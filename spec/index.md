@@ -14,6 +14,7 @@
 | Phase 2: ページ設計 | 完了 | [pages/index.md](./pages/index.md)（P-01〜P-14 の14画面） |
 | Phase 3: 技術設計 | 完了 | [domains/index.md](./domains/index.md)・spec/usecases/・[database/index.md](./database/index.md)・spec/testcases/（52ユースケース・約750ケース）・クロスフェーズ検証（spec/review/cross-phase/） |
 | Phase 4: マニュアルテスト | 完了 | [manual-tests/index.md](./manual-tests/index.md)（7カテゴリ・192ケース） |
+| デザイン（design-flow） | 完了 | [design/index.md](./design/index.md)・[design/tokens.md](./design/tokens.md)・spec/design/pages/（P-01〜P-14 の14画面 HTML）・spec/design/review/（5ラウンド） |
 
 ## 成果物
 
@@ -25,6 +26,10 @@
 - spec/testcases/ — テストケース定義（52ユースケース・約750ケース）
 - [manual-tests/index.md](./manual-tests/index.md) — マニュアルテスト（192ケース）
 - spec/review/cross-phase/ — クロスフェーズ検証
+- [design/index.md](./design/index.md) — デザイン方針（ソフトミニマリズム。採用ドラフト: [mock.html](./mock.html)）
+- [design/tokens.md](./design/tokens.md) — デザイントークン
+- spec/design/pages/ — 全14画面の HTML デザイン（単体でブラウザ表示可能）
+- spec/design/review/ — デザインレビュー記録（視覚確認 / critique / polish / audit / issues対応の5ラウンド）
 
 ## ADR
 

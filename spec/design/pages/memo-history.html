@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>メモ履歴 — fog</title>
+    <style>
+      :root {
+        /* spec/design/tokens.md */
+        --color-primary-lighter: oklch(0.93 0.04 292);
+        --color-primary-light: oklch(0.78 0.09 292);
+        --color-primary: oklch(0.63 0.13 292);
+        --color-primary-dark: oklch(0.54 0.15 292);
+        --color-primary-darker: oklch(0.45 0.15 292);
+        --color-accent: oklch(0.62 0.19 40);
+        --color-neutral-50: oklch(0.97 0.002 286);
+        --color-neutral-100: oklch(0.945 0.004 286);
+        --color-neutral-200: oklch(0.93 0.004 286);
+        --color-neutral-300: oklch(0.875 0.006 278);
+        --color-neutral-400: oklch(0.69 0.01 275);
+        --color-neutral-500: oklch(0.58 0.01 275);
+        --color-neutral-600: oklch(0.52 0.01 275);
+        --color-neutral-700: oklch(0.38 0.008 275);
+        --color-neutral-900: oklch(0.21 0.006 270);
+        --color-success: oklch(0.55 0.13 155);
+        --color-success-dark: oklch(0.42 0.11 155);
+        --color-success-bg: oklch(0.95 0.03 155);
+        --color-warning: oklch(0.6 0.13 75);
+        --color-warning-dark: oklch(0.45 0.1 75);
+        --color-warning-bg: oklch(0.96 0.04 90);
+        --color-error: oklch(0.55 0.19 27);
+        --color-error-dark: oklch(0.45 0.19 27);
+        --color-error-bg: oklch(0.95 0.025 20);
+        --color-info: var(--color-primary);
+        --color-info-bg: var(--color-primary-lighter);
+        --color-bg-page: oklch(0.93 0.004 286);
+        --color-bg-page-top: oklch(0.955 0.003 286);
+        --color-bg-card: oklch(1 0 0);
+        --color-bg-input: oklch(0.96 0.003 286 / 0.88);
+        --color-bg-hover: oklch(1 0 0 / 0.55);
+        --color-overlay: oklch(0.21 0.006 270 / 0.28);
+        --color-text-inverse: oklch(1 0 0); /* 塗りボタン・トースト上の白文字 */
+        --color-focus: var(--color-primary);
+        --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
+          "Hiragino Sans", "Noto Sans JP", sans-serif;
+        --text-xs: 0.72rem;
+        --text-sm: 0.78rem;
+        --text-base: 0.95rem;
+        --text-lg: 1.05rem;
+        --text-xl: clamp(1.2rem, 1.1rem + 0.5vw, 1.45rem);
+        --text-2xl: clamp(1.45rem, 1.3rem + 0.8vw, 1.8rem);
+        --weight-regular: 400;
+        --weight-medium: 500;
+        --weight-semibold: 600;
+        --weight-bold: 700;
+        --leading-tight: 1.5;
+        --leading-normal: 1.85;
+        --leading-loose: 2;
+        --tracking-label: 0.03em;
+        --space-xs: 0.25rem;
+        --space-sm: 0.5rem;
+        --space-md: 0.875rem;
+        --space-lg: 1.5rem;
+        --space-xl: 1.875rem;
+        --space-2xl: 2.5rem;
+        --space-section: 2.25rem;
+        --pad-row: 16px; /* リスト行の縦 padding（全画面共通） */
+        --pad-menu: 0.75rem var(--space-md); /* 12px 14px メニュー/ナビ項目（サイドバーリンク・ポップオーバー項目） */
+        --pad-btn: 12px 24px; /* ピルボタン大（フォームの主ボタン） */
+        --icon-lg: 20px; /* 戻る矢印 */
+        --icon-md: 19px; /* ヘッダー操作・行末操作（ジャンプ/復元/削除） */
+        --radius-sm: 0.375rem;
+        --radius-md: 0.625rem;
+        --radius-lg: 1.625rem;
+        --radius-full: 9999px;
+        --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);
+        --shadow-md: 0 12px 36px oklch(0.21 0.006 270 / 0.18);
+        --shadow-lg: 0 -8px 40px oklch(0.21 0.006 270 / 0.2);
+        --transition-fast: 0.15s ease;
+        --transition-default: 0.22s ease;
+        --container-max: 1280px;
+        --sidebar-w: 200px;
+        --content-max: 50rem;
+        --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
+        --container-padding: clamp(0.875rem, 4vw, 2rem);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: linear-gradient(
+          180deg,
+          var(--color-bg-page-top) 0%,
+          var(--color-bg-page) 240px
+        );
+        font-family: var(--font-base);
+        color: var(--color-neutral-900);
+        font-size: var(--text-base);
+      }
+
+      /* ==== アプリシェル ==== */
+      .app {
+        height: 100dvh;
+        display: flex;
+      }
+      .main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ---- サイドバー（lg以上） ---- */
+      .sidebar {
+        display: none;
+      }
+      @media (min-width: 1024px) {
+        .app {
+          max-width: var(--container-max);
+          margin: 0 auto;
+        }
+        .sidebar {
+          display: flex;
+          flex-direction: column;
+          width: var(--sidebar-w);
+          flex: none;
+          padding: var(--space-2xl) var(--space-lg) var(--space-lg);
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: var(--text-lg);
+          font-weight: var(--weight-semibold);
+          padding: 0 var(--space-md) var(--space-2xl);
+          text-decoration: none;
+          color: var(--color-neutral-900);
+        }
+        .brand .dot {
+          width: 6px;
+          height: 6px;
+          border-radius: var(--radius-full);
+          background: var(--color-accent);
+        }
+        .side-nav {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .side-link {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: var(--pad-menu);
+          border-radius: var(--radius-md);
+          text-decoration: none;
+          font-size: var(--text-base);
+          font-weight: var(--weight-medium);
+          color: var(--color-neutral-600);
+          transition: background var(--transition-fast),
+            color var(--transition-fast);
+        }
+        .side-link .mark {
+          width: 5px;
+          height: 5px;
+          border-radius: var(--radius-full);
+          background: transparent;
+          flex: none;
+        }
+        @media (hover: hover) {
+          .side-link:hover {
+            background: var(--color-bg-hover);
+            color: var(--color-neutral-900);
+          }
+        }
+        .side-link:focus-visible {
+          outline: 2px solid var(--color-focus);
+          outline-offset: -2px;
+        }
+        .side-link[aria-current="page"] {
+          color: var(--color-neutral-900);
+          font-weight: var(--weight-semibold);
+        }
+        .side-link[aria-current="page"] .mark {
+          background: var(--color-primary);
+        }
+      }
+
+      /* ---- ヘッダー ---- */
+      header.top {
+        padding: max(20px, env(safe-area-inset-top, 0px) + 12px)
+          var(--space-md) 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--space-md);
+        flex: none;
+      }
+      .h-back {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        flex: 1;
+      }
+      .h-title {
+        font-size: var(--text-lg);
+        font-weight: var(--weight-semibold);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .h-title .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: var(--radius-full);
+        background: var(--color-accent);
+        flex: none;
+      }
+      .h-title .title-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .h-title h1 {
+        font-size: inherit;
+        font-weight: inherit;
+      }
+      .icon-btn {
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--color-neutral-500);
+        padding: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-md);
+        transition: color var(--transition-fast),
+          background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .icon-btn:hover {
+          color: var(--color-neutral-900);
+          background: var(--color-bg-hover);
+        }
+      }
+      .icon-btn:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .icon-btn:active {
+        color: var(--color-primary-darker);
+      }
+      .h-back .icon-btn svg {
+        width: var(--icon-lg);
+        height: var(--icon-lg);
+      }
+      .h-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+      }
+      .menu {
+        border: none;
+        background: none;
+        cursor: pointer;
+        padding: 10px 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 6px;
+        border-radius: var(--radius-md);
+      }
+      .menu span {
+        display: block;
+        height: 2.5px;
+        border-radius: 3px;
+        background: var(--color-neutral-500);
+      }
+      .menu span:nth-child(1) {
+        width: 19px;
+      }
+      .menu span:nth-child(2) {
+        width: 12px;
+      }
+      .menu:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .menu span {
+        transition: background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .menu:hover span {
+          background: var(--color-neutral-900);
+        }
+      }
+      @media (min-width: 1024px) {
+        header.top {
+          padding-top: var(--space-xl);
+        }
+        .menu {
+          display: none;
+        }
+        .h-title .dot {
+          display: none;
+        }
+      }
+
+      /* ---- シート ---- */
+      .sheet {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--color-bg-card);
+        width: min(100% - 2 * var(--space-md), var(--sheet-max));
+        margin-inline: auto;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        box-shadow: var(--shadow-sm);
+      }
+      .inner {
+        padding: var(--space-2xl) var(--space-lg) 80px;
+      }
+      @media (min-width: 640px) {
+        .inner {
+          padding: var(--space-2xl) var(--space-2xl) 80px;
+        }
+      }
+      @media (min-width: 768px) {
+        /* ヘッダーとシートは同一のコンテンツカラム（本文幅+左右パディング）を
+           共有し、余った幅はページ背景に逃がす */
+        header.top,
+        .sheet {
+          width: min(calc(100% - 2 * var(--space-lg)), var(--sheet-max));
+          margin-inline: auto;
+        }
+        header.top {
+          padding-inline: 0;
+        }
+        .inner {
+          max-width: var(--content-max);
+          margin: 0 auto;
+        }
+      }
+
+      /* ==== メモ履歴固有 ==== */
+
+      .list-label {
+        font-size: var(--text-xs);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-label);
+        margin-bottom: 12px;
+      }
+
+      .memo-content {
+        font-size: var(--text-base);
+        line-height: var(--leading-normal);
+      }
+
+      /* 「履歴」セクションの開始線は次セクション側に持たせる（document.html の .origin と同型） */
+      .history-section {
+        margin-top: var(--space-section);
+        padding-top: var(--space-lg);
+        border-top: 1px solid var(--color-neutral-100);
+      }
+
+      /* 版の行 — 行全体が1つのリンク（単一ホバー面） */
+      .revision-list {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .revision-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        margin-inline: calc(-1 * var(--space-md));
+        padding: var(--pad-row) var(--space-md);
+        border-radius: var(--radius-md);
+        text-decoration: none;
+        color: inherit;
+        transition: background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .revision-row:hover {
+          background: var(--color-neutral-50);
+        }
+      }
+      .revision-row:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: -2px;
+      }
+      /* 区切りヘアラインは張り出しに追従させない */
+      /* 区切り線は張り出しに追従させず、テキストのカラム幅に合わせる */
+      .revision-row + .revision-row::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        inset-inline: var(--space-md);
+        border-top: 1px solid var(--color-neutral-100);
+      }
+
+      .revision-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .revision-time {
+        font-size: var(--text-base);
+        font-weight: var(--weight-medium);
+        color: var(--color-neutral-900);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .revision-meta {
+        font-size: var(--text-xs);
+        color: var(--color-neutral-400);
+        margin-top: var(--space-xs);
+      }
+
+      .revision-row .jump {
+        flex: none;
+        color: var(--color-primary);
+        width: var(--icon-md);
+        height: var(--icon-md);
+      }
+
+      /* 差分表示 */
+      .diff-label {
+        font-size: var(--text-sm);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        font-variant-numeric: tabular-nums;
+        margin-bottom: var(--space-lg);
+      }
+
+      .diff-view {
+        border: 1px solid var(--color-neutral-100);
+        border-radius: var(--radius-md);
+        overflow-x: auto;
+        background: var(--color-bg-card);
+      }
+
+      .diff-content {
+        font-size: var(--text-sm);
+        line-height: var(--leading-normal);
+        font-family: var(--font-base);
+        padding: var(--space-lg);
+      }
+
+      .diff-line {
+        padding: 4px 0;
+        display: flex;
+        gap: 8px;
+      }
+
+      .diff-line.added {
+        background-color: var(--color-success-bg);
+      }
+
+      .diff-line.removed {
+        background-color: var(--color-error-bg);
+      }
+
+      .diff-mark {
+        color: var(--color-neutral-500);
+        flex: none;
+        width: 16px;
+        text-align: center;
+      }
+
+      .diff-line.added .diff-mark {
+        color: var(--color-success-dark);
+      }
+
+      .diff-line.removed .diff-mark {
+        color: var(--color-error-dark);
+      }
+
+      .diff-text {
+        flex: 1;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: var(--color-neutral-900);
+      }
+
+      .diff-line.added .diff-text {
+        color: var(--color-success-dark);
+      }
+
+      .diff-line.removed .diff-text {
+        color: var(--color-error-dark);
+      }
+
+      /* ボタン */
+      .action-row {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: var(--space-lg);
+      }
+      .action-btn {
+        border: none;
+        background: var(--color-primary-dark);
+        cursor: pointer;
+        border-radius: var(--radius-full);
+        padding: var(--pad-btn);
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        color: var(--color-text-inverse);
+        font-family: var(--font-base);
+        transition: background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .action-btn:hover {
+          background: var(--color-primary-darker);
+        }
+      }
+      .action-btn:active {
+        background: var(--color-primary-darker);
+      }
+      .action-btn:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      /* ---- ナビゲーションシート（〜md） ---- */
+      .nav-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: var(--color-overlay);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity var(--transition-fast),
+          visibility var(--transition-fast);
+        border: none;
+      }
+      .nav-overlay.show {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+      }
+      .nav-sheet {
+        position: fixed;
+        inset-inline: max(
+          var(--space-md),
+          calc((100% - var(--sheet-max)) / 2)
+        );
+        bottom: 0;
+        z-index: 21;
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        padding: 14px var(--space-lg)
+          max(40px, env(safe-area-inset-bottom, 0px) + 24px);
+        transform: translateY(105%);
+        visibility: hidden;
+        transition: transform var(--transition-default),
+          visibility var(--transition-default);
+        box-shadow: var(--shadow-lg);
+      }
+      .nav-sheet.show {
+        transform: translateY(0);
+        visibility: visible;
+      }
+      .nav-sheet .handle {
+        width: 36px;
+        height: 4px;
+        border-radius: 4px;
+        background: var(--color-neutral-300);
+        margin: 0 auto 14px;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: var(--text-base);
+        font-weight: var(--weight-medium);
+        color: var(--color-neutral-900);
+        font-family: inherit;
+        padding: var(--pad-row) 2px;
+        text-decoration: none;
+      }
+      .nav-item + .nav-item {
+        border-top: 1px solid var(--color-neutral-100);
+      }
+      .nav-item .mark {
+        width: 5px;
+        height: 5px;
+        border-radius: var(--radius-full);
+        background: transparent;
+        flex: none;
+      }
+      .nav-item[aria-current="page"] {
+        font-weight: var(--weight-semibold);
+      }
+      .nav-item[aria-current="page"] .mark {
+        background: var(--color-primary);
+      }
+      .nav-item:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: -2px;
+        border-radius: var(--radius-md);
+      }
+      @media (min-width: 1024px) {
+        .nav-overlay,
+        .nav-sheet {
+          display: none;
+        }
+      }
+
+      /* ---- 状態の例 ---- */
+      .state-examples {
+        max-width: var(--content-max);
+        margin: var(--space-2xl) auto;
+        padding: 0 var(--space-lg) var(--space-2xl);
+      }
+      .state-examples h2 {
+        font-size: var(--text-sm);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        letter-spacing: var(--tracking-label);
+        margin-bottom: var(--space-md);
+      }
+      .state-examples .example {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+        margin-bottom: var(--space-md);
+      }
+      .state-examples .example-label {
+        font-size: var(--text-xs);
+        color: var(--color-neutral-400);
+        margin-bottom: var(--space-sm);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- サイドバー（lg以上） -->
+      <aside class="sidebar">
+        <a class="brand" href="#"><span>fog</span><span class="dot"></span></a>
+        <nav class="side-nav" aria-label="グローバルナビゲーション">
+          <a class="side-link" href="#" aria-current="page"
+            ><span class="mark"></span>タイムライン</a
+          >
+          <a class="side-link" href="#"><span class="mark"></span>トピック</a>
+          <a class="side-link" href="#"><span class="mark"></span>検索</a>
+          <a class="side-link" href="#"><span class="mark"></span>ゴミ箱</a>
+          <a class="side-link" href="#"><span class="mark"></span>設定</a>
+        </nav>
+      </aside>
+
+      <div class="main">
+        <header class="top">
+          <div class="h-back">
+            <button
+              class="icon-btn"
+              aria-label="戻る"
+            >
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M12.5 4L6.5 10L12.5 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div class="h-title">
+              <h1 class="title-text">メモの履歴</h1><span class="dot"></span>
+            </div>
+          </div>
+          <div class="h-actions">
+            <button class="menu" aria-label="メニュー" aria-expanded="false" aria-controls="nav-sh" onclick="openNav()">
+              <span></span><span></span>
+            </button>
+          </div>
+        </header>
+
+        <main class="sheet">
+          <div class="inner">
+            <!-- 現在のメモ内容 -->
+            <div class="list-label">現在の内容</div>
+            <div class="memo-content">
+              ワイヤーフレームの構成、先週の議論を整理して固めた。
+            </div>
+
+            <!-- リビジョン一覧 -->
+            <div class="history-section">
+            <div class="list-label">履歴</div>
+            <div class="revision-list">
+              <a class="revision-row" href="#">
+                <div class="revision-info">
+                  <div class="revision-time">7月20日 12:31 PM</div>
+                  <div class="revision-meta">あなた</div>
+                </div>
+                <svg class="jump" aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </a>
+
+              <a class="revision-row" href="#">
+                <div class="revision-info">
+                  <div class="revision-time">7月20日 12:30 PM</div>
+                  <div class="revision-meta">あなた</div>
+                </div>
+                <svg class="jump" aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </a>
+            </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ナビゲーション（〜md） -->
+    <button
+      class="nav-overlay"
+      id="nav-ov"
+      aria-label="メニューを閉じる"
+      onclick="closeNav()"
+    ></button>
+    <nav class="nav-sheet" id="nav-sh" aria-label="グローバルナビゲーション">
+      <div class="handle"></div>
+      <a class="nav-item" href="#" aria-current="page"
+        ><span class="mark"></span>タイムライン</a
+      >
+      <a class="nav-item" href="#"><span class="mark"></span>トピック</a>
+      <a class="nav-item" href="#"><span class="mark"></span>検索</a>
+      <a class="nav-item" href="#"><span class="mark"></span>ゴミ箱</a>
+      <a class="nav-item" href="#"><span class="mark"></span>設定</a>
+    </nav>
+
+    <!-- 状態の例（通常フローには含めない） -->
+    <section class="state-examples" aria-label="状態の例">
+      <h2>状態の例</h2>
+      <div class="example">
+        <p class="example-label">版を開いた閲覧画面（現在との差分。復元はこの画面で行う）</p>
+        <div class="diff-label">12:30 PM → 12:31 PM の差分</div>
+        <div class="diff-view">
+          <div class="diff-content">
+            <div class="diff-line removed">
+              <span class="diff-mark">−</span>
+              <span class="diff-text">ワイヤーフレーム検討中</span>
+            </div>
+            <div class="diff-line added">
+              <span class="diff-mark">+</span>
+              <span class="diff-text">ワイヤーフレームの構成、先週の議論を整理して固めた。</span>
+            </div>
+          </div>
+        </div>
+        <div class="action-row">
+          <button class="action-btn">この内容に戻す</button>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      function openNav() {
+        document.getElementById("nav-ov").classList.add("show");
+        document.getElementById("nav-sh").classList.add("show");
+        document.querySelector(".menu").setAttribute("aria-expanded", "true");
+      }
+      function closeNav() {
+        document.getElementById("nav-ov").classList.remove("show");
+        document.getElementById("nav-sh").classList.remove("show");
+        document.querySelector(".menu").setAttribute("aria-expanded", "false");
+      }
+    </script>
+  </body>
+</html>

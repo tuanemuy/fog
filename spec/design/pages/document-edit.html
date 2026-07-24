@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ドキュメント編集 — fog</title>
+    <style>
+      :root {
+        /* spec/design/tokens.md */
+        --color-primary-lighter: oklch(0.93 0.04 292);
+        --color-primary-light: oklch(0.78 0.09 292);
+        --color-primary: oklch(0.63 0.13 292);
+        --color-primary-dark: oklch(0.54 0.15 292);
+        --color-primary-darker: oklch(0.45 0.15 292);
+        --color-accent: oklch(0.62 0.19 40);
+        --color-neutral-50: oklch(0.97 0.002 286);
+        --color-neutral-100: oklch(0.945 0.004 286);
+        --color-neutral-200: oklch(0.93 0.004 286);
+        --color-neutral-300: oklch(0.875 0.006 278);
+        --color-neutral-400: oklch(0.69 0.01 275);
+        --color-neutral-500: oklch(0.58 0.01 275);
+        --color-neutral-600: oklch(0.52 0.01 275);
+        --color-neutral-700: oklch(0.38 0.008 275);
+        --color-neutral-900: oklch(0.21 0.006 270);
+        --color-success: oklch(0.55 0.13 155);
+        --color-success-dark: oklch(0.42 0.11 155);
+        --color-success-bg: oklch(0.95 0.03 155);
+        --color-warning: oklch(0.6 0.13 75);
+        --color-warning-dark: oklch(0.45 0.1 75);
+        --color-warning-bg: oklch(0.96 0.04 90);
+        --color-error: oklch(0.55 0.19 27);
+        --color-error-dark: oklch(0.45 0.19 27);
+        --color-error-bg: oklch(0.95 0.025 20);
+        --color-info: var(--color-primary);
+        --color-info-bg: var(--color-primary-lighter);
+        --color-bg-page: oklch(0.93 0.004 286);
+        --color-bg-page-top: oklch(0.955 0.003 286);
+        --color-bg-card: oklch(1 0 0);
+        --color-bg-input: oklch(0.96 0.003 286 / 0.88);
+        --color-bg-hover: oklch(1 0 0 / 0.55);
+        --color-overlay: oklch(0.21 0.006 270 / 0.28);
+        --color-text-inverse: oklch(1 0 0); /* 塗りボタン・トースト上の白文字 */
+        --color-focus: var(--color-primary);
+        --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
+          "Hiragino Sans", "Noto Sans JP", sans-serif;
+        --text-xs: 0.72rem;
+        --text-sm: 0.78rem;
+        --text-base: 0.95rem;
+        --text-lg: 1.05rem;
+        --text-xl: clamp(1.2rem, 1.1rem + 0.5vw, 1.45rem);
+        --text-2xl: clamp(1.45rem, 1.3rem + 0.8vw, 1.8rem);
+        --weight-regular: 400;
+        --weight-medium: 500;
+        --weight-semibold: 600;
+        --weight-bold: 700;
+        --leading-tight: 1.5;
+        --leading-normal: 1.85;
+        --leading-loose: 2;
+        --tracking-label: 0.03em;
+        --space-xs: 0.25rem;
+        --space-sm: 0.5rem;
+        --space-md: 0.875rem;
+        --space-lg: 1.5rem;
+        --space-xl: 1.875rem;
+        --space-2xl: 2.5rem;
+        --space-section: 2.25rem;
+        --pad-row: 16px; /* リスト行の縦 padding（全画面共通） */
+        --pad-menu: 0.75rem var(--space-md); /* 12px 14px メニュー/ナビ項目（サイドバーリンク・ポップオーバー項目） */
+        --pad-btn-sm: 10px 20px; /* ピルボタン小（ヘッダー保存・インライン追加・設定行のボタン） */
+        --icon-lg: 20px; /* 戻る矢印 */
+        --icon-sm: 16px; /* 行内トリガー(…)・ポップオーバー項目・× 閉じる */
+        --icon-xs: 12px; /* テキストに随伴する小グリフ（リンク矢印・+ 等） */
+        --radius-sm: 0.375rem;
+        --radius-md: 0.625rem;
+        --radius-lg: 1.625rem;
+        --radius-full: 9999px;
+        --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);
+        --shadow-md: 0 12px 36px oklch(0.21 0.006 270 / 0.18);
+        --shadow-lg: 0 -8px 40px oklch(0.21 0.006 270 / 0.2);
+        --transition-fast: 0.15s ease;
+        --transition-default: 0.22s ease;
+        --container-max: 1280px;
+        --sidebar-w: 200px;
+        --content-max: 50rem;
+        --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
+        --container-padding: clamp(0.875rem, 4vw, 2rem);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: linear-gradient(
+          180deg,
+          var(--color-bg-page-top) 0%,
+          var(--color-bg-page) 240px
+        );
+        font-family: var(--font-base);
+        color: var(--color-neutral-900);
+        font-size: var(--text-base);
+      }
+
+      /* ==== アプリシェル ==== */
+      .app {
+        height: 100dvh;
+        display: flex;
+      }
+      .main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ---- サイドバー（lg以上） ---- */
+      .sidebar {
+        display: none;
+      }
+      @media (min-width: 1024px) {
+        .app {
+          max-width: var(--container-max);
+          margin: 0 auto;
+        }
+        .sidebar {
+          display: flex;
+          flex-direction: column;
+          width: var(--sidebar-w);
+          flex: none;
+          padding: var(--space-2xl) var(--space-lg) var(--space-lg);
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: var(--text-lg);
+          font-weight: var(--weight-semibold);
+          padding: 0 var(--space-md) var(--space-2xl);
+          text-decoration: none;
+          color: var(--color-neutral-900);
+        }
+        .brand .dot {
+          width: 6px;
+          height: 6px;
+          border-radius: var(--radius-full);
+          background: var(--color-accent);
+        }
+        .side-nav {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .side-link {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: var(--pad-menu);
+          border-radius: var(--radius-md);
+          text-decoration: none;
+          font-size: var(--text-base);
+          font-weight: var(--weight-medium);
+          color: var(--color-neutral-600);
+          transition: background var(--transition-fast),
+            color var(--transition-fast);
+        }
+        .side-link .mark {
+          width: 5px;
+          height: 5px;
+          border-radius: var(--radius-full);
+          background: transparent;
+          flex: none;
+        }
+        @media (hover: hover) {
+          .side-link:hover {
+            background: var(--color-bg-hover);
+            color: var(--color-neutral-900);
+          }
+        }
+        .side-link:focus-visible {
+          outline: 2px solid var(--color-focus);
+          outline-offset: -2px;
+        }
+        .side-link[aria-current="page"] {
+          color: var(--color-neutral-900);
+          font-weight: var(--weight-semibold);
+        }
+        .side-link[aria-current="page"] .mark {
+          background: var(--color-primary);
+        }
+      }
+
+      /* ---- ヘッダー ---- */
+      header.top {
+        padding: max(20px, env(safe-area-inset-top, 0px) + 12px)
+          var(--space-md) 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--space-md);
+        flex: none;
+      }
+      .h-back {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        flex: 1;
+      }
+      .icon-btn {
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--color-neutral-500);
+        padding: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-md);
+        transition: color var(--transition-fast),
+          background var(--transition-fast);
+        flex: none;
+      }
+      @media (hover: hover) {
+        .icon-btn:hover {
+          color: var(--color-neutral-900);
+          background: var(--color-bg-hover);
+        }
+      }
+      .icon-btn:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .h-back .icon-btn svg {
+        width: var(--icon-lg);
+        height: var(--icon-lg);
+      }
+      .back-link {
+        color: var(--color-neutral-900);
+        text-decoration: none;
+        font-size: var(--text-lg);
+        font-weight: var(--weight-semibold);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .back-link span:first-child {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .back-link .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: var(--radius-full);
+        background: var(--color-accent);
+        flex: none;
+      }
+      .back-link:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+        border-radius: var(--radius-md);
+      }
+      .h-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+      }
+      .h-save {
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
+        background: var(--color-primary-dark);
+        color: var(--color-text-inverse);
+        border-radius: var(--radius-full);
+        padding: var(--pad-btn-sm);
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        transition: background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .h-save:hover {
+          background: var(--color-primary-darker);
+        }
+      }
+      .h-save:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .h-save:active {
+        background: var(--color-primary-darker);
+      }
+      .menu {
+        border: none;
+        background: none;
+        cursor: pointer;
+        padding: 10px 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 6px;
+        border-radius: var(--radius-md);
+      }
+      .menu span {
+        display: block;
+        height: 2.5px;
+        border-radius: 3px;
+        background: var(--color-neutral-500);
+      }
+      .menu span:nth-child(1) {
+        width: 19px;
+      }
+      .menu span:nth-child(2) {
+        width: 12px;
+      }
+      .menu:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .menu span {
+        transition: background var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .menu:hover span {
+          background: var(--color-neutral-900);
+        }
+      }
+      @media (min-width: 1024px) {
+        header.top {
+          padding-top: var(--space-xl);
+        }
+        .menu {
+          display: none;
+        }
+        .back-link .dot {
+          display: none;
+        }
+      }
+
+      /* ---- シート ---- */
+      .sheet {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--color-bg-card);
+        width: min(100% - 2 * var(--space-md), var(--sheet-max));
+        margin-inline: auto;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        box-shadow: var(--shadow-sm);
+      }
+      .inner {
+        padding: var(--space-2xl) var(--space-lg) 80px;
+      }
+      @media (min-width: 640px) {
+        .inner {
+          padding: var(--space-2xl) var(--space-2xl) 80px;
+        }
+      }
+      @media (min-width: 768px) {
+        /* ヘッダーとシートは同一のコンテンツカラム（本文幅+左右パディング）を
+           共有し、余った幅はページ背景に逃がす */
+        header.top,
+        .sheet {
+          width: min(calc(100% - 2 * var(--space-lg)), var(--sheet-max));
+          margin-inline: auto;
+        }
+        header.top {
+          padding-inline: 0;
+        }
+        .inner {
+          max-width: var(--content-max);
+          margin: 0 auto;
+        }
+      }
+
+      /* ==== ドキュメント編集固有 ==== */
+
+      /* タイトルと本文は枠なしで地続きに。エディタ内スクロールは作らず
+         シート全体がスクロールする */
+      .title-input {
+        display: block;
+        width: 100%;
+        border: none;
+        background: none;
+        outline: none;
+        font-family: inherit;
+        font-size: var(--text-xl);
+        font-weight: var(--weight-bold);
+        line-height: var(--leading-tight);
+        color: var(--color-neutral-900);
+      }
+      .title-input::placeholder {
+        color: var(--color-neutral-400);
+      }
+
+      .body-input {
+        display: block;
+        width: 100%;
+        border: none;
+        background: none;
+        outline: none;
+        resize: none;
+        font-family: inherit;
+        font-size: var(--text-base);
+        line-height: var(--leading-loose);
+        color: var(--color-neutral-900);
+        margin-top: var(--space-lg);
+        field-sizing: content;
+        min-height: 10em;
+      }
+      .body-input::placeholder {
+        color: var(--color-neutral-400);
+      }
+
+      .error-text {
+        font-size: var(--text-sm);
+        color: var(--color-error);
+        margin-top: var(--space-sm);
+      }
+
+      /* 出典 */
+      .origin {
+        margin-top: var(--space-section);
+        padding-top: var(--space-lg);
+        border-top: 1px solid var(--color-neutral-100);
+      }
+      .origin .o-label {
+        font-size: var(--text-xs);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-label);
+        margin-bottom: 12px;
+      }
+      .origin-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: var(--pad-row) 0;
+        border-radius: var(--radius-md);
+      }
+      /* 区切りヘアラインは張り出しに追従させない */
+      .origin-row + .origin-row {
+        border-top: 1px solid var(--color-neutral-100);
+      }
+      .origin-row .row-main {
+        flex: 1;
+        min-width: 0;
+      }
+      .time-label {
+        display: block;
+        font-size: var(--text-xs);
+        font-weight: var(--weight-medium);
+        color: var(--color-neutral-400);
+        letter-spacing: var(--tracking-label);
+        margin-bottom: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+      .origin-row .o-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-size: var(--text-base);
+        line-height: 1.8;
+        color: var(--color-neutral-700);
+      }
+      .row-action {
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--color-neutral-500);
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        border-radius: var(--radius-md);
+        transition: color var(--transition-fast);
+      }
+      @media (hover: hover) {
+        .row-action:hover {
+          color: var(--color-neutral-900);
+        }
+      }
+      .row-action:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: -2px;
+      }
+      .row-action svg {
+        width: var(--icon-sm);
+        height: var(--icon-sm);
+      }
+
+      .add-origin {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--color-neutral-300);
+        background: none;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        color: var(--color-primary-dark);
+        border-radius: var(--radius-full);
+        padding: 9px 18px;
+        margin-top: var(--space-md);
+        transition: color var(--transition-fast);
+      }
+      .add-origin svg {
+        width: var(--icon-xs);
+        height: var(--icon-xs);
+      }
+      @media (hover: hover) {
+        .add-origin:hover {
+          color: var(--color-primary-darker);
+        }
+      }
+      .add-origin:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      /* ---- ナビゲーションシート（〜md） ---- */
+      .nav-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: var(--color-overlay);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity var(--transition-fast),
+          visibility var(--transition-fast);
+        border: none;
+      }
+      .nav-overlay.show {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+      }
+      .nav-sheet {
+        position: fixed;
+        inset-inline: max(
+          var(--space-md),
+          calc((100% - var(--sheet-max)) / 2)
+        );
+        bottom: 0;
+        z-index: 21;
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        padding: 14px var(--space-lg)
+          max(40px, env(safe-area-inset-bottom, 0px) + 24px);
+        transform: translateY(105%);
+        visibility: hidden;
+        transition: transform var(--transition-default),
+          visibility var(--transition-default);
+        box-shadow: var(--shadow-lg);
+      }
+      .nav-sheet.show {
+        transform: translateY(0);
+        visibility: visible;
+      }
+      .nav-sheet .handle {
+        width: 36px;
+        height: 4px;
+        border-radius: 4px;
+        background: var(--color-neutral-300);
+        margin: 0 auto 14px;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: var(--text-base);
+        font-weight: var(--weight-medium);
+        color: var(--color-neutral-900);
+        font-family: inherit;
+        padding: var(--pad-row) 2px;
+        text-decoration: none;
+      }
+      .nav-item + .nav-item {
+        border-top: 1px solid var(--color-neutral-100);
+      }
+      .nav-item .mark {
+        width: 5px;
+        height: 5px;
+        border-radius: var(--radius-full);
+        background: transparent;
+        flex: none;
+      }
+      .nav-item[aria-current="page"] {
+        font-weight: var(--weight-semibold);
+      }
+      .nav-item[aria-current="page"] .mark {
+        background: var(--color-primary);
+      }
+      .nav-item:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: -2px;
+        border-radius: var(--radius-md);
+      }
+      @media (min-width: 1024px) {
+        .nav-overlay,
+        .nav-sheet {
+          display: none;
+        }
+      }
+
+      /* ---- 状態の例（モック用の隔離セクション） ---- */
+      .state-examples {
+        max-width: var(--content-max);
+        margin: var(--space-2xl) auto;
+        padding: 0 var(--space-lg) var(--space-2xl);
+      }
+      .state-examples h2 {
+        font-size: var(--text-sm);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        letter-spacing: var(--tracking-label);
+        margin-bottom: var(--space-md);
+      }
+      .state-examples .example {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+        margin-bottom: var(--space-md);
+      }
+      .state-examples .example-label {
+        font-size: var(--text-xs);
+        color: var(--color-neutral-400);
+        margin-bottom: var(--space-sm);
+      }
+      .toast {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--color-neutral-900);
+        color: var(--color-text-inverse);
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        padding: 12px 20px;
+        border-radius: var(--radius-full);
+        box-shadow: var(--shadow-md);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- サイドバー（lg以上） -->
+      <aside class="sidebar">
+        <a class="brand" href="#"><span>fog</span><span class="dot"></span></a>
+        <nav class="side-nav" aria-label="グローバルナビゲーション">
+          <a class="side-link" href="#"><span class="mark"></span>タイムライン</a>
+          <a class="side-link" href="#" aria-current="page"
+            ><span class="mark"></span>トピック</a
+          >
+          <a class="side-link" href="#"><span class="mark"></span>検索</a>
+          <a class="side-link" href="#"><span class="mark"></span>ゴミ箱</a>
+          <a class="side-link" href="#"><span class="mark"></span>設定</a>
+        </nav>
+      </aside>
+
+      <div class="main">
+        <header class="top">
+          <div class="h-back">
+            <button class="icon-btn" aria-label="戻る">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M12.5 4L6.5 10L12.5 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <a class="back-link" href="#">
+              <span>ブランド刷新</span><span class="dot"></span>
+            </a>
+          </div>
+          <div class="h-actions">
+            <button class="h-save">保存</button>
+            <button
+              class="menu"
+              aria-label="メニュー"
+              aria-expanded="false"
+              aria-controls="nav-sh"
+              onclick="openNav()"
+            >
+              <span></span><span></span>
+            </button>
+          </div>
+        </header>
+
+        <main class="sheet">
+          <div class="inner">
+            <!-- タイトル + 本文（シームレスなエディタ） -->
+            <input
+              type="text"
+              class="title-input"
+              id="doc-title"
+              placeholder="タイトル"
+              value="サイト構成の方針"
+              aria-label="タイトル"
+            />
+            <textarea
+              class="body-input"
+              id="doc-body"
+              rows="16"
+              placeholder="本文を書く…"
+              aria-label="本文"
+            >トップは製品ではなく制作の姿勢を見せる。写真は現場のものだけを使い、素材集は使わない。
+
+## 構成
+
+- トップ：姿勢を伝える一枚と最小限の導線
+- 制作事例：件数を絞り、一件ごとに経緯まで書く
+- 会社概要：地図と沿革のみ
+
+## 決めたこと
+
+色は現行の紺を残す。書体は本文と見出しの二種に絞り、多言語対応は今回のスコープに含めない。
+
+展示会の案内はトップに常設せず、期間中だけ掲載する。</textarea>
+
+            <!-- 出典 -->
+            <div class="origin">
+              <div class="o-label">出典</div>
+              <div class="origin-row">
+                <span class="row-main">
+                  <span class="time-label">2026年7月20日 12:30 PM</span>
+                  <span class="o-text">ワイヤーフレームの構成、先週の議論を整理して固めた。</span>
+                </span>
+                <button class="row-action" aria-label="出典から外す">
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 5L15 15M15 5L5 15"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div class="origin-row">
+                <span class="row-main">
+                  <span class="time-label">2026年7月14日 09:12 AM</span>
+                  <span class="o-text">事例ページは数を並べるより一件を深く。経緯を書くと選ばれる理由が伝わる、と昨日の打ち合わせで。</span>
+                </span>
+                <button class="row-action" aria-label="出典から外す">
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 5L15 15M15 5L5 15"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <button class="add-origin">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 4V16M4 10H16"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                出典を追加
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ナビゲーション（〜md） -->
+    <button
+      class="nav-overlay"
+      id="nav-ov"
+      aria-label="メニューを閉じる"
+      onclick="closeNav()"
+    ></button>
+    <nav class="nav-sheet" id="nav-sh" aria-label="グローバルナビゲーション">
+      <div class="handle"></div>
+      <a class="nav-item" href="#"><span class="mark"></span>タイムライン</a>
+      <a class="nav-item" href="#" aria-current="page"
+        ><span class="mark"></span>トピック</a
+      >
+      <a class="nav-item" href="#"><span class="mark"></span>検索</a>
+      <a class="nav-item" href="#"><span class="mark"></span>ゴミ箱</a>
+      <a class="nav-item" href="#"><span class="mark"></span>設定</a>
+    </nav>
+
+    <!-- 状態の例（通常フローには含めない） -->
+    <section class="state-examples" aria-label="状態の例">
+      <h2>状態の例</h2>
+      <div class="example">
+        <p class="example-label">バリデーションエラー（タイトル未入力で保存したとき）</p>
+        <input
+          type="text"
+          class="title-input"
+          placeholder="タイトル"
+          aria-label="タイトル"
+          aria-invalid="true"
+          aria-describedby="title-error-example"
+        />
+        <p class="error-text" id="title-error-example">タイトルを入力してください</p>
+      </div>
+      <div class="example">
+        <p class="example-label">保存成功のトースト（実アプリでは画面下部中央に固定表示し、数秒で自動的に消える）</p>
+        <div class="toast">保存しました</div>
+      </div>
+    </section>
+
+    <script>
+      function openNav() {
+        document.getElementById("nav-ov").classList.add("show");
+        document.getElementById("nav-sh").classList.add("show");
+        document.querySelector(".menu").setAttribute("aria-expanded", "true");
+      }
+      function closeNav() {
+        document.getElementById("nav-ov").classList.remove("show");
+        document.getElementById("nav-sh").classList.remove("show");
+        document.querySelector(".menu").setAttribute("aria-expanded", "false");
+      }
+    </script>
+  </body>
+</html>
