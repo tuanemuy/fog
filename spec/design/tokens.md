@@ -30,7 +30,7 @@
   --color-neutral-100: oklch(0.945 0.004 286);   /* #eeeef1 罫線 (--line) */
   --color-neutral-200: oklch(0.93 0.004 286);    /* #e9e9ed ページ背景 */
   --color-neutral-300: oklch(0.875 0.006 278);   /* #d6d7dc アウトライン・ハンドル (--gray) */
-  --color-neutral-400: oklch(0.69 0.01 275);     /* #9b9da4 補助テキスト (--sub) */
+  --color-neutral-400: oklch(0.69 0.01 275);     /* #9b9da4 補助テキスト（--text-xs のメタ情報専用。本文・ラベルは 600 以上） */
   --color-neutral-500: oklch(0.58 0.01 275);     /* #7c7e85 アイコン */
   --color-neutral-600: oklch(0.52 0.01 275);     /* #6e7076 弱めの本文・ラベル */
   --color-neutral-700: oklch(0.38 0.008 275);    /* #45464b 引用・二次本文 */
