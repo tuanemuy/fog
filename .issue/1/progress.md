@@ -1,0 +1,76 @@
+# 残存課題 — Issue #1: [skeleton] 基盤＋アカウント登録・ログイン
+
+**作成日:** 2026-07-25
+
+実装チェックリスト75行はすべて実装済み。以下は本 Issue のスコープ外として意図的に残した項目と、既知の制限。
+
+## 意図的にスコープ外とした項目
+
+### 1. `loginWithPassword` のタイミングサイドチャネル
+
+- **内容:** 未登録メールの場合 `passwordHasher.verify` をスキップするため、登録済みメールより応答が速い。エラーの `kind` / `code` / `message` は完全一致させている（TC-loginWithPassword-008）が、応答時間からアカウントの存在を推測できる。
+- **理由:** 塞ぐにはダミーハッシュに対するダミー verify が必要。`spec/usecases/identity.md` にも実装チェックリストにも記述がない。
+- **影響範囲:** ユーザー列挙の緩和策としては不完全。`application/identity/loginWithPassword.ts` の JSDoc に既知の制限として明記済み。
+
+### 2. CSRF ミドルウェア未設定
+
+- **内容:** `apps/web/app/start.ts` はテンプレート初期状態のまま。dev 起動時に TanStack Start が CSRF 未設定の警告を出す。
+- **理由:** 本スライスで初めて Cookie 認証付き POST サーバー関数が入ったため関連はするが、テンプレート全体の設定であり Issue のチェックリストに含まれない。
+- **影響範囲:** セッション Cookie は `SameSite=Lax` のためクロスサイト POST には送出されず、実害は限定的。
+
+### 3. SSO ボタンの非描画
+
+- **内容:** `spec/design/pages/login.html` / `signup.html` には SSO ボタンがあるが描画していない。
+- **理由:** 本スライスで SSO は未実装（チェックリスト外）。動かないボタンを置くのはデザイン方針に反する。
+- **影響範囲:** `spec/manual-tests/account.md` TC-01 の確認ポイント「SSOボタンが表示されている」と意図的に乖離する。SSO スライスで解消される。
+
+### 4. Cloudflare / AWS / GCP ランタイムの撤去
+
+- **内容:** CLAUDE.md は「ひとつ選んで他は消す」方針だが、4ランタイム構成を維持している（ADR-004）。
+- **理由:** 影響範囲が大きく本スライスと直交する。
+- **影響範囲:** DI・env・マイグレーションが4系統に分岐したままで、変更のたびに全系統の更新が必要。
+
+### 5. テンプレート残滓の名称
+
+- **内容:** wrangler の D1 データベース名が `tanstack-start-template-d1` のまま。outbox の実テーブル名は `outbox_events`（spec/database は `outbox` と表記）。
+- **理由:** リネームは本スライスと直交する（ADR-001 / plan.md スコープ節）。
+- **影響範囲:** CF ランタイムを本採用する際にリネームが必要。
+
+## 既知の制限
+
+### 6. `pnpm-lock.yaml` が未追跡
+
+- **内容:** リポジトリに lockfile がコミットされていない。本作業中に pnpm コマンド実行で生成されたが、コミット対象に含めていない。
+- **理由:** セッション開始時点で未追跡であり、本 Issue の変更ではない。CLAUDE.md は「ルートに1つ」と書いているため、追跡すべきかはリポジトリ所有者の判断。
+- **影響範囲:** 依存バージョンが再現されない。
+
+### 7. `spec/inventory/` が未追跡
+
+- **内容:** Issue のチェックリストID の出所である `spec/inventory/*.md` が git 未追跡のまま。
+- **理由:** セッション開始前から未追跡で存在していたユーザーの既存物であり、本 Issue の変更ではない。
+- **影響範囲:** PR から参照している ID の出所がリポジトリに存在しない。
+
+### 8. `inputValidator()` の deprecation 警告
+
+- **内容:** dev 起動時に `inputValidator() is deprecated. Use validator() instead` が出る。
+- **理由:** `docs/frontend_implementation_example.md` が `.validator(...)` を使わないよう明記しているため、ドキュメント側に従った。
+- **影響範囲:** テンプレート追従の判断が別途必要。
+
+### 9. 子ルートの `canonical`
+
+- **内容:** 各ページで `meta` のみ差し替えているため `<link rel="canonical">` は root の `/` のまま（`og:url` はページごとに正しい）。
+- **理由:** plan.md の要求外。
+- **影響範囲:** SEO 上の軽微な不整合。
+
+### 10. libsql の `TestContainer` に `passwordHasher` スロットがない
+
+- **内容:** libsql 側のテストコンテナは `RequestContainer` を含まない独自形のまま。
+- **理由:** 本 Issue で libsql 側にユースケース統合テストを置いていないため不要だった。
+- **影響範囲:** 今後 libsql 側でユースケース統合テストを書く場合、差し替え口の追加が必要。
+
+## spec-sync 対象（実装と spec の字面差）
+
+- **TC-logout-003 の層** — spec は「アダプター層で SystemError」と書くが、実装の翻訳点は presentation（ADR-010）。
+- **`spec/design/tokens.md` に無い生値** — モックにあった背景グラデ高さ・input padding・シート幅の式などを、役割名を持つ派生トークン8つとして `tokens.css` に追加した（ADR-017）。
+- **signup のパスワードヘルパー文** — モックの「大文字・小文字・数字を含む」は `PlainPassword` の制約（8〜128文字のみ）と不一致のため「8文字以上128文字以下」に変更した（ADR-018）。
+- **`ADP-identity-012` のハッシュ方式** — spec は「Argon2id 等」と例示するが、実装は WebCrypto PBKDF2-HMAC-SHA256（ADR-003）。spec が「アダプター責務」と明記しているため乖離ではないが、記録として残す。
