@@ -30,6 +30,7 @@
 
   .card { border: 1px solid var(--color-hairline); border-radius: var(--radius-lg); background: var(--color-bg-card); box-shadow: var(--shadow-sm); margin-bottom: 24px; overflow: hidden; }
   .card .head { padding: 24px 28px 18px; }
+  .card.adopted .titleline h2::before { content: "ADOPTED"; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #fff; background: var(--color-accent); padding: 2px 7px; border-radius: 980px; margin-right: 8px; vertical-align: 2px; }
   .head .titleline { display: flex; align-items: baseline; gap: 10px; }
   .head .titleline h2 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.014em; }
   .head .titleline .jp { font-size: 13px; color: var(--color-ink-tertiary); }
@@ -121,7 +122,7 @@
   </section>
 
   <!-- ============ 2. Dot & Mist ============ -->
-  <section class="card">
+  <section class="card adopted">
     <div class="head">
       <div class="titleline"><h2>Dot &amp; Mist</h2><span class="jp">点と霧 — 既存ブランドの継承</span></div>
       <p class="desc">霧の線に、現行ヘッダーの橙ドットをそのまま迎え入れる案。「霧（雑多なメモ）の中に確かな一点（価値）がある」。既存 UI と一貫し、差し色を使える唯一の案。</p>
@@ -211,7 +212,7 @@
   </section>
 
   <p class="footer">
-    全 4 案 × {Helvetica Neue, Avenir Next} × {lowercase, UPPERCASE} = 各 4 パターンの lockup。気に入った「アイコン × バリアント × フォント × 大小文字（＋差し色の有無）」1 組を指定してくれれば、字間・プロポーションを詰めて lockup を確定し、<code>.svg</code> 化＋favicon 一式（<code>favicon.ico</code> / <code>apple-touch-icon</code> / <code>og:image</code> / <code>mask-icon</code>）と、サイドバー brand・認証画面ヘッダーへの組み込み方針まで仕上げる。差し色（橙）を使う場合はトークン規約「橙は点専用・面に使わない」を維持する。
+    <b>決定済み</b>: Dot &amp; Mist（右上 × 点のみ橙）× Avenir Next / lowercase を採用。確定 lockup・配布アセット・組み込みは <a href="./logo.md">logo.md</a> を参照。以下は提案時の記録 — 全 4 案 × {Helvetica Neue, Avenir Next} × {lowercase, UPPERCASE} = 各 4 パターンの lockup。
   </p>
 </div>
 </body>
