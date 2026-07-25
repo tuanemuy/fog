@@ -81,12 +81,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     <>
       <div inert={navOpen} className="flex h-dvh lg:mx-auto lg:max-w-page">
         <aside className="hidden w-sidebar flex-none flex-col px-lg pt-2xl pb-lg lg:flex">
-          <BrandLink to="/" className={`mb-2xl px-md ${LINK_FOCUS} rounded-md`}>
+          {/* The design carries this gap as `.brand`'s padding-bottom, but
+              `BrandLink` renders an `<a>`, so padding would stretch the hit
+              area down by `--space-2xl`. The nav below owns the gap instead. */}
+          <BrandLink to="/" className={`px-md ${LINK_FOCUS} rounded-md`}>
             <Brand />
           </BrandLink>
           <nav
             aria-label="グローバルナビゲーション"
-            className="flex flex-col gap-xs"
+            className="mt-2xl flex flex-col gap-xs"
           >
             {NAV_ITEMS.map((item) => {
               const isCurrent = item.to === pathname;
@@ -185,24 +188,29 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <div
             aria-hidden="true"
-            className="mx-auto mb-md h-handle-h w-handle-w rounded-full bg-neutral-300"
+            className="mx-auto h-handle-h w-handle-w rounded-full bg-neutral-300"
           />
-          {NAV_ITEMS.map((item, index) => {
-            const isCurrent = item.to === pathname;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                aria-current={isCurrent ? "page" : undefined}
-                className={`${NAV_ITEM} ${
-                  index === 0 ? "" : "border-t border-neutral-100"
-                } ${isCurrent ? "font-semibold" : ""}`}
-              >
-                <Mark current={isCurrent} />
-                {item.label}
-              </Link>
-            );
-          })}
+          {/* The design's `.nav-sheet .handle + *` gap. The wrapper owns it
+              rather than the first item, so it stays orthogonal to that
+              item's `border-t` branch. */}
+          <div className="mt-md">
+            {NAV_ITEMS.map((item, index) => {
+              const isCurrent = item.to === pathname;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  aria-current={isCurrent ? "page" : undefined}
+                  className={`${NAV_ITEM} ${
+                    index === 0 ? "" : "border-t border-neutral-100"
+                  } ${isCurrent ? "font-semibold" : ""}`}
+                >
+                  <Mark current={isCurrent} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       ) : null}
     </>

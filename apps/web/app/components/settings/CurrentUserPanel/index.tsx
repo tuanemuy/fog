@@ -27,10 +27,10 @@ export async function CurrentUserPanel() {
 
   return (
     <section>
-      <h2 className="mb-sm text-xs font-semibold uppercase tracking-label text-neutral-600">
+      <h2 className="text-xs font-semibold uppercase tracking-label text-neutral-600">
         アカウント
       </h2>
-      <div className={ROW}>
+      <div className={`${ROW} mt-sm`}>
         <span className="text-sm font-medium">メールアドレス</span>
         <span className="min-w-0 truncate text-sm text-neutral-700">
           {user.email}

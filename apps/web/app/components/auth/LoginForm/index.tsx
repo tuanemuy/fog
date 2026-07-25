@@ -61,6 +61,8 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
 
   return (
     <>
+      {/* 設計の `.auth-form` から margin-top だけ意図的に落としている。
+          本文の上余白は AuthSheet 側のラッパーが持つ */}
       <form action={formAction} className="flex flex-col gap-lg">
         {display.form !== undefined ? (
           <FormMessage ref={formMessageRef}>{display.form}</FormMessage>
