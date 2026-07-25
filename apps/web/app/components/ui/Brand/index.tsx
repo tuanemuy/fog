@@ -4,17 +4,16 @@
  * fonts, so vectorizing is what keeps the wordmark identical off-macOS).
  *
  * The accent colour appears only as the 「点」 (the 「色は役割」 rule in
- * `spec/design/index.md`): here as the dot inside the icon, and again in
- * `AppShell`'s mobile header beside the page title — change the accent's
- * treatment in both. Master SVGs live in `spec/design/icons/`.
+ * `spec/design/index.md`), and in the signed-in shell it lives inside this
+ * icon. Master SVGs live in `spec/design/icons/`.
  */
 export function Brand() {
   return (
     <span className="flex items-center text-neutral-900">
       <svg
         viewBox="0 0 120 44"
-        width="57.3"
-        height="21"
+        width="65.5"
+        height="24"
         role="img"
         aria-label="fog"
       >

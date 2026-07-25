@@ -6,7 +6,8 @@
 
 - アイコン: **Dot & Mist**（霧の2本線 ＋ 右上の点）。霧＝雑多なメモ、点＝その中にある確かな価値。点は既存ブランドの橙ドット（`--color-accent`）を継承する
 - Wordmark: **Avenir Next Regular / lowercase**、tracking −0.022em。トークン規約で Web フォントは使えないため、字形はアウトライン化した SVG パスとして保持する（実行環境のフォントに依存しない）
-- lockup 末尾の 6px ドットは廃止。橙の「点」はアイコン内の1つに集約し、二重ドットを避ける。モバイルヘッダー（タイトル横）のドットはブランドの反復として存続
+- lockup 末尾の 6px ドットは廃止。橙の「点」はアイコン内の1つに集約し、二重ドットを避ける。孫ページヘッダーの back-link（親タイトル横）のドットはブランドの反復として存続
+- トップレベル画面（タイムライン / トピック / 検索 / ゴミ箱 / 設定）のヘッダーはタイトルではなく lockup を表示する。h1 は視覚的に隠して支援技術向けに残し、lg 以上ではサイドバーの brand があるためヘッダー側の lockup は非表示（ドットを lg で隠していた従来規則の踏襲）。戻るヘッダーを持つ孫ページはタイトル表示のまま
 
 ## 構成ファイル
 
@@ -26,7 +27,7 @@
 | `icon-192.png` / `icon-512.png` | `site.webmanifest` 用（apple-touch-icon と同デザイン） |
 | `og-image.png` | 1200×630。ページ背景色 `#e9e9ed` に lockup をセンタリング |
 
-UI 内の lockup は `apps/web/app/components/ui/Brand` にインライン SVG として実装し、デザインモック（`../pages/*.html`）の `.brand` にも同じ SVG を埋め込んでいる。表示サイズ 57.3×21px は置き換え前の 17px Wordmark と x-height を揃えた値。
+UI 内の lockup は `apps/web/app/components/ui/Brand` にインライン SVG として実装し、デザインモック（`../pages/*.html`）の `.brand`・トップレベル画面の `.h-brand` にも同じ SVG を埋め込んでいる。表示サイズは 65.5×24px（Wordmark ≈ 21.8px 相当。当初は旧 17px テキストと x-height を揃えた 57.3×21px だったが、華奢だったため一段拡大した）。
 
 ## 幾何
 
