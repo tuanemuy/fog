@@ -6,7 +6,7 @@
 
 ## カラー
 
-グレーは青みをわずかに含む冷たいニュートラル（hue ≈ 280）で統一する。彩度を持つ色は Primary（紫）と Accent（橙）の2つだけ。橙はブランドの「点」（ロゴアイコンの点・孫ページヘッダーのドット）専用で、面には使わない（ロゴの詳細は [icons/logo.md](./icons/logo.md)）。
+グレーは青みをわずかに含む冷たいニュートラル（hue ≈ 280）で統一する。彩度を持つ色は Primary（紫）と Accent（橙）の2つだけ。橙はブランドの「点」（ロゴアイコンの点・戻る付きページヘッダーのドット）専用で、面には使わない（ロゴの詳細は [icons/logo.md](./icons/logo.md)）。
 
 ```css
 :root {
@@ -23,7 +23,7 @@
   --color-primary-darker: oklch(0.45 0.15 292);  /* #5a49ad アクティブ・lighter 上の文字 */
 
   /* Accent — ブランドの「点」。面には使わない */
-  --color-accent: oklch(0.62 0.19 40);           /* #e8590c ロゴアイコンの点・孫ページヘッダーのドットのみ */
+  --color-accent: oklch(0.62 0.19 40);           /* #e8590c ロゴアイコンの点・戻る付きページヘッダーのドットのみ */
 
   /* Neutral — 青みグレーのスケール */
   --color-neutral-50: oklch(0.97 0.002 286);     /* #f6f6f8 */
@@ -75,10 +75,13 @@
 
 UI 基本書体は OS 標準のサンセリフスタック1本。Web フォントは読み込まない（普遍的な書体で、読み込み遅延・FOUT をなくす）。見出し書体は分けない（様式上、階層はサイズとウェイトのみで表現する）。等幅は日時・残日数など数値表示のタブラー表示に `font-variant-numeric: tabular-nums` を使い、専用モノスペース書体は導入しない。
 
+唯一の例外が `--font-brand` — ロゴの Wordmark（Avenir Next）に揃えるブランド書体で、戻る付きページヘッダーの短い英語タイトル専用。Apple プラットフォーム以外では Helvetica にフォールバックし、字形の完全一致は求めない（ロゴ本体はアウトライン化した SVG で固定されている。[icons/logo.md](./icons/logo.md) 参照）。
+
 ```css
 :root {
   --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
     "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --font-brand: "Avenir Next", "Avenir", "Helvetica Neue", Arial, sans-serif;
 
   --text-xs: 0.72rem;                             /* メタ情報（日時・残日数） */
   --text-sm: 0.78rem;                             /* 補助説明・ラベル */

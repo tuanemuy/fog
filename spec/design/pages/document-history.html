@@ -43,6 +43,8 @@
         --color-focus: var(--color-primary);
         --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
           "Hiragino Sans", "Noto Sans JP", sans-serif;
+        --font-brand: "Avenir Next", "Avenir", "Helvetica Neue", Arial,
+          sans-serif;
         --text-xs: 0.72rem;
         --text-sm: 0.78rem;
         --text-base: 0.95rem;
@@ -219,10 +221,8 @@
         flex: none;
       }
       .h-title .title-text {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        min-width: 0;
+        font-family: var(--font-brand);
+        font-weight: var(--weight-medium);
       }
       .icon-btn {
         border: none;
@@ -692,7 +692,7 @@
               </svg>
             </button>
             <div class="h-title">
-              <span class="title-text">履歴</span><span class="dot"></span>
+              <span class="title-text" lang="en">history</span><span class="dot"></span>
             </div>
           </div>
           <div class="h-actions">

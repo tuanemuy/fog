@@ -111,11 +111,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="mx-auto flex w-sheet flex-none items-center justify-between gap-md pt-safe-t-lg pb-md md:w-sheet-md lg:pt-xl">
-            {/* Everything above grandchild depth leads with the logo, not
-                the title (the title stays for assistive tech); child screens
-                place it beside their back button. On lg the sidebar already
-                carries the brand, so the header shows neither — only
-                grandchild screens (document and deeper) show a title. */}
+            {/* Top-level screens lead with the logo, not the title (the
+                title stays for assistive tech); on lg the sidebar already
+                carries the brand, so the header shows neither. Screens with
+                a back button will instead show a short English label in
+                `--font-brand` — see `spec/design/icons/logo.md`. */}
             <div className="flex min-w-0 items-center">
               <h1 className="sr-only">{title}</h1>
               <div className="lg:hidden">

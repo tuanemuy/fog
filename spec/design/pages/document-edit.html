@@ -43,6 +43,8 @@
         --color-focus: var(--color-primary);
         --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
           "Hiragino Sans", "Noto Sans JP", sans-serif;
+        --font-brand: "Avenir Next", "Avenir", "Helvetica Neue", Arial,
+          sans-serif;
         --text-xs: 0.72rem;
         --text-sm: 0.78rem;
         --text-base: 0.95rem;
@@ -232,33 +234,23 @@
         width: var(--icon-lg);
         height: var(--icon-lg);
       }
-      .back-link {
-        color: var(--color-neutral-900);
-        text-decoration: none;
+      .h-title {
         font-size: var(--text-lg);
-        font-weight: var(--weight-semibold);
         display: flex;
         align-items: center;
         gap: 8px;
         min-width: 0;
       }
-      .back-link span:first-child {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        min-width: 0;
+      .h-title .title-text {
+        font-family: var(--font-brand);
+        font-weight: var(--weight-medium);
       }
-      .back-link .dot {
+      .h-title .dot {
         width: 6px;
         height: 6px;
         border-radius: var(--radius-full);
         background: var(--color-accent);
         flex: none;
-      }
-      .back-link:focus-visible {
-        outline: 2px solid var(--color-focus);
-        outline-offset: 2px;
-        border-radius: var(--radius-md);
       }
       .h-actions {
         display: flex;
@@ -333,7 +325,7 @@
         .menu {
           display: none;
         }
-        .back-link .dot {
+        .h-title .dot {
           display: none;
         }
       }
@@ -377,6 +369,20 @@
 
       /* タイトルと本文は枠なしで地続きに。エディタ内スクロールは作らず
          シート全体がスクロールする */
+      .doc-context {
+        font-size: var(--text-sm);
+        color: var(--color-neutral-600);
+        margin-bottom: var(--space-sm);
+      }
+      .doc-context a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .doc-context a:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+        border-radius: var(--radius-sm);
+      }
       .title-input {
         display: block;
         width: 100%;
@@ -703,9 +709,7 @@
                 />
               </svg>
             </button>
-            <a class="back-link" href="#">
-              <span>ブランド刷新</span><span class="dot"></span>
-            </a>
+            <div class="h-title"><span class="title-text" lang="en">edit</span><span class="dot"></span></div>
           </div>
           <div class="h-actions">
             <button class="h-save">保存</button>
@@ -724,6 +728,7 @@
         <main class="sheet">
           <div class="inner">
             <!-- タイトル + 本文（シームレスなエディタ） -->
+            <p class="doc-context"><a href="#">ブランド刷新</a></p>
             <input
               type="text"
               class="title-input"
