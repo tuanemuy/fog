@@ -45,6 +45,14 @@ export const DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
 const DUMMY_PASSWORD_HASH =
   `pbkdf2-sha256$${DUMMY_PASSWORD_HASH_ITERATIONS}$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=` as PasswordHash;
 
+// Latch for the warning below. The fact it reports — this deployment's
+// hasher cannot read the dummy — is a property of the process, not of a
+// request, while the branch that reports it is reachable by unauthenticated
+// traffic (unknown addresses, SSO accounts). Logging per attempt would let
+// that traffic inflate the volume of the one signal
+// .issue/1/adr.md ADR-034 relies on, so it is emitted once per isolate.
+let dummyHashUnreadableReported = false;
+
 /**
  * Runs one verification whose outcome is discarded, so the "no such
  * account" and "wrong password" paths take comparable time.
@@ -55,7 +63,14 @@ const DUMMY_PASSWORD_HASH =
  * degrades the equalisation back to today's behaviour rather than breaking
  * login, which is why this is the one place a throw is swallowed — and why
  * it is logged: the request is unaffected, so the warning is the only
- * signal that the mitigation has stopped working.
+ * signal that the mitigation has stopped working. It is logged once per
+ * process, which is the granularity of the fact.
+ *
+ * Only the failure's type is logged, never the value: the `PasswordHasher`
+ * contract forbids putting a `PlainPassword` in what it throws, and
+ * projecting to a name rather than passing the object through keeps that
+ * promise from being the only thing standing between a swapped-in hasher
+ * and a plaintext password in the logs.
  */
 async function burnVerificationTime(
   hasher: PasswordHasher,
@@ -65,9 +80,11 @@ async function burnVerificationTime(
   try {
     await hasher.verify(plainPassword, DUMMY_PASSWORD_HASH);
   } catch (cause) {
+    if (dummyHashUnreadableReported) return;
+    dummyHashUnreadableReported = true;
     logger.warn(
       "Login timing equalisation is inactive: the password hasher could not verify the dummy hash",
-      { cause },
+      { cause: cause instanceof Error ? cause.name : typeof cause },
     );
   }
 }

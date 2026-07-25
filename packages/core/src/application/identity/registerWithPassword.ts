@@ -63,7 +63,7 @@ export async function registerWithPassword({
     // the same address; the loser only finds out when the unit of work
     // flushes and `users_email_uq` fires. Reading that as
     // EMAIL_ALREADY_REGISTERED gives the racing caller the same answer as
-    // the pre-check would have (ADR-008).
+    // the pre-check would have (.issue/1/adr.md ADR-008).
     //
     // Safe only because of what this unit of work writes: one `users`
     // insert plus its outbox row. The inserted user is a `PasswordUser`,

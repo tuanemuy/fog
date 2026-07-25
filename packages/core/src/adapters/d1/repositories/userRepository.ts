@@ -29,12 +29,12 @@ type UserRow = typeof users.$inferSelect;
  * Because writes are deferred, a unique-constraint violation on `insert`
  * surfaces at flush time rather than inside the `insert` frame — the
  * `EMAIL_ALREADY_REGISTERED` translation therefore lives in the
- * `registerWithPassword` usecase, not here (ADR-008).
+ * `registerWithPassword` usecase, not here (.issue/1/adr.md ADR-008).
  *
- * OCC is enforced by the `ExpectedVersion<User>` token returned from
- * `findById`. This file is the only legitimate construction site of the
- * token (via the `as` cast inside `toVersioned`) — the brand keeps raw
- * numbers out at every other call site.
+ * OCC is enforced by the `ExpectedVersion<User>` token both lookups
+ * (`findById` / `findByEmail`) return. The `toVersioned` helper is this
+ * adapter's only construction site for it (via the `as` cast) — the brand
+ * keeps raw numbers out at every other call site.
  */
 export class D1UserRepository implements UserRepository {
   constructor(

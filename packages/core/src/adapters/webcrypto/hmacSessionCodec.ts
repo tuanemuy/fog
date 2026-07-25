@@ -8,10 +8,15 @@ export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * Floor for the HMAC key length, asserted by the factory below.
  *
  * A shorter key than the hash's block-equivalent output buys nothing:
- * HMAC-SHA256 forgeries cost the key's entropy, not the payload's. The
- * DI layer states the same requirement in operator-facing terms; this is
+ * HMAC-SHA256 forgeries cost the key's entropy, not the payload's. This is
  * the invariant of the construction boundary itself, so paths that build
  * the codec directly (tests, a future app package) cannot skip it.
+ *
+ * `application/di/secrets.ts` imports it rather than restating it
+ * (.issue/1/adr.md ADR-036), so this algorithm-specific floor is also what
+ * `SESSION_SECRET` is checked against at request-config time. That is the
+ * one reference to this file from outside the adapter, and replacing the
+ * codec means replacing it too.
  */
 export const MIN_SESSION_SECRET_LENGTH = 32;
 
@@ -40,12 +45,14 @@ function parsePayload(raw: string): Payload | null {
  * `SessionCodec` backed by an HMAC-SHA256 signature over a `{ uid, exp }`
  * payload, encoded as `<payloadBase64url>.<signatureBase64url>`.
  *
- * Stateless by design (ADR-002): no session table, no read on the request
- * path, one implementation across all four runtimes. The cost is that a
- * token cannot be revoked server-side before `exp` — acceptable while the
- * product has no "sign out everywhere" requirement, and the reason `ttlMs`
- * defaults to a week rather than months. Swapping in a table-backed codec
- * later is a one-file change because callers only see this port.
+ * Stateless by design (.issue/1/adr.md ADR-002): no session table, no read
+ * on the request path, one implementation across all four runtimes. The
+ * cost is that a token cannot be revoked server-side before `exp` —
+ * acceptable while the product has no "sign out everywhere" requirement,
+ * and the reason `ttlMs` defaults to a week rather than months. Swapping in
+ * a table-backed codec later touches this file plus the one place outside
+ * it that reads {@link MIN_SESSION_SECRET_LENGTH} — callers of the port see
+ * nothing.
  *
  * Verification goes through `crypto.subtle.verify`, which compares the
  * MAC in constant time. Every rejection path — malformed token, bad

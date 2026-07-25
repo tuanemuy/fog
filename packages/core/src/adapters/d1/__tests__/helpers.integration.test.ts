@@ -13,8 +13,8 @@ import { createTestContainer } from "./helpers";
 // canary for the classification regressing into a generic SystemError.
 //
 // `registerWithPassword` reads `UNIQUE_VIOLATION` as
-// `EMAIL_ALREADY_REGISTERED` (ADR-008), so this classification is the
-// foundation that translation stands on.
+// `EMAIL_ALREADY_REGISTERED` (.issue/1/adr.md ADR-008), so this
+// classification is the foundation that translation stands on.
 describe("mapDbError SQLITE_CONSTRAINT_* classification (integration)", () => {
   const NOW = new Date("2026-01-01T00:00:00.000Z");
   const row = (id: string, email: string) => ({

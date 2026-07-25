@@ -195,7 +195,7 @@ export const SystemErrorCode = {
   // `DatabaseError`: routing "the storage layer threw" and "the response
   // header could not be written" to the same alert makes the former
   // unreadable. Not retryable — a second attempt writes the same header
-  // into the same broken response (ADR-010).
+  // into the same broken response (.issue/1/adr.md ADR-010).
   SessionError: "SESSION_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",

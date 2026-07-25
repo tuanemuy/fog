@@ -1,6 +1,7 @@
 import type { Database as LibsqlDatabase } from "@repo/core/adapters/libsql/client";
 import { content } from "@repo/core/config";
 import { describe, expect, it } from "vitest";
+import type { UsecaseContainer } from "../../types";
 import { requireSessionSecret } from "../secrets";
 import { createAwsRequestContainer } from "../serverAws";
 import { createRequestContainer } from "../serverCloudflare";
@@ -83,5 +84,20 @@ describe.each(containers)("%s request container config", (_name, build) => {
 
   it("carries no secret material anywhere in the serialized config", () => {
     expect(JSON.stringify(build().config)).not.toContain(SESSION_SECRET);
+  });
+});
+
+describe("UsecaseContainer", () => {
+  // The `Omit` is the only thing keeping `sessionCodec` out of reach of a
+  // usecase, and nothing else would fail if `ServiceArgs.container` were
+  // widened back to `RequestContainer`. The directive below is the whole
+  // assertion: it goes unused the moment the codec becomes reachable, and
+  // `@ts-expect-error` with nothing to suppress fails the type check. The
+  // runtime object still carries the codec, so this is the type boundary
+  // only — a deliberate `as RequestContainer` still gets through.
+  it("does not expose the session codec", () => {
+    // @ts-expect-error usecases must not be able to reach the session codec
+    const reach = (c: UsecaseContainer) => c.sessionCodec;
+    void reach;
   });
 });

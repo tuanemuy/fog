@@ -11,6 +11,14 @@ import type { PasswordHash, PlainPassword } from "../valueObject";
  * into an error would tempt callers to reveal which half of the credential
  * pair was wrong. Only a failure of the computation itself (resource
  * exhaustion, unusable stored encoding) raises `SystemError`.
+ *
+ * **An error thrown by either method must not carry a `PlainPassword` in
+ * its message, its `cause` or any nested field.** Callers log these
+ * failures, and a `PlainPassword` is a branded `string` with no `toJSON` to
+ * intercept, so an implementation that echoes its input — a debugging
+ * wrapper, a third-party hasher — puts the plaintext straight into the log
+ * sink. Nothing in the type system stops that; this clause is what a
+ * reviewer holds an adapter to.
  */
 export interface PasswordHasher {
   hash(plain: PlainPassword): Promise<PasswordHash>;

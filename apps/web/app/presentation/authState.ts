@@ -9,7 +9,7 @@ import { noStoreMiddleware } from "./noStoreMiddleware";
  * declaring it per route would register separate server functions and let
  * the definitions drift. This is a navigation aid, never the guard — every
  * server execution point that reads protected data calls `requireUserId()`
- * itself (ADR-005).
+ * itself (.issue/1/adr.md ADR-005).
  *
  * It is, however, the one call every protected document passes through
  * (`_app.tsx`'s `beforeLoad`), which is why `noStoreMiddleware` sits here:

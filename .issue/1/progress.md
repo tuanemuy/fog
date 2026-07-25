@@ -70,7 +70,13 @@
 
 ## spec-sync 対象（実装と spec の字面差）
 
+台帳は記憶ではなく `grep -n "spec-sync" .issue/1/adr.md` の全ヒットから作る。ADR を追記したら同じ grep を回して差分を転記する。
+
+- **`EMAIL_ALREADY_REGISTERED` の翻訳レイヤー** — `spec/inventory/adapter.md` は翻訳をアダプター責務と書くが、遅延バッチ UoW では違反が `insert` フレームの外で上がるため実装の翻訳点はユースケース境界（ADR-008）。
+- **読み取り専用ユースケースの UoW** — spec は「UoW 不要」と書くが、実装は `unitOfWorkProvider.run` を通る（純読み取り UoW はトランザクションを張らない）（ADR-009）。
 - **TC-logout-003 の層** — spec は「アダプター層で SystemError」と書くが、実装の翻訳点は presentation（ADR-010）。
+- **`PlainPassword` の漏出防止** — DOM-identity-006 は長さ検証のみの部分実装で、漏出防止の実装を持たない（テスト＋ポート契約で担保）（ADR-011）。
+- **認証ヘルパーの配置** — `docs/frontend_implementation_example.md` は `packages/core/src/lib/server/currentUser.ts` を例示するが、実装は `apps/web/app/presentation/currentUser.ts`（ADR-005）。docs 側の更新対象。
 - **`spec/design/tokens.md` に無い生値** — モックにあった背景グラデ高さ・input padding・シート幅の式などを、役割名を持つ派生トークン8つとして `tokens.css` に追加した（ADR-017）。
 - **signup のパスワードヘルパー文** — モックの「大文字・小文字・数字を含む」は `PlainPassword` の制約（8〜128文字のみ）と不一致のため「8文字以上128文字以下」に変更した（ADR-018）。
 - **`ADP-identity-012` のハッシュ方式** — spec は「Argon2id 等」と例示するが、実装は WebCrypto PBKDF2-HMAC-SHA256（ADR-003）。spec が「アダプター責務」と明記しているため乖離ではないが、記録として残す。

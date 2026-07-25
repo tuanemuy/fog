@@ -1377,7 +1377,8 @@ ADR-028 で `--nav-sheet-pad-b` に `env(safe-area-inset-bottom)` を足した�
 
 ### Consequences
 
-- 良い点: CDP の `Emulation.setSafeAreaInsetsOverride`（top 59 / bottom 34）で実測し、ヘッダー上端 24px → 73px、認証シートの上下 30px → 73px / 48px、ボトムシート下端 40px → 58px と、全箇所で safe-area が算出値に反映されることを確認した
+- 良い点: CDP の `Emulation.setSafeAreaInsetsOverride`（top 59 / bottom 34）で実測し、**この ADR で足した4トークンすべて**で safe-area が算出値に反映されることを確認した（`--header-pad-t` 24px → 73px、`--auth-pad-t` / `--auth-pad-b` 30px → 73px / 48px、`--nav-sheet-pad-b` 40px → 58px）。左右インセットは上記のとおり扱わない
+- **訂正（review-003-frontend W-002）**: 当初この行は「全箇所で反映されることを確認した」と書いていたが、**画面端に接する余白は4トークンで尽きていなかった**。シート本文の下端（`AppShell` の `<main>` 内側の `pb-2xl`）が固定値のまま残っており、実測は 40px（= `--space-2xl`）で変化しなかった。5つ目のトークン `--sheet-pad-b` は .issue/1/adr.md ADR-049 で足している。「全箇所」と書けるのは棚卸しの根拠を示せるときだけ、という記録として残す
 - トレードオフ: cover はレイアウトビューポートを画面全体に広げるので、以後**画面端に接する余白を足すたびに safe-area を考える**必要がある。生値ではなく役割名トークン経由にしたのは、その判断を tokens.css の1箇所に集めるため
 
 ---
@@ -1421,3 +1422,106 @@ Accepted（レビュー指摘 review-002-frontend W-003 への対応）
 
 - 良い点: 実測で `/` の `aria-current="page"` が「タイムライン」1件だけになった。`data-status="active"` は残るので、将来ロゴにアクティブ表現を足す余地は消えていない
 - トレードオフ: ワードマークが `Link` ではなくラッパー経由になる。ラッパーの存在理由をコメントで固定した
+
+---
+
+## ADR-046: 出荷コードからの ADR 参照は `.issue/1/adr.md` をパスで明示する
+
+### Status
+
+Accepted（レビュー指摘 review-003-domain-adapters B-001 への対応）
+
+### Context
+
+`packages/core/src` / `apps/web/app` のコメントには本 Issue の判断を指す `ADR-NNN` 参照が44箇所ある。ところがリポジトリには `spec/adr/001〜006` という長命な ADR が既に実在し、`spec/domains/identity.md:5` が `[ADR-004](../adr/004-domain-boundaries.md)` と相対リンクしているため、「ADR-NNN」は既に `spec/adr/NNN` を意味する語彙として確立している。結果、無修飾の `ADR-002`（意図はセッション方式）は `spec/adr/002-export-scope.md` に解決し、007 以降はどこにも解決しない。
+
+選択肢は3つあった。(a) `.issue/1/adr.md` の判断を `spec/adr/007-*.md` 以降として切り出す。(b) コード側の参照を全件パス付きに直す。(c) `.issue/1/adr.md` の採番を 100 番台へ振り直す。
+
+### Decision
+
+**(b) を採る。** 44箇所すべてを `.issue/1/adr.md ADR-NNN` の形にした（`(ADR-008)` → `(.issue/1/adr.md ADR-008)`）。1行に複数の兄弟参照がある場合は先頭だけを修飾する（`(.issue/1/adr.md ADR-005 / ADR-010)`）。
+
+(a) が筋であることには同意するが、それは「どの判断が長命でどれが issue ローカルか」の仕分けと `spec/adr/` の文書体裁への書き換えを伴う設計作業であり、本レビューラウンドの範囲を超える。まず参照が一意に解決する状態を作り、切り出しは別途行う。
+
+### Consequences
+
+- 良い点: `grep -rnoE 'ADR-[0-9]+' packages/core/src apps/web/app infra` の全ヒットが、直前のパスによって一意に解決する。番号空間の衝突は解消した
+- トレードオフ: 出荷コードが issue 単位の作業ディレクトリを参照し続ける歪みは残る。`.issue/1/adr.md` を `spec/adr/007-*.md` 以降へ切り出す作業は未了で、その時点で44箇所の再置換が必要になる
+
+---
+
+## ADR-047: ダミーハッシュ読み取り失敗の警告はプロセス単位でラッチする
+
+### Status
+
+Accepted（レビュー指摘 review-003-domain-adapters W-003 / W-004 への対応）
+
+### Context
+
+`burnVerificationTime` の `logger.warn`（ADR-034）は、ログイン試行1回につき1行出る。しかし報告している事実は「このデプロイのハッシャーがダミーを読めない」というプロセス単位の静的な事実であり、しかもこの分岐に入るのは未登録アドレスと SSO アカウント宛の試行、つまり未認証トラフィックが自由に量を作れる経路である。レート制限は #18 に defer されているため保護もない。Workers はログをサンプリングし、CloudWatch は取り込み量で課金するので、量が増えるほど「唯一の signal」が読めなくなる・高くつく。
+
+あわせて、`cause` をそのまま `logger` に渡していた点も問題だった。ADR-011 は「`PlainPassword` を `logger.*` に渡さない」をレビュー観点として残しているが、`PasswordHasher` の契約は例外に何を載せてよいかを何も言っていない。
+
+### Decision
+
+- **モジュールスコープの `boolean` ラッチ**で警告をプロセス（isolate）単位に1回へ絞る。「アプリケーション層は stateless」原則とはわずかに緊張するが、この状態はログの抑制だけに使われ、ユースケースの返り値・エラー・永続化のいずれにも影響しない。Logger デコレータ側に「同一メッセージの抑制」を寄せる案は、DI 4本すべてに配線が要るうえ抑制ポリシーが呼び出し側から見えなくなるため採らなかった
+- **`PasswordHasher` のポート JSDoc に禁止条項を書く**（W-004 提案 (a)）: 「`hash` / `verify` が投げるエラーは `PlainPassword` を message / cause / 入れ子のフィールドに含めてはならない」。ADR-011 のレビュー観点を「ポートが禁止した」に格上げする
+- あわせて `logger.warn` に渡すメタを**非推移的な射影**に絞る（同 (b)）: `{ cause: cause instanceof Error ? cause.name : typeof cause }`。等時間化が死んだ事実を知るのに必要なのは種別だけで、スタックは要らない
+
+### Consequences
+
+- 良い点: 攻撃トラフィックで警告行数が増えなくなり、ADR-034 の signal が量に埋もれない。契約と実装の二重で平文がログに出る経路を閉じた
+- トレードオフ: ラッチが立った後は「何回起きたか」が分からない。頻度が要るなら Logger 側のカウンタで足す話であって、per-request ログに戻す理由にはならない
+- トレードオフ: プロセスが再起動するまでラッチは降りない。長命な Node プロセスでは、原因を直したあとも「直った」ことがログからは分からない
+
+---
+
+## ADR-048: エラー表示の受け皿を「シェル内」と「全画面」の二段にする
+
+### Status
+
+Accepted（レビュー指摘 review-003-frontend W-001 への対応。ADR-039 を補う）
+
+### Context
+
+`/settings` を per-fragment streaming にした結果（ADR-039）、streaming リーフ `CurrentUserPanel` の例外は `<Deferred>` の `use(promise)` からレンダー中に投げられる。ところが `@tanstack/react-router@1.170.18` の `Match.js` は `ResolvedCatchBoundary = routeErrorComponent ? CatchBoundary : SafeFragment`（`routeErrorComponent = route.options.errorComponent ?? router.options.defaultErrorComponent`）で、`/settings` にも `_app` にも `errorComponent` がなく `defaultErrorComponent` も未配線だったため、**保護画面のマッチには catch boundary が1つも張られていなかった**。例外は root まで上がり、`__root.errorComponent`（`AuthSheet` = 未認証画面と同じ体裁）が `RootComponent` ごと置き換わる。実測 `{ hasNav: false }`：ログイン中のユーザーがグローバルナビを失い「ログアウトされた」と誤解しうる。
+
+選択肢は2つ。(a) `_app` に `errorComponent` を置く。(b) `router.tsx` に `defaultErrorComponent` を配線する。
+
+### Decision
+
+**(a) を採る。** `_app.errorComponent` が `AppShell` を張り直し、その `<main>` の中にエラー表示（見出し + メッセージ + リトライ導線）を出す。`__root.errorComponent` は「シェルの外」＝未認証画面と `_app` 自身の失敗のための全画面表示として残し、二段構成にした。リトライ導線（`再読み込み` + `タイムラインへ`）は `components/ui/ErrorRetry` に切り出して両者で共有する。
+
+(b) を採らなかった理由は landmark にある。`defaultErrorComponent` は**全ルートに一律**で効くので、`/login` などの認証前ルートでも `AuthSheet`（= `main` ランドマークの持ち主）が差し替わり、review-002-frontend W-001 で入れた「認証前画面にも `main` がある」が壊れる。逆に `defaultErrorComponent` を `AuthSheet` 版にすると、シェル内で `<main>` が入れ子になる。**ランドマークの持ち主が2種類ある以上、受け皿も2種類要る。**
+
+`_app` に置いたのは、次のスライスで増える streaming ルートが**何も書かなくても**この受け皿を得るため。リーフ単位の粒度（他のフラグメントを残したまま片方だけエラーにする）が要るルートは、そのルートに `errorComponent` を足せば内側の boundary が先に捕まえる。
+
+### Consequences
+
+- 良い点: 実測（`users` 行を消して streaming リーフを `notFound` で失敗させる）で `{ hasNav: true, mains: 1, h1: "設定", h2: "エラーが発生しました" }`。グローバルナビ・ヘッダー・現在地マークが保たれ、axe violations 0。行を戻して「再読み込み」を押すと、`router.invalidate()` が `loadedAt` を更新して `CatchBoundaryImpl` の `getResetKey` が変わり、フルロードなしでパネルが復帰することも実測した
+- 良い点: root の受け皿が「シェルの外の失敗」に用途を絞れた。`loadAppContext`（root の `beforeLoad`）を落として実測すると、従来どおり全画面の `AuthSheet` に落ちる
+- トレードオフ: `errorComponent` はそのルート自身の `component` を置き換えるので、`_app` の受け皿は `AppShell` を自分で描き直す。`AppShell` は表示物をすべて `pathname` から導くので同じ見た目に戻るが、ナビシートの開閉状態のような shell 内 state はエラー時にリセットされる
+- トレードオフ: `_app` の `beforeLoad`（`readAuthStateFn`）が失敗した場合もこの受け皿が出るため、認証状態が不明のままナビが見える。ナビはリンクにすぎず、遷移すれば `beforeLoad` が再実行されて未認証なら `/login` へ飛ぶので、保護境界（ADR-005）には影響しない
+
+---
+
+## ADR-049: シート本文の下端にも safe-area トークンを置く
+
+### Status
+
+Accepted（レビュー指摘 review-003-frontend W-002 への対応。ADR-041 の抜けの修正）
+
+### Context
+
+ADR-041 で `viewport-fit=cover` を採り、画面端に接する余白を4つの役割名トークンにした。しかし棚卸しが漏れていた箇所がある：`AppShell` の `<main>` は `h-dvh` + `flex-1` のスクロールコンテナで、**下端がビューポート下端と一致する**（実測 `mainBottom === innerHeight === 844`）。その内側の余白は `pb-2xl`（`--space-2xl` = 40px）の固定値のままだった。cover はレイアウトビューポートをホームインジケータ帯まで広げるので、ノッチ機の縦持ちでは最後の行と帯（34px）の実クリアランスが **40px → 6px** に縮む。遮蔽ではないが、帯はシステムのスワイプ領域でもあり、タイムラインスライスで本文やアクションがここに載ると体感差が出る。
+
+基準形 `timeline.html` の `.inner` は `padding-bottom: 150px` を持っており、この差分はデザイン側では露見しない（実装のシート高さの取り方に固有）。
+
+### Decision
+
+**他の4つと同形の `--sheet-pad-b: max(var(--space-2xl), calc(env(safe-area-inset-bottom, 0px) + var(--space-lg)))` を tokens.css に足し、`pb-2xl` を `pb-(--sheet-pad-b)` に置き換える。** 生値も任意値構文も足さず、safe-area の判断を tokens.css の1箇所に集める ADR-041 の形をそのまま踏襲する。
+
+### Consequences
+
+- 良い点: CDP の `Emulation.setSafeAreaInsetsOverride`（bottom 34）で実測し、シート本文の下端が 40px → 58px（= `max(40px, 34px + 24px)`）。ホームインジケータ帯との実クリアランスが 6px → 24px（`--space-lg`）に戻った。override なしでは 40px のままで、非ノッチ環境の見た目は変わらない
+- トレードオフ: safe-area トークンが5つになった。「画面端に接する余白」の棚卸しは目視に頼っており、`<main>` のようにスクロールコンテナ越しに画面端へ接する箇所は見落としやすい。ADR-041 の「全箇所」という書き方が実際に見落としを隠していたので、同 ADR の Consequences も訂正してある

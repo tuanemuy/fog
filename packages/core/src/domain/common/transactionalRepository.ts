@@ -3,8 +3,8 @@ declare const expectedVersionBrand: unique symbol;
 /**
  * Token capturing the persisted version observed at read time.
  *
- * Adapters mint these inside `findById` (the only legitimate
- * construction site, via an internal `as` cast). The phantom `T`
+ * Adapters mint these inside their lookup methods (the only legitimate
+ * construction sites, via an internal `as` cast). The phantom `T`
  * parameter makes tokens nominal per aggregate — a token captured for
  * `Memo` cannot be passed to a `User` repository and vice versa, so
  * the brand catches both "forge a number" and "mix tokens across
@@ -16,7 +16,7 @@ export type ExpectedVersion<T> = number & {
 
 /**
  * Pair of an aggregate and the version token captured when it was
- * read. `findById` returns this so the caller can carry the
+ * read. Lookup methods return this so the caller can carry the
  * token into the matching `save` / `delete` call.
  */
 export type Versioned<T> = {

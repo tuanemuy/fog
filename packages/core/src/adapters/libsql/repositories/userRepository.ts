@@ -23,12 +23,13 @@ type UserRow = typeof users.$inferSelect;
 /**
  * libSQL `UserRepository`. Reads run immediately; writes register
  * closures on the `PendingBatch` for the surrounding UoW to flush.
- * OCC is enforced via the `ExpectedVersion<User>` token returned from
- * `findById` — this file is the only legitimate construction site.
+ * OCC is enforced via the `ExpectedVersion<User>` token both lookups
+ * (`findById` / `findByEmail`) return — the `toVersioned` helper is this
+ * adapter's only construction site for it.
  *
  * As on D1, the deferred flush means a unique-constraint violation on
  * `insert` cannot be caught here; `EMAIL_ALREADY_REGISTERED` is
- * translated by the `registerWithPassword` usecase (ADR-008).
+ * translated by the `registerWithPassword` usecase (.issue/1/adr.md ADR-008).
  */
 export class LibsqlUserRepository implements UserRepository {
   constructor(

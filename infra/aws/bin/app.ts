@@ -4,24 +4,32 @@ import { AppStack } from "../lib/appStack.js";
 
 const app = new App();
 
-const account = process.env["CDK_DEFAULT_ACCOUNT"];
-const region = process.env["CDK_DEFAULT_REGION"] ?? "us-east-1";
-
-const stages = ["staging", "production"] as const;
-
 // An unset secret in CI arrives as an empty string, not as an absent key
 // (`FOO: ${{ secrets.MISSING }}` in GitHub Actions, `export FOO=` in a
 // shell), so "" has to mean unset here too. Otherwise the checks below
 // pass and the stack fails later inside `Secret.fromSecretCompleteArn`,
-// which names no variable at all.
+// which names no variable at all. Every env read in this file goes through
+// here — `CDK_DEFAULT_ACCOUNT` / `CDK_DEFAULT_REGION` included, since those
+// are exactly what CI passes from `secrets.` / `vars.`.
 function read(key: string): string | undefined {
   const value = process.env[key];
   return value === undefined || value === "" ? undefined : value;
 }
 
+const account = read("CDK_DEFAULT_ACCOUNT");
+const region = read("CDK_DEFAULT_REGION") ?? "us-east-1";
+
+const stages = ["staging", "production"] as const;
+
 // `Secret.fromSecretCompleteArn` requires the full ARN including the
 // six-character suffix Secrets Manager appends; a name or a partial ARN
 // fails the same nameless way an empty string does.
+//
+// This is a heuristic, not a decision procedure: secret names may contain
+// hyphens, so a partial ARN whose name ends in `-` plus six alphanumerics
+// (`…:secret:my-config`) is indistinguishable from a complete one here and
+// passes. It catches the common shapes (a bare name, an ARN truncated at
+// the name) and nothing more.
 const COMPLETE_SECRET_ARN =
   /^arn:[^:]+:secretsmanager:[^:]+:\d+:secret:.+-[A-Za-z0-9]{6}$/;
 

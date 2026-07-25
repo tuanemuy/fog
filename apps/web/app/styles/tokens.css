@@ -128,7 +128,7 @@
   --size-handle-h: 4px;
 
   /* Skeleton — 読み込み中のプレースホルダー行の寸法。tokens.md に対応する
-     役割がないため、役割名で持つ（ADR-028） */
+     役割がないため、役割名で持つ（.issue/1/adr.md ADR-028） */
   --skeleton-line-h: 1rem;
   --skeleton-title-h: 2rem;
   --skeleton-line-w-short: 12rem;
@@ -175,6 +175,13 @@
     calc(env(safe-area-inset-bottom, 0px) + var(--space-md))
   );
   --nav-sheet-pad-b: max(
+    var(--space-2xl),
+    calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))
+  );
+  /* シート本文の下端。`<main>` は下端がビューポート下端に一致するスクロール
+     コンテナなので、最後の行とホームインジケータ帯の間隔がここで決まる
+     （.issue/1/adr.md ADR-049） */
+  --sheet-pad-b: max(
     var(--space-2xl),
     calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))
   );

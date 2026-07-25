@@ -1,0 +1,324 @@
+import { FakeLogger } from "@repo/core/application/__tests__/fakes";
+import { installContainerStore } from "@repo/core/application/di/containerStore";
+import type { RequestContainer } from "@repo/core/application/di/types";
+import {
+  SystemError,
+  SystemErrorCode,
+  ValidationError,
+} from "@repo/core/application/errors";
+import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
+import { content } from "@repo/core/config";
+import {
+  isNotFound,
+  isRedirect,
+  notFound,
+  redirect,
+} from "@tanstack/react-router";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AppServerError,
+  extractSerializedError,
+  isAppServerError,
+  type SerializedError,
+} from "../errorResponse";
+import {
+  errorResponseMiddleware,
+  guardStreamedRender,
+} from "../errorResponseMiddleware";
+
+const mocks = vi.hoisted(() => ({ statuses: [] as number[] }));
+
+vi.mock("@tanstack/react-start/server", () => ({
+  setResponseStatus: (status: number) => {
+    mocks.statuses.push(status);
+  },
+}));
+
+const INTERNAL_DETAIL =
+  "D1_ERROR: no such table: users (/var/task/packages/core/adapters/d1/userRepository.js:120)";
+
+const LOGIN_FAILURE_MESSAGE = "Invalid email or password";
+
+function invalidCredentials(): ValidationError {
+  return new ValidationError("INVALID_CREDENTIALS", LOGIN_FAILURE_MESSAGE, {
+    email: [LOGIN_FAILURE_MESSAGE],
+  });
+}
+
+let logger: FakeLogger;
+
+function trip(what: string): never {
+  throw new Error(`the error boundary must not ${what}`);
+}
+
+function installContainer(): void {
+  logger = new FakeLogger();
+  const container = {
+    config: { ...content, appUrl: "https://app.example" },
+    unitOfWorkProvider: { run: async () => trip("open a unit of work") },
+    passwordHasher: {
+      hash: async () => trip("hash a password"),
+      verify: async () => trip("verify a password"),
+    },
+    sessionCodec: {
+      issue: async () => trip("issue a session token"),
+      verify: async () => trip("verify a session token"),
+    },
+    clock: { now: () => new Date(0) },
+    idGenerator: UuidV7Generator,
+    logger,
+  } satisfies RequestContainer;
+
+  installContainerStore({ getStore: () => container });
+}
+
+async function run(handler: () => Promise<unknown>): Promise<unknown> {
+  return await errorResponseMiddleware.options.server?.({
+    next: handler,
+  } as never);
+}
+
+async function captureFrom(
+  boundary: (handler: () => Promise<unknown>) => Promise<unknown>,
+  thrown: unknown,
+): Promise<unknown> {
+  try {
+    await boundary(async () => {
+      throw thrown;
+    });
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the boundary to rethrow");
+}
+
+function serializedOf(caught: unknown): SerializedError {
+  expect(isAppServerError(caught)).toBe(true);
+  return extractSerializedError(caught);
+}
+
+beforeEach(() => {
+  mocks.statuses = [];
+  installContainer();
+});
+
+describe("errorResponseMiddleware", () => {
+  it("returns the handler result and touches nothing on the happy path", async () => {
+    await expect(run(async () => "handler result")).resolves.toBe(
+      "handler result",
+    );
+
+    expect(mocks.statuses).toEqual([]);
+    expect(logger.entries).toEqual([]);
+  });
+
+  // Control-flow throws must survive by identity: wrapping the redirect the
+  // auth guard throws would turn "send this visitor to /login" into a 500.
+  it("rethrows a redirect unwrapped", async () => {
+    const thrown = redirect({
+      to: "/login",
+      search: { redirect: "/settings" },
+    });
+
+    const caught = await captureFrom(run, thrown);
+
+    expect(caught).toBe(thrown);
+    expect(isRedirect(caught)).toBe(true);
+    expect(isAppServerError(caught)).toBe(false);
+    expect(mocks.statuses).toEqual([]);
+    expect(logger.entries).toEqual([]);
+  });
+
+  it("rethrows a notFound unwrapped", async () => {
+    const thrown = notFound();
+
+    const caught = await captureFrom(run, thrown);
+
+    expect(caught).toBe(thrown);
+    expect(isNotFound(caught)).toBe(true);
+    expect(mocks.statuses).toEqual([]);
+  });
+
+  // AC-10 / AC-12: the login form reads its wording off `code`, so the
+  // boundary has to carry the usecase's code and field errors through
+  // untouched — and must not treat an expected credential failure as an
+  // operational incident.
+  it("carries a validation failure to the client with its code intact", async () => {
+    const caught = await captureFrom(run, invalidCredentials());
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "validation",
+      code: "INVALID_CREDENTIALS",
+      message: LOGIN_FAILURE_MESSAGE,
+      retryable: false,
+      fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
+    });
+    expect(mocks.statuses).toEqual([422]);
+    expect(logger.entries).toEqual([]);
+  });
+
+  it("redacts a system failure for the client but logs it raw", async () => {
+    const thrown = new SystemError(
+      SystemErrorCode.DatabaseError,
+      INTERNAL_DETAIL,
+    );
+
+    const caught = await captureFrom(run, thrown);
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "system",
+      code: null,
+      message: "System error",
+      retryable: false,
+    });
+    expect(JSON.stringify(serializedOf(caught))).not.toContain("no such table");
+    expect(mocks.statuses).toEqual([500]);
+
+    expect(logger.byLevel("error")).toEqual([
+      {
+        level: "error",
+        message: "Server function failed",
+        meta: {
+          kind: "system",
+          code: SystemErrorCode.DatabaseError,
+          message: INTERNAL_DETAIL,
+          cause: thrown,
+        },
+      },
+    ]);
+  });
+
+  it("redacts an error that reached the boundary unclassified", async () => {
+    const caught = await captureFrom(run, new Error(INTERNAL_DETAIL));
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "System error",
+    });
+    expect(mocks.statuses).toEqual([500]);
+    expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+      kind: "unknown",
+      message: INTERNAL_DETAIL,
+    });
+  });
+
+  // A leaf that already wrapped its own failure (`guardStreamedRender`, a
+  // nested server fn) must not be able to smuggle a raw payload past the
+  // response boundary.
+  it("redacts an AppServerError that still carries a raw payload", async () => {
+    const caught = await captureFrom(
+      run,
+      new AppServerError({
+        kind: "system",
+        code: SystemErrorCode.DatabaseError,
+        message: INTERNAL_DETAIL,
+        retryable: false,
+      }),
+    );
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "system",
+      code: null,
+      message: "System error",
+      retryable: false,
+    });
+    expect(mocks.statuses).toEqual([500]);
+  });
+
+  it("still answers when the logger itself is unreachable", async () => {
+    installContainerStore({ getStore: () => undefined });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    try {
+      const caught = await captureFrom(
+        run,
+        new SystemError(SystemErrorCode.DatabaseError, INTERNAL_DETAIL),
+      );
+
+      expect(serializedOf(caught)).toMatchObject({
+        kind: "system",
+        code: null,
+        message: "System error",
+      });
+      expect(mocks.statuses).toEqual([500]);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+});
+
+// .issue/1/adr.md ADR-039: a streaming RSC leaf renders after the handler
+// returned, so its throws never reach the middleware above. This is the leaf's
+// only redaction and logging point, and forgetting the call is invisible to the
+// compiler — which is exactly why the contract is pinned here.
+describe("guardStreamedRender", () => {
+  it("returns what the load resolved to", async () => {
+    await expect(guardStreamedRender(async () => "panel")).resolves.toBe(
+      "panel",
+    );
+    expect(logger.entries).toEqual([]);
+  });
+
+  it("rethrows a redirect unwrapped", async () => {
+    const thrown = redirect({ to: "/login" });
+
+    const caught = await captureFrom(guardStreamedRender, thrown);
+
+    expect(caught).toBe(thrown);
+    expect(isRedirect(caught)).toBe(true);
+    expect(logger.entries).toEqual([]);
+  });
+
+  it("rethrows a notFound unwrapped", async () => {
+    const thrown = notFound();
+
+    const caught = await captureFrom(guardStreamedRender, thrown);
+
+    expect(caught).toBe(thrown);
+    expect(isNotFound(caught)).toBe(true);
+  });
+
+  it("redacts a system failure and logs it raw", async () => {
+    const thrown = new SystemError(
+      SystemErrorCode.DatabaseError,
+      INTERNAL_DETAIL,
+    );
+
+    const caught = await captureFrom(guardStreamedRender, thrown);
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "system",
+      code: null,
+      message: "System error",
+      retryable: false,
+    });
+    expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+      code: SystemErrorCode.DatabaseError,
+      message: INTERNAL_DETAIL,
+    });
+    // The response is already committed by the time a streamed leaf throws,
+    // so the status is the one thing this boundary must not pretend to fix.
+    expect(mocks.statuses).toEqual([]);
+  });
+
+  // Server-side contract only: whether the client can still read this `code`
+  // depends on the RSC boundary running the serialization adapter, which the
+  // function's own JSDoc says it does not. What is pinned here is that the
+  // guard itself does not collapse a classified failure on its way out.
+  it("wraps a validation failure without touching its code", async () => {
+    const caught = await captureFrom(guardStreamedRender, invalidCredentials());
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "validation",
+      code: "INVALID_CREDENTIALS",
+      message: LOGIN_FAILURE_MESSAGE,
+      retryable: false,
+      fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
+    });
+    expect(logger.entries).toEqual([]);
+  });
+});

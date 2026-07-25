@@ -50,7 +50,7 @@ describe("endSession", () => {
   // TC-logout-003 — the point of the translation: `serializeError` falls
   // back to `kind: "unknown"` for anything that is not a
   // `SerializableError`, so a bare throw would never reach the client as
-  // a system error (ADR-010).
+  // a system error (.issue/1/adr.md ADR-010).
   it("serializes to kind: system at the transport boundary (TC-logout-003)", () => {
     let caught: unknown;
     try {
@@ -136,7 +136,7 @@ describe("startSession", () => {
   });
 
   // Shares `writeSessionCookie` with `endSession`, so this also guards
-  // the two staying on one translation (ADR-010).
+  // the two staying on one translation (.issue/1/adr.md ADR-010).
   it("translates a failing header write into SystemError(SESSION_ERROR)", async () => {
     const cause = new Error("response already committed");
 

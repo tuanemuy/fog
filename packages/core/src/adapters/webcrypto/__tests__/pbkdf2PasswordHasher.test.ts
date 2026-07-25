@@ -184,8 +184,9 @@ describe("createPbkdf2PasswordHasher at the iteration ceiling", () => {
   });
 });
 
-// The other half of the split ADR-014 makes: a corrupted stored value is
-// `DataIntegrityError` (above), a failing computation is `CryptoError`.
+// The other half of the split made by .issue/1/adr.md ADR-014: a corrupted
+// stored value is `DataIntegrityError` (above), a failing computation is
+// `CryptoError`.
 // Usecases pass `SystemError` through untouched, so if this translation
 // were missing the raw WebCrypto rejection would reach the client as
 // `kind: "unknown"` and nothing else in the suite would notice.
@@ -228,5 +229,20 @@ describe("createPbkdf2PasswordHasher under a failing WebCrypto", () => {
     // computation that never ran says nothing about the password.
     expect(isSystemError(caught) && caught.code).toBe("CRYPTO_ERROR");
     expect(isSystemError(caught) && caught.cause).toBe(cause);
+  });
+});
+
+describe("DEFAULT_PBKDF2_ITERATIONS", () => {
+  // The pin holds only while `DUMMY_PASSWORD_HASH_ITERATIONS` infers a
+  // literal type. Annotating it `: number` — a plausible readability edit —
+  // widens `typeof` and silently drops the pin, letting the two work
+  // factors drift apart and reviving the timing oracle. The directive below
+  // is the whole assertion: it goes unused the moment the pin is gone, and
+  // `@ts-expect-error` with nothing to suppress fails the type check.
+  it("is pinned to the literal the login path declares", () => {
+    // @ts-expect-error the adapter default is the literal
+    // `DUMMY_PASSWORD_HASH_ITERATIONS`, not `number`
+    const drifted: typeof DEFAULT_PBKDF2_ITERATIONS = 600_000;
+    void drifted;
   });
 });

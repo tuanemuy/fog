@@ -44,8 +44,15 @@ export const errorResponseMiddleware = createMiddleware({
  * without awaiting it, so the RSC leaf renders after the handler returned:
  * a throw inside it never reaches the middleware's `catch`. Leaves that read
  * protected data wrap their loading in this so redaction and logging still
- * happen at one place. The HTTP status is the one thing it cannot restore —
- * the response is already committed by the time the leaf renders.
+ * happen at one place.
+ *
+ * Two things it cannot restore, both failing towards less information on the
+ * client: the HTTP status (the response is already committed by the time the
+ * leaf renders) and the serialized `kind`. The RSC boundary does not run
+ * `appServerErrorAdapter`, so the client receives a plain `Error` with no
+ * `serialized` payload and `extractSerializedError` falls back to
+ * `kind: "unknown"` — every streamed failure reads as the generic wording
+ * regardless of what was thrown.
  */
 export async function guardStreamedRender<T>(
   load: () => Promise<T>,

@@ -167,7 +167,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             data-scroll-restoration-id="app-sheet"
             className="mx-auto w-(--sheet-w) flex-1 overflow-y-auto rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)"
           >
-            <div className="mx-auto max-w-(--content-max) px-lg pt-2xl pb-2xl sm:px-2xl">
+            <div className="mx-auto max-w-(--content-max) px-lg pt-2xl pb-(--sheet-pad-b) sm:px-2xl">
               {children}
             </div>
           </main>

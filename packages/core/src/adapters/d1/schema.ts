@@ -40,10 +40,15 @@ export const users = sqliteTable(
       "users_auth_method_sum",
       sql`(auth_method = 'password' AND password_hash IS NOT NULL AND sso_provider IS NULL AND sso_provider_subject IS NULL) OR (auth_method = 'sso' AND password_hash IS NULL AND sso_provider IS NOT NULL AND sso_provider_subject IS NOT NULL)`,
     ),
-    // The three checks below are implied by the sum constraint's
-    // disjuncts but kept separate so a violation names the invariant it
-    // broke rather than reporting the whole union as failed.
+    // Implied by the sum constraint's disjuncts, but kept separate so a
+    // violation names the invariant it broke rather than reporting the
+    // whole union as failed.
     check("users_auth_method_valid", sql`auth_method IN ('password','sso')`),
+    // The next two are *not* implied: the sum constraint only says the SSO
+    // columns are non-NULL on an `sso` row, never what they may contain.
+    // The value set (`google` / `apple`) and the non-empty subject are
+    // held by these two checks alone — dropping either as "redundant"
+    // deletes the invariant.
     check(
       "users_sso_provider_valid",
       sql`sso_provider IS NULL OR sso_provider IN ('google','apple')`,

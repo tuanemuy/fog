@@ -123,9 +123,10 @@ describe("getCurrentUserId", () => {
 
 describe("requireUserId", () => {
   // AC-15 / manual TC-23. The guard is the authoritative "this response
-  // carries protected data" point (ADR-031), so the header that keeps a
-  // logged-out back button from restoring a protected screen is emitted
-  // here and nowhere else. Router-level invalidation cannot reach the
+  // carries protected data" point (.issue/1/adr.md ADR-031), so the header
+  // that keeps a logged-out back button from restoring a protected screen
+  // is emitted here and nowhere else. Router-level invalidation cannot
+  // reach the
   // browser's history / heuristic caches; only this header can.
   it("marks an authenticated response as uncacheable", async () => {
     mocks.cookie = TOKEN;

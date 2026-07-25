@@ -68,7 +68,7 @@ export const Email = {
  * plaintext column, and the entity factories take a `PasswordHash`. Being a
  * branded `string` (the convention every identity VO follows) there is no
  * `toString` / `toJSON` to override, so this rule is held by tests and
- * review rather than by the type — see ADR-011.
+ * review rather than by the type — see .issue/1/adr.md ADR-011.
  *
  * Not trimmed: leading / trailing whitespace is part of what the user typed
  * and must survive to `PasswordHasher.hash` verbatim.

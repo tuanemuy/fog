@@ -24,7 +24,7 @@ function digest(plain: string): string {
  * The output must not embed the plaintext, cheap as the fake is: every
  * suite that uses it asserts "no plaintext reached `users.password_hash`"
  * against this value, and a fake that simply prefixed the password would
- * make that assertion hold by accident (ADR-011).
+ * make that assertion hold by accident (.issue/1/adr.md ADR-011).
  */
 export class FakePasswordHasher implements PasswordHasher {
   async hash(plain: PlainPassword): Promise<PasswordHash> {

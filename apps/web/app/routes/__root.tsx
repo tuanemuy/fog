@@ -3,13 +3,12 @@ import {
   HeadContent,
   Outlet,
   Scripts,
-  useRouter,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { createServerFn } from "@tanstack/react-start";
 import type { ReactNode } from "react";
 import { AuthSheet } from "@/components/ui/AuthSheet";
-import { Button } from "@/components/ui/Button";
+import { ERROR_TITLE, ErrorRetry } from "@/components/ui/ErrorRetry";
 import { TextLink } from "@/components/ui/TextLink";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
@@ -76,14 +75,13 @@ export const Route = createRootRoute({
 });
 
 /**
- * The last-resort failure surface (spec/pages/index.md 共通レイアウト: 通信
- * エラーはリトライ導線付きで扱う). `invalidate()` re-runs the loaders that
- * failed, so a transient failure recovers without a full page load.
+ * The last-resort failure surface: a full-screen sheet with no navigation,
+ * for failures outside the signed-in shell (the pre-auth screens, and the
+ * shell's own layout route). Protected routes are caught one level lower by
+ * `_app`'s `errorComponent`, which keeps the global nav
+ * (.issue/1/adr.md ADR-048).
  */
-const ERROR_TITLE = "エラーが発生しました";
-
 function ErrorScreen({ message }: { message: string }) {
-  const router = useRouter();
   return (
     <AuthSheet
       title={ERROR_TITLE}
@@ -91,14 +89,7 @@ function ErrorScreen({ message }: { message: string }) {
       // under the heading says nothing.
       {...(message === ERROR_TITLE ? {} : { description: message })}
     >
-      <div className="flex flex-col gap-lg">
-        <Button type="button" fullWidth onClick={() => router.invalidate()}>
-          再読み込み
-        </Button>
-        <p className="text-center text-sm">
-          <TextLink to="/">タイムラインへ</TextLink>
-        </p>
-      </div>
+      <ErrorRetry fullWidth />
     </AuthSheet>
   );
 }

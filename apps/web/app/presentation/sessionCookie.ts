@@ -6,12 +6,15 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
  * Deliberately free of framework imports: `session.ts` owns the header
  * read/write and is `server-only`, while everything decidable without a
  * request lives here so it stays reachable from the node test pool
- * (ADR-005 / ADR-010).
+ * (.issue/1/adr.md ADR-005 / ADR-010).
  */
 
 export const SESSION_COOKIE_NAME = "fog_session";
 
-/** 7 days, matching the token TTL the session codec issues (ADR-002). */
+/**
+ * 7 days, matching the token TTL the session codec issues
+ * (.issue/1/adr.md ADR-002).
+ */
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export type SessionCookieOptions = Readonly<{
@@ -51,7 +54,8 @@ export function buildSessionCookie(
  *
  * `serializeError` falls back to `kind: "unknown"` for anything that is
  * not a `SerializableError`, so a bare throw from the header write would
- * never reach the client as `kind: "system"` (TC-logout-003 / ADR-010).
+ * never reach the client as `kind: "system"` (TC-logout-003 /
+ * .issue/1/adr.md ADR-010).
  */
 export function toSessionSystemError(cause: unknown): SystemError {
   return new SystemError(

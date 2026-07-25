@@ -906,7 +906,7 @@ Issue 本文の実装チェックリスト75行と実装ステップの対応。
 - **単体（`pnpm test:unit`, node pool）**
   - `domain/identity/__tests__/valueObject.test.ts` — 各 VO の正常・異常。Email の正規化、UserId 空文字（TC-getCurrentUser-008）
   - `domain/identity/__tests__/valueObject.property.test.ts` — Email 320/321、PlainPassword 7/8/128/129 の境界（TC-registerWithPassword-004〜009）を fast-check で
-  - `domain/identity/__tests__/entity.test.ts` — 各ファクトリの `version` / タイムスタンプ / イベントドラフト、`changePassword` が `PasswordUser` のみを受けること（型レベル＋ランタイム）、`reconstruct` の不整合行が `RehydrationError` になること、**`identity.userRegistered` のペイロードに平文パスワードが含まれないこと**（キー集合の表明＋値の再帰走査で平文文字列を含まないことの表明。`PlainPassword` の漏出防止を型で守れない分の担保 → ADR-011）
+  - `domain/identity/__tests__/entity.test.ts` — 各ファクトリの `version` / タイムスタンプ / イベントドラフト、`changePassword` が `PasswordUser` のみを受けること（型レベルのみ。判別可能ユニオンでコンパイルエラーになるのでランタイムガードは置かない）、`reconstruct` の不整合行が `RehydrationError` になること、**`identity.userRegistered` のペイロードに平文パスワードが含まれないこと**（キー集合の表明＋値の再帰走査で平文文字列を含まないことの表明。`PlainPassword` の漏出防止を型で守れない分の担保 → ADR-011）
   - `application/identity/__tests__/eventDecoders.test.ts` — 3イベントの往復とスキーマ不一致時の `SystemError(DataIntegrityError)`
   - `application/identity/__tests__/logout.test.ts` — TC-logout-001（永続化・イベントが発生しない）
   - `adapters/webcrypto/__tests__/pbkdf2PasswordHasher.test.ts` — hash → verify 往復、誤パスワードで `false`、エンコード形式、同一入力でも salt が異なること、**ファクトリ引数の `iterations` が保存形式に反映され、異なる反復回数で作ったハッシュも verify できること**

@@ -75,3 +75,18 @@
 | `test/relay 統合テストの弱い表明` | R2 | fix | R1 W-004 と同種のパターンが4箇所残存 | 0 |
 | `test/Cache-Control と無効セッション拒否の無テスト` | R2 | fix | AC-15 / manual TC-23 の根拠が無検証 | 0 |
 | `test/errorDisplay の FIELD_LABELS 到達不能` | R2 | fix | R1 で新設した整形がテストから踏まれない | 0 |
+| `出荷ソースの ADR 参照が spec/adr と番号衝突` | R3 | fix | `ADR-002` 等が実在する別文書（`spec/adr/002-export-scope.md`）に解決され、007以降は解決しない | 0 |
+| `ports/userRepository の JSDoc（ExpectedVersion の発行点）` | R3 | fix | `findByEmail` も鋳造するので記述が偽。R2 が AC-4 の根拠に引用していた | 0 |
+| `schema.ts の CHECK 含意コメント` | R3 | fix | 3本中2本で偽（必須制約を「帰結」と書いている） | 0 |
+| `burnVerificationTime のログ` | R3 | fix | 静的事実なのに未認証入力で試行ごとに1行出る | 0 |
+| `burnVerificationTime が生の例外を logger へ渡す` | R3 | fix | ポート契約が「例外に平文を載せない」を保証していない | 0 |
+| `hmacSessionCodec の one-file change JSDoc` | R3 | fix | ADR-036 の単一化で不成立になった | 0 |
+| `infra/aws/read() の適用漏れ` | R3 | fix | `CDK_DEFAULT_ACCOUNT` / `REGION` に未適用 | 0 |
+| `infra/aws/完全 ARN 正規表現` | R3 | fix | 部分 ARN を通す。`.env.aws.example` の例示値がまさにそれ | 0 |
+| `typeof ピンと Omit の退行検出` | R3 | fix | 型注釈1つでピンが無言で死ぬ | 0 |
+| `progress.md の spec-sync 節の取りこぼし` | R3 | fix | ADR-008 / 009 / 011 の宣言が漏れている | 0 |
+| `routes/_app/errorComponent 欠如` | R3 | fix | streaming リーフの失敗が認証後シェルごと未認証風エラー画面に差し替わる | 0 |
+| `シート本文下端の safe-area` | R3 | fix | ノッチ機で実クリアランスが 40px→6px に縮む。ADR-041 の記述も不正確 | 0 |
+| `test/送出側 redaction 境界の無テスト` | R3 | fix | AC-10 / AC-12 の文言が依存する経路の退行を検出できない | 0 |
+| `plan.md の changePassword ランタイム記述` | R3 | fix | 実装は型のみ | 0 |
+| `docs/test.md の Fake policy と存在しないスクリプト` | R3 | fix | 本 PR で fake を追加し同ファイルを編集しているのに未更新 | 0 |

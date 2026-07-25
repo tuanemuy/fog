@@ -19,7 +19,7 @@ const HASH = PasswordHash.create("pbkdf2-sha256$1$c2FsdA==$aGFzaA==");
 // Recursive scan rather than a key check: `PlainPassword` is a branded
 // `string` with no `toJSON` to override, so the only guard against a
 // plaintext reaching an event payload is asserting it is nowhere in the
-// emitted value (ADR-011).
+// emitted value (.issue/1/adr.md ADR-011).
 function containsString(value: unknown, needle: string): boolean {
   if (typeof value === "string") return value.includes(needle);
   if (Array.isArray(value)) {
@@ -66,7 +66,8 @@ describe("User.registerWithPassword", () => {
     ]);
   });
 
-  // ADR-011: the plaintext-leak guard the type system cannot express.
+  // .issue/1/adr.md ADR-011: the plaintext-leak guard the type system
+  // cannot express.
   it("never carries the plaintext password or the hash into the event payload", () => {
     const { eventDrafts } = User.registerWithPassword(
       { id: ID, email: "user@example.com", passwordHash: HASH },
@@ -180,7 +181,7 @@ describe("User.changePassword", () => {
     expect(containsString(eventDrafts, NEXT_HASH)).toBe(false);
   });
 
-  it("does not accept an SSO account", () => {
+  it("rejects an SSO account at compile time", () => {
     const { entity: ssoUser } = User.registerWithSso(
       {
         id: ID,
@@ -191,11 +192,16 @@ describe("User.changePassword", () => {
       NOW,
     );
 
-    // @ts-expect-error `changePassword` takes `PasswordUser`; an SSO
-    // account has no password to change and that is a compile error.
-    const call = () => User.changePassword(ssoUser, NEXT_HASH, LATER);
     expect(ssoUser.authMethod).toBe("sso");
-    expect(typeof call).toBe("function");
+
+    // The directive below is the whole assertion: widening the parameter back
+    // to `User` makes this line compile and fails the suite. There is
+    // deliberately no runtime guard (`entity.ts`, `changePassword`), so
+    // invoking the call would assert nothing.
+    // @ts-expect-error `changePassword` takes `PasswordUser`; an SSO account
+    // has no password to change.
+    const call = () => User.changePassword(ssoUser, NEXT_HASH, LATER);
+    void call;
   });
 });
 
