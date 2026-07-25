@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { AuthSheet } from "@/components/ui/AuthSheet";
 import { readAuthStateFn } from "@/presentation/authState";
-import { buildHead } from "@/presentation/head";
+import { routeHead } from "@/presentation/head";
 import {
   DEFAULT_REDIRECT_PATH,
   redirectSearchSchema,
@@ -18,13 +18,7 @@ export const Route = createFileRoute("/login")({
       throw redirect({ href: search.redirect ?? DEFAULT_REDIRECT_PATH });
     }
   },
-  head: ({ match }) => {
-    const config = match.context.config;
-    if (!config) return {};
-    return {
-      meta: buildHead(config, { title: "ログイン", path: "/login" }).meta,
-    };
-  },
+  head: ({ match }) => routeHead(match, { title: "ログイン", path: "/login" }),
   component: LoginPage,
 });
 

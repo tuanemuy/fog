@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { SignupForm } from "@/components/auth/SignupForm";
 import { AuthSheet } from "@/components/ui/AuthSheet";
 import { readAuthStateFn } from "@/presentation/authState";
-import { buildHead } from "@/presentation/head";
+import { routeHead } from "@/presentation/head";
 import { DEFAULT_REDIRECT_PATH } from "@/presentation/redirectSearch";
 
 export const Route = createFileRoute("/signup")({
@@ -11,14 +11,8 @@ export const Route = createFileRoute("/signup")({
     const { authenticated } = await readAuthStateFn();
     if (authenticated) throw redirect({ to: DEFAULT_REDIRECT_PATH });
   },
-  head: ({ match }) => {
-    const config = match.context.config;
-    if (!config) return {};
-    return {
-      meta: buildHead(config, { title: "アカウント登録", path: "/signup" })
-        .meta,
-    };
-  },
+  head: ({ match }) =>
+    routeHead(match, { title: "アカウント登録", path: "/signup" }),
   component: SignupPage,
 });
 

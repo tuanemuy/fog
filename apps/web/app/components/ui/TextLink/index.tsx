@@ -8,8 +8,20 @@ type TextLinkAnchorProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   ref?: Ref<HTMLAnchorElement>;
 };
 
-function TextLinkAnchor({ ref, ...props }: TextLinkAnchorProps) {
-  return <a ref={ref} className={TEXT_LINK} {...props} />;
+// `className` is merged, not overwritten: the router hands an active link
+// `className="active"`, which spread after a fixed `className` would strip
+// the colour and the focus ring off whichever link points at the current
+// page.
+function TextLinkAnchor({ ref, className, ...props }: TextLinkAnchorProps) {
+  return (
+    <a
+      ref={ref}
+      className={
+        className === undefined ? TEXT_LINK : `${TEXT_LINK} ${className}`
+      }
+      {...props}
+    />
+  );
 }
 
 /**

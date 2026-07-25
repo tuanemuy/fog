@@ -3,6 +3,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Brand } from "@/components/ui/Brand";
+import { BrandLink } from "@/components/ui/BrandLink";
 import { NAV_ITEMS } from "./navItems";
 
 /**
@@ -87,12 +88,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="flex h-dvh lg:mx-auto lg:max-w-(--container-max)"
       >
         <aside className="hidden w-(--sidebar-w) flex-none flex-col px-lg pt-2xl pb-lg lg:flex">
-          <Link
+          <BrandLink
             to="/"
             className={`mb-2xl px-md ${LINK_FOCUS} rounded-(--radius-md)`}
           >
             <Brand />
-          </Link>
+          </BrandLink>
           <nav
             aria-label="グローバルナビゲーション"
             className="flex flex-col gap-xs"
@@ -119,7 +120,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="mx-auto flex w-(--sheet-w) flex-none items-center justify-between gap-md pt-lg pb-md md:w-(--sheet-w-md) lg:pt-xl">
+          <header className="mx-auto flex w-(--sheet-w) flex-none items-center justify-between gap-md pt-(--header-pad-t) pb-md md:w-(--sheet-w-md) lg:pt-xl">
             <div className="flex min-w-0 items-center gap-sm text-lg font-semibold">
               <h1 className="truncate text-lg font-semibold">{title}</h1>
               <span
@@ -160,8 +161,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {/* Only the sheet scrolls: header and sidebar stay put, matching
               `.app { height: 100dvh }` + `.sheet { overflow-y: auto }` in
-              `spec/design/pages/timeline.html`. */}
-          <main className="mx-auto w-(--sheet-w) flex-1 overflow-y-auto rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)">
+              `spec/design/pages/timeline.html`. The id is what
+              `scrollToTopSelectors` in `router.tsx` points at. */}
+          <main
+            data-scroll-restoration-id="app-sheet"
+            className="mx-auto w-(--sheet-w) flex-1 overflow-y-auto rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)"
+          >
             <div className="mx-auto max-w-(--content-max) px-lg pt-2xl pb-2xl sm:px-2xl">
               {children}
             </div>

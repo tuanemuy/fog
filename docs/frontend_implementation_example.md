@@ -2,6 +2,14 @@
 
 Implementation example assuming TanStack Start (with React Server Components enabled).
 
+The `todo` domain used throughout is the template's own sample and has been deleted from this repository — read the `apps/web/app/{components,routes}/todo/…` paths below as illustrations of a pattern, not as files to open. What this repository actually ships:
+
+- three-layer mutation (server component → `"use client"` island → React 19 primitive): `apps/web/app/components/auth/{LoginForm,SignupForm}` (`useActionState`) and `apps/web/app/components/settings/LogoutButton` (`useTransition`)
+- per-fragment streaming with a shape-matched skeleton: `apps/web/app/routes/_app/settings.tsx` + `apps/web/app/components/settings/SettingsSkeleton`
+- shared shell in the parent route's `component`: `apps/web/app/routes/_app.tsx` + `apps/web/app/components/layout/AppShell`
+
+No screen owns a list yet, so **there is currently no `useOptimistic` reference implementation**. The optimistic sections below (list ownership, in-item toggles) describe the intended pattern with no code behind it until a list screen lands.
+
 Basic design principles:
 
 - **Choose RSC with an awareness of its "owner".** An RSC is nothing more than a React Flight payload returned from `createServerFn`. Decide first where you call it from = who holds that payload.
@@ -105,9 +113,9 @@ export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> 
 }
 ```
 
-The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
+The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/settings/SettingsSkeleton` shaped to `CurrentUserPanel`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
 
-This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/todo` settles its loader immediately and never triggers it.
+This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/settings` settles its loader immediately and never triggers it.
 
 ### 2. Held by TanStack Query
 

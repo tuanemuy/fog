@@ -12,13 +12,19 @@
 # deploys. Reserve this file for credentials and tokens that must not
 # be checked in.
 #
-# HMAC key that signs session cookies. At least 32 characters; generate one
-# with `openssl rand -base64 48`. Deliberately a secret rather than a
-# `[vars]` entry — `wrangler.toml` does not inherit `[vars]` across
-# `[env.*]` blocks, so a var would have to be duplicated per environment
-# in plaintext. For deployed environments use `wrangler secret put
+# HMAC key that signs session cookies. Left empty on purpose: a value
+# published in this file would be a valid key for anyone who reads the
+# repository, and copying it into a deployment hands out every account.
+# Generate your own — the Worker refuses every request until you do:
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters. Deliberately a secret rather than a `[vars]`
+# entry — `wrangler.toml` does not inherit `[vars]` across `[env.*]`
+# blocks, so a var would have to be duplicated per environment in
+# plaintext. For deployed environments use `wrangler secret put
 # SESSION_SECRET`. Only the request-path Worker needs it.
-SESSION_SECRET="dev-only-session-secret-change-me-0123456789"
+SESSION_SECRET=""
 
 # Example (uncomment and replace when you add a secret-backed feature):
 # SOME_THIRD_PARTY_API_KEY="replace-me"

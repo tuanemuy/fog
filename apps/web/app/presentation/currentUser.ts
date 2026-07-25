@@ -36,10 +36,10 @@ export const getCurrentUserId = cache(async (): Promise<string | null> => {
 export async function requireUserId(): Promise<string> {
   const userId = await getCurrentUserId();
   if (userId !== null) {
-    // The guard is also the authoritative "this response is per-user" point:
-    // anything that got here carries protected data and must stay out of the
-    // browser's history / heuristic caches (a logout must not be undone by
-    // the back button).
+    // Belt to `noStoreMiddleware`'s braces. This alone does NOT cover a
+    // per-fragment streaming route: there the guard runs inside the RSC
+    // render, after the response headers were settled. Anything that returns
+    // protected data must also carry `noStoreMiddleware`.
     setResponseHeader("cache-control", "no-store, private");
     return userId;
   }

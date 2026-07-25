@@ -28,6 +28,7 @@ export function SignupForm() {
   const signup = useServerFn(signupFn);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const formMessageRef = useRef<HTMLParagraphElement>(null);
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
@@ -48,19 +49,22 @@ export function SignupForm() {
 
   const display = toAuthErrorDisplay(state.error);
 
-  // Failure leaves focus on the submit button, where nothing describes what
-  // went wrong. Moving it to the offending field reads label, invalid state
-  // and message in one go.
+  // Failure leaves focus on the submit button, which is disabled while the
+  // request is in flight — focus lands on `<body>` and keyboard users have to
+  // tab from the top of the page again. Moving it to the offending field
+  // reads label, invalid state and message in one go; a form-level failure
+  // names no field, so the banner itself takes the focus.
   useEffect(() => {
     const target = toAuthErrorDisplay(state.error);
     if (target.email !== undefined) emailRef.current?.focus();
     else if (target.password !== undefined) passwordRef.current?.focus();
+    else if (target.form !== undefined) formMessageRef.current?.focus();
   }, [state]);
 
   return (
     <form action={formAction} className="flex flex-col gap-lg">
       {display.form !== undefined ? (
-        <FormMessage>{display.form}</FormMessage>
+        <FormMessage ref={formMessageRef}>{display.form}</FormMessage>
       ) : null}
 
       <TextField

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createHmacSessionCodec,
   DEFAULT_SESSION_TTL_MS,
+  MIN_SESSION_SECRET_LENGTH,
 } from "../hmacSessionCodec";
 
 const SECRET = "test-session-secret-0123456789abcdef";
@@ -92,5 +93,33 @@ describe("createHmacSessionCodec", () => {
     ["not base64", "!!!.???"],
   ])("rejects a malformed token: %s", async (_label, token) => {
     await expect(codec.verify(token, NOW)).resolves.toBeNull();
+  });
+});
+
+// Every token this codec ever signs is only as unforgeable as the key it
+// was built with, and the factory is the last place that can refuse. A
+// deployment whose `SESSION_SECRET` is a placeholder must fail to build a
+// codec rather than issue forgeable sessions, so the refusing side is
+// walked here alongside the boundary that must still be accepted.
+describe("createHmacSessionCodec argument validation", () => {
+  it.each([
+    ["an empty secret", ""],
+    ["a one-character secret", "x"],
+    [
+      "one character below the floor",
+      "a".repeat(MIN_SESSION_SECRET_LENGTH - 1),
+    ],
+  ])("refuses to build a codec from %s", (_label, secret) => {
+    expect(() => createHmacSessionCodec({ secret })).toThrow(/at least/);
+  });
+
+  it("accepts a secret of exactly the floor, so the check is `<` and not `<=`", async () => {
+    const shortest = "a".repeat(MIN_SESSION_SECRET_LENGTH);
+    const floorCodec = createHmacSessionCodec({ secret: shortest });
+
+    const token = await floorCodec.issue(USER_ID, NOW);
+    await expect(floorCodec.verify(token, NOW)).resolves.toEqual({
+      userId: USER_ID,
+    });
   });
 });

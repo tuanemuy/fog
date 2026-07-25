@@ -48,8 +48,12 @@ export const Route = createRootRoute({
     const baseLinks = [...SITE_ASSET_LINKS, stylesheet];
     const config = match.context?.config;
     if (!config) return { links: baseLinks };
-    const { meta, links } = buildHead(config);
-    return { meta, links: [...baseLinks, ...links] };
+    // `meta` only: matches override each other by `name` / `property`, but
+    // `links` from every match are concatenated as-is, so a canonical here
+    // would sit beside the page's own rather than be replaced by it. Each
+    // route owns its canonical through `routeHead`.
+    const { meta } = buildHead(config);
+    return { meta, links: baseLinks };
   },
   component: RootComponent,
   errorComponent: ({ error }) => (

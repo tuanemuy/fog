@@ -104,6 +104,12 @@ describe("D1UnitOfWorkProvider (integration)", () => {
       caught = error;
     }
     expect(isConflictError(caught)).toBe(true);
+    // Not merely "some conflict": the same UoW can also raise
+    // UNIQUE_VIOLATION, and a stale-version write reported as one would
+    // mean the OCC guard never fired.
+    expect(isConflictError(caught) && caught.code).toBe(
+      "OPTIMISTIC_LOCK_FAILURE",
+    );
 
     // Neither prior UoW collected events (only the insert / save ran), so
     // the outbox must be empty — the failing UoW's `collectEvents` was

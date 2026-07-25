@@ -6,10 +6,11 @@ import { navTitle } from "@/components/layout/AppShell/navItems";
 import { SettingsSkeleton } from "@/components/settings/SettingsSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
-import { buildHead } from "@/presentation/head";
+import { routeHead } from "@/presentation/head";
+import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 
 const renderSettings = createServerFn({ method: "GET" })
-  .middleware([errorResponseMiddleware])
+  .middleware([errorResponseMiddleware, noStoreMiddleware])
   .handler(async () => {
     const { CurrentUserPanel } = await import(
       "@/components/settings/CurrentUserPanel"
@@ -24,16 +25,8 @@ export const Route = createFileRoute("/_app/settings")({
     const { Panel } = await renderSettings();
     return { Panel };
   },
-  head: ({ match }) => {
-    const config = match.context.config;
-    if (!config) return {};
-    return {
-      meta: buildHead(config, {
-        title: navTitle("/settings"),
-        path: "/settings",
-      }).meta,
-    };
-  },
+  head: ({ match }) =>
+    routeHead(match, { title: navTitle("/settings"), path: "/settings" }),
   component: SettingsPage,
 });
 

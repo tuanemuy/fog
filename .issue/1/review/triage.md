@@ -53,3 +53,25 @@
 | `test/ハッシュ保存の実ハッシャー検証` | R1 | fix | 平文が保存されないことを実物で見ていない | 0 |
 | `test/ALTER TABLE RENAME の巻き込み` | R1 | fix | 失敗するとファイル全体が汚染される | 0 |
 | `presentation/errorResponse/kind が transport で落ちる` | R1 | fix | R1 修正中に発覚。SSR と RSC が別 module graph で `instanceof AppServerError` が常に false になり、AC-10 / AC-12 のエラー文言が実行時に一切出ない | 0 |
+| `presentation/currentUser/Cache-Control の適用範囲` | R2 | fix | ドキュメント経路のみで server function 経路に付かず manual TC-23 が実際に落ちる | 0 |
+| `router/scrollToTopSelectors` | R2 | fix | `main` をスクロールコンテナにした R1 修正の副作用でスクロール位置が持ち越される | 0 |
+| `test/ダミーハッシュ陳腐化の検出` | R2 | fix | 対策が死んでも green のままになる | 0 |
+| `application/identity/loginWithPassword/ダミーハッシュの結合` | R2 | fix | 反復回数がハードコードで既定値変更に追随しない | 0 |
+| `.issue/1/progress.md の陳腐化` | R2 | fix | R1 修正で解決済みの課題が未解決として残っている | 0 |
+| `application/types/sessionCodec のユースケース非公開` | R2 | fix | 型エイリアス1本で表現できるので型に落とす | 0 |
+| `infra/aws/部分設定検出の空文字誤判定` | R2 | fix | CI の未設定シークレットは空文字になるため現実的 | 0 |
+| `adapters/webcrypto/encoding の JSDoc 不正確` | R2 | fix | 実態より広い保証を書いている | 0 |
+| `adapters/webcrypto/ガードの無テスト` | R2 | fix | フェイルクローズが「通る側」しか踏まれていない | 0 |
+| `CLAUDE.md / docs の todo 参照` | R2 | fix | 削除済みの実装をリファレンスとして名指ししている | 0 |
+| `セッション鍵最小長の二重定義` | R2 | fix | ずれるとブランド型を通過した秘密が codec で素の Error を投げる | 0 |
+| `ui/AuthSheet/main ランドマーク欠如` | R2 | fix | axe violation 2件 | 0 |
+| `ui/TextLink/アクティブ時の className 上書き` | R2 | fix | スタイルとフォーカスリングを喪失 | 0 |
+| `layout/AppShell/ブランドリンクの aria-current` | R2 | fix | 現在地が2箇所になる | 0 |
+| `routes/_app/canonical` | R2 | fix | `og:url` と矛盾 | 0 |
+| `routes/__root/viewport-fit=cover` | R2 | fix | safe-area の修正が常に発火しない | 0 |
+| `auth/フォーム全体エラー時のフォーカス` | R2 | fix | フォーカスが body へ落ちる | 0 |
+| `.env.example の既定 SESSION_SECRET` | R2 | fix | コピーしてそのまま本番に出ると全アカウントなりすましが成立する | 0 |
+| `deferred RSC の throw が middleware を通らない` | R2 | fix | redaction / status / Logger の権威点が保護画面を覆っていない | 0 |
+| `test/relay 統合テストの弱い表明` | R2 | fix | R1 W-004 と同種のパターンが4箇所残存 | 0 |
+| `test/Cache-Control と無効セッション拒否の無テスト` | R2 | fix | AC-15 / manual TC-23 の根拠が無検証 | 0 |
+| `test/errorDisplay の FIELD_LABELS 到達不能` | R2 | fix | R1 で新設した整形がテストから踏まれない | 0 |

@@ -24,9 +24,12 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 ```bash
 pnpm install
 cp .dev.vars.example .dev.vars         # wrangler-loaded secrets for local dev (gitignored)
+openssl rand -base64 48                # paste into SESSION_SECRET (ships empty)
 pnpm db:migrate:cf                     # apply migrations to the local D1
 pnpm dev:cf                            # vite dev backed by workerd (@cloudflare/vite-plugin)
 ```
+
+`SESSION_SECRET` is the one value with no usable default: a key printed in the repository is a key everyone has, so the example ships it empty and every request fails until it is set.
 
 `.dev.vars` is auto-loaded by `wrangler dev` (and the workerd-backed `pnpm dev:cf`) and mirrors `wrangler secret put` for production. Non-secret config such as `APP_URL` belongs in the matching `wrangler*.toml` `[vars]`, not in `.dev.vars`.
 

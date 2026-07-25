@@ -23,9 +23,12 @@ This is the default runtime: `pnpm dev` / `pnpm build` / `pnpm start` all alias 
 ```bash
 pnpm install
 cp .env.example .env       # edit if defaults are not appropriate
+openssl rand -base64 48    # paste into SESSION_SECRET (ships empty)
 pnpm db:migrate            # creates ./data/ and applies migrations
 pnpm dev                   # http://localhost:3000
 ```
+
+`SESSION_SECRET` is the one value with no usable default: a key printed in the repository is a key everyone has, so the example ships it empty and the request path refuses to boot until it is set.
 
 For a production build:
 

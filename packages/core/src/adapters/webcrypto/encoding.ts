@@ -39,13 +39,17 @@ export function toBase64Url(bytes: Uint8Array): string {
  * Decodes base64url back to bytes, re-adding the padding this module's
  * encoder strips.
  *
- * **The decoding is not canonical.** It inherits `atob`'s forgiving
- * behaviour, so standard-base64 `+` / `/`, redundant padding and embedded
- * whitespace all decode rather than being rejected — several distinct
- * strings can therefore yield the same bytes. That is harmless for
- * signature verification (the bytes are what gets compared), but it means
- * a token string must never be treated as a canonical identity: do not
- * compare, index or deduplicate on the encoded form.
+ * **The decoding is not canonical.** Standard-base64 `+` / `/` survive the
+ * substitution below and decode to the same bytes as their base64url
+ * spellings, so several distinct strings yield one byte sequence. That is
+ * harmless for signature verification (the bytes are what gets compared),
+ * but it means a token string must never be treated as a canonical
+ * identity: do not compare, index or deduplicate on the encoded form.
+ *
+ * Acceptance is *narrower* than `atob`'s, not wider: padding is computed
+ * from the length of the input, so embedded whitespace and redundant `=`
+ * push the result off a multiple of four and `atob` refuses it, even
+ * though `atob` would have tolerated either on its own.
  */
 export function fromBase64Url(value: string): Uint8Array {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/");

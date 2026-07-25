@@ -1,5 +1,8 @@
 import * as schema from "@repo/core/adapters/d1/schema";
-import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
+import {
+  createPbkdf2PasswordHasher,
+  DEFAULT_PBKDF2_ITERATIONS,
+} from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import {
   isConflictError,
   isNotFoundError,
@@ -17,6 +20,8 @@ import { User } from "@repo/core/domain/identity/entity";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   Email,
+  PasswordHash,
+  PlainPassword,
   SsoProvider,
   TrashRetentionDays,
   UserId,
@@ -590,7 +595,7 @@ describe("loginWithPassword (integration)", () => {
         },
       },
     });
-    await seedPasswordUser(container, "user@example.com");
+    const userId = await seedPasswordUser(container, "user@example.com");
     await seedSsoUser(container, "sso@example.com");
 
     for (const email of [
@@ -606,7 +611,84 @@ describe("loginWithPassword (integration)", () => {
       );
     }
 
+    // Per-path breakdown, not just the total: a total of three also holds
+    // when one path burns twice and another not at all, which is exactly
+    // the equalisation being broken.
     expect(counted).toHaveLength(3);
+    const [unknownAddress, ssoAccount, passwordAccount] = counted;
+    expect(unknownAddress).toBe(ssoAccount);
+    const stored = (await userRows(container)).find(
+      (row) => row.id === userId,
+    )?.passwordHash;
+    expect(passwordAccount).toBe(stored);
+    expect(unknownAddress).not.toBe(passwordAccount);
+  });
+
+  // The burn above is only a burn if the production hasher can actually
+  // read the hash it is handed: `burnVerificationTime` swallows the
+  // throw, so an algorithm swap, an iteration count outside the accepted
+  // range or a typo in the constant would make the equalisation cost
+  // nothing while every other assertion in the suite stayed green. The
+  // fake never parses its input, so this is the only place that can
+  // notice. Recording what the usecase passes (rather than importing the
+  // constant) keeps the assertion true however the value is produced.
+  it("burns against a hash the production hasher derives from, not just any string", async () => {
+    const burnt: string[] = [];
+    const delegate = new FakePasswordHasher();
+    const container = createTestContainer({
+      passwordHasher: {
+        hash: (plain) => delegate.hash(plain),
+        verify: async (plain, hash) => {
+          burnt.push(hash);
+          return delegate.verify(plain, hash);
+        },
+      },
+    });
+
+    await capture(() =>
+      loginWithPassword({
+        container,
+        input: { email: "nobody@example.com", password: PASSWORD },
+      }),
+    );
+
+    expect(burnt).toHaveLength(1);
+    const dummy = burnt[0] ?? "";
+    // Production parameters, since it is the shipped hasher that has to
+    // survive the constant. `verify` reads the cost out of the stored
+    // value, so this pays exactly what a real login pays.
+    await expect(
+      createPbkdf2PasswordHasher().verify(
+        PlainPassword.create(PASSWORD),
+        PasswordHash.create(dummy),
+      ),
+    ).resolves.toBe(false);
+    // Self-describing at production strength: a constant re-made at a
+    // token cost would still verify, and would still buy nothing.
+    expect(dummy).toMatch(
+      new RegExp(`^pbkdf2-sha256\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
+    );
+  });
+
+  // The other half of that swallow: the JSDoc promises a hasher which
+  // cannot read the dummy degrades the equalisation rather than turning
+  // an unknown address into a 500. TC-loginWithPassword-011 only walks
+  // the registered-address path, where the throw is meant to surface.
+  it("keeps an unknown address at INVALID_CREDENTIALS when the burn itself throws", async () => {
+    const container = createTestContainer({
+      passwordHasher: throwingHasher("verify"),
+    });
+
+    const error = await capture(() =>
+      loginWithPassword({
+        container,
+        input: { email: "nobody@example.com", password: PASSWORD },
+      }),
+    );
+
+    expect(isSystemError(error)).toBe(false);
+    expect(isValidationError(error)).toBe(true);
+    expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
   // TC-loginWithPassword-009 — the one case that pays for a real key

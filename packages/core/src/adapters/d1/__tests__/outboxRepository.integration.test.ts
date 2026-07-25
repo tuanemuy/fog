@@ -85,7 +85,7 @@ describe("D1OutboxRepository.save (integration)", () => {
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.id).toBe(event.id);
     expect(row.eventType).toBe("identity.userRegistered");
     expect(row.aggregateId).toBe(userId);

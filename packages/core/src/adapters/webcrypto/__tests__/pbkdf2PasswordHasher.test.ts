@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPbkdf2PasswordHasher,
   DEFAULT_PBKDF2_ITERATIONS,
+  MAX_PBKDF2_ITERATIONS,
+  MIN_PBKDF2_ITERATIONS,
 } from "../pbkdf2PasswordHasher";
 
 async function capture(fn: () => Promise<unknown>): Promise<unknown> {
@@ -93,6 +95,20 @@ describe("createPbkdf2PasswordHasher", () => {
     ["non-numeric iterations", "pbkdf2-sha256$many$c2FsdA==$aGFzaA=="],
     ["zero iterations", "pbkdf2-sha256$0$c2FsdA==$aGFzaA=="],
     ["malformed base64", "pbkdf2-sha256$1000$!!!$aGFzaA=="],
+    // A row claiming an absurd cost turns one login into an unbounded
+    // CPU burn, so the ceiling is a refusal to compute rather than a
+    // slow success. `Number` would also accept the three spellings
+    // below, each of which the encoder can never produce.
+    [
+      "iterations above the ceiling",
+      `pbkdf2-sha256$${MAX_PBKDF2_ITERATIONS + 1}$c2FsdA==$aGFzaA==`,
+    ],
+    [
+      "iterations with surrounding whitespace",
+      "pbkdf2-sha256$ 1000 $c2FsdA==$aGFzaA==",
+    ],
+    ["iterations in exponent notation", "pbkdf2-sha256$1e5$c2FsdA==$aGFzaA=="],
+    ["iterations in hexadecimal", "pbkdf2-sha256$0x10$c2FsdA==$aGFzaA=="],
   ])(
     "raises SystemError(DATA_INTEGRITY_ERROR) for a stored hash it cannot read: %s",
     async (_label, stored) => {
@@ -107,6 +123,65 @@ describe("createPbkdf2PasswordHasher", () => {
       expect(isSystemError(caught) && caught.code).toBe("DATA_INTEGRITY_ERROR");
     },
   );
+});
+
+// The construction boundary is the only place "this hasher offers a real
+// work factor" can be decided — every caller downstream just holds a
+// `PasswordHasher`. A guard that only ever runs on values it accepts is
+// not a guard, so both directions are walked here.
+describe("createPbkdf2PasswordHasher argument validation", () => {
+  it.each([
+    ["one below the floor", MIN_PBKDF2_ITERATIONS - 1],
+    ["no work factor at all", 1],
+    ["zero", 0],
+    ["negative", -1],
+    ["fractional", MIN_PBKDF2_ITERATIONS + 0.5],
+    ["not a number", Number.NaN],
+    ["infinite", Number.POSITIVE_INFINITY],
+  ])("refuses to build a hasher with %s iterations", (_label, iterations) => {
+    expect(() => createPbkdf2PasswordHasher({ iterations })).toThrow(
+      /at least/,
+    );
+  });
+
+  it("accepts exactly the floor, so the check is `<` and not `<=`", async () => {
+    const floor = createPbkdf2PasswordHasher({
+      iterations: MIN_PBKDF2_ITERATIONS,
+    });
+    const hash = await floor.hash(PASSWORD);
+
+    expect(hash.split("$")[1]).toBe(String(MIN_PBKDF2_ITERATIONS));
+    await expect(floor.verify(PASSWORD, hash)).resolves.toBe(true);
+  });
+
+  it("takes the OWASP default when given no argument", async () => {
+    const hash = await createPbkdf2PasswordHasher().hash(PASSWORD);
+    expect(hash.split("$")[1]).toBe(String(DEFAULT_PBKDF2_ITERATIONS));
+  });
+});
+
+// The ceiling's accepting side, kept apart because reaching `derive` at
+// ten million iterations is the very cost the ceiling exists to bound:
+// stubbing the derivation leaves `parse` as the only thing under test.
+describe("createPbkdf2PasswordHasher at the iteration ceiling", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads a stored hash declaring exactly the ceiling", async () => {
+    vi.spyOn(crypto.subtle, "deriveBits").mockResolvedValue(
+      new ArrayBuffer(32),
+    );
+
+    await expect(
+      hasher.verify(
+        PASSWORD,
+        PasswordHash.create(
+          `pbkdf2-sha256$${MAX_PBKDF2_ITERATIONS}$c2FsdA==$aGFzaA==`,
+        ),
+      ),
+    ).resolves.toBe(false);
+  });
 });
 
 // The other half of the split ADR-014 makes: a corrupted stored value is

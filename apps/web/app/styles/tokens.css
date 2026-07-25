@@ -158,8 +158,22 @@
   --sheet-w-md: min(100% - 2 * var(--space-lg), var(--sheet-max));
   --nav-sheet-inset: max(var(--space-md), calc((100% - var(--sheet-max)) / 2));
 
-  /* ボトムシートの下端。ホームインジケータ帯に最後の項目が重ならないよう
-     safe-area を足し込む（基準形 timeline.html の `.nav-sheet` と同値） */
+  /* Safe area — `head.ts` の `viewport-fit=cover` でレイアウトビューポートが
+     ノッチ／ホームインジケータ帯まで広がるので、画面端に接する余白は既定値と
+     safe-area の大きいほうを取る（基準形 timeline.html / login.html と同形）。
+     cover でなければ env() は 0 に解決され、既定値がそのまま残る */
+  --header-pad-t: max(
+    var(--space-lg),
+    calc(env(safe-area-inset-top, 0px) + var(--space-md))
+  );
+  --auth-pad-t: max(
+    var(--space-xl),
+    calc(env(safe-area-inset-top, 0px) + var(--space-md))
+  );
+  --auth-pad-b: max(
+    var(--space-xl),
+    calc(env(safe-area-inset-bottom, 0px) + var(--space-md))
+  );
   --nav-sheet-pad-b: max(
     var(--space-2xl),
     calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))

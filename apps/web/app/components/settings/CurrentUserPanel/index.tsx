@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { LogoutButton } from "@/components/settings/LogoutButton";
 import { requireUserId } from "@/presentation/currentUser";
+import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
 
 const loadCurrentUser = cache(
@@ -19,8 +20,10 @@ const AUTH_METHOD_LABEL = {
 const ROW = "flex items-center justify-between gap-md py-(--pad-row)";
 
 export async function CurrentUserPanel() {
-  const userId = await requireUserId();
-  const user = await loadCurrentUser(userId);
+  // This leaf is streamed, so it renders outside `errorResponseMiddleware`.
+  const user = await guardStreamedRender(async () =>
+    loadCurrentUser(await requireUserId()),
+  );
 
   return (
     <section>

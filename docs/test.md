@@ -18,7 +18,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 - **Dependencies**: real SQLite (in-memory). `setupTestContainer()` builds a container with migrations applied on top of `:memory:`, and closes the client in afterEach.
 - **Aim**: realistically verify transaction rollback, the adapter's built-in `SQLITE_BUSY` retry, `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
 - **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
-- **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `todo.integration.test.ts`, `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
+- **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `identity.integration.test.ts`, `userRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
 
 ### Property-based (fast-check)
 
@@ -66,8 +66,8 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 | All | `pnpm test` |
 | Unit only | `pnpm test:unit` |
 | Integration only | `pnpm test:integration` |
-| Specific domain (application) | `TEST_DOMAIN=todo pnpm test:domain` |
-| Specific domain (domain) | `TEST_DOMAIN=todo pnpm test:domain-layer` |
+| Specific domain (application) | `TEST_DOMAIN=identity pnpm test:domain` |
+| Specific domain (domain) | `TEST_DOMAIN=identity pnpm test:domain-layer` |
 
 ## Coverage
 

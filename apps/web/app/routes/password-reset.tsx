@@ -1,19 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AuthSheet } from "@/components/ui/AuthSheet";
 import { TextLink } from "@/components/ui/TextLink";
-import { buildHead } from "@/presentation/head";
+import { routeHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/password-reset")({
-  head: ({ match }) => {
-    const config = match.context.config;
-    if (!config) return {};
-    return {
-      meta: buildHead(config, {
-        title: "パスワードリセット",
-        path: "/password-reset",
-      }).meta,
-    };
-  },
+  head: ({ match }) =>
+    routeHead(match, {
+      title: "パスワードリセット",
+      path: "/password-reset",
+    }),
   component: PasswordResetPage,
 });
 

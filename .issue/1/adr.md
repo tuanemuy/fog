@@ -1154,3 +1154,270 @@ Accepted（実行時バグ修正時に決定）
 - 良い点: `kind` / `code` がクライアントまで届き、AC-10 / AC-12 の文言が実際に表示される（ブラウザで4ケースとも確認）。判定が graph 構成・バンドラ設定から独立する
 - トレードオフ: `name` 文字列という規約に寄りかかる。`AppServerError` を継承して `name` を上書きするクラスを作ると外れるが、このクラスは transport 境界専用で継承する用途が無い
 - 回帰検出: `apps/web/app/presentation/__tests__/appServerErrorAdapter.test.ts` が、`?dup` クエリで別 module instance を作って「別 graph の `AppServerError`」を再現し、アダプターが同定できること・`extractSerializedError` が `kind` を拾えること・アダプターが start インスタンスに登録されていることを検証する。`instanceof` に戻すとこのテストが落ちる
+
+---
+
+## ADR-033: タイミングオラクル対策の検証を「定数の export」ではなく「ユースケースが渡した値の記録」で行う
+
+### Status
+
+Accepted（レビュー 002 修正時に決定）
+
+### Context
+
+レビュー 002 test の B-001。`loginWithPassword` の `burnVerificationTime` は未登録メール / SSO ユーザーの経路でも鍵導出1回分のコストを払うことで応答時間を均す（ADR-026）。ところがこの関数は `hasher.verify` の throw を**意図的に握り潰す**。したがって `DUMMY_PASSWORD_HASH` が実ハッシャーの `parse()` を通らなくなった瞬間（アルゴリズム識別子の変更、反復回数が受理範囲を外れる、定数のタイポ）、`derive()` に到達する前に例外が出て握り潰され、**対策は死ぬが型検査もテストも実行時エラーも出ない**。
+
+唯一の検証テストは `FakePasswordHasher`（保存形式を一切 parse しない）の上で `verify` の呼び出し回数を数えるだけだったため、定数が壊れていても常に green だった。テスト名が主張する「1回分の検証コストを払う」に対し、実際に固定できていたのは「`verify` が呼ばれる」だけである。
+
+### Decision
+
+**ユースケースが `verify` に渡したハッシュ文字列をスタブで記録し、その値を実ハッシャー（本番パラメータ）に食わせて `resolves.toBe(false)` を表明する。**
+
+- **定数を `export` して直接検証する案は採らない。** 記録方式は「どう作られた値か」に依存しないので、定数がリテラルでも設定値からの導出でも実行時計算でも同じ表明が成立する（実際、本レビュー期間中に `DUMMY_PASSWORD_HASH` はリテラルから `DUMMY_PASSWORD_HASH_ITERATIONS` 由来の組み立てへ変わったが、テストは無変更で追随した）。また `export` は「テストのためだけの公開 API」を1つ増やす
+- **表明は `throw しないこと` ではなく `false に解決すること`。** parse 成功と derive 成功の両方を1つの表明で押さえられる。`parse` だけを見る形にすると、`derive` に到達しない退行を見逃す
+- **あわせて経路ごとの内訳（各1回）と、握り潰しの効果も固定する。** 合計3回だけでは「ある経路が2回・別の経路が0回」で通る。握り潰し側は `throwingHasher("verify")` × 未登録メールで `ValidationError(INVALID_CREDENTIALS)` になること（JSDoc が明示的に約束している「未知のアドレスを 500 にしない」）を1ケース
+
+同じ形の判断をフェイルクローズのガード（`requireSessionSecret` / `MIN_SESSION_SECRET_LENGTH` / `MIN_PBKDF2_ITERATIONS` / `MAX_PBKDF2_ITERATIONS`）にも適用する。**「落ちる側」と「ちょうど境界で通る側」を対にして踏む**ことで、条件が `<` から `<=` にずれる退行も検出できる。DI 側の `requireSessionSecret` のテストが長さをアダプターの `MIN_SESSION_SECRET_LENGTH` から取っているのは意図的で、二重定義が将来ずれたときにテストが落ちる（レビュー 002 adapters W-005）。
+
+### Consequences
+
+- 良い点: 定数の陳腐化が1ケースで落ちる（実測: 反復回数を 21,000,000 に書き換えると `DATA_INTEGRITY_ERROR` で失敗する）。実ハッシャーでの検証コストは本番パラメータ 210,000 回でも workerd 上で 33ms なので、統合スイートの実行時間に影響しない
+- トレードオフ: テストがスタブ経由の間接観測になるため、記録した値が「ユースケースが実際に渡したもの」であることは `burnt).toHaveLength(1)` に依存する。未登録メール経路は `verify` を1回しか呼ばないので、この前提が崩れると件数表明のほうが先に落ちる
+- 波及: `FakePasswordHasher` は依然として parse しないので、「本番ハッシャーが読めること」を見る表明はこの1箇所にしか置けない。ダミーハッシュの形式を変えるときはこのテストが唯一の関門になる
+
+---
+
+## ADR-034: ダミーハッシュの反復回数をアダプター既定値と型で結び、握り潰しに警告を足す
+
+### Status
+
+Accepted（レビュー指摘 review-002-domain-usecase W-001 / W-002、review-002-security W-004 への対応）
+
+### Context
+
+ADR-026 の等時間化は `DUMMY_PASSWORD_HASH`（`pbkdf2-sha256$210000$…` の文字列定数）に verify を1回走らせることで成立している。ここに2つの穴が残っていた。
+
+- 反復回数がリテラルなので、`DEFAULT_PBKDF2_ITERATIONS` を上げると未登録アドレスだけが旧コストのままになり、オラクルが元の向きで復活する。ダミーだけ上げれば向きが反転する
+- ダミーが読めなくなったときの唯一の挙動が `catch {}` で、ログも出ない。等時間化が死んでも観測点が1つも無い
+
+「設定値から導出する」には `loginWithPassword` が `DEFAULT_PBKDF2_ITERATIONS` を import する必要があるが、これはユースケース → アダプターの依存で、CLAUDE.md の依存方向に反する。ポートに `dummyHash` を生やす案は ADR-026 で退けたとおり spec のポート面（AC-4）を実装都合で広げる。
+
+### Decision
+
+**結合を型で表明し、向きはアダプター → アプリケーションに取る。**
+
+- ユースケース側に `DUMMY_PASSWORD_HASH_ITERATIONS = 210_000` を置き、ダミー文字列をそこから組み立てる。反復回数の記述箇所はユースケース内で1つになる
+- アダプター側は `export const DEFAULT_PBKDF2_ITERATIONS: typeof DUMMY_PASSWORD_HASH_ITERATIONS = 210_000` と宣言する。`import type` なので実行時の依存は生じず、依存の向きも内向きのまま。片方だけ動かすと**その行で型エラーになる**（実測: 600,000 に変えると `Type '600000' is not assignable to type '210000'`）
+- `burnVerificationTime` に `Logger` を渡し、握り潰す前に `warn` を1行出す。リクエストの結果は変えないので、ログが唯一の signal になる
+
+salt と digest は再生成不要にした。`verify` は保存値が宣言するコストで導出するので、一致しないバイト列のままで意図どおり働く。
+
+### Consequences
+
+- 良い点: 反復回数の引き上げが型検査で止まり、テストの実行を待たずに気づける。ダミーの陳腐化（形式そのものが読めなくなる側）は ADR-033 のテストが拾い、コストのずれは型が拾う、と検出手段が二層になる
+- トレードオフ: アダプターの既定値の型がアプリケーション層の定数に縛られる。数値としては同じものなので実害は無いが、`DEFAULT_PBKDF2_ITERATIONS` の型が `number` ではなくリテラルになる
+- 残る限界: 引き上げ前に書かれた保存ハッシュは旧コストのままなので、その行に対する誤パスワードは未登録アドレスより安い。rehash-on-login（#18）まで解消しない。この限界は `DEFAULT_PBKDF2_ITERATIONS` の JSDoc と `progress.md` に書いた
+
+---
+
+## ADR-035: ユースケースが受け取るコンテナから `sessionCodec` を型で外す
+
+### Status
+
+Accepted（レビュー指摘 review-002-domain-usecase W-004 への対応）
+
+### Context
+
+`SessionCodec` の JSDoc は「Presentation-layer port. No usecase may reference it.」と禁止しているが、`ServiceArgs.container` の型は `RequestContainer` そのもので、`container.sessionCodec.issue(...)` はコンパイルを通る。同じ PR で `SessionSecret` ブランドを入れて「未設定の秘密鍵」を型から消した直後であり、`RequestContainer` が `outboxRepository` / リポジトリ群を「載せない」ことで構造的に排除しているのと比べても、ここだけコメント頼みだった。
+
+### Decision
+
+`application/types.ts` に `UsecaseContainer = Omit<RequestContainer, "sessionCodec">` を置き、`ServiceArgs.container` をそれにする。presentation は `getContainer()` の戻り値（`RequestContainer`）をそのまま渡せる — 変数の代入には excess property check が働かないため、呼び出し側・テストヘルパーとも無変更で通る（実測: 4パッケージの型検査が変更0行で Done）。
+
+### Consequences
+
+- 良い点: 「ユースケースはセッションに触れない」が型エラーになる。責務のドリフトがレビュー待ちにならない
+- トレードオフ: コンテナ型が2つになる。`RequestContainer` は「リクエスト境界が組み立てるもの」、`UsecaseContainer` は「ユースケースが見てよい面」という役割の違いなので、`di/types.ts` の JSDoc に対応を書いた
+- 将来: presentation 専用のポートが増えるたびに `Omit` の対象が増える。3つ目が出たら `Pick` 側で書くか、コンテナを2本に分ける判断をする
+
+---
+
+## ADR-036: セッション鍵の最小長はアダプターを唯一の出所にする
+
+### Status
+
+Accepted（レビュー指摘 review-002-adapters W-005 への対応）
+
+### Context
+
+`MIN_SESSION_SECRET_LENGTH = 32` が `application/di/secrets.ts`（非公開）と `adapters/webcrypto/hmacSessionCodec.ts`（公開）に別々にあった。ずれたときの壊れ方が悪い — アダプター側だけ上げると、DI は下限を満たさない秘密に `SessionSecret` ブランドを付けて通し、その後 `createHmacSessionCodec` が素の `Error` を投げる。Cloudflare ではこの throw が `errorResponseMiddleware` の外（`createRequestContainer` の中）で起きるので、ADR-025 で潰した「起動は成功、全リクエストが素の 500」に戻る。
+
+### Decision
+
+`secrets.ts` がアダプターの `MIN_SESSION_SECRET_LENGTH` を import する。値の出所は**構築境界を持つ側**、つまり HMAC 鍵長の不変条件を実際に強制するアダプターとする。`application/di/` は既に4本のランタイム配線でアダプターを import しており、依存の向きは変わらない（`d1/schema.ts` の `OCC_GUARD_CHECK_NAME` を検出器と共有しているのと同じ形）。
+
+### Consequences
+
+- 良い点: 定数が1つになり、アダプター側を上げれば DI の検査も同時に上がる。`di/__tests__/secrets.test.ts` と `webcrypto/__tests__/hmacSessionCodec.test.ts` が同じ定数を参照するので、境界も1つの数字で表明される
+- トレードオフ: `secrets.ts` がアダプターに依存する。セッションの実装方式（署名済みブロブ / セッションテーブル）を差し替えるときは、この import 先も差し替え対象になる
+
+---
+
+## ADR-037: 例示ファイルの `SESSION_SECRET` は値を置かず空にする
+
+### Status
+
+Accepted（レビュー指摘 review-002-security W-002 への対応）
+
+### Context
+
+`apps/web/.env.example` と `.dev.vars.example` が `dev-only-session-secret-change-me-0123456789`（44文字）を同梱していた。`requireSessionSecret` の検査は「未設定でない」「32文字以上」だけなので、この値はそのまま通る。コピーして本番に出た瞬間、リポジトリを読んだ誰でも任意の `uid` の署名済み Cookie を作れる。`.env.aws.example` / `.env.gcp.example` は空だったので、方針も揃っていなかった。
+
+### Decision
+
+**両ファイルとも空にし、生成コマンド（`openssl rand -base64 48`）をコメントで示す。** レビューが挙げたもう一方の案（`requireSessionSecret` に例示値の拒否リストを持たせる）は採らない — 塞げるのは「この文字列を使った場合」だけで、例示値をコピーして1文字変えた鍵は素通りする。値を置かないことは「弱い鍵の網羅的な検出」を要求せず、失敗形も「起動時 / 初回リクエストで落ちる」という既存の経路に収まる。
+
+### Consequences
+
+- 良い点: 4つの例示ファイルで方針が揃う。公開された鍵が本番に出る経路が、検出ではなく不在によって閉じる
+- トレードオフ: `cp .env.example .env` の直後は起動しない。生成コマンドを `SESSION_SECRET=` の直上に置き、各ランタイム docs のセットアップ手順と揃えることで、失敗から復帰までを1コマンドにした
+
+---
+
+## ADR-038: キャッシュ禁止の権威点をガードからリクエスト境界のミドルウェアへ移す
+
+### Status
+
+Accepted（レビュー指摘 review-002-frontend B-001 / review-002-security W-001 への対応。ADR-031 を更新する）
+
+### Context
+
+ADR-031 は `requireUserId()` を「このレスポンスは per-user である」権威点と定め、そこで `Cache-Control: no-store, private` を付けた。しかし `requireUserId()` を呼ぶのは `CurrentUserPanel` と `logoutFn` だけで、実測したヘッダは `/settings` にしか付いていなかった（`/`・`/topics`・`/search`・`/trash` は無し）。結果として **manual TC-23 が実際に落ちる** — ログアウト後の戻るボタンで、ブラウザの back/forward キャッシュから SSR 済みの保護シェルが再利用される。
+
+さらに `/settings` に付いていたのも保証ではなくレースだった。per-fragment streaming のリーフは**ハンドラが戻ってヘッダが確定した後**に描画されるので、`setResponseHeader` はその時点で手遅れになりうる。実際 SPA 内遷移で使う `GET /_serverFn/<renderSettings>`（本文にメールアドレスを含む）にはヘッダが一切付いていなかった。
+
+### Decision
+
+**`noStoreMiddleware` を1本置き、認証状態に依存する server function に付ける。** ミドルウェアは `next()` の**前**にヘッダを立てるので、ハンドラが promise を await せず返す streaming 経路も覆う。付ける先は `readAuthStateFn`（`_app` 配下の全文書がここを通る）・`renderSettings`・`logoutFn`。SSR 中は server function がインプロセスで走るため、同じ1点が文書レスポンスにも乗る。`Vary: Cookie` も併せて立てる — `/_serverFn/<id>` の URL は全ユーザーで同一なので、前段にキャッシュを置いたときのフェイルセーフになる。
+
+`requireUserId()` 側の `setResponseHeader` は残すが、コメントを「これだけでは streaming 経路を覆えない」に書き換えた。ADR-031 の「ガードが唯一の権威点」という表現は本 ADR で置き換わる。
+
+### Consequences
+
+- 良い点: 保護データを返す経路が文書・server function とも1つの宣言で覆われる。実測で `/`・`/topics`・`/search`・`/trash`・`/settings` の文書と `readAuthStateFn` / `renderSettings` の server function 応答すべてに `no-store, private` + `vary: cookie` が乗り、ログアウト後の戻るボタンで保護画面が復元されないこと（TC-23）をブラウザで確認した
+- トレードオフ: `/login` の文書にも `no-store` が乗る（`beforeLoad` が `readAuthStateFn` を通るため）。未認証ページの再訪が毎回サーバー往復になるが、認証フォームは元よりキャッシュしたい対象ではない
+- 次に streaming ルートを足す人への要求: 保護データを返すなら `noStoreMiddleware` を付ける。ガードを呼ぶだけでは足りない
+
+---
+
+## ADR-039: streaming する RSC リーフを redaction 境界の内側に入れる
+
+### Status
+
+Accepted（レビュー指摘 review-002-security W-003 への対応）
+
+### Context
+
+`errorResponseMiddleware` は「serialize → redact → status → Logger」の唯一の権威点として設計されている。しかし per-fragment streaming のリーフは**ハンドラが戻った後**に描画されるので、そこでの throw は middleware の `catch` に届かない。実測では開発ビルドで `E{"name":"NotFoundError","message":"User not found: …","stack":[[…,"/Users/…/packages/core/src/application/identity/getCurrentUser.ts",…]]}` が RSC ストリームに載り、開発マシンの絶対パスを含むサーバースタックがそのまま応答に出ていた。本番で漏れないのは React が message を digest に潰すからで、**redaction 境界がこの経路を覆っていない**という事実は変わらない。
+
+`renderServerComponent` は `onError` を受け取らない（`RscCssEnvelopeOptions` のみ）ため、レビューが挙げた「`renderServerComponent` に `onError` を渡す」案は API 上取れない。RSC ツリー内の error boundary はクライアントコンポーネントを要求するので、リーフを Suspense 境界の外から包むこともできない。
+
+### Decision
+
+**`errorResponseMiddleware` から redaction / ログの本体を `toClientError` に括り出し、`guardStreamedRender(load)` として同じ境界を streaming リーフに公開する。** `CurrentUserPanel` はデータ取得をこれで包む。middleware と同じ関数を通るので、redaction と Logger の分岐は1箇所のまま。
+
+HTTP ステータスだけは復元できない（描画時点で応答は確定済み）ので、`guardStreamedRender` の JSDoc に「これは戻せない」と明記した。CLAUDE.md「domain → application はそのまま流す」「boundary でだけ catch する」の方針とは整合する — ここは transport 境界そのものが2つに割れている構造的な事情で、リーフ側が2つ目の境界になる。
+
+### Consequences
+
+- 良い点: 実測で RSC ストリームのエラーフレームが `E{"name":"AppServerError","message":"User not found: …","stack":[]}` になり、内部フレーム（`packages/core/**` の絶対パス）が消えた。`system` / `unknown` は本番同様に `System error` へ潰れ、Logger にも届く
+- トレードオフ: streaming リーフは「middleware に任せる」だけでは済まなくなり、`guardStreamedRender` を明示的に呼ぶ必要がある。呼び忘れは型では検出できないので、規約として JSDoc に書いた
+- `notFound` は従来どおり redact されない（ADR 外の既存判断。届く相手はそのセッションの持ち主本人）
+
+---
+
+## ADR-040: canonical は各ルートが持ち、root は出さない
+
+### Status
+
+Accepted（レビュー指摘 review-002-frontend W-004 への対応）
+
+### Context
+
+各ルートの `head` が `buildHead(...).meta` だけを返していたため、canonical は `__root` が出す `/` のまま全ページで固定され、ページ別の `og:url` と矛盾していた。
+
+修正にあたって、`meta` と `links` で TanStack Router の合成規則が違うことが分かった。`meta` は `name` / `property` をキーに**深いマッチが勝つ**が、`links` は全マッチ分を**そのまま連結**する（`headContentUtils.tsx` の `appendUniqueUserTags` は完全一致のみ排除）。したがって「root がベースを出して子が上書きする」は canonical では成立せず、実測でも `<link rel="canonical" href="…/"/>` と `<link rel="canonical" href="…/login"/>` が2本並んだ。
+
+### Decision
+
+**`__root` は `meta` だけを返し、canonical は各ルートが `routeHead(match, {...})` で出す。** `head` の定型（`config` の有無で分岐して `buildHead` を呼ぶ）が8ルートに逐語コピーされていたので、`presentation/head.ts` に `routeHead` を1本足して配線ごと共通化した。`__root` の `links` はサイトアセットとスタイルシート（ページ非依存で1本しか無いもの）に限る。
+
+### Consequences
+
+- 良い点: canonical が1ページ1本になり、`og:url` と一致する。`head` の分岐が8箇所から1箇所になり、片方だけ直す事故が消える
+- トレードオフ: `head` を持たないルート（現状は無い。404 / エラー画面がこれに当たる）には canonical が付かない。索引対象でないので許容する
+
+---
+
+## ADR-041: `viewport-fit=cover` を採り、safe-area を役割名トークンで持つ
+
+### Status
+
+Accepted（レビュー指摘 review-002-frontend W-005 への対応。ADR-028 を補う）
+
+### Context
+
+ADR-028 で `--nav-sheet-pad-b` に `env(safe-area-inset-bottom)` を足したが、viewport meta が `viewport-fit=contain`（既定）のままだったため `env()` は常に 0 に解決され、修正は**一度も発火していなかった**（実測 `padding-bottom: 40px` = `--space-2xl` ちょうど）。レビューは (a) cover を入れて上端も手当てする / (b) cover にしないと決めて ADR に注記する、の二択を示した。
+
+### Decision
+
+**(a) を採る。** `head.ts` の viewport meta に `viewport-fit=cover` を足し、画面端に接する余白を役割名トークンにした（`--header-pad-t` / `--auth-pad-t` / `--auth-pad-b`。既存の `--nav-sheet-pad-b` と同形）。`head.ts` は `apple-mobile-web-app-capable: yes` を出していてスタンドアロン起動を想定しているので、(b) を選ぶと「PWA 化した時点で上端がステータスバーに潜る」を将来へ先送りするだけになる。
+
+各トークンは `max(既定値, calc(env(...) + 余白))` の形で、cover でない環境では既定値がそのまま残る。基準形 `timeline.html` の `header.top` / `login.html` の `.auth-container` に対応する。左右のインセット（横向きのノッチ）は基準形も扱っていないので、本スライスでも扱わない。
+
+### Consequences
+
+- 良い点: CDP の `Emulation.setSafeAreaInsetsOverride`（top 59 / bottom 34）で実測し、ヘッダー上端 24px → 73px、認証シートの上下 30px → 73px / 48px、ボトムシート下端 40px → 58px と、全箇所で safe-area が算出値に反映されることを確認した
+- トレードオフ: cover はレイアウトビューポートを画面全体に広げるので、以後**画面端に接する余白を足すたびに safe-area を考える**必要がある。生値ではなく役割名トークン経由にしたのは、その判断を tokens.css の1箇所に集めるため
+
+---
+
+## ADR-042: シートのスクロールリセットは `scrollToTopSelectors` で明示する
+
+### Status
+
+Accepted（レビュー指摘 review-002-frontend B-002 への対応。ADR-030 を補う）
+
+### Context
+
+ADR-030 で `<main>` をスクロールコンテナにした結果、新規ナビゲーションでスクロール位置が先頭に戻らなくなった。`@tanstack/router-core` の `setupScrollRestoration` は、戻る / 進むの復元は任意の要素を追跡して行う一方、**新規遷移のトップ復帰は window と `scrollToTopSelectors` の列挙しか見ない**。`scrollToTopSelectors` は既定値を持たない。加えて `scroll.restoring && fromCacheKey !== cacheKey` の分岐が遷移元の位置を遷移先のエントリへコピーするため、放置すると前画面の位置を持ち越す。
+
+### Decision
+
+**`<main data-scroll-restoration-id="app-sheet">` と `scrollToTopSelectors: ['[data-scroll-restoration-id="app-sheet"]']` を対で置く。** id を付けることでスクロールキャッシュのキーが `nth-child` の構造セレクタから外れる副次効果もある（DOM 構造を変えても保存済みの位置が迷子にならない）。
+
+### Consequences
+
+- 良い点: 実測で「`main` を 800px スクロール → `/settings` へ遷移 → `scrollTop === 0`」「戻る → 800 に復元」を確認した。無限スクロールのタイムラインが載る前に土台側で閉じている
+- トレードオフ: スクロールコンテナを増やすたびに `scrollToTopSelectors` への追加が要る。シェルが1つのスクロール領域を持つ設計（ADR-030）である限り、追加は起きない
+
+---
+
+## ADR-043: ブランドリンクの `aria-current` は `createLink` のラッパーで落とす
+
+### Status
+
+Accepted（レビュー指摘 review-002-frontend W-003 への対応）
+
+### Context
+
+`<Link>` はアクティブ時に `aria-current="page"` を自動付与するため、`to="/"` のワードマークがタイムライン表示中に「現在地」として公開され、ナビ項目と合わせて2箇所になっていた。レビューの提案は `activeProps={{}}` を渡すことだったが、`@tanstack/react-router` の `useLinkProps` は `...isActive && STATIC_ACTIVE_PROPS` を `activeProps` の**後**に展開する（`link.js:369`）ので、`activeProps` でも呼び出し側の `aria-current={undefined}` でも消せない。
+
+### Decision
+
+**`createLink` でラップした `BrandLink` を作り、ラッパーの引数で `aria-current` を落とす。** `createLink(Comp)` は解決済み props を `Comp` に渡すので、ここが唯一 `aria-current` に触れる位置になる。同じ理由で `TextLink` は `className` をマージするようにした（アクティブ時に router が渡す `className="active"` が固定クラス列を上書きしていた）— どちらも「`createLink` のラッパーは router が渡す props を素通しにしない」という同じ形。
+
+### Consequences
+
+- 良い点: 実測で `/` の `aria-current="page"` が「タイムライン」1件だけになった。`data-status="active"` は残るので、将来ロゴにアクティブ表現を足す余地は消えていない
+- トレードオフ: ワードマークが `Link` ではなくラッパー経由になる。ラッパーの存在理由をコメントで固定した

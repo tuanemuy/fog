@@ -9,14 +9,29 @@ const region = process.env["CDK_DEFAULT_REGION"] ?? "us-east-1";
 
 const stages = ["staging", "production"] as const;
 
+// An unset secret in CI arrives as an empty string, not as an absent key
+// (`FOO: ${{ secrets.MISSING }}` in GitHub Actions, `export FOO=` in a
+// shell), so "" has to mean unset here too. Otherwise the checks below
+// pass and the stack fails later inside `Secret.fromSecretCompleteArn`,
+// which names no variable at all.
+function read(key: string): string | undefined {
+  const value = process.env[key];
+  return value === undefined || value === "" ? undefined : value;
+}
+
+// `Secret.fromSecretCompleteArn` requires the full ARN including the
+// six-character suffix Secrets Manager appends; a name or a partial ARN
+// fails the same nameless way an empty string does.
+const COMPLETE_SECRET_ARN =
+  /^arn:[^:]+:secretsmanager:[^:]+:\d+:secret:.+-[A-Za-z0-9]{6}$/;
+
 for (const stage of stages) {
   // Stage-keyed env vars: `TURSO_URL_STAGING`, `TURSO_AUTH_TOKEN_SECRET_ARN_STAGING`, `APP_URL_STAGING`, etc.
   const upper = stage.toUpperCase();
-  const tursoUrl = process.env[`TURSO_URL_${upper}`];
-  const tursoAuthSecretArn =
-    process.env[`TURSO_AUTH_TOKEN_SECRET_ARN_${upper}`];
-  const sessionSecretArn = process.env[`SESSION_SECRET_ARN_${upper}`];
-  const appUrl = process.env[`APP_URL_${upper}`];
+  const tursoUrl = read(`TURSO_URL_${upper}`);
+  const tursoAuthSecretArn = read(`TURSO_AUTH_TOKEN_SECRET_ARN_${upper}`);
+  const sessionSecretArn = read(`SESSION_SECRET_ARN_${upper}`);
+  const appUrl = read(`APP_URL_${upper}`);
 
   const stageEnv = {
     [`TURSO_URL_${upper}`]: tursoUrl,
@@ -41,13 +56,28 @@ for (const stage of stages) {
       // absent, which surfaces later as "cdk deploy did nothing" with
       // no message to trace back to the unset variable.
       throw new Error(
-        `Stage "${stage}" is partially configured: ${missing.join(", ")} unset. Set them, or unset every variable of the stage to skip it.`,
+        `Stage "${stage}" is partially configured: ${missing.join(", ")} unset or empty. Set them, or unset every variable of the stage to skip it.`,
       );
     }
 
     // Skip stages that have not been configured at all — synth stays
     // useful for the stage(s) that are wired up.
     continue;
+  }
+
+  const malformed = [
+    [`TURSO_AUTH_TOKEN_SECRET_ARN_${upper}`, tursoAuthSecretArn],
+    [`SESSION_SECRET_ARN_${upper}`, sessionSecretArn],
+  ]
+    .filter(
+      ([, value]) => value !== undefined && !COMPLETE_SECRET_ARN.test(value),
+    )
+    .map(([key]) => key);
+
+  if (malformed.length > 0) {
+    throw new Error(
+      `Stage "${stage}" has ${malformed.join(", ")} set to something other than a complete Secrets Manager ARN (arn:<partition>:secretsmanager:<region>:<account>:secret:<name>-<6 chars>).`,
+    );
   }
 
   new AppStack(app, `AppStack-${stage}`, {

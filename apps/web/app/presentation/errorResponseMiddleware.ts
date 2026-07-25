@@ -19,11 +19,11 @@ import {
 // from client bundles by the TanStack Start compiler, so importing
 // `@tanstack/react-start/server` at module top-level is safe.
 //
-// This is the single redaction boundary for outbound errors: the raw
-// serialized form is handed to the injected `Logger` for ops triage, and
-// the client receives only `redactForClient(...)`. Logger output policy
+// This module owns the redaction boundary for outbound errors — as this
+// middleware for awaited server functions, and as `guardStreamedRender` for
+// RSC leaves that render after the handler returned. Logger output policy
 // (console, structured JSON, sink, …) is owned by the implementation that
-// the container injects — the middleware just forwards the raw payload.
+// the container injects — this module just forwards the raw payload.
 export const errorResponseMiddleware = createMiddleware({
   type: "function",
 }).server(async ({ next }) => {
@@ -31,21 +31,46 @@ export const errorResponseMiddleware = createMiddleware({
     return await next();
   } catch (error) {
     if (isRedirect(error) || isNotFound(error)) throw error;
-
-    const rawSerialized = isAppServerError(error)
-      ? error.serialized
-      : serializeError(error);
-
-    if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
-      await logServerError(error, rawSerialized);
-    }
-
-    const clientSerialized = redactForClient(rawSerialized);
-    const appError = new AppServerError(clientSerialized);
-    setResponseStatus(httpStatusFor(clientSerialized));
+    const appError = await toClientError(error);
+    setResponseStatus(httpStatusFor(appError.serialized));
     throw appError;
   }
 });
+
+/**
+ * The same boundary, for renders that stream past the middleware.
+ *
+ * A per-fragment streaming route forwards `renderServerComponent(...)`
+ * without awaiting it, so the RSC leaf renders after the handler returned:
+ * a throw inside it never reaches the middleware's `catch`. Leaves that read
+ * protected data wrap their loading in this so redaction and logging still
+ * happen at one place. The HTTP status is the one thing it cannot restore —
+ * the response is already committed by the time the leaf renders.
+ */
+export async function guardStreamedRender<T>(
+  load: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isRedirect(error) || isNotFound(error)) throw error;
+    throw await toClientError(error);
+  }
+}
+
+// The single redaction point: the raw serialized form goes to the injected
+// `Logger` for ops triage, the client only ever sees `redactForClient(...)`.
+async function toClientError(error: unknown): Promise<AppServerError> {
+  const rawSerialized = isAppServerError(error)
+    ? error.serialized
+    : serializeError(error);
+
+  if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
+    await logServerError(error, rawSerialized);
+  }
+
+  return new AppServerError(redactForClient(rawSerialized));
+}
 
 // `containerStore` is client-graph safe (no node-only imports), so
 // statically importing `getContainer` here doesn't pull `node:async_hooks`

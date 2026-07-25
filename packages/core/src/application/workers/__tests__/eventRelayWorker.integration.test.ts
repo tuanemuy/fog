@@ -340,8 +340,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(1);
     expect(row.processedAt).toBeNull();
     expect(row.failedAt).toBeNull();
@@ -365,8 +366,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.lastError).not.toBeNull();
     expect(row.lastError?.length ?? 0).toBeLessThanOrEqual(4096);
     expect(row.lastError).toMatch(/…\(truncated\)$/);
@@ -417,8 +419,9 @@ describe("processOutboxEvents", () => {
     });
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(2);
     expect(row.failedAt).toBeInstanceOf(Date);
     expect(row.nextAttemptAt).toBeNull();
@@ -464,8 +467,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(2);
     expect(row.failedAt).toBeInstanceOf(Date);
     expect(row.lastError).toMatch(/No decoder registered/);

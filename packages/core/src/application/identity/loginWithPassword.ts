@@ -6,6 +6,7 @@ import {
   PlainPassword,
 } from "@repo/core/domain/identity/valueObject";
 import { ValidationError } from "../errors";
+import type { Logger } from "../ports/logger";
 import type { ServiceArgs } from "../types";
 
 export type LoginWithPasswordInput = {
@@ -21,15 +22,28 @@ const invalidCredentials = (): ValidationError =>
   new ValidationError("INVALID_CREDENTIALS", "Invalid email or password");
 
 /**
+ * The work factor {@link DUMMY_PASSWORD_HASH} declares.
+ *
+ * `PasswordHasher.verify` reads the cost out of the value it is handed, so
+ * this number — not the salt, not the digest — is what makes the burn cost
+ * what a real verification costs. Equalisation therefore only holds while
+ * it equals the shipped hasher's work factor, and the shipped hasher pins
+ * itself to it: `DEFAULT_PBKDF2_ITERATIONS` is declared as `typeof` this
+ * constant, so raising one without the other stops compiling. The pin sits
+ * on the adapter side because the dependency may only point inward.
+ */
+export const DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
+
+/**
  * A throwaway hash, in the `PasswordHasher` adapter's stored encoding, of a
  * password nobody holds. It exists so a login that finds no password
  * account still pays for one key derivation — see `burnVerificationTime`.
  *
- * Produced with the adapter's production parameters (PBKDF2-HMAC-SHA256,
- * 210,000 iterations), so its self-described cost matches the real one.
+ * Only the declared cost has to be current; the salt and digest are
+ * arbitrary bytes, since no password is ever meant to match them.
  */
 const DUMMY_PASSWORD_HASH =
-  "pbkdf2-sha256$210000$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=" as PasswordHash;
+  `pbkdf2-sha256$${DUMMY_PASSWORD_HASH_ITERATIONS}$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=` as PasswordHash;
 
 /**
  * Runs one verification whose outcome is discarded, so the "no such
@@ -39,16 +53,22 @@ const DUMMY_PASSWORD_HASH =
  * parse {@link DUMMY_PASSWORD_HASH} (an algorithm swap that leaves this
  * constant stale) must not turn an unknown address into a 500. That
  * degrades the equalisation back to today's behaviour rather than breaking
- * login, which is why this is the one place a throw is swallowed.
+ * login, which is why this is the one place a throw is swallowed — and why
+ * it is logged: the request is unaffected, so the warning is the only
+ * signal that the mitigation has stopped working.
  */
 async function burnVerificationTime(
   hasher: PasswordHasher,
   plainPassword: PlainPassword,
+  logger: Logger,
 ): Promise<void> {
   try {
     await hasher.verify(plainPassword, DUMMY_PASSWORD_HASH);
-  } catch {
-    // deliberately ignored
+  } catch (cause) {
+    logger.warn(
+      "Login timing equalisation is inactive: the password hasher could not verify the dummy hash",
+      { cause },
+    );
   }
 }
 
@@ -86,13 +106,21 @@ export async function loginWithPassword({
     userRepository.findByEmail(email),
   );
   if (!found) {
-    await burnVerificationTime(container.passwordHasher, plainPassword);
+    await burnVerificationTime(
+      container.passwordHasher,
+      plainPassword,
+      container.logger,
+    );
     throw invalidCredentials();
   }
 
   const user = found.entity;
   if (!User.isPasswordUser(user)) {
-    await burnVerificationTime(container.passwordHasher, plainPassword);
+    await burnVerificationTime(
+      container.passwordHasher,
+      plainPassword,
+      container.logger,
+    );
     throw invalidCredentials();
   }
 

@@ -1,6 +1,6 @@
 # Backend Implementation Guide
 
-The Todo domain implementation is the canonical example. When adding a new domain, just follow the same structure.
+The snippets use a `Todo` domain — the template's sample, deleted from this repository. The domain that actually ships is `identity` (`packages/core/src/domain/identity/`, `packages/core/src/application/identity/`); read it for the same structure in working code, and follow that structure when adding a domain.
 
 > For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
 

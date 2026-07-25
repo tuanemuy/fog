@@ -52,7 +52,14 @@ export function buildHead(
 
   const meta: MetaTag[] = [
     { charSet: "utf-8" },
-    { name: "viewport", content: "width=device-width, initial-scale=1" },
+    // `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to
+    // anything but 0 — without it the safe-area tokens in `tokens.css` are
+    // inert and content sits under the notch / home indicator when the app
+    // is launched standalone.
+    {
+      name: "viewport",
+      content: "width=device-width, initial-scale=1, viewport-fit=cover",
+    },
     { title },
     { name: "description", content: description },
     { name: "theme-color", content: config.themeColor },
@@ -79,5 +86,26 @@ export function buildHead(
 
   const links: LinkTag[] = [{ rel: "canonical", href: url }];
 
+  return { meta, links };
+}
+
+// `config` is absent only while the root `beforeLoad` that provides it is
+// still in flight; there is nothing page-specific to say yet.
+type RouteHeadMatch = { context: { config?: AppConfig | undefined } };
+
+/**
+ * The per-route `head()` body.
+ *
+ * Returning `meta` alone leaves `__root`'s canonical (the home page) in
+ * place, which then contradicts the page's own `og:url` — the two are built
+ * from the same `path`, so they are returned together or not at all.
+ */
+export function routeHead(
+  match: RouteHeadMatch,
+  overrides: HeadOverrides = {},
+): Partial<HeadConfig> {
+  const config = match.context.config;
+  if (!config) return {};
+  const { meta, links } = buildHead(config, overrides);
   return { meta, links };
 }

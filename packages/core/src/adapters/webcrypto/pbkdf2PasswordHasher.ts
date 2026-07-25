@@ -1,4 +1,5 @@
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import type { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/application/identity/loginWithPassword";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   PasswordHash,
@@ -10,8 +11,23 @@ const ALGORITHM_ID = "pbkdf2-sha256";
 const SALT_BYTES = 16;
 const DERIVED_BITS = 256;
 
-/** OWASP's recommendation for PBKDF2-HMAC-SHA256 (2023 cheat sheet). */
-export const DEFAULT_PBKDF2_ITERATIONS = 210_000;
+/**
+ * OWASP's recommendation for PBKDF2-HMAC-SHA256 (2023 cheat sheet).
+ *
+ * Typed as the login path's {@link DUMMY_PASSWORD_HASH_ITERATIONS} rather
+ * than as `number`: `loginWithPassword` levels its response time by
+ * verifying a dummy hash that declares that cost, so the two numbers have
+ * to move together or the timing oracle comes back — inverted if only the
+ * dummy moves, in its original direction if only this one does. Raising
+ * the work factor therefore means editing both constants; nothing else in
+ * the dummy needs regenerating, since `verify` derives at whatever cost
+ * the stored value declares.
+ *
+ * Equalisation stays imperfect for hashes written at an earlier cost:
+ * until those rows are rewritten (rehash-on-login, Issue #18) a wrong
+ * password on such an account is cheaper than an unknown address.
+ */
+export const DEFAULT_PBKDF2_ITERATIONS: typeof DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
 
 /**
  * Floor for the factory's `iterations` argument. Well below any usable

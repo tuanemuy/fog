@@ -1,3 +1,9 @@
+// The floor belongs to the codec's construction boundary; restating it
+// here would let the two drift, and a secret that satisfies this check
+// but not the codec's would pass the brand and then fail at container
+// construction — outside the error middleware.
+import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+
 /**
  * Secrets a request container needs, held in their own nested object.
  *
@@ -30,8 +36,6 @@ declare const sessionSecretBrand: unique symbol;
 export type SessionSecret = string & {
   readonly [sessionSecretBrand]: true;
 };
-
-const MIN_SESSION_SECRET_LENGTH = 32;
 
 /**
  * Asserts a usable `SESSION_SECRET` while the request config is built.
