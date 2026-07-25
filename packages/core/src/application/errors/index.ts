@@ -191,6 +191,12 @@ export const SystemErrorCode = {
   // derivation threw. Kept apart from `DataIntegrityError`, which is what
   // a *stored* hash in an unreadable encoding raises.
   CryptoError: "CRYPTO_ERROR",
+  // Writing or clearing the session cookie failed. Deliberately not
+  // `DatabaseError`: routing "the storage layer threw" and "the response
+  // header could not be written" to the same alert makes the former
+  // unreadable. Not retryable — a second attempt writes the same header
+  // into the same broken response (ADR-010).
+  SessionError: "SESSION_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

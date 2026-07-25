@@ -1,3 +1,30 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./theme.css";
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background: var(--gradient-page);
+    background-attachment: fixed;
+    font-family: var(--font-base);
+    font-size: var(--text-base);
+    color: var(--color-neutral-900);
+  }
+
+  /* spec/design/tokens.md: `prefers-reduced-motion: reduce` では
+     transition を無効化する（全画面共通） */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition: none !important;
+      animation: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

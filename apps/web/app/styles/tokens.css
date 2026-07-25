@@ -1,73 +1,154 @@
+/* fog design tokens — spec/design/tokens.md is the single source of truth
+   for every value below. Raw values must not appear anywhere else. */
 :root {
-  /* Colors */
-  --color-primary-lighter: oklch(0.95 0.03 250);
-  --color-primary-light: oklch(0.85 0.08 250);
-  --color-primary: oklch(0.6 0.18 250);
-  --color-primary-dark: oklch(0.45 0.18 250);
-  --color-primary-darker: oklch(0.3 0.15 250);
-  --color-accent: oklch(0.7 0.2 30);
+  /* Colors — Primary（操作・リンク・フォーカス）
+     コントラスト規約（WCAG AA）:
+     - アイコン・フォーカスリング・選択マーク（非テキスト 3:1）→ --color-primary
+     - 白地上のテキストリンク・テキストボタン → --color-primary-dark
+     - 塗りボタンの背景 → --color-primary-dark。ホバーは darker
+     - primary-lighter 背景上の文字 → --color-primary-darker */
+  --color-primary-lighter: oklch(0.93 0.04 292);
+  --color-primary-light: oklch(0.78 0.09 292);
+  --color-primary: oklch(0.63 0.13 292);
+  --color-primary-dark: oklch(0.54 0.15 292);
+  --color-primary-darker: oklch(0.45 0.15 292);
 
-  --color-neutral-50: oklch(0.98 0 0);
-  --color-neutral-100: oklch(0.96 0 0);
-  --color-neutral-150: oklch(0.93 0 0);
-  --color-neutral-200: oklch(0.9 0 0);
-  --color-neutral-250: oklch(0.86 0 0);
-  --color-neutral-300: oklch(0.82 0 0);
-  --color-neutral-350: oklch(0.76 0 0);
-  --color-neutral-400: oklch(0.7 0 0);
-  --color-neutral-450: oklch(0.64 0 0);
-  --color-neutral-500: oklch(0.58 0 0);
-  --color-neutral-550: oklch(0.52 0 0);
-  --color-neutral-600: oklch(0.46 0 0);
-  --color-neutral-650: oklch(0.4 0 0);
-  --color-neutral-700: oklch(0.34 0 0);
-  --color-neutral-750: oklch(0.28 0 0);
-  --color-neutral-800: oklch(0.22 0 0);
-  --color-neutral-850: oklch(0.18 0 0);
-  --color-neutral-900: oklch(0.14 0 0);
+  /* Accent — ブランドの「点」。面には使わない */
+  --color-accent: oklch(0.62 0.19 40);
 
-  --color-success: oklch(0.7 0.18 150);
-  --color-warning: oklch(0.8 0.17 80);
-  --color-error: oklch(0.62 0.22 25);
-  --color-info: oklch(0.7 0.15 230);
+  /* Neutral — 青みグレーのスケール */
+  --color-neutral-50: oklch(0.97 0.002 286);
+  --color-neutral-100: oklch(0.945 0.004 286);
+  --color-neutral-200: oklch(0.93 0.004 286);
+  --color-neutral-300: oklch(0.875 0.006 278);
+  --color-neutral-400: oklch(0.69 0.01 275);
+  --color-neutral-500: oklch(0.58 0.01 275);
+  --color-neutral-600: oklch(0.52 0.01 275);
+  --color-neutral-700: oklch(0.38 0.008 275);
+  --color-neutral-900: oklch(0.21 0.006 270);
 
-  --color-bg-page: oklch(0.99 0 0);
+  /* Semantic — 淡色背景の上の文字は必ず -dark を使う */
+  --color-success: oklch(0.55 0.13 155);
+  --color-success-dark: oklch(0.42 0.11 155);
+  --color-success-bg: oklch(0.95 0.03 155);
+  --color-warning: oklch(0.6 0.13 75);
+  --color-warning-dark: oklch(0.45 0.1 75);
+  --color-warning-bg: oklch(0.96 0.04 90);
+  --color-error: oklch(0.55 0.19 27);
+  --color-error-dark: oklch(0.45 0.19 27);
+  --color-error-bg: oklch(0.95 0.025 20);
+  --color-info: var(--color-primary);
+  --color-info-bg: var(--color-primary-lighter);
+
+  /* Background */
+  --color-bg-page: oklch(0.93 0.004 286);
+  --color-bg-page-top: oklch(0.955 0.003 286);
   --color-bg-card: oklch(1 0 0);
-  --color-bg-section: oklch(0.97 0 0);
+  --color-bg-input: oklch(0.96 0.003 286 / 0.88);
+  --color-bg-hover: oklch(1 0 0 / 0.55);
+  --color-overlay: oklch(0.21 0.006 270 / 0.28);
+
+  /* ページ背景。基準形が body に敷くグラデーションを1つの役割として持つ
+     （tokens.md の色トークンからの合成。停止位置を各所へ散らさないため） */
+  --gradient-page: linear-gradient(
+    180deg,
+    var(--color-bg-page-top) 0%,
+    var(--color-bg-page) 240px
+  );
+
+  /* Text on fill */
+  --color-text-inverse: oklch(1 0 0);
+
+  /* Focus — 通常は紫、破壊的操作ボタンだけ赤 */
+  --color-focus: var(--color-primary);
+  --color-focus-danger: var(--color-error);
 
   /* Typography */
-  --font-heading: "Inter", "Noto Sans JP", serif;
-  --font-body: "Inter", "Noto Sans JP", sans-serif;
+  --font-base:
+    "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+    "Noto Sans JP", sans-serif;
 
-  --text-xs: clamp(0.75rem, 0.7rem + 0.2vw, 0.8125rem);
-  --text-sm: clamp(0.875rem, 0.82rem + 0.25vw, 0.9375rem);
-  --text-base: clamp(1rem, 0.95rem + 0.3vw, 1.0625rem);
-  --text-lg: clamp(1.125rem, 1.05rem + 0.4vw, 1.25rem);
-  --text-xl: clamp(1.25rem, 1.15rem + 0.5vw, 1.5rem);
-  --text-2xl: clamp(1.5rem, 1.3rem + 0.8vw, 1.875rem);
-  --text-3xl: clamp(1.875rem, 1.6rem + 1.2vw, 2.5rem);
+  --text-xs: 0.72rem;
+  --text-sm: 0.78rem;
+  --text-base: 0.95rem;
+  --text-lg: 1.05rem;
+  --text-xl: clamp(1.2rem, 1.1rem + 0.5vw, 1.45rem);
+  --text-2xl: clamp(1.45rem, 1.3rem + 0.8vw, 1.8rem);
 
-  --leading-tight: 1.2;
-  --leading-normal: 1.6;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-tight: 1.5;
+  --leading-normal: 1.85;
+  --leading-loose: 2;
+
+  --tracking-label: 0.03em;
 
   /* Spacing */
   --space-xs: 0.25rem;
   --space-sm: 0.5rem;
-  --space-md: 1rem;
+  --space-md: 0.875rem;
   --space-lg: 1.5rem;
-  --space-xl: 2.5rem;
-  --space-2xl: 4rem;
-  --space-section: clamp(3rem, 5vw, 6rem);
+  --space-xl: 1.875rem;
+  --space-2xl: 2.5rem;
+  --space-section: 2.25rem;
 
-  /* Misc */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 1rem;
+  /* コンポーネント余白 — 役割で選ぶ */
+  --pad-row: 16px;
+  --pad-menu: 0.75rem var(--space-md);
+  --pad-btn: 12px 24px;
+  --pad-btn-sm: 10px 20px;
+  --pad-input: 12px 16px;
+
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-popover: 0.875rem;
+  --radius-lg: 1.625rem;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.05);
-  --shadow-md: 0 4px 8px -2px oklch(0 0 0 / 0.1);
-  --shadow-lg: 0 12px 24px -6px oklch(0 0 0 / 0.15);
+  /* Border */
+  --border-input: 1.3px solid var(--color-neutral-300);
 
-  --transition-default: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* Icon — サイズは4段のみ */
+  --icon-lg: 20px;
+  --icon-md: 19px;
+  --icon-sm: 16px;
+  --icon-xs: 12px;
+
+  /* Popover */
+  --popover-min-w: 10rem;
+
+  /* 点・マーク — 面ではなく「点」として置く小さな図形の寸法 */
+  --size-dot: 6px; /* ブランドの点 */
+  --size-mark: 5px; /* ナビの現在地マーク */
+  --size-handle-w: 36px; /* ボトムシートのハンドル */
+  --size-handle-h: 4px;
+
+  /* Shadow — 影は「浮遊」の表現専用。3段のみ */
+  --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);
+  --shadow-md: 0 12px 36px oklch(0.21 0.006 270 / 0.18);
+  --shadow-lg: 0 -8px 40px oklch(0.21 0.006 270 / 0.2);
+
+  /* Transition — shorthand と、Tailwind の duration ユーティリティが要求する
+     分解済みの持続時間。同じ値の2つの表現なので片方だけ変えない */
+  --duration-fast: 0.15s;
+  --duration-default: 0.22s;
+  --transition-fast: var(--duration-fast) ease;
+  --transition-default: var(--duration-default) ease;
+
+  /* Container */
+  --container-max: 1280px;
+  --content-max: 50rem;
+  --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
+  --container-padding: clamp(0.875rem, 4vw, 2rem);
+  --sidebar-w: 200px;
+  --auth-sheet-max: 26rem;
+
+  /* ヘッダーとシートが共有する横フレーム。余った幅はページ背景へ逃がす */
+  --sheet-w: min(100% - 2 * var(--space-md), var(--sheet-max));
+  --sheet-w-md: min(100% - 2 * var(--space-lg), var(--sheet-max));
+  --nav-sheet-inset: max(var(--space-md), calc((100% - var(--sheet-max)) / 2));
 }

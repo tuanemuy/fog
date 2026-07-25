@@ -621,3 +621,95 @@ GCP 側は Terraform 変数（`sensitive = true`）のまま据え置く。Cloud
 - トレードオフ:
   - コールドスタートに Secrets Manager 呼び出しが1回増える（Turso トークンと同一の `loadSecretsIntoEnv` 呼び出しにまとまるので往復自体は増えない）
   - `bin/app.ts` の必須 env が1つ増える。未設定のステージは synth からスキップされるだけなので、気づかず不完全なスタックが出る心配はない
+
+---
+
+## ADR-016: `?redirect=` の二重スキーマを `presentation/redirectSearch.ts` に置く
+
+### Status
+
+Proposed
+
+### Context
+
+plan.md「UI / プレゼンテーション」は `?redirect=` を「`/` で始まり `//` を含まない」に限定し、`paginationSearchSchema` と同じ二重スキーマ（`validateSearch` は `catch` 付き / server fn 側は strict）で扱うと定めているが、その置き場所は指定していない。候補は2つあった。
+
+- (a) `apps/web/app/components/auth/schema.ts` — 認証まわりの transport スキーマを1ファイルにまとめる
+- (b) `apps/web/app/presentation/redirectSearch.ts` — 既存の `presentation/pagination.ts` と同じ扱いにする
+
+`?redirect=` を組み立てるのは `presentation/currentUser.ts` の `requireUserId()` と `routes/_app.tsx` の `beforeLoad` であり、消費するのは `routes/login.tsx`。**`components/auth/` を参照しない地点が発生源**なので、(a) を選ぶと presentation → components の逆向き参照が生まれる。
+
+### Decision
+
+**(b) を採る。** `REDIRECT_MAX_LENGTH` / `redirectPathSchema`（strict）/ `redirectSearchSchema`（`catch(undefined)` 付き）/ `toSafeRedirect()` / `DEFAULT_REDIRECT_PATH` を `apps/web/app/presentation/redirectSearch.ts` に置く。URL 検索パラメータの transport スキーマを presentation に置くのは `pagination.ts` が既に敷いた流儀であり、CLAUDE.md の「presentation = TanStack Start 固有の横断ユーティリティ」の定義にも一致する。
+
+`components/auth/schema.ts` はフォーム本文（email / password）の shape / DoS 検証だけを持つ。
+
+拒否条件は「`/` で始まる」「`//` を含まない」に加えて **バックスラッシュを含まない**（ブラウザが `/\evil.example` を `//evil.example` に正規化するため）と **`/%2f` で始まらない**（デコード後に `//` になるため）も含める。
+
+### Consequences
+
+- 良い点: 依存の向きが内向きのまま保たれ、`?redirect=` を使う新しい画面が増えても参照先が1つに定まる
+- トレードオフ: 認証まわりの transport 検証が2ファイルに分かれる。役割（URL 検索パラメータ / フォーム本文）で分かれているので混同はしにくい
+
+---
+
+## ADR-017: デザイントークンの Tailwind 投影と、tokens.md に無い派生トークンの追加
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/design/tokens.md` は CSS カスタムプロパティとしてトークンを定義しているが、実装は Tailwind v4 であり、ユーティリティを生やすには `@theme` の名前空間（`--color-*` / `--text-*` / `--spacing-*` / `--radius-*` / `--shadow-*` / `--font-weight-*` / `--leading-*` / `--tracking-*`）へ投影する必要がある。一方で `--pad-btn` / `--icon-md` / `--border-input` / `--content-max` / `--sidebar-w` のように**対応する名前空間が存在しない**トークンもある。
+
+また、承認済みモック（`spec/design/pages/*.html`）には tokens.md に無い生値がいくつか現れる（body 背景グラデーションの停止位置 240px、`.form-input` の `padding: 12px 16px`、`.auth-sheet` の `max-width: 26rem`、ブランドの点 6px、ナビの現在地マーク 5px、ボトムシートのハンドル 36×4px、ヘッダーとシートが共有する横フレーム幅の式）。「生値を書かない」という一貫性ルール（spec/design/index.md）を守るには、これらを (a) 実装側でその都度書く か (b) 役割名を持つトークンとして追加する のどちらかを選ぶ必要がある。
+
+### Decision
+
+- **投影**: `tokens.css` は spec の値をそのまま持つ（レイヤー無しの `:root`）。`theme.css` は `@theme` へ**名前空間のあるものだけ**を投影する。名前空間の無いトークンは `p-(--pad-btn)` / `size-(--icon-md)` / `[border:var(--border-input)]` のような Tailwind の任意値構文で消費する — 値は依然としてトークン経由で、生値は書かれない
+- **半段階の削除**: テンプレートが `@theme` に持っていた `--color-neutral-{150,250,…,850}` は spec に存在しないので削除する（放置すると未定義参照が8個残る）
+- **`--color-bg-section` の削除**: spec が「使用しない（面の分割は罫線で行う）」と明記しているトークンをユーティリティとして露出させると、使えてしまう
+- **派生トークンの追加**: モックの生値は spec/design/index.md が示す (b)「トークン化すべき意図的な新しい役割」として `tokens.css` に**役割名で追加**する。追加したのは次の8つ
+  - `--gradient-page`（ページ背景。停止位置を各画面へ散らさないため1つの役割にする）
+  - `--pad-input`（入力欄の内側余白。`--pad-btn` と同じ「コンポーネント余白」系列）
+  - `--auth-sheet-max`（認証シートの最大幅）
+  - `--sheet-w` / `--sheet-w-md`（ヘッダーとシートが共有する横フレーム幅）・`--nav-sheet-inset`（ボトムシートの左右位置）
+  - `--size-dot` / `--size-mark` / `--size-handle-w` / `--size-handle-h`（「点」として置く小さな図形の寸法）
+  - `--duration-fast` / `--duration-default`（`--transition-fast` / `--transition-default` を Tailwind の `duration-*` が要求する形に分解したもの。shorthand 側がこれらを参照するので値は1箇所）
+- **`--bp-*` は追加しない**。spec のブレークポイント（640/768/1024/1280/1536）は Tailwind v4 の既定値と完全に一致するので、`sm:` / `lg:` をそのまま使う
+
+追加した8トークンは `spec/design/tokens.md` に**まだ存在しない**ため、spec-sync の対象として記録する。
+
+### Consequences
+
+- 良い点:
+  - 実装のどこにも hex / px の生値が現れず、AC-18 を機械的に確認できる（`bg-neutral-200` / `text-red-500` 等のテンプレート既定パレット由来クラスも全滅している）
+  - `theme.css` と `tokens.css` が lockstep になり、「トークンに無い名前のユーティリティ」は生成されない
+- トレードオフ:
+  - 実装のトークン集合が spec/design/tokens.md より8つ多い状態が一時的に生じる。spec-sync で tokens.md 側に取り込むまでは、モックと実装のどちらを見ても値は一致する（値はモックから採っている）
+  - 名前空間の無いトークンは `p-(--pad-btn)` という書き方になり、素の Tailwind に比べて冗長になる
+
+---
+
+## ADR-018: 認証画面に SSO ボタンを描画せず、パスワードのヘルパー文もモックから変える
+
+### Status
+
+Proposed
+
+### Context
+
+plan.md のスコープ節は「動かない SSO ボタンは置かない」と決めている。実装時に、同じ理由でモックと乖離させるべき箇所がもう1つ見つかった: `spec/design/pages/signup.html` のパスワード欄のヘルパー文が「**8文字以上。大文字・小文字・数字を含む**」となっている。しかし `PlainPassword`（DOM-identity-006 / spec/domains/identity.md）の制約は **8〜128文字だけ**で、文字種の要件は存在しない。モックのまま書くと、UI が実際には課されない規則をユーザーに要求することになる。
+
+### Decision
+
+- SSO ボタン（`.sso-group` / `.divider-text`）は `/login` `/signup` のどちらにも描画しない（plan.md のスコープ節どおり）
+- パスワード欄のヘルパー文は「**8文字以上128文字以下**」とし、ドメインの制約と一致させる。`PlainPassword` の制約が変われば同時に変える1箇所として `SignupForm` に置く
+- `/login` 側にはヘルパー文を置かない（ログイン時に規則を示しても操作の助けにならない。spec/design/index.md「UI は言葉で説明しない」）
+
+### Consequences
+
+- 良い点: 画面が課す規則と実装が課す規則が一致し、`IDENTITY_PASSWORD_TOO_WEAK` の日本語文言（「パスワードは8文字以上128文字以下で入力してください」）とも矛盾しない
+- トレードオフ: 承認済みデザイン HTML との差分が2箇所（SSO ブロック・ヘルパー文）になる。どちらも「実装が仕様に合わせた」差分なので、SSO スライスとあわせて spec-sync / デザイン更新の対象として記録する

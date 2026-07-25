@@ -1,3 +1,4 @@
+import { IdentityErrorCode } from "@repo/core/domain/identity/errorCode";
 import {
   extractSerializedError,
   type SerializedError,
@@ -5,6 +6,8 @@ import {
 
 function renderConflictMessage(code: string | null): string {
   switch (code) {
+    case "EMAIL_ALREADY_REGISTERED":
+      return "このメールアドレスは登録済みです";
     case "OPTIMISTIC_LOCK_FAILURE":
       return "他の操作と競合しました。もう一度お試しください";
     case "UNIQUE_VIOLATION":
@@ -13,6 +16,30 @@ function renderConflictMessage(code: string | null): string {
       return "依存関係があるため操作できません";
     default:
       return "他の操作と競合しました。もう一度お試しください";
+  }
+}
+
+// `business` and `validation` both carry the message the layer that threw
+// wrote in English. Codes we have a user-facing wording for are translated
+// here; everything else keeps falling through to that message, so adding a
+// new error does not silently produce a blank UI.
+function renderBusinessMessage(code: string | null): string | null {
+  switch (code) {
+    case IdentityErrorCode.PasswordTooWeak:
+      return "パスワードは8文字以上128文字以下で入力してください";
+    case IdentityErrorCode.InvalidEmail:
+      return "メールアドレスの形式が正しくありません";
+    default:
+      return null;
+  }
+}
+
+function renderValidationMessage(code: string | null): string | null {
+  switch (code) {
+    case "INVALID_CREDENTIALS":
+      return "メールアドレスまたはパスワードが正しくありません";
+    default:
+      return null;
   }
 }
 
@@ -31,7 +58,7 @@ function formatFieldErrors(
 export function renderErrorMessage(error: SerializedError): string {
   switch (error.kind) {
     case "business":
-      return error.message;
+      return renderBusinessMessage(error.code) ?? error.message;
     case "notFound":
       return "対象が見つかりません";
     case "conflict":
@@ -45,7 +72,7 @@ export function renderErrorMessage(error: SerializedError): string {
         const formatted = formatFieldErrors(error.fieldErrors);
         if (formatted !== null) return formatted;
       }
-      return error.message;
+      return renderValidationMessage(error.code) ?? error.message;
     }
     case "system":
       return "システムエラーが発生しました";
