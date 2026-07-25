@@ -90,3 +90,7 @@
 | `test/送出側 redaction 境界の無テスト` | R3 | fix | AC-10 / AC-12 の文言が依存する経路の退行を検出できない | 0 |
 | `plan.md の changePassword ランタイム記述` | R3 | fix | 実装は型のみ | 0 |
 | `docs/test.md の Fake policy と存在しないスクリプト` | R3 | fix | 本 PR で fake を追加し同ファイルを編集しているのに未更新 | 0 |
+| `hmacSessionCodec の外部参照数の記述` | R4 | fix | R3 W-005 の修正が新たな不正確さを生んだ（実測で外部参照は6本） | 1 |
+| `UsecaseContainer の @ts-expect-error が空振り` | R4 | fix | コメントが名指しした退行を検出しない（実測で typecheck が通る） | 1 |
+| `fromBase64Url の空白拒否の記述` | R4 | fix | 実測で長さが4の倍数に収まる空白は受理される | 1 |
+| `__root JSDoc / ADR-048 Decision / currentUser.test の ADR 参照` | R4 | fix | 記述が実測・実装と食い違う（マージ条件ではないが同一コミットで直す） | 0 |

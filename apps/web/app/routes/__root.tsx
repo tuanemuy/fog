@@ -76,9 +76,11 @@ export const Route = createRootRoute({
 
 /**
  * The last-resort failure surface: a full-screen sheet with no navigation,
- * for failures outside the signed-in shell (the pre-auth screens, and the
- * shell's own layout route). Protected routes are caught one level lower by
- * `_app`'s `errorComponent`, which keeps the global nav
+ * for failures outside the signed-in shell — the pre-auth screens, and a
+ * failure of the root's own `beforeLoad` (`loadAppContext`). A match's
+ * `errorComponent` handles that match's own `beforeLoad` / `loader`, so
+ * `_app` catches its own failures too; everything under the shell is caught
+ * one level lower by `_app`'s `errorComponent`, which keeps the global nav
  * (.issue/1/adr.md ADR-048).
  */
 function ErrorScreen({ message }: { message: string }) {

@@ -1259,7 +1259,7 @@ Accepted（レビュー指摘 review-002-adapters W-005 への対応）
 ### Consequences
 
 - 良い点: 定数が1つになり、アダプター側を上げれば DI の検査も同時に上がる。`di/__tests__/secrets.test.ts` と `webcrypto/__tests__/hmacSessionCodec.test.ts` が同じ定数を参照するので、境界も1つの数字で表明される
-- トレードオフ: `secrets.ts` がアダプターに依存する。セッションの実装方式（署名済みブロブ / セッションテーブル）を差し替えるときは、この import 先も差し替え対象になる
+- トレードオフ: `secrets.ts` がアダプターに依存する。セッションの実装方式（署名済みブロブ / セッションテーブル）を差し替えるときは、この import 先も差し替え対象になる。差し替えの範囲はこの1本だけではなく、`createHmacSessionCodec` を呼ぶ DI 配線4本（`di/server{Node,Cloudflare,Aws,Gcp}.ts`）とテストハーネスを含む合成ルート全体である（review-004-backend W-001 で数え落としが判明したため明示。ポートの呼び出し側は変わらない）
 
 ---
 
@@ -1490,7 +1490,7 @@ Accepted（レビュー指摘 review-003-frontend W-001 への対応。ADR-039 �
 
 ### Decision
 
-**(a) を採る。** `_app.errorComponent` が `AppShell` を張り直し、その `<main>` の中にエラー表示（見出し + メッセージ + リトライ導線）を出す。`__root.errorComponent` は「シェルの外」＝未認証画面と `_app` 自身の失敗のための全画面表示として残し、二段構成にした。リトライ導線（`再読み込み` + `タイムラインへ`）は `components/ui/ErrorRetry` に切り出して両者で共有する。
+**(a) を採る。** `_app.errorComponent` が `AppShell` を張り直し、その `<main>` の中にエラー表示（見出し + メッセージ + リトライ導線）を出す。`__root.errorComponent` は「シェルの外」＝未認証画面と、root 自身の `beforeLoad`（`loadAppContext`）の失敗のための全画面表示として残し、二段構成にした。`Match.js` の `match.status === "error"` は**そのマッチ自身の** `errorComponent` を使うので、`_app` の `beforeLoad` / `loader` の失敗は `_app` が捕まえる（root には落ちない）。リトライ導線（`再読み込み` + `タイムラインへ`）は `components/ui/ErrorRetry` に切り出して両者で共有する。
 
 (b) を採らなかった理由は landmark にある。`defaultErrorComponent` は**全ルートに一律**で効くので、`/login` などの認証前ルートでも `AuthSheet`（= `main` ランドマークの持ち主）が差し替わり、review-002-frontend W-001 で入れた「認証前画面にも `main` がある」が壊れる。逆に `defaultErrorComponent` を `AuthSheet` 版にすると、シェル内で `<main>` が入れ子になる。**ランドマークの持ち主が2種類ある以上、受け皿も2種類要る。**
 
@@ -1525,3 +1525,65 @@ ADR-041 で `viewport-fit=cover` を採り、画面端に接する余白を4つ�
 
 - 良い点: CDP の `Emulation.setSafeAreaInsetsOverride`（bottom 34）で実測し、シート本文の下端が 40px → 58px（= `max(40px, 34px + 24px)`）。ホームインジケータ帯との実クリアランスが 6px → 24px（`--space-lg`）に戻った。override なしでは 40px のままで、非ノッチ環境の見た目は変わらない
 - トレードオフ: safe-area トークンが5つになった。「画面端に接する余白」の棚卸しは目視に頼っており、`<main>` のようにスクロールコンテナ越しに画面端へ接する箇所は見落としやすい。ADR-041 の「全箇所」という書き方が実際に見落としを隠していたので、同 ADR の Consequences も訂正してある
+
+---
+
+## ADR-050: 型レベルの表明は「守りたい境界そのもの」に当てる
+
+### Status
+
+Accepted（レビュー指摘 review-004-backend W-002 への対応。ADR-035 が型で引いた境界を守るテストの直し）
+
+### Context
+
+`requestContainerConfig.test.ts` は「ユースケースからセッション codec に手が届かない」ことを `@ts-expect-error` で表明していたが、その対象が型エイリアス `UsecaseContainer` そのものだった。
+
+```ts
+// @ts-expect-error
+const reach = (c: UsecaseContainer) => c.sessionCodec;
+```
+
+この形が固定しているのは `Omit<RequestContainer, "sessionCodec">` の定義だけである。**実測**：`application/types.ts` の `ServiceArgs.container` を `UsecaseContainer` → `RequestContainer` に戻して `pnpm typecheck` を回すと、root + 3パッケージすべて Done で通る。`UsecaseContainer` の定義が残っている限り `c.sessionCodec` は型エラーのままなので、ディレクティブは使われ続け、退行は素通りする。R3 W-008 が塞ぐよう求めたのはまさにこの経路だった。
+
+### Decision
+
+**表明の対象を型エイリアスではなく、ユースケースが実際に受け取る引数（`ServiceArgs<unknown>`）にする。**
+
+```ts
+// @ts-expect-error usecases must not be able to reach the session codec
+const reach = (args: ServiceArgs<unknown>) => args.container.sessionCodec;
+```
+
+一般則としては「`@ts-expect-error` は、壊れてほしくない境界を**通る式**に当てる」。型エイリアスに当てるとエイリアスの定義しか固定できず、その定義を**使う地点**が差し替わったことは検出できない。
+
+### Consequences
+
+- 良い点: 2つの退行がどちらも検出される。**実測で確認**した — (1) `ServiceArgs.container` を `RequestContainer` に戻す → `requestContainerConfig.test.ts(100,5): error TS2578: Unused '@ts-expect-error' directive.` で落ちる、(2) `UsecaseContainer` の `Omit` を外す → 同じ位置・同じコードで落ちる（どちらも実測後 revert 済み）
+- 良い点: 表明が1行のままで、以前の表明範囲も失われていない
+- トレードオフ: 型境界のみで、実行時オブジェクトは依然 codec を持つ。意図的な `as RequestContainer` は今も通る（コメントに明記）
+
+---
+
+## ADR-051: モジュールスコープのラッチは `vi.resetModules()` で表明する
+
+### Status
+
+Accepted（レビュー指摘 review-004-backend N-001 / review-004-frontend-security-test N-003 への対応。ADR-047 の残課題）
+
+### Context
+
+ADR-047 で `burnVerificationTime` の警告をモジュールスコープの `boolean` ラッチで isolate 単位1回に絞ったが、その振る舞いを表明するテストが1件も無かった。ADR-034 が「等時間化が死んだときの唯一の signal」と位置づけた1行が、消えても誰も気づかない状態が続いていた。ラッチがあるためテストは実行順に依存し、素直には書けない。
+
+### Decision
+
+**`vi.resetModules()` + 動的 import でユースケースモジュールごと作り直し、テストごとに新品のラッチを得る**（`application/identity/__tests__/loginWithPassword.test.ts`）。ラッチ自体をコンテナ（`Logger` デコレータ等）へ移す案は ADR-047 で既に退けた判断なので蒸し返さず、テスト側でモジュール境界を切る。
+
+固定するのは4点：(1) 読めないダミーで警告が1回出ること、(2) メタが `cause` の**型名だけ**を運ぶこと（`{ cause: "UnreadableDummyError" }` を完全一致で）、(3) 同一モジュール上では**コンテナを新しくしても**2回目以降が黙ること、(4) ダミーが読める場合は何も出ないこと。(4) が無いと「毎回 warn する実装」でも (1)(3) が緑になりうる。
+
+DB は要らない（`findByEmail` が `null` を返すスタブで十分）ので、CF pool の統合テストではなく node pool の単体テストに置く。
+
+### Consequences
+
+- 良い点: ミューテーションで実効性を確認した。ラッチの2行を削ると (3) が落ち、`cause` の射影を生のまま渡す形に戻すと3件が落ちる（いずれも実測後 revert 済み）
+- 良い点: `PasswordHasher` の「例外に平文を載せない」契約（ADR-047）の消費側の守り方が、初めてテストで固定された
+- トレードオフ: `vi.resetModules()` を使うテストはモジュールグラフを作り直すので、静的 import した型ガード（`isValidationError` 等）とはインスタンスが別になる。このスイートはログだけを見て例外の同一性を見ないことでそれを回避している。ラッチ以外の `loginWithPassword` の表明は従来どおり `identity.integration.test.ts` が持つ

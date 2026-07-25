@@ -46,10 +46,14 @@ export function toBase64Url(bytes: Uint8Array): string {
  * but it means a token string must never be treated as a canonical
  * identity: do not compare, index or deduplicate on the encoded form.
  *
- * Acceptance is *narrower* than `atob`'s, not wider: padding is computed
- * from the length of the input, so embedded whitespace and redundant `=`
- * push the result off a multiple of four and `atob` refuses it, even
- * though `atob` would have tolerated either on its own.
+ * Acceptance is *narrower* than `atob`'s, not wider — but only along one
+ * axis. Padding is computed from the length of the input, so whitespace or
+ * a redundant `=` that pushes the length off a multiple of four is refused
+ * even though `atob` would have tolerated it. Whitespace that keeps the
+ * length a multiple of four (`"YWJj    "`, `"YQ  "`) still gets through on
+ * `atob`'s own leniency. This does not narrow the accepted *byte*
+ * sequences, which is why it is a decoding note and not a guarantee to
+ * lean on: reject non-canonical spellings upstream if you need them gone.
  */
 export function fromBase64Url(value: string): Uint8Array {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/");

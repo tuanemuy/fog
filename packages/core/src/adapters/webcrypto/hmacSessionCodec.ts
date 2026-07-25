@@ -14,9 +14,9 @@ export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  *
  * `application/di/secrets.ts` imports it rather than restating it
  * (.issue/1/adr.md ADR-036), so this algorithm-specific floor is also what
- * `SESSION_SECRET` is checked against at request-config time. That is the
- * one reference to this file from outside the adapter, and replacing the
- * codec means replacing it too.
+ * `SESSION_SECRET` is checked against at request-config time. That import
+ * is the only reader of this constant outside this file in shipped code,
+ * and replacing the codec means replacing it too.
  */
 export const MIN_SESSION_SECRET_LENGTH = 32;
 
@@ -50,9 +50,12 @@ function parsePayload(raw: string): Payload | null {
  * cost is that a token cannot be revoked server-side before `exp` —
  * acceptable while the product has no "sign out everywhere" requirement,
  * and the reason `ttlMs` defaults to a week rather than months. Swapping in
- * a table-backed codec later touches this file plus the one place outside
- * it that reads {@link MIN_SESSION_SECRET_LENGTH} — callers of the port see
- * nothing.
+ * a table-backed codec later stays inside the composition root: this file,
+ * the four DI factories that call {@link createHmacSessionCodec}
+ * (`application/di/server{Node,Cloudflare,Aws,Gcp}.ts`), the
+ * `application/di/secrets.ts` check that reads
+ * {@link MIN_SESSION_SECRET_LENGTH}, and the test harnesses that build a
+ * codec directly — callers of the port see nothing.
  *
  * Verification goes through `crypto.subtle.verify`, which compares the
  * MAC in constant time. Every rejection path — malformed token, bad

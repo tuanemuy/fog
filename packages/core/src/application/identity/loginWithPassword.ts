@@ -63,8 +63,8 @@ let dummyHashUnreadableReported = false;
  * degrades the equalisation back to today's behaviour rather than breaking
  * login, which is why this is the one place a throw is swallowed — and why
  * it is logged: the request is unaffected, so the warning is the only
- * signal that the mitigation has stopped working. It is logged once per
- * process, which is the granularity of the fact.
+ * signal that the mitigation has stopped working. The latch above holds it
+ * to once per isolate, which is the granularity of the fact.
  *
  * Only the failure's type is logged, never the value: the `PasswordHasher`
  * contract forbids putting a `PlainPassword` in what it throws, and

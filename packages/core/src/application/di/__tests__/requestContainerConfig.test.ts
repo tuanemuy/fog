@@ -1,7 +1,7 @@
 import type { Database as LibsqlDatabase } from "@repo/core/adapters/libsql/client";
 import { content } from "@repo/core/config";
 import { describe, expect, it } from "vitest";
-import type { UsecaseContainer } from "../../types";
+import type { ServiceArgs } from "../../types";
 import { requireSessionSecret } from "../secrets";
 import { createAwsRequestContainer } from "../serverAws";
 import { createRequestContainer } from "../serverCloudflare";
@@ -87,17 +87,18 @@ describe.each(containers)("%s request container config", (_name, build) => {
   });
 });
 
-describe("UsecaseContainer", () => {
-  // The `Omit` is the only thing keeping `sessionCodec` out of reach of a
-  // usecase, and nothing else would fail if `ServiceArgs.container` were
-  // widened back to `RequestContainer`. The directive below is the whole
-  // assertion: it goes unused the moment the codec becomes reachable, and
-  // `@ts-expect-error` with nothing to suppress fails the type check. The
-  // runtime object still carries the codec, so this is the type boundary
-  // only — a deliberate `as RequestContainer` still gets through.
-  it("does not expose the session codec", () => {
+describe("what a usecase receives", () => {
+  // Nothing else would fail if `UsecaseContainer` stopped omitting
+  // `sessionCodec`, or if `ServiceArgs.container` were widened back to
+  // `RequestContainer`. The directive below is the whole assertion, and it
+  // is written against the argument a usecase actually takes so that both
+  // of those regressions make the codec reachable, leave the directive
+  // with nothing to suppress, and fail the type check. The runtime object
+  // still carries the codec, so this is the type boundary only — a
+  // deliberate `as RequestContainer` still gets through.
+  it("cannot reach the session codec", () => {
     // @ts-expect-error usecases must not be able to reach the session codec
-    const reach = (c: UsecaseContainer) => c.sessionCodec;
+    const reach = (args: ServiceArgs<unknown>) => args.container.sessionCodec;
     void reach;
   });
 });

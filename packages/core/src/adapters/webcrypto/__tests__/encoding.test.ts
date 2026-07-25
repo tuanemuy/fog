@@ -72,11 +72,9 @@ describe("toBase64Url / fromBase64Url", () => {
     expect(fromBase64Url("-_-_")).toEqual(fromBase64Url("+/+/"));
   });
 
-  // The narrower half of that: `atob` alone ignores whitespace, but the
-  // padding is computed from the length *before* it is stripped, so a
-  // whitespace-bearing or over-padded string lands off a multiple of four
-  // and is refused. Pinned because the JSDoc's warning is only accurate
-  // if this stays true.
+  // The narrower half of that: padding is computed from the length of the
+  // input, so anything that lands off a multiple of four is refused even
+  // though `atob` alone would have tolerated it.
   it.each([
     ["trailing whitespace", "YWJj "],
     ["embedded whitespace", "YW Jj"],
@@ -84,6 +82,21 @@ describe("toBase64Url / fromBase64Url", () => {
     ["outside the alphabet", "!!!!"],
   ])("refuses %s", (_label, value) => {
     expect(() => fromBase64Url(value)).toThrow();
+  });
+
+  // The other side of that boundary, pinned so the JSDoc is not read as
+  // "whitespace is rejected": the length check is the only filter, and
+  // whitespace that keeps the length a multiple of four rides through on
+  // `atob`'s own leniency.
+  it.each([
+    [
+      "trailing whitespace that keeps a multiple of four",
+      "YWJj    ",
+      bytes(0x61, 0x62, 0x63),
+    ],
+    ["whitespace standing in for stripped padding", "YQ  ", bytes(0x61)],
+  ])("accepts %s", (_label, value, expected) => {
+    expect(fromBase64Url(value)).toEqual(expected);
   });
 });
 
