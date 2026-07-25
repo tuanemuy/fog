@@ -48,11 +48,10 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
 
   const display = toAuthErrorDisplay(state.error);
 
-  // Failure leaves focus on the submit button, which is disabled while the
-  // request is in flight — focus lands on `<body>` and keyboard users have to
-  // tab from the top of the page again. Moving it to the offending field
-  // reads label, invalid state and message in one go; a form-level failure
-  // names no field, so the banner itself takes the focus.
+  // The submit button is disabled while the request is in flight, so a
+  // failure drops focus to `<body>`. Move it to the offending field (label,
+  // invalid state and message in one go); a form-level failure names no
+  // field, so the banner takes the focus.
   useEffect(() => {
     const target = toAuthErrorDisplay(state.error);
     if (target.email !== undefined) emailRef.current?.focus();

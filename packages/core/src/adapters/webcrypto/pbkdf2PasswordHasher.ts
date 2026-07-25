@@ -24,7 +24,7 @@ const DERIVED_BITS = 256;
  * the stored value declares.
  *
  * Equalisation stays imperfect for hashes written at an earlier cost:
- * until those rows are rewritten (rehash-on-login, Issue #18) a wrong
+ * until those rows are rewritten by rehash-on-login, a wrong
  * password on such an account is cheaper than an unknown address.
  */
 export const DEFAULT_PBKDF2_ITERATIONS: typeof DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;

@@ -8,17 +8,13 @@ type AuthSheetProps = {
 };
 
 /**
- * The single centred sheet shared by every pre-auth screen
+ * The centred sheet shared by every pre-auth screen
  * (`spec/design/pages/login.html` の `.auth-container` / `.auth-sheet`).
- * No navigation: signed-out screens have no global nav — which is also why
- * the container itself is the `main` landmark: nothing else on these
- * screens could carry it, and without one every signed-out screen (login,
- * signup, password reset, the error and 404 surfaces) leaves its content
- * outside any landmark.
+ * Signed-out screens have no global nav, so this container is the `main`
+ * landmark — nothing else on these screens could carry it.
  *
- * 上下の余白がアプリ画面のシート（下 80px、`spec/design/review/005.md`）と
- * 違って対称なのは、あの 80px がスクロールの終わり際の逃げ幅だから。認証
- * シートはスクロールせず縦中央に置くので、非対称だと中身が上へずれて見える。
+ * 余白はアプリ画面のシートと違い上下対称: このシートはスクロールせず
+ * 縦中央に置くので、非対称だと中身が上へずれて見える。
  */
 export function AuthSheet({ title, description, children }: AuthSheetProps) {
   return (

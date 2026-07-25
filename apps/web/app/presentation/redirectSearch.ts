@@ -5,16 +5,13 @@ import { z } from "zod";
  * user back to the URL they were bounced off after signing in.
  *
  * The value comes from whoever wrote the URL, so it is constrained to a
- * same-origin path: it must start with `/` and must not contain `//`,
- * which is what stops `?redirect=//evil.example` (a protocol-relative URL
- * the browser reads as another origin) from turning the login screen into
- * an open redirector. Backslashes are refused for the same reason —
- * browsers normalise `/\evil.example` to `//evil.example`.
+ * same-origin path: `//evil.example` is a protocol-relative URL the browser
+ * reads as another origin — an open redirector — and `/\evil.example` is
+ * normalised to the same thing, so `//` and backslashes are refused.
  *
- * Same two-schema split as `pagination.ts`: the strict variant guards
- * values handed to a server function, and the `catch`-wrapped variant is
- * for `validateSearch` so a hand-typed URL degrades to "no redirect"
- * instead of erroring the route.
+ * Same two-schema split as `pagination.ts`: strict for server-function
+ * input, `catch`-wrapped for `validateSearch` so a hand-typed URL degrades
+ * to "no redirect" instead of erroring the route.
  */
 export const REDIRECT_MAX_LENGTH = 2048;
 

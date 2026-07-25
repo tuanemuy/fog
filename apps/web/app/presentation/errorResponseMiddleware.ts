@@ -12,18 +12,14 @@ import {
 } from "./errorResponse";
 
 // Wraps the entire server-function pipeline so throws from `inputValidator`
-// and the handler land in the same catch. Setting the response status from
-// inside the handler alone would miss validator throws (they fire before
-// `.handler` runs), and the constructor of `AppServerError` can't touch the
-// server-only status setter directly. The `.server(...)` body is stripped
-// from client bundles by the TanStack Start compiler, so importing
-// `@tanstack/react-start/server` at module top-level is safe.
+// and the handler land in the same catch — setting the status inside the
+// handler alone would miss validator throws. The `.server(...)` body is
+// stripped from client bundles by the compiler, so the top-level import of
+// `@tanstack/react-start/server` is safe.
 //
-// This module owns the redaction boundary for outbound errors — as this
-// middleware for awaited server functions, and as `guardStreamedRender` for
-// RSC leaves that render after the handler returned. Logger output policy
-// (console, structured JSON, sink, …) is owned by the implementation that
-// the container injects — this module just forwards the raw payload.
+// This module owns the redaction boundary for outbound errors: this
+// middleware for awaited server functions, `guardStreamedRender` for RSC
+// leaves that render after the handler returned.
 export const errorResponseMiddleware = createMiddleware({
   type: "function",
 }).server(async ({ next }) => {
@@ -40,19 +36,15 @@ export const errorResponseMiddleware = createMiddleware({
 /**
  * The same boundary, for renders that stream past the middleware.
  *
- * A per-fragment streaming route forwards `renderServerComponent(...)`
- * without awaiting it, so the RSC leaf renders after the handler returned:
- * a throw inside it never reaches the middleware's `catch`. Leaves that read
- * protected data wrap their loading in this so redaction and logging still
- * happen at one place.
+ * A streaming route forwards `renderServerComponent(...)` without awaiting
+ * it, so the RSC leaf renders after the handler returned and its throws
+ * never reach the middleware's `catch`. Leaves that read protected data
+ * wrap their loading in this so redaction and logging still happen.
  *
- * Two things it cannot restore, both failing towards less information on the
- * client: the HTTP status (the response is already committed by the time the
- * leaf renders) and the serialized `kind`. The RSC boundary does not run
- * `appServerErrorAdapter`, so the client receives a plain `Error` with no
- * `serialized` payload and `extractSerializedError` falls back to
- * `kind: "unknown"` — every streamed failure reads as the generic wording
- * regardless of what was thrown.
+ * It cannot restore the HTTP status (the response is already committed) or
+ * the serialized `kind` (the RSC boundary does not run
+ * `appServerErrorAdapter`), so every streamed failure reaches the client as
+ * `kind: "unknown"` — both failing towards less information.
  */
 export async function guardStreamedRender<T>(
   load: () => Promise<T>,

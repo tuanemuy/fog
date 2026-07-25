@@ -5,15 +5,12 @@ import { noStoreMiddleware } from "./noStoreMiddleware";
 /**
  * Whether the current request carries a valid session, for `beforeLoad`.
  *
- * One definition shared by every route that branches on sign-in state:
- * declaring it per route would register separate server functions and let
- * the definitions drift. This is a navigation aid, never the guard — every
- * server execution point that reads protected data calls `requireUserId()`
- * itself.
- *
- * It is, however, the one call every protected document passes through
- * (`_app.tsx`'s `beforeLoad`), which is why `noStoreMiddleware` sits here:
- * it is what puts `Cache-Control: no-store` on every route under `_app`.
+ * One shared definition: per-route copies would register separate server
+ * functions and drift. A navigation aid, never the guard — every server
+ * execution point that reads protected data calls `requireUserId()` itself.
+ * Because every protected document passes through here (`_app.tsx`'s
+ * `beforeLoad`), `noStoreMiddleware` on this function is what puts
+ * `Cache-Control: no-store` on every route under `_app`.
  *
  * Referenced only from route modules, which the RSC manifest already sees;
  * no side-effect import in `__root.tsx` is needed.

@@ -1,8 +1,6 @@
 /**
- * The five signed-in destinations (PAGE-common-001).
- *
- * Shared by the shell's navigation and each route's `head`, so a screen's
- * label and its `<title>` cannot drift apart.
+ * The signed-in destinations, shared by the shell's navigation and each
+ * route's `head` so a screen's label and its `<title>` cannot drift apart.
  */
 export const NAV_ITEMS = [
   { to: "/", label: "タイムライン" },

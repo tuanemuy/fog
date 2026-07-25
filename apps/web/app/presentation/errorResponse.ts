@@ -157,17 +157,12 @@ function asSerializedError(value: unknown): SerializedError | null {
 /**
  * Structural identity test for {@link AppServerError}.
  *
- * `instanceof` is unusable at the transport boundary: server functions are
- * compiled into their own module graph (the RSC / server-fn environment)
- * while `start.ts` — and with it the serialization adapter — is loaded from
- * the SSR graph, so one process holds two distinct class objects built from
- * this same file. An error thrown by the server-fn middleware therefore
- * fails `instanceof` against the adapter's class and silently falls back to
- * Seroval's default `Error` handling, which drops `serialized` entirely.
- *
- * Matching on the `name` tag plus a well-formed `kind`-tagged payload is
- * graph-independent and matches the "serialize structurally" rule the rest
- * of this module follows.
+ * `instanceof` is unusable here: server functions compile into their own
+ * module graph while the serialization adapter loads from the SSR graph, so
+ * one process holds two distinct class objects built from this same file —
+ * a thrown error fails `instanceof` and silently falls back to Seroval's
+ * default `Error` handling, dropping `serialized`. Matching the `name` tag
+ * plus a well-formed `kind`-tagged payload is graph-independent.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
