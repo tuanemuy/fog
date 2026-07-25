@@ -244,17 +244,13 @@
         gap: 8px;
         min-width: 0;
       }
-      .h-title .context {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      .h-title .h-brand {
+        display: flex;
+        align-items: center;
+        color: var(--color-neutral-900);
       }
-      .h-title .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: var(--radius-full);
-        background: var(--color-accent);
-        flex: none;
+      .h-title .h-brand svg {
+        display: block;
       }
       .h-actions {
         display: flex;
@@ -305,7 +301,7 @@
         .menu {
           display: none;
         }
-        .h-title .dot {
+        .h-title .h-brand {
           display: none;
         }
       }
@@ -871,7 +867,17 @@
               </svg>
             </button>
             <div class="h-title">
-              <span class="context">トピック</span><span class="dot"></span>
+              <span class="h-brand"><svg viewBox="0 0 64.7 26" width="64.7" height="26" role="img" aria-label="fog">
+                <g transform="scale(1.0833)">
+                  <path d="M4.5 12 H19.5 M7 16 H15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                  <circle cx="16.5" cy="7" r="1.8" fill="var(--color-accent)"/>
+                </g>
+                <g transform="translate(36 19.02) scale(0.019 -0.019)" fill="currentColor">
+                  <path d="M304 397L194 397L194 0L100 0L100 397L6 397L6 474L100 474L100 573Q100 615 109.5 650.5Q119 686 140.5 712Q162 738 195.5 753Q229 768 277 768Q311 768 336 761L325 680Q314 683 303 685Q292 687 278 687Q251 687 234.5 677.5Q218 668 209 652Q200 636 197 615.5Q194 595 194 573L194 474L304 474Z"/>
+                  <path transform="translate(288 0)" d="M561 238Q561 183 541.5 137Q522 91 487.5 57.5Q453 24 406 5.5Q359 -13 305 -13Q251 -13 204 5.5Q157 24 123 57.5Q89 91 69.5 137Q50 183 50 238Q50 293 69.5 338.5Q89 384 123 417Q157 450 204 468.5Q251 487 305 487Q359 487 406 468.5Q453 450 487.5 417Q522 384 541.5 338.5Q561 293 561 238ZM463 238Q463 272 452.5 303Q442 334 422 357.5Q402 381 372.5 395Q343 409 305 409Q267 409 237.5 395Q208 381 188 357.5Q168 334 157.5 303Q147 272 147 238Q147 204 157.5 173Q168 142 188 118Q208 94 237.5 80Q267 66 305 66Q343 66 372.5 80Q402 94 422 118Q442 142 452.5 173Q463 204 463 238Z"/>
+                  <path transform="translate(876 0)" d="M118 -81Q149 -116 195.5 -137Q242 -158 291 -158Q338 -158 370 -144.5Q402 -131 421.5 -107.5Q441 -84 449.5 -52Q458 -20 458 17L458 78L456 78Q430 38 385 17Q340 -4 289 -4Q235 -4 190.5 15Q146 34 115 67Q84 100 67 144.5Q50 189 50 240Q50 291 67 336Q84 381 115 414.5Q146 448 190 467.5Q234 487 288 487Q339 487 385.5 465Q432 443 459 398L461 398L461 474L552 474L552 24Q552 -28 539 -75.5Q526 -123 495 -159.5Q464 -196 414 -218Q364 -240 290 -240Q228 -240 165.5 -217.5Q103 -195 58 -154ZM147 242Q147 209 157.5 179Q168 149 188.5 126Q209 103 238 89Q267 75 304 75Q340 75 370 88Q400 101 421 123.5Q442 146 453.5 176.5Q465 207 465 242Q465 276 453.5 306Q442 336 420.5 359Q399 382 369.5 395.5Q340 409 304 409Q267 409 238 395.5Q209 382 188.5 359.5Q168 337 157.5 306.5Q147 276 147 242Z"/>
+                </g>
+              </svg></span>
             </div>
           </div>
           <div class="h-actions">
