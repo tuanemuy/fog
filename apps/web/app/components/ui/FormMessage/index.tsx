@@ -1,7 +1,7 @@
 import type { ReactNode, Ref } from "react";
 
 /**
- * Form-level error banner (`spec/design/pages/login.html` の `.error-message`).
+ * Form-level error banner (`.error-message` in `spec/design/pages/login.html`).
  *
  * `role="alert"` announces the message when it appears after a failed
  * submit; field-scoped messages belong on `TextField` instead.

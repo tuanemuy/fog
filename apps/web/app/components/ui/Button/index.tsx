@@ -22,7 +22,7 @@ const VARIANT = {
     "bg-transparent text-neutral-900 [border:var(--border-input)] enabled:hover:border-neutral-600 disabled:text-neutral-400",
 } as const;
 
-/** Pill button. `spec/design/pages/login.html` の `.btn` / `.btn-primary` / `.btn-outline`. */
+/** Pill button (`.btn` / `.btn-primary` / `.btn-outline` in `spec/design/pages/login.html`). */
 export function Button({
   variant = "primary",
   pending = false,

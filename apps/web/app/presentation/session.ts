@@ -13,7 +13,7 @@ import {
  *
  * The identity domain has no session state and the logout usecase does no
  * domain work, so issuing and destroying the session lives here rather
- * than in a usecase (spec/usecases/identity.md 共通事項).
+ * than in a usecase (the 共通事項 section of `spec/usecases/identity.md`).
  */
 
 /** Header sink, swappable so tests can inject a failing writer. */

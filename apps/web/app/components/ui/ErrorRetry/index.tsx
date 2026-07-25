@@ -12,8 +12,8 @@ import { TextLink } from "@/components/ui/TextLink";
 export const ERROR_TITLE = "エラーが発生しました";
 
 /**
- * Retry affordance shared by the error surfaces (`spec/pages/index.md`
- * 共通レイアウト). `router.invalidate()` re-runs the failed loaders, so a
+ * Retry affordance shared by the error surfaces (the shared layout in
+ * `spec/pages/index.md`). `router.invalidate()` re-runs the failed loaders, so a
  * transient failure recovers without a full page load. `fullWidth` is for
  * the standalone sheet; in the app shell the actions sit at natural width.
  */

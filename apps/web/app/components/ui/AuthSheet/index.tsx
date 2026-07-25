@@ -9,12 +9,9 @@ type AuthSheetProps = {
 
 /**
  * The centred sheet shared by every pre-auth screen
- * (`spec/design/pages/login.html` の `.auth-container` / `.auth-sheet`).
+ * (`.auth-container` / `.auth-sheet` in `spec/design/pages/login.html`).
  * Signed-out screens have no global nav, so this container is the `main`
  * landmark — nothing else on these screens could carry it.
- *
- * 余白はアプリ画面のシートと違い上下対称: このシートはスクロールせず
- * 縦中央に置くので、非対称だと中身が上へずれて見える。
  */
 export function AuthSheet({ title, description, children }: AuthSheetProps) {
   return (

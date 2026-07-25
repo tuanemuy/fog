@@ -25,7 +25,7 @@ function TextLinkAnchor({ ref, className, ...props }: TextLinkAnchorProps) {
 }
 
 /**
- * Inline text link (`spec/design/pages/login.html` の `.form-link`).
+ * Inline text link (`.form-link` in `spec/design/pages/login.html`).
  *
  * Built with `createLink` so the router's typed `to` survives the wrapper —
  * the styling lives here once instead of being copied per call site.

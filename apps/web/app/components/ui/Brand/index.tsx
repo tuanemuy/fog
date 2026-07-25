@@ -1,9 +1,9 @@
 /**
  * Wordmark plus the accent dot.
  *
- * The accent colour appears only as this 6px dot (spec/design/index.md
- * 「色は役割」). `AppShell`'s mobile header repeats the dot without going
- * through this component — change the accent's treatment in both.
+ * The accent colour appears only as this 6px dot (the 「色は役割」 rule in
+ * `spec/design/index.md`). `AppShell`'s mobile header repeats the dot without
+ * going through this component — change the accent's treatment in both.
  */
 export function Brand() {
   return (

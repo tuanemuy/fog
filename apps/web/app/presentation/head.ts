@@ -1,6 +1,6 @@
 import type { AppConfig } from "@repo/core/application/di/types";
 
-// 1200x630 — `summary_large_image` 互換サイズ。
+// 1200x630 — the `summary_large_image` compatible size.
 const DEFAULT_OG_IMAGE_PATH = "/og-image.png";
 const DEFAULT_LOCALE = "ja_JP";
 
@@ -20,7 +20,7 @@ type MetaTag =
 
 type LinkTag = { rel: string; href: string };
 
-// TanStack Router の `head()` 戻り値型が mutable array を要求するため readonly 不可。
+// TanStack Router's `head()` return type demands mutable arrays, so no readonly.
 export type HeadConfig = {
   meta: MetaTag[];
   links: LinkTag[];
