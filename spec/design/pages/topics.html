@@ -322,7 +322,12 @@
       .create-row {
         display: flex;
         gap: var(--space-sm);
-        margin-bottom: var(--space-lg);
+      }
+
+      /* 入力行の直下にはエラー文が入りうる（.form-error が自前の 6px を持つ）ため、
+         リストの開始余白はリスト側だけに効かせる */
+      .create-row + .topic-row {
+        margin-top: var(--space-lg);
       }
       .create-input {
         flex: 1;
@@ -648,27 +653,31 @@
       /* ---- 状態の例（通常フロー外） ---- */
       .state-examples {
         max-width: var(--content-max);
-        margin: var(--space-2xl) auto;
+        margin: var(--space-2xl) auto 0;
         padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
       }
       .state-examples h2 {
         font-size: var(--text-sm);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-600);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example {
         background: var(--color-bg-card);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-sm);
         padding: var(--space-lg);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example-label {
         font-size: var(--text-xs);
         color: var(--color-neutral-400);
-        margin-bottom: var(--space-sm);
+      }
+
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
       }
       .state-examples .topic-pop {
         position: static;
@@ -687,18 +696,18 @@
         font-size: var(--text-lg);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-900);
-        margin-bottom: var(--space-md);
       }
       .dialog-text {
         font-size: var(--text-sm);
         line-height: var(--leading-normal);
         color: var(--color-neutral-700);
-        margin-bottom: var(--space-xl);
+        margin-top: var(--space-md);
       }
       .dialog-actions {
         display: flex;
         flex-direction: column;
         gap: 8px;
+        margin-top: var(--space-xl);
       }
       .dialog-btn {
         border: none;

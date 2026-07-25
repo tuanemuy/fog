@@ -319,7 +319,10 @@
         padding: 16px 20px;
         background: var(--color-neutral-50);
         border-radius: var(--radius-full);
-        margin-bottom: var(--space-lg);
+      }
+
+      .search-box + * {
+        margin-top: var(--space-lg);
       }
       .search-box svg {
         color: var(--color-neutral-500);
@@ -350,7 +353,10 @@
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
-        margin-bottom: var(--space-lg);
+      }
+
+      .filter-chips + * {
+        margin-top: var(--space-lg);
       }
       .chip {
         display: inline-flex;
@@ -389,7 +395,10 @@
         color: var(--color-neutral-400);
         font-weight: var(--weight-medium);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
+      }
+
+      .result-count + * {
+        margin-top: var(--space-md);
       }
       /* 行全体が1つのリンク。ホバー面は行の1面のみ（内部要素は反応しない） */
       .result-row {
@@ -482,27 +491,31 @@
       /* ---- 状態の例（通常フローの外、ページ最下部に隔離） ---- */
       .state-examples {
         max-width: var(--content-max);
-        margin: var(--space-2xl) auto;
+        margin: var(--space-2xl) auto 0;
         padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
       }
       .state-examples h2 {
         font-size: var(--text-sm);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-600);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example {
         background: var(--color-bg-card);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-sm);
         padding: var(--space-lg);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example-label {
         font-size: var(--text-xs);
         color: var(--color-neutral-400);
-        margin-bottom: var(--space-sm);
+      }
+
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
       }
       .empty-state {
         padding: var(--space-2xl) 0;

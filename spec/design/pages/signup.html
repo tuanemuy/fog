@@ -128,7 +128,6 @@
         font-size: var(--text-lg);
         font-weight: var(--weight-semibold);
         justify-content: center;
-        margin-bottom: var(--space-section);
       }
 
 
@@ -136,17 +135,23 @@
       .page-title {
         font-size: var(--text-2xl);
         font-weight: var(--weight-bold);
-        margin-bottom: var(--space-section);
+        margin-top: var(--space-section);
         text-align: center;
         line-height: var(--leading-tight);
       }
 
       /* ---- フォーム ---- */
+      .auth-form {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-lg);
+        margin-top: var(--space-section);
+      }
+
       .form-group {
         display: flex;
         flex-direction: column;
         gap: var(--space-sm);
-        margin-bottom: var(--space-lg);
       }
 
       .form-label {
@@ -275,13 +280,14 @@
         display: flex;
         flex-direction: column;
         gap: var(--space-sm);
+        margin-top: var(--space-lg);
       }
 
       .divider-text {
         display: flex;
         align-items: center;
         gap: var(--space-md);
-        margin: var(--space-lg) 0;
+        margin-top: var(--space-lg);
         color: var(--color-neutral-600);
         font-size: var(--text-sm);
       }
@@ -326,8 +332,11 @@
       /* ---- 状態の例 ---- */
       .state-examples {
         max-width: var(--content-max);
-        margin: var(--space-2xl) auto;
+        margin: var(--space-2xl) auto 0;
         padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
       }
 
       .state-examples h2 {
@@ -335,7 +344,6 @@
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-600);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
       }
 
       .state-examples .example {
@@ -343,17 +351,15 @@
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-sm);
         padding: var(--space-lg);
-        margin-bottom: var(--space-md);
       }
 
       .state-examples .example-label {
         font-size: var(--text-xs);
         color: var(--color-neutral-400);
-        margin-bottom: var(--space-sm);
       }
 
-      .state-examples .form-group {
-        margin-bottom: 0;
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -386,7 +392,7 @@
         <h1 class="page-title">アカウント登録</h1>
 
         <!-- 登録フォーム -->
-        <form>
+        <form class="auth-form">
           <div class="form-group">
             <label class="form-label" for="signup-email">メールアドレス</label>
             <input

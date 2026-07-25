@@ -367,6 +367,9 @@
       /* ==== タイムライン固有 ==== */
 
       /* ---- 絞り込みバー ---- */
+      /* 余白は原則「次の要素の margin-top」に寄せるが、ここだけ margin-bottom。
+         このバーは display:none で開閉するので、下余白なら閉じたとき一緒に
+         消えるが .filter-bar + * の上余白だと閉じていても残ってしまう */
       .filter-bar {
         display: none;
         align-items: center;
@@ -448,8 +451,11 @@
       }
       .entry {
         position: relative;
-        margin-bottom: var(--space-xs);
         padding: var(--space-sm) 0;
+      }
+
+      .entry + * {
+        margin-top: var(--space-xs);
       }
       .entry .items {
         padding-top: var(--space-xs);
@@ -764,18 +770,18 @@
         font-size: var(--text-lg);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-900);
-        margin-bottom: var(--space-md);
       }
       .dialog-text {
         font-size: var(--text-sm);
         line-height: var(--leading-normal);
         color: var(--color-neutral-700);
-        margin-bottom: var(--space-xl);
+        margin-top: var(--space-md);
       }
       .dialog-actions {
         display: flex;
         flex-direction: column;
         gap: 8px;
+        margin-top: var(--space-xl);
       }
       .dialog-btn {
         border: none;
@@ -911,27 +917,31 @@
       /* ---- 状態の例（モック用の隔離セクション） ---- */
       .state-examples {
         max-width: var(--content-max);
-        margin: var(--space-2xl) auto;
+        margin: var(--space-2xl) auto 0;
         padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
       }
       .state-examples h2 {
         font-size: var(--text-sm);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-600);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example {
         background: var(--color-bg-card);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-sm);
         padding: var(--space-lg);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example-label {
         font-size: var(--text-xs);
         color: var(--color-neutral-400);
-        margin-bottom: var(--space-sm);
+      }
+
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
       }
       .state-examples .entry-pop {
         position: static;

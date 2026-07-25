@@ -348,7 +348,10 @@
       .doc-context {
         font-size: var(--text-sm);
         color: var(--color-neutral-600);
-        margin-bottom: var(--space-sm);
+      }
+
+      .doc-context + * {
+        margin-top: var(--space-sm);
       }
       .doc-context a {
         color: inherit;
@@ -428,7 +431,10 @@
         color: var(--color-neutral-600);
         text-transform: uppercase;
         letter-spacing: var(--tracking-label);
-        margin-bottom: 12px;
+      }
+
+      .origin .o-label + * {
+        margin-top: 12px;
       }
       .origin-row {
         position: relative;
@@ -469,8 +475,11 @@
         font-weight: var(--weight-medium);
         color: var(--color-neutral-400);
         letter-spacing: var(--tracking-label);
-        margin-bottom: 6px;
         font-variant-numeric: tabular-nums;
+      }
+
+      .time-label + * {
+        margin-top: 6px;
       }
       .origin-row .o-text {
         display: -webkit-box;
@@ -616,27 +625,31 @@
       /* ---- 状態の例（モック用の隔離セクション） ---- */
       .state-examples {
         max-width: var(--content-max);
-        margin: var(--space-2xl) auto;
+        margin: var(--space-2xl) auto 0;
         padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
       }
       .state-examples h2 {
         font-size: var(--text-sm);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-600);
         letter-spacing: var(--tracking-label);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example {
         background: var(--color-bg-card);
         border-radius: var(--radius-md);
         box-shadow: var(--shadow-sm);
         padding: var(--space-lg);
-        margin-bottom: var(--space-md);
       }
       .state-examples .example-label {
         font-size: var(--text-xs);
         color: var(--color-neutral-400);
-        margin-bottom: var(--space-sm);
+      }
+
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
       }
 
       /* ---- 確認ダイアログ（状態例では静的に表示） ---- */
@@ -651,18 +664,18 @@
         font-size: var(--text-lg);
         font-weight: var(--weight-semibold);
         color: var(--color-neutral-900);
-        margin-bottom: var(--space-md);
       }
       .dialog-text {
         font-size: var(--text-sm);
         line-height: var(--leading-normal);
         color: var(--color-neutral-700);
-        margin-bottom: var(--space-xl);
+        margin-top: var(--space-md);
       }
       .dialog-actions {
         display: flex;
         flex-direction: column;
         gap: 8px;
+        margin-top: var(--space-xl);
       }
       .dialog-btn {
         border: none;
