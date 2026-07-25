@@ -88,4 +88,5 @@ WCAG AA を下回らない。コントラストの担保はトークンの役割
 - ドラフト: `spec/mock.html`（採用済み。モバイル5画面のプロトタイプ）
 - トークン: [tokens.md](./tokens.md) — すべての具体値の唯一の出所
 - 画面デザイン: `pages/*.html`（P-01〜P-14、単体でブラウザ表示可能。上記の基準形を含む）
+- ロゴ: [icons/logo.md](./icons/logo.md) — 採用したアイコン・lockup と favicon 一式の決定記録（提案の経緯は `icons/proposals.html`）
 - レビュー記録: `review/`

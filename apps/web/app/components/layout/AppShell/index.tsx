@@ -111,12 +111,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="mx-auto flex w-sheet flex-none items-center justify-between gap-md pt-safe-t-lg pb-md md:w-sheet-md lg:pt-xl">
-            <div className="flex min-w-0 items-center gap-sm text-lg font-semibold">
-              <h1 className="truncate text-lg font-semibold">{title}</h1>
-              <span
-                aria-hidden="true"
-                className="size-dot flex-none rounded-full bg-accent lg:hidden"
-              />
+            {/* Top-level screens lead with the logo, not the title (the
+                title stays for assistive tech); on lg the sidebar already
+                carries the brand, so the header shows neither. Screens with
+                a back button will instead show a short English label in
+                `--font-brand` — see `spec/design/icons/logo.md`. */}
+            <div className="flex min-w-0 items-center">
+              <h1 className="sr-only">{title}</h1>
+              <div className="lg:hidden">
+                <Brand />
+              </div>
             </div>
             <button
               type="button"
