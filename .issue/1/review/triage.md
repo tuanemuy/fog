@@ -52,3 +52,4 @@
 | `test/startSession の無テスト` | R1 | fix | `endSession` のみ検証されている | 0 |
 | `test/ハッシュ保存の実ハッシャー検証` | R1 | fix | 平文が保存されないことを実物で見ていない | 0 |
 | `test/ALTER TABLE RENAME の巻き込み` | R1 | fix | 失敗するとファイル全体が汚染される | 0 |
+| `presentation/errorResponse/kind が transport で落ちる` | R1 | fix | R1 修正中に発覚。SSR と RSC が別 module graph で `instanceof AppServerError` が常に false になり、AC-10 / AC-12 のエラー文言が実行時に一切出ない | 0 |

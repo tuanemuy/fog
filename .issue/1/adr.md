@@ -1119,3 +1119,38 @@ security レビュー 001 の W-005 / W-009 / W-010。
 - トレードオフ:
   - `/_` 始まりを一律に拒否するので、将来 `_` 始まりの公開 URL を作ると復帰しなくなる。デザイン・IA 上その予定は無く、拒否リストの理由はコメントに残した
   - `no-store` は `requireUserId()` を通るレスポンスにしか付かない。保護データを読むのに `requireUserId()` を通らない実行地点を作ればヘッダーも落ちるが、それは ADR-005 のガード自体の違反であり、そちらのレビュー観点で捕まえる
+
+---
+
+## ADR-032: `AppServerError` の同定を `instanceof` から構造判定に切り替える
+
+### Status
+
+Accepted（実行時バグ修正時に決定）
+
+### Context
+
+`/login` でログインに失敗すると、サーバー側は 422 と `ValidationError("INVALID_CREDENTIALS")` を正しく組み立てているのに、レスポンス本文が `{"c":"$TSR/Error","s":{"message":"Invalid email or password"}}` になり、`kind` / `code` が落ちていた。クライアントは `kind: "unknown"` として扱い、AC-10 の「メールアドレスまたはパスワードが正しくありません」も AC-12 の各文言も**実行時に一度も表示されない**。PR #17 由来ではなく、テンプレートの配線に元からあった不具合。
+
+`dev` サーバーに一時プローブを仕込んで確認した観測結果:
+
+- `appServerErrorAdapter.test` は**呼ばれている**（アダプター登録は生きている）。ただし `hit: false`, `sameCtor: false`, `ctorName: "AppServerError"`
+- 中間層とアダプターが握る `AppServerError` は別のクラスオブジェクト（`sameAsAdapter: false`）
+
+原因は module graph の分割。server function は `?tss-serverfn-split` として **rsc 環境の graph** にコンパイルされ、そこで `errorResponseMiddleware` が `AppServerError` を throw する。一方 `start.ts`（= アダプター）は `createStartHandler` が `#tanstack-start-entry` として **ssr 環境の graph** から読む。同一プロセス内に同じソースから作られた別クラスが2つ存在するため、`test: value instanceof AppServerError` が必ず false になり、seroval が既定の `Error` プラグインへフォールバックして `serialized` を丸ごと捨てていた。`extractSerializedError` の「アダプター迂回」フォールバックも、`$TSR/Error` が `message` しか運ばないので機能しない。
+
+### Decision
+
+`AppServerError` の同定を**構造判定**にする。`isAppServerError(value)` を `errorResponse.ts` に置き、`name === "AppServerError"` かつ `serialized` が既知の `kind` を持つことで判定する。`appServerErrorAdapter.test` と `errorResponseMiddleware` はこれを使う。
+
+- **クラス実体の二重ロードを避けるモジュール配置の修正は採らない。** どの graph に何が入るかはフレームワークのコンパイラが決めており、こちらが配置で制御しても次のバージョンで壊れる。「graph が分かれても壊れない判定」のほうが前提が少ない
+- **アダプター登録の場所・タイミングの修正も採らない。** 観測のとおり登録は正しく効いている
+- CLAUDE.md の「presentation layer serializes structurally — no `instanceof` enumeration of concrete classes」に照らしても、`instanceof` を残すほうが規約から外れている。`kind` タグを見る構造判定は既存の `serializeError` / `asSerializedError` と同じ流儀
+
+判定を `name` だけに緩めないのは、`serialized` の妥当性まで見ないと `toSerializable` が壊れた値を通してしまうため。逆に `serialized` だけを見ないのは、他人のオブジェクトが偶然 `serialized` を持つ場合に取り違えるため。
+
+### Consequences
+
+- 良い点: `kind` / `code` がクライアントまで届き、AC-10 / AC-12 の文言が実際に表示される（ブラウザで4ケースとも確認）。判定が graph 構成・バンドラ設定から独立する
+- トレードオフ: `name` 文字列という規約に寄りかかる。`AppServerError` を継承して `name` を上書きするクラスを作ると外れるが、このクラスは transport 境界専用で継承する用途が無い
+- 回帰検出: `apps/web/app/presentation/__tests__/appServerErrorAdapter.test.ts` が、`?dup` クエリで別 module instance を作って「別 graph の `AppServerError`」を再現し、アダプターが同定できること・`extractSerializedError` が `kind` を拾えること・アダプターが start インスタンスに登録されていることを検証する。`instanceof` に戻すとこのテストが落ちる
