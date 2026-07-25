@@ -11,6 +11,7 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 - [Wrangler config layout](#wrangler-config-layout)
 - [One-time Cloudflare resource creation](#one-time-cloudflare-resource-creation)
 - [Secrets and vars](#secrets-and-vars)
+- [Session secret rotation](#session-secret-rotation)
 - [Deployment](#deployment)
 - [D1 migrations](#d1-migrations)
 - [Queues](#queues)
@@ -23,9 +24,12 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 ```bash
 pnpm install
 cp .dev.vars.example .dev.vars         # wrangler-loaded secrets for local dev (gitignored)
+openssl rand -base64 48                # paste into SESSION_SECRET (ships empty)
 pnpm db:migrate:cf                     # apply migrations to the local D1
 pnpm dev:cf                            # vite dev backed by workerd (@cloudflare/vite-plugin)
 ```
+
+`SESSION_SECRET` is the one value with no usable default: a key printed in the repository is a key everyone has, so the example ships it empty and every request fails until it is set.
 
 `.dev.vars` is auto-loaded by `wrangler dev` (and the workerd-backed `pnpm dev:cf`) and mirrors `wrangler secret put` for production. Non-secret config such as `APP_URL` belongs in the matching `wrangler*.toml` `[vars]`, not in `.dev.vars`.
 
@@ -87,6 +91,29 @@ For local dev, drop them into `.dev.vars` (copied from `.dev.vars.example`).
 
 The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `.env.example` — the schema is shared with the Node runtime via `packages/core/src/application/di/env.ts`.
 
+### `SESSION_SECRET`
+
+The HMAC key signing session cookies (32 characters minimum, `openssl rand -base64 48`) is a secret, not a `[vars]` entry — `wrangler.toml` does not inherit `[vars]` across `[env.*]` blocks, so a var would have to be duplicated in plaintext per environment. Set it once per stage on the **app Worker only**; relay / consumer / pruner / DLQ never touch a session and must not receive it.
+
+```bash
+wrangler secret put SESSION_SECRET --config wrangler.staging.toml
+wrangler secret put SESSION_SECRET --config wrangler.production.toml
+```
+
+`.dev.vars` covers local dev. Skipping the remote `secret put` is invisible until deploy: the Cloudflare `ServerEnv` has no zod schema, so the Worker boots and every request then fails building its container.
+
+## Session secret rotation
+
+Session cookies are stateless: an HMAC-signed `{ uid, exp }` payload with no server-side record (`packages/core/src/adapters/webcrypto/hmacSessionCodec.ts`). Nothing can revoke a single session ahead of its expiry, which defaults to 7 days. **Rotating `SESSION_SECRET` is the only kill switch** — every previously issued cookie fails signature verification at once, which logs out every user.
+
+Use it when a cookie or the key itself may have leaked:
+
+1. Generate a replacement: `openssl rand -base64 48`.
+2. `wrangler secret put SESSION_SECRET --config wrangler.<stage>.toml` — wrangler applies the new value to the running Worker.
+3. Confirm an existing browser session now lands on `/login`.
+
+Old and new keys are never accepted together — there is no rolling window, so the logout is immediate and total. To shrink the exposure window instead, lower `ttlMs` where the codec is constructed.
+
 ## Deployment
 
 ```bash
@@ -123,6 +150,19 @@ pnpm db:execute:production --file=...  # run an arbitrary SQL file against produ
 ```
 
 `pnpm db:migrate:cf` is an alias of `db:apply:local` for parity with the Node runtime's `pnpm db:migrate`.
+
+### Replacing a migration in place
+
+`0000_initial` is regenerated in place rather than superseded by a `0001_*` while the schema is still pre-deployment. `wrangler d1 migrations apply` tracks applied migrations by **file name** in the `d1_migrations` table, so a D1 that already ran the old `0000_initial.sql` **skips the new contents without an error** — the tables never appear and the app fails later with `no such table: users`.
+
+Delete the local D1 state before applying whenever the initial migration has been regenerated:
+
+```bash
+rm -rf apps/web/.wrangler/state/v3/d1
+pnpm db:migrate:cf
+```
+
+Remote stages need the same treatment while pre-deployment: recreate the D1 (`wrangler d1 delete` / `create`, then paste the new `database_id`). Once the schema ships to an environment holding real data, stop replacing the tag and add `0001_*` migrations instead.
 
 ## Queues
 

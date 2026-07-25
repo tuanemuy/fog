@@ -9,113 +9,225 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TodoRouteRouteImport } from './routes/todo/route'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as TodoIndexRouteImport } from './routes/todo/index'
-import { Route as TodoAboutRouteImport } from './routes/todo/about'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PasswordResetRouteImport } from './routes/password-reset'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppSearchRouteImport } from './routes/_app/search'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTopicsRouteImport } from './routes/_app/topics'
+import { Route as AppTrashRouteImport } from './routes/_app/trash'
 
-const TodoRouteRoute = TodoRouteRouteImport.update({
-  id: '/todo',
-  path: '/todo',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TodoIndexRoute = TodoIndexRouteImport.update({
+const PasswordResetRoute = PasswordResetRouteImport.update({
+  id: '/password-reset',
+  path: '/password-reset',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => TodoRouteRoute,
+  getParentRoute: () => AppRoute,
 } as any)
-const TodoAboutRoute = TodoAboutRouteImport.update({
-  id: '/about',
-  path: '/about',
-  getParentRoute: () => TodoRouteRoute,
+const AppSearchRoute = AppSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTopicsRoute = AppTopicsRouteImport.update({
+  id: '/topics',
+  path: '/topics',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTrashRoute = AppTrashRouteImport.update({
+  id: '/trash',
+  path: '/trash',
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
+  '/': typeof AppIndexRoute
+  '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
+  '/signup': typeof SignupRoute
+  '/search': typeof AppSearchRoute
+  '/settings': typeof AppSettingsRoute
+  '/topics': typeof AppTopicsRoute
+  '/trash': typeof AppTrashRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/todo/about': typeof TodoAboutRoute
-  '/todo': typeof TodoIndexRoute
+  '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
+  '/signup': typeof SignupRoute
+  '/search': typeof AppSearchRoute
+  '/settings': typeof AppSettingsRoute
+  '/topics': typeof AppTopicsRoute
+  '/trash': typeof AppTrashRoute
+  '/': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
+  '/signup': typeof SignupRoute
+  '/_app/search': typeof AppSearchRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/_app/topics': typeof AppTopicsRoute
+  '/_app/trash': typeof AppTrashRoute
+  '/_app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/todo' | '/todo/about' | '/todo/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/password-reset'
+    | '/signup'
+    | '/search'
+    | '/settings'
+    | '/topics'
+    | '/trash'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/todo/about' | '/todo'
-  id: '__root__' | '/' | '/todo' | '/todo/about' | '/todo/'
+  to:
+    | '/login'
+    | '/password-reset'
+    | '/signup'
+    | '/search'
+    | '/settings'
+    | '/topics'
+    | '/trash'
+    | '/'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/password-reset'
+    | '/signup'
+    | '/_app/search'
+    | '/_app/settings'
+    | '/_app/topics'
+    | '/_app/trash'
+    | '/_app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  TodoRouteRoute: typeof TodoRouteRouteWithChildren
+  AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  PasswordResetRoute: typeof PasswordResetRoute
+  SignupRoute: typeof SignupRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/todo': {
-      id: '/todo'
-      path: '/todo'
-      fullPath: '/todo'
-      preLoaderRoute: typeof TodoRouteRouteImport
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password-reset': {
+      id: '/password-reset'
+      path: '/password-reset'
+      fullPath: '/password-reset'
+      preLoaderRoute: typeof PasswordResetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/todo/': {
-      id: '/todo/'
-      path: '/'
-      fullPath: '/todo/'
-      preLoaderRoute: typeof TodoIndexRouteImport
-      parentRoute: typeof TodoRouteRoute
+    '/_app/search': {
+      id: '/_app/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof AppSearchRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/todo/about': {
-      id: '/todo/about'
-      path: '/about'
-      fullPath: '/todo/about'
-      preLoaderRoute: typeof TodoAboutRouteImport
-      parentRoute: typeof TodoRouteRoute
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/topics': {
+      id: '/_app/topics'
+      path: '/topics'
+      fullPath: '/topics'
+      preLoaderRoute: typeof AppTopicsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/trash': {
+      id: '/_app/trash'
+      path: '/trash'
+      fullPath: '/trash'
+      preLoaderRoute: typeof AppTrashRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
-interface TodoRouteRouteChildren {
-  TodoAboutRoute: typeof TodoAboutRoute
-  TodoIndexRoute: typeof TodoIndexRoute
+interface AppRouteChildren {
+  AppSearchRoute: typeof AppSearchRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppTopicsRoute: typeof AppTopicsRoute
+  AppTrashRoute: typeof AppTrashRoute
+  AppIndexRoute: typeof AppIndexRoute
 }
 
-const TodoRouteRouteChildren: TodoRouteRouteChildren = {
-  TodoAboutRoute: TodoAboutRoute,
-  TodoIndexRoute: TodoIndexRoute,
+const AppRouteChildren: AppRouteChildren = {
+  AppSearchRoute: AppSearchRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppTopicsRoute: AppTopicsRoute,
+  AppTrashRoute: AppTrashRoute,
+  AppIndexRoute: AppIndexRoute,
 }
 
-const TodoRouteRouteWithChildren = TodoRouteRoute._addFileChildren(
-  TodoRouteRouteChildren,
-)
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  TodoRouteRoute: TodoRouteRouteWithChildren,
+  AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
+  PasswordResetRoute: PasswordResetRoute,
+  SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -2,14 +2,6 @@
 // Mirrors the wrangler `[env.*]` pattern in CF: one declarative bundle of
 // every Lambda + queue + schedule + IAM grant for one environment.
 //
-// Resources declared here:
-//   - 5 Lambda functions: app, relay, consumer, pruner, dlq
-//   - HTTP API (API Gateway v2) fronting `app`
-//   - CloudFront distribution + S3 bucket for `/assets/*` (client bundle)
-//   - SQS standard queue + DLQ with redrive policy
-//   - 2 EventBridge Scheduler schedules (relay 5min / pruner daily)
-//   - IAM grants between them
-//
 // Turso itself is NOT managed here — create the database with the
 // `turso` CLI and pass the URL / auth-token secret ARN as stack props.
 
@@ -28,6 +20,7 @@ import {
   AllowedMethods,
   CachePolicy,
   Distribution,
+  OriginRequestPolicy,
   ViewerProtocolPolicy,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
@@ -58,6 +51,10 @@ export type AppStackProps = StackProps &
     // Secrets Manager ARN that holds the Turso auth token. The Lambdas
     // read it at cold start via the boot-time secrets loader.
     tursoAuthSecretArn: string;
+    // Secrets Manager ARN holding the session-cookie HMAC key. Only the
+    // request-path Lambda reads it; the worker Lambdas never touch a
+    // session, so the secret is not distributed to them.
+    sessionSecretArn: string;
     // Public origin (custom domain, or the auto-generated API Gateway URL).
     appUrl: string;
   }>;
@@ -70,6 +67,12 @@ export class AppStack extends Stack {
       this,
       "TursoAuthTokenSecret",
       props.tursoAuthSecretArn,
+    );
+
+    const sessionSecret = Secret.fromSecretCompleteArn(
+      this,
+      "SessionSecret",
+      props.sessionSecretArn,
     );
 
     // ---- SQS ---------------------------------------------------------
@@ -162,6 +165,12 @@ export class AppStack extends Stack {
       environment: {
         ...sharedEnv,
         RELAY_FUNCTION_NAME: relayFn.functionName,
+        // Deliberately not in `sharedEnv`: the session key goes to the
+        // request path and nowhere else. Passed as a Secrets Manager ARN
+        // (same idiom as the Turso token) so the value never lands in the
+        // CloudFormation template; `server.aws.ts` resolves it at cold
+        // start into `SESSION_SECRET`.
+        SESSION_SECRET_ARN: props.sessionSecretArn,
       },
     });
 
@@ -220,7 +229,16 @@ export class AppStack extends Stack {
         viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: AllowedMethods.ALLOW_ALL,
         // The app produces dynamic HTML / RSC payloads — bypass the cache.
+        // Keep it disabled: a caching policy here would key responses
+        // without the session cookie and hand one user's authenticated
+        // page to the next viewer.
         cachePolicy: CachePolicy.CACHING_DISABLED,
+        // CloudFront forwards only what the cache policy and the origin
+        // request policy name, and `CachingDisabled` names nothing. Without
+        // this the origin never sees `Cookie` (no one stays logged in) or
+        // the query string (`?redirect=`, server-function arguments).
+        // `Host` stays excluded so the API Gateway origin keeps resolving.
+        originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
       additionalBehaviors: {
         "/assets/*": {
@@ -239,8 +257,9 @@ export class AppStack extends Stack {
     });
 
     // ---- IAM grants --------------------------------------------------
-    // Request path → relay (async invoke) + SQS read for DLQ requeue +
-    // Turso auth token from Secrets Manager.
+    // Request path → relay (async invoke) + Turso auth token and session
+    // secret from Secrets Manager. No SQS grant: the app never touches a
+    // queue directly.
     relayFn.grantInvoke(appFn);
     // Relay self-chains when a batch saturates `maxIterations`.
     relayFn.grantInvoke(relayFn);
@@ -249,11 +268,10 @@ export class AppStack extends Stack {
     tursoSecret.grantRead(consumerFn);
     tursoSecret.grantRead(prunerFn);
     tursoSecret.grantRead(dlqFn);
+    sessionSecret.grantRead(appFn);
 
-    // Relay → SQS (publish)
     eventsQueue.grantSendMessages(relayFn);
 
-    // Consumer → events queue (event source mapping)
     consumerFn.addEventSource(
       new SqsEventSource(eventsQueue, {
         batchSize: 10,
@@ -262,10 +280,9 @@ export class AppStack extends Stack {
       }),
     );
 
-    // DLQ → dlq lambda (event source mapping). The handler always acks
-    // every message (the DLQ has no further dead-letter target so a
-    // re-failure would loop), hence `reportBatchItemFailures` is left
-    // off intentionally.
+    // `reportBatchItemFailures` is left off intentionally: the handler always
+    // acks every message, because the DLQ has no further dead-letter target
+    // and a re-failure would loop.
     dlqFn.addEventSource(
       new SqsEventSource(dlq, {
         batchSize: 10,

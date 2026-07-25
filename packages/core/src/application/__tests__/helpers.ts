@@ -12,6 +12,7 @@ import { type Database, getDatabase } from "@repo/core/adapters/d1/client";
 import { D1IdempotencyStore } from "@repo/core/adapters/d1/repositories/idempotencyStore";
 import { D1OutboxRepository } from "@repo/core/adapters/d1/repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "@repo/core/adapters/d1/unitOfWork";
+import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import type {
   RequestContainer,
   WorkerContainer,
@@ -21,6 +22,7 @@ import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { content } from "@repo/core/config";
 import { beforeEach } from "vitest";
+import { FakePasswordHasher } from "./fakes";
 
 // Tests need both scopes — they exercise usecases (request) and worker
 // pipelines in the same suite. Production code uses one container or
@@ -30,7 +32,21 @@ export type TestContainer = RequestContainer &
     db: Database;
   };
 
-export function createTestContainer(): TestContainer {
+export const TEST_SESSION_SECRET = "test-session-secret-0123456789abcdef";
+
+export type TestContainerOverrides = Partial<
+  Pick<RequestContainer, "passwordHasher" | "sessionCodec">
+>;
+
+/**
+ * `passwordHasher` defaults to the fake: usecase suites register and log
+ * in dozens of times, and paying a real key derivation for each buys
+ * nothing the WebCrypto adapter's own unit tests do not already cover.
+ * Tests where the round trip is the point pass a real hasher.
+ */
+export function createTestContainer(
+  overrides: TestContainerOverrides = {},
+): TestContainer {
   const db = getDatabase(env.DB);
   return {
     config: {
@@ -42,6 +58,10 @@ export function createTestContainer(): TestContainer {
       SystemClock,
       UuidV7Generator,
     ),
+    passwordHasher: overrides.passwordHasher ?? new FakePasswordHasher(),
+    sessionCodec:
+      overrides.sessionCodec ??
+      createHmacSessionCodec({ secret: TEST_SESSION_SECRET }),
     outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
     idempotencyStore: new D1IdempotencyStore(db, SystemClock),
     clock: SystemClock,
@@ -56,10 +76,12 @@ export function createTestContainer(): TestContainer {
  * cleanup happens globally in the D1 pool's `setup.ts`, so this is
  * just a constructor + getter — no `afterEach` work is needed.
  */
-export function setupTestContainer(): () => TestContainer {
+export function setupTestContainer(
+  overrides: TestContainerOverrides = {},
+): () => TestContainer {
   let container: TestContainer;
   beforeEach(() => {
-    container = createTestContainer();
+    container = createTestContainer(overrides);
   });
   return () => container;
 }

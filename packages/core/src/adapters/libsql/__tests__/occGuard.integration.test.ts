@@ -1,6 +1,10 @@
-import { Todo } from "@repo/core/domain/todo/entity";
-import { TodoEvents } from "@repo/core/domain/todo/events";
-import { TodoId } from "@repo/core/domain/todo/valueObject";
+import { isConflictError } from "@repo/core/application/errors";
+import { User } from "@repo/core/domain/identity/entity";
+import { IdentityEvents } from "@repo/core/domain/identity/events";
+import {
+  PasswordHash,
+  TrashRetentionDays,
+} from "@repo/core/domain/identity/valueObject";
 import { afterEach, describe, expect, it } from "vitest";
 import { occGuard, outboxEvents } from "../schema";
 import { createTestContainer, type TestContainer } from "./helpers";
@@ -14,11 +18,18 @@ import { createTestContainer, type TestContainer } from "./helpers";
  */
 describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
   const NOW = new Date("2026-01-01T00:00:00.000Z");
+  const HASH = PasswordHash.create("pbkdf2-sha256$1$c2FsdA==$aGFzaA==");
   let counter = 0;
-  const nextTodoId = () => {
+  const nextUser = (label: string) => {
     counter += 1;
-    return TodoId.create(
-      `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-8000-400000000000`,
+    const suffix = counter.toString(16).padStart(4, "0");
+    return User.registerWithPassword(
+      {
+        id: `0193e7d0-${suffix}-7000-8000-400000000000`,
+        email: `${label}-${suffix}@example.com`,
+        passwordHash: HASH,
+      },
+      NOW,
     );
   };
 
@@ -30,24 +41,25 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
 
   it("keeps _occ_guard empty across a successful commit", async () => {
     container = await createTestContainer();
-    const { entity: todo, eventDrafts } = Todo.create(
-      { id: nextTodoId(), title: "ok" },
-      NOW,
-    );
+    const { entity: user, eventDrafts } = nextUser("ok");
     await container.unitOfWorkProvider.run(
-      async ({ todoRepository, collectEvents }) => {
-        await todoRepository.insert(todo);
+      async ({ userRepository, collectEvents }) => {
+        await userRepository.insert(user);
         collectEvents(eventDrafts);
       },
     );
 
     const found = await container.unitOfWorkProvider.run(
-      async ({ todoRepository }) => todoRepository.findById(todo.id),
+      async ({ userRepository }) => userRepository.findById(user.id),
     );
-    if (!found || !Todo.isActive(found.entity)) return;
-    const { entity: completed } = Todo.complete(found.entity, NOW);
-    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(completed, found.expectedVersion);
+    if (!found) throw new Error("seeded user disappeared");
+    const { entity: updated } = User.changeTrashRetentionDays(
+      found.entity,
+      TrashRetentionDays.create(7),
+      NOW,
+    );
+    await container.unitOfWorkProvider.run(async ({ userRepository }) => {
+      await userRepository.save(updated, found.expectedVersion);
     });
 
     const guardRows = await container.db.select().from(occGuard);
@@ -56,35 +68,41 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
 
   it("keeps _occ_guard empty after a failed OCC commit", async () => {
     container = await createTestContainer();
-    const { entity: active } = Todo.create(
-      { id: nextTodoId(), title: "fail" },
-      NOW,
-    );
-    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.insert(active);
+    const { entity: created } = nextUser("fail");
+    await container.unitOfWorkProvider.run(async ({ userRepository }) => {
+      await userRepository.insert(created);
     });
 
     const found = await container.unitOfWorkProvider.run(
-      async ({ todoRepository }) => todoRepository.findById(active.id),
+      async ({ userRepository }) => userRepository.findById(created.id),
     );
-    if (!found || !Todo.isActive(found.entity)) return;
-    const { entity: bumped } = Todo.complete(found.entity, NOW);
-    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(bumped, found.expectedVersion);
+    if (!found) throw new Error("seeded user disappeared");
+    const { entity: bumped } = User.changeTrashRetentionDays(
+      found.entity,
+      TrashRetentionDays.create(7),
+      NOW,
+    );
+    await container.unitOfWorkProvider.run(async ({ userRepository }) => {
+      await userRepository.save(bumped, found.expectedVersion);
     });
 
-    let threw = false;
+    let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(
-        async ({ todoRepository, collectEvents }) => {
-          await todoRepository.save(bumped, found.expectedVersion);
-          collectEvents([TodoEvents.toggled(active.id, true, NOW)]);
+        async ({ userRepository, collectEvents }) => {
+          await userRepository.save(bumped, found.expectedVersion);
+          collectEvents([IdentityEvents.passwordChanged(created.id, NOW)]);
         },
       );
-    } catch {
-      threw = true;
+    } catch (error) {
+      caught = error;
     }
-    expect(threw).toBe(true);
+    // Not merely "something threw": a broken schema would satisfy that
+    // while proving nothing about the guard.
+    expect(isConflictError(caught)).toBe(true);
+    expect(isConflictError(caught) && caught.code).toBe(
+      "OPTIMISTIC_LOCK_FAILURE",
+    );
 
     // Guard table must stay empty — the CHECK aborts the transaction before
     // any row can persist on either the success or conflict path.

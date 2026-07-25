@@ -33,10 +33,14 @@ resource "google_cloud_run_v2_service" "app" {
       ports {
         container_port = 8080
       }
+      # SESSION_SECRET is merged in here rather than into `shared_env`:
+      # only the request path signs session cookies, so the relay /
+      # consumer / dlq services never receive the key.
       dynamic "env" {
         for_each = merge(local.shared_env, {
-          WORKER_ROLE = "app"
-          RELAY_URL   = google_cloud_run_v2_service.relay.uri
+          WORKER_ROLE    = "app"
+          RELAY_URL      = google_cloud_run_v2_service.relay.uri
+          SESSION_SECRET = var.session_secret
         })
         content {
           name  = env.key
@@ -60,9 +64,8 @@ resource "google_cloud_run_v2_service" "app" {
 # The relay service intentionally omits `RELAY_URL` for itself. The
 # saturation self-chain in `runRelayTick` is a performance optimisation;
 # without it the 5-minute Scheduler tick remains the safety net and a
-# backlog drains more slowly but correctly. Avoiding self-reference
-# removes the Terraform cycle the previous flat layout worked around
-# with `null_resource` + `gcloud run services update`.
+# backlog drains more slowly but correctly. A self-reference would also be
+# a Terraform cycle — see the README's RELAY_URL section.
 resource "google_cloud_run_v2_service" "relay" {
   name     = "${local.prefix}-relay"
   location = var.region

@@ -4,24 +4,23 @@ import type {
   SerializedNotFoundError,
   SerializedSystemError,
   SerializedUnauthorizedError,
+  SerializedValidationError,
 } from "@repo/core/application/errors";
 import type { SerializedBusinessError } from "@repo/core/domain/error";
 import {
-  type FieldErrors,
   isSerializableError,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
 
+// Re-exported so `validator.ts` (and other presentation modules) keep a
+// single import site for the serialized-error contract even though the
+// validation variant is owned by the application layer.
+export type { SerializedValidationError } from "@repo/core/application/errors";
 export type {
   FieldErrors,
   SerializableError,
   SerializedErrorBase,
 } from "@repo/core/lib/error";
-
-export type SerializedValidationError = SerializedErrorBase & {
-  kind: "validation";
-  fieldErrors?: FieldErrors;
-};
 
 export type SerializedUnknownError = SerializedErrorBase & {
   kind: "unknown";
@@ -114,8 +113,10 @@ export function httpStatusFor(serialized: SerializedError): number {
   return HTTP_STATUS_BY_KIND[serialized.kind];
 }
 
+const APP_SERVER_ERROR_NAME = "AppServerError";
+
 export class AppServerError extends Error {
-  override readonly name = "AppServerError";
+  override readonly name = APP_SERVER_ERROR_NAME;
 
   constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
@@ -153,8 +154,27 @@ function asSerializedError(value: unknown): SerializedError | null {
     : null;
 }
 
+/**
+ * Structural identity test for {@link AppServerError}.
+ *
+ * `instanceof` is unusable here: server functions compile into their own
+ * module graph while the serialization adapter loads from the SSR graph, so
+ * one process holds two distinct class objects built from this same file —
+ * a thrown error fails `instanceof` and silently falls back to Seroval's
+ * default `Error` handling, dropping `serialized`. Matching the `name` tag
+ * plus a well-formed `kind`-tagged payload is graph-independent.
+ */
+export function isAppServerError(value: unknown): value is AppServerError {
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as { name?: unknown }).name !== APP_SERVER_ERROR_NAME)
+    return false;
+  return (
+    hasSerializedRemnant(value) && asSerializedError(value.serialized) !== null
+  );
+}
+
 export function extractSerializedError(error: unknown): SerializedError {
-  if (error instanceof AppServerError) {
+  if (isAppServerError(error)) {
     return error.serialized;
   }
   if (hasSerializedRemnant(error)) {

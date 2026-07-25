@@ -1,12 +1,9 @@
-// Deliberately separate from `./serverNode.ts` and `./serverCloudflare.ts`
-// so the AWS entry never pulls Workers-only imports and the Node entry
-// never pulls AWS-SDK imports. All three factories return the same
-// `RequestContainer` / `WorkerContainer` shapes.
-
 import type { Database } from "@repo/core/adapters/libsql/client";
 import { LibsqlIdempotencyStore } from "@repo/core/adapters/libsql/repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "@repo/core/adapters/libsql/repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "@repo/core/adapters/libsql/unitOfWork";
+import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { content } from "@repo/core/config";
 import { z } from "zod";
 import { SystemClock } from "../ports/clock";
@@ -20,6 +17,7 @@ import {
   readRelayTuning as readRelayTuningShared,
   type TuningEnv,
 } from "./env";
+import { type RequestSecrets, requireSessionSecret } from "./secrets";
 import type {
   AppConfig,
   RequestContainer,
@@ -39,6 +37,7 @@ export type AwsServerEnv = Readonly<{
   DATABASE_URL: string;
   DATABASE_AUTH_TOKEN?: string | undefined;
   APP_URL: string;
+  SESSION_SECRET?: string | undefined;
   AWS_REGION?: string | undefined;
   EVENTS_QUEUE_URL?: string | undefined;
   RELAY_FUNCTION_NAME?: string | undefined;
@@ -52,6 +51,10 @@ const awsServerEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   DATABASE_AUTH_TOKEN: z.string().min(1).optional(),
   APP_URL: z.string().min(1, "APP_URL is required"),
+  // Optional at the schema level so the four worker Lambdas — which share
+  // this reader and never touch a session — still boot without it. The
+  // request path enforces it via `requireSessionSecret`.
+  SESSION_SECRET: z.string().optional(),
   AWS_REGION: z.string().min(1).optional(),
   EVENTS_QUEUE_URL: z.string().min(1).optional(),
   RELAY_FUNCTION_NAME: z.string().min(1).optional(),
@@ -113,6 +116,7 @@ export type AwsRequestServerConfig = AppConfig &
   Readonly<{
     db: Database;
     relayTrigger: RelayTrigger;
+    secrets: RequestSecrets;
   }>;
 
 export function readAwsRequestServerConfig(
@@ -124,6 +128,7 @@ export function readAwsRequestServerConfig(
     appUrl: env.APP_URL,
     db: bindings.db,
     relayTrigger: bindings.relayTrigger ?? NoopRelayTrigger,
+    secrets: { sessionSecret: requireSessionSecret(env.SESSION_SECRET) },
   };
 }
 
@@ -131,7 +136,12 @@ export function readAwsRequestServerConfig(
 export function createAwsRequestContainer(
   config: AwsRequestServerConfig,
 ): RequestContainer {
-  const { db: _db, relayTrigger: _relayTrigger, ...appConfig } = config;
+  const {
+    db: _db,
+    relayTrigger: _relayTrigger,
+    secrets,
+    ...appConfig
+  } = config;
   return {
     ...buildSharedDeps(),
     config: appConfig satisfies AppConfig,
@@ -141,6 +151,10 @@ export function createAwsRequestContainer(
       UuidV7Generator,
       config.relayTrigger,
     ),
+    passwordHasher: createPbkdf2PasswordHasher(),
+    sessionCodec: createHmacSessionCodec({
+      secret: secrets.sessionSecret,
+    }),
   };
 }
 

@@ -14,8 +14,8 @@ import {
   type EventDraft,
   EventId,
 } from "@repo/core/domain/common/event";
-import { TodoEvents } from "@repo/core/domain/todo/events";
-import { TodoId, TodoTitle } from "@repo/core/domain/todo/valueObject";
+import { IdentityEvents } from "@repo/core/domain/identity/events";
+import { UserId } from "@repo/core/domain/identity/valueObject";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -36,8 +36,8 @@ import {
 // adapters and have nothing to verify beyond their type signature.
 //
 // The fetch handler is intentionally not exercised; it lives in the
-// main app Worker (`app/worker.ts`) and is gated on TanStack Start's
-// build pipeline.
+// main app Worker (`app/server.cloudflare.ts`) and is gated on TanStack
+// Start's build pipeline.
 
 let counter = 0;
 const nextEventId = (): EventId => {
@@ -46,15 +46,18 @@ const nextEventId = (): EventId => {
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-a000-400000000000`,
   );
 };
-const nextTodoId = () => {
+const nextUserId = () => {
   counter += 1;
-  return TodoId.create(
+  return UserId.create(
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-a000-500000000000`,
   );
 };
 const withId = <TEvent extends DomainEvent>(
   draft: EventDraft<TEvent>,
 ): TEvent => ({ ...draft, id: nextEventId() }) as TEvent;
+
+const registeredEvent = (occurredAt: Date) =>
+  withId(IdentityEvents.userRegistered(nextUserId(), "password", occurredAt));
 
 async function seedOutbox(events: readonly DomainEvent[]): Promise<void> {
   const db = getDatabase(env.DB);
@@ -81,9 +84,7 @@ const dlqEnv = (): DlqEnv => env as unknown as DlqEnv;
 
 describe("relay producer Worker — runRelayTick", () => {
   it("claims pending outbox rows, sends them to the queue, and marks processed", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("relay");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = registeredEvent(new Date());
     await seedOutbox([event]);
 
     const result = await runRelayTick(relayEnv());
@@ -106,9 +107,7 @@ describe("relay producer Worker — runRelayTick", () => {
 
 describe("pruner Worker — runPruneTick", () => {
   it("deletes processed rows older than the retention window", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("prune");
-    const event = withId(TodoEvents.created(todoId, title, new Date(0)));
+    const event = registeredEvent(new Date(0));
     await seedOutbox([event]);
 
     const db = getDatabase(env.DB);
@@ -127,13 +126,11 @@ describe("pruner Worker — runPruneTick", () => {
   });
 
   it("retains processed rows newer than the retention window", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("recent");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = registeredEvent(new Date());
     await seedOutbox([event]);
 
     const db = getDatabase(env.DB);
-    const recent = new Date(Date.now() - 60 * 1000); // 1 min ago
+    const recent = new Date(Date.now() - 60 * 1000);
     await db
       .update(outboxEvents)
       .set({ processedAt: recent })
@@ -153,9 +150,7 @@ afterEach(() => {
 
 describe("consumer Worker — handleQueue", () => {
   it("acks every message in the batch on the happy path", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("queue-ack");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = registeredEvent(new Date());
 
     const batch = createMessageBatch<DomainEvent>(
       "tanstack-start-template-events",
@@ -186,9 +181,7 @@ describe("consumer Worker — handleQueue", () => {
   });
 
   it("acks a redelivered message without re-running the handler", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("queue-redeliver");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = registeredEvent(new Date());
 
     // First delivery — stamps `processed_events`.
     const firstBatch = createMessageBatch<DomainEvent>(
@@ -255,14 +248,8 @@ describe("consumer Worker — handleQueue", () => {
 // parity between the test miniflare setup and wrangler.toml.
 describe("consumer Worker — handleQueue retry path", () => {
   it("routes failed messages to retry() so the queue can dead-letter them", async () => {
-    const okTodo = nextTodoId();
-    const okEvent = withId(
-      TodoEvents.created(okTodo, TodoTitle.create("ok"), new Date()),
-    );
-    const failTodo = nextTodoId();
-    const failEvent = withId(
-      TodoEvents.created(failTodo, TodoTitle.create("fail"), new Date()),
-    );
+    const okEvent = registeredEvent(new Date());
+    const failEvent = registeredEvent(new Date());
 
     const originalMarkProcessed = D1IdempotencyStore.prototype.markProcessed;
     vi.spyOn(D1IdempotencyStore.prototype, "markProcessed").mockImplementation(
@@ -318,9 +305,7 @@ describe("consumer Worker — handleQueue retry path", () => {
 
 describe("DLQ Worker — handleDlq", () => {
   it("acks every quarantined message so it does not re-enter the DLQ", async () => {
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("dlq-ack");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = registeredEvent(new Date());
 
     const batch = createMessageBatch<DomainEvent>(
       "tanstack-start-template-events-dlq",

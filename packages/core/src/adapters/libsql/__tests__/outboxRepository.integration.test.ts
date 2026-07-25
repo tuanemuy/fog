@@ -3,8 +3,11 @@ import {
   type EventDraft,
   EventId,
 } from "@repo/core/domain/common/event";
-import { TodoEvents } from "@repo/core/domain/todo/events";
-import { TodoId, TodoTitle } from "@repo/core/domain/todo/valueObject";
+import { IdentityEvents } from "@repo/core/domain/identity/events";
+import {
+  TrashRetentionDays,
+  UserId,
+} from "@repo/core/domain/identity/valueObject";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { PendingBatch } from "../pendingBatch";
@@ -32,15 +35,26 @@ const nextEventId = (): EventId => {
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-9000-200000000000`,
   );
 };
-const nextTodoId = () => {
+const nextUserId = () => {
   counter += 1;
-  return TodoId.create(
+  return UserId.create(
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-9000-300000000000`,
   );
 };
 const withId = <TEvent extends DomainEvent>(
   draft: EventDraft<TEvent>,
 ): TEvent => ({ ...draft, id: nextEventId() }) as TEvent;
+
+const registered = (userId: UserId, occurredAt: Date) =>
+  withId(IdentityEvents.userRegistered(userId, "password", occurredAt));
+const retentionChanged = (userId: UserId, days: number, occurredAt: Date) =>
+  withId(
+    IdentityEvents.trashRetentionChanged(
+      userId,
+      TrashRetentionDays.create(days),
+      occurredAt,
+    ),
+  );
 
 async function manualSave(
   container: TestContainer,
@@ -74,24 +88,23 @@ describe("LibsqlOutboxRepository.save (integration)", () => {
 
   it("writes payload / eventType / aggregateId to the correct columns", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("persistence");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const userId = nextUserId();
+    const event = registered(userId, new Date());
 
     await manualSave(container, [event], new Date());
 
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.id).toBe(event.id);
-    expect(row.eventType).toBe("todo.created");
-    expect(row.aggregateId).toBe(todoId);
+    expect(row.eventType).toBe("identity.userRegistered");
+    expect(row.aggregateId).toBe(userId);
     expect(row.processedAt).toBeNull();
 
-    const stored = row.payload as { todoId: string; title: string };
-    expect(stored.todoId).toBe(todoId);
-    expect(stored.title).toBe(title);
+    const stored = row.payload as { userId: string; authMethod: string };
+    expect(stored.userId).toBe(userId);
+    expect(stored.authMethod).toBe("password");
   });
 });
 
@@ -111,10 +124,9 @@ describe("LibsqlOutboxRepository.claimPending (integration)", () => {
 
   it("returns only unprocessed entries in approximate created_at order", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("claim");
-    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
-    const b = withId(TodoEvents.toggled(todoId, true, new Date(1000)));
+    const userId = nextUserId();
+    const a = registered(userId, new Date(0));
+    const b = retentionChanged(userId, 7, new Date(1000));
     await manualSave(container, [a, b], new Date(0));
 
     await container.db
@@ -131,9 +143,7 @@ describe("LibsqlOutboxRepository.claimPending (integration)", () => {
 
   it("hides newly-claimed rows from concurrent claims until the lease lapses", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("lease");
-    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    const a = registered(nextUserId(), new Date(0));
     await manualSave(container, [a], new Date(0));
 
     const t0 = new Date(10_000);
@@ -161,9 +171,7 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("stamps processed_at and clears the claim for processed ids", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("processed");
-    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const a = registered(nextUserId(), new Date());
     await manualSave(container, [a], new Date());
 
     const claim = new Date(10_000);
@@ -189,9 +197,7 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("schedules retry and releases claim when nextAttemptAt is set", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("retry");
-    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const a = registered(nextUserId(), new Date());
     await manualSave(container, [a], new Date());
 
     await container.outboxRepository.claimPending({
@@ -218,9 +224,7 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("quarantines the row when nextAttemptAt is null", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("quarantine");
-    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const a = registered(nextUserId(), new Date());
     await manualSave(container, [a], new Date());
 
     const failedAt = new Date(30_000);
@@ -238,9 +242,7 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("excludes quarantined rows from claimPending", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("excluded");
-    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const a = registered(nextUserId(), new Date());
     await manualSave(container, [a], new Date());
 
     await container.outboxRepository.finalize({
@@ -260,10 +262,9 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("commits processed and failures together in one call", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("mixed");
-    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
-    const b = withId(TodoEvents.toggled(todoId, true, new Date(1000)));
+    const userId = nextUserId();
+    const a = registered(userId, new Date(0));
+    const b = retentionChanged(userId, 7, new Date(1000));
     await manualSave(container, [a, b], new Date(0));
 
     await container.outboxRepository.claimPending({
@@ -294,9 +295,7 @@ describe("LibsqlOutboxRepository.finalize (integration)", () => {
 
   it("is a no-op when both processed and failures are empty", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("noop");
-    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const a = registered(nextUserId(), new Date());
     await manualSave(container, [a], new Date());
 
     await container.outboxRepository.finalize({
@@ -321,10 +320,9 @@ describe("LibsqlOutboxRepository.pruneProcessed (integration)", () => {
 
   it("deletes only rows processed before the cutoff", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("prune");
-    const old = withId(TodoEvents.created(todoId, title, new Date(0)));
-    const fresh = withId(TodoEvents.toggled(todoId, true, new Date(1000)));
+    const userId = nextUserId();
+    const old = registered(userId, new Date(0));
+    const fresh = retentionChanged(userId, 7, new Date(1000));
     await manualSave(container, [old, fresh], new Date(0));
 
     await container.db

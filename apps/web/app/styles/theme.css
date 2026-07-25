@@ -1,3 +1,14 @@
+/* Projects the tokens in `tokens.css` into Tailwind's `@theme` namespaces so
+   they become utilities (`bg-*`, `text-*`, `rounded-*`, …). Kept in lockstep
+   with `tokens.css`: a token that is not listed here has no utility, and a
+   name listed here that no longer exists there resolves to nothing.
+
+   A token goes into whatever namespace can carry it, even when its name does
+   not look like a scale step: single-value widths and paddings ride
+   `--spacing-*`, max-widths ride `--container-*`. Only values no namespace can
+   hold — the multi-value shorthands `--pad-btn` / `--pad-input` / `--pad-menu`
+   and `--border-input` — stay out and are consumed as `p-(--pad-btn)`-style
+   arbitrary values (ADR-053 narrowed ADR-017 to just those). */
 @theme {
   /* Colors */
   --color-primary-lighter: var(--color-primary-lighter);
@@ -9,35 +20,39 @@
 
   --color-neutral-50: var(--color-neutral-50);
   --color-neutral-100: var(--color-neutral-100);
-  --color-neutral-150: var(--color-neutral-150);
   --color-neutral-200: var(--color-neutral-200);
-  --color-neutral-250: var(--color-neutral-250);
   --color-neutral-300: var(--color-neutral-300);
-  --color-neutral-350: var(--color-neutral-350);
   --color-neutral-400: var(--color-neutral-400);
-  --color-neutral-450: var(--color-neutral-450);
   --color-neutral-500: var(--color-neutral-500);
-  --color-neutral-550: var(--color-neutral-550);
   --color-neutral-600: var(--color-neutral-600);
-  --color-neutral-650: var(--color-neutral-650);
   --color-neutral-700: var(--color-neutral-700);
-  --color-neutral-750: var(--color-neutral-750);
-  --color-neutral-800: var(--color-neutral-800);
-  --color-neutral-850: var(--color-neutral-850);
   --color-neutral-900: var(--color-neutral-900);
 
   --color-success: var(--color-success);
+  --color-success-dark: var(--color-success-dark);
+  --color-success-bg: var(--color-success-bg);
   --color-warning: var(--color-warning);
+  --color-warning-dark: var(--color-warning-dark);
+  --color-warning-bg: var(--color-warning-bg);
   --color-error: var(--color-error);
+  --color-error-dark: var(--color-error-dark);
+  --color-error-bg: var(--color-error-bg);
   --color-info: var(--color-info);
+  --color-info-bg: var(--color-info-bg);
 
   --color-bg-page: var(--color-bg-page);
+  --color-bg-page-top: var(--color-bg-page-top);
   --color-bg-card: var(--color-bg-card);
-  --color-bg-section: var(--color-bg-section);
+  --color-bg-input: var(--color-bg-input);
+  --color-bg-hover: var(--color-bg-hover);
+  --color-overlay: var(--color-overlay);
+
+  --color-text-inverse: var(--color-text-inverse);
+  --color-focus: var(--color-focus);
+  --color-focus-danger: var(--color-focus-danger);
 
   /* Typography */
-  --font-heading: var(--font-heading);
-  --font-body: var(--font-body);
+  --font-base: var(--font-base);
 
   --text-xs: var(--text-xs);
   --text-sm: var(--text-sm);
@@ -45,10 +60,17 @@
   --text-lg: var(--text-lg);
   --text-xl: var(--text-xl);
   --text-2xl: var(--text-2xl);
-  --text-3xl: var(--text-3xl);
+
+  --font-weight-regular: var(--weight-regular);
+  --font-weight-medium: var(--weight-medium);
+  --font-weight-semibold: var(--weight-semibold);
+  --font-weight-bold: var(--weight-bold);
 
   --leading-tight: var(--leading-tight);
   --leading-normal: var(--leading-normal);
+  --leading-loose: var(--leading-loose);
+
+  --tracking-label: var(--tracking-label);
 
   /* Spacing */
   --spacing-xs: var(--space-xs);
@@ -59,15 +81,54 @@
   --spacing-2xl: var(--space-2xl);
   --spacing-section: var(--space-section);
 
-  /* Misc */
+  /* Spacing — safe-area 込みの段（`pt-safe-t-xl` / `pb-safe-b-2xl`） */
+  --spacing-safe-t-lg: var(--space-safe-t-lg);
+  --spacing-safe-t-xl: var(--space-safe-t-xl);
+  --spacing-safe-b-xl: var(--space-safe-b-xl);
+  --spacing-safe-b-2xl: var(--space-safe-b-2xl);
+
+  /* Spacing — 単値の役割寸法。スケールの段ではないが `--spacing-*` に載るので
+     ユーティリティになる（複合値の `--pad-btn` / `--pad-input` / `--pad-menu`
+     だけは名前空間に載らず `p-(--pad-btn)` のまま） */
+  --spacing-row: var(--pad-row);
+  --spacing-sheet: var(--sheet-w);
+  --spacing-sheet-md: var(--sheet-w-md);
+  --spacing-sheet-inset: var(--nav-sheet-inset);
+  --spacing-sidebar: var(--sidebar-w);
+  --spacing-icon-lg: var(--icon-lg);
+  --spacing-icon-md: var(--icon-md);
+  --spacing-icon-sm: var(--icon-sm);
+  --spacing-icon-xs: var(--icon-xs);
+  --spacing-dot: var(--size-dot);
+  --spacing-mark: var(--size-mark);
+  --spacing-handle-w: var(--size-handle-w);
+  --spacing-handle-h: var(--size-handle-h);
+  --spacing-skeleton-line: var(--skeleton-line-h);
+  --spacing-skeleton-title: var(--skeleton-title-h);
+  --spacing-skeleton-short: var(--skeleton-line-w-short);
+
+  /* Container — `max-w-*` が読む名前空間。`--container-max` を `max-w-max`
+     として出すと Tailwind 組み込みの `max-width: max-content` と衝突するので、
+     投影名は `page` にする */
+  --container-page: var(--container-max);
+  --container-content: var(--content-max);
+  --container-narrow: var(--narrow-max);
+  --container-skeleton-short: var(--skeleton-line-w-short);
+
+  /* Radius */
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
+  --radius-popover: var(--radius-popover);
   --radius-lg: var(--radius-lg);
   --radius-full: var(--radius-full);
 
+  /* Shadow */
   --shadow-sm: var(--shadow-sm);
   --shadow-md: var(--shadow-md);
   --shadow-lg: var(--shadow-lg);
 
-  --transition-default: var(--transition-default);
+  /* Transition — plain `transition*` utilities inherit the fast pair;
+     the slower one is opted into with `duration-(--duration-default)`. */
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: ease;
 }

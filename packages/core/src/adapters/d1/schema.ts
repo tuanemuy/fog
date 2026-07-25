@@ -1,31 +1,72 @@
-import { desc, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   check,
   index,
   integer,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 // Timestamps are ms-precision so they round-trip with `Date` and align
 // with outbox `occurred_at` and the UUIDv7 monotonic ordering encoded
 // in `id`. All timestamps come from the application `Clock` (no SQL
-// defaults) so fakes can freeze time deterministically.
-export const todos = sqliteTable(
-  "todos",
+// defaults) so fakes can freeze time deterministically. The same rule
+// applies to `trash_retention_days`: the default (30) is supplied by
+// `TrashRetentionDays.default()`, not by the DB.
+export const users = sqliteTable(
+  "users",
   {
     id: text("id").primaryKey(),
-    title: text("title").notNull(),
-    status: text("status").notNull(),
-    version: integer("version").notNull().default(0),
+    // Stored already normalised (trim + lowercase) by `Email.create`, so
+    // `users_email_uq` enforces uniqueness on the normalised form and
+    // `findByEmail` is a plain equality lookup.
+    email: text("email").notNull(),
+    authMethod: text("auth_method").notNull(),
+    passwordHash: text("password_hash"),
+    ssoProvider: text("sso_provider"),
+    ssoProviderSubject: text("sso_provider_subject"),
+    trashRetentionDays: integer("trash_retention_days").notNull(),
+    version: integer("version").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
-    // Backs `findPage`'s `ORDER BY created_at DESC, id DESC` paging key.
-    // Without this the planner falls back to a sort over the full table
-    // once the row count grows past the cache.
-    index("idx_todos_created_id").on(desc(table.createdAt), desc(table.id)),
+    // Mirrors the `PasswordUser | SsoUser` discriminated union: the
+    // discriminator decides which nullable columns must be present, so a
+    // row like "password account carrying an SSO subject" cannot exist
+    // even if a future writer bypasses the domain.
+    check(
+      "users_auth_method_sum",
+      sql`(auth_method = 'password' AND password_hash IS NOT NULL AND sso_provider IS NULL AND sso_provider_subject IS NULL) OR (auth_method = 'sso' AND password_hash IS NULL AND sso_provider IS NOT NULL AND sso_provider_subject IS NOT NULL)`,
+    ),
+    // Implied by the sum constraint's disjuncts, but kept separate so a
+    // violation names the invariant it broke rather than reporting the
+    // whole union as failed.
+    check("users_auth_method_valid", sql`auth_method IN ('password','sso')`),
+    // The next two are *not* implied: the sum constraint only says the SSO
+    // columns are non-NULL on an `sso` row, never what they may contain.
+    // The value set (`google` / `apple`) and the non-empty subject are
+    // held by these two checks alone — dropping either as "redundant"
+    // deletes the invariant.
+    check(
+      "users_sso_provider_valid",
+      sql`sso_provider IS NULL OR sso_provider IN ('google','apple')`,
+    ),
+    check(
+      "users_sso_subject_nonempty",
+      sql`sso_provider_subject IS NULL OR length(sso_provider_subject) > 0`,
+    ),
+    // Independent of the sum constraint — nothing above bounds the
+    // retention window, so without this the `TrashRetentionDays`
+    // invariant would hold only in application code.
+    check("users_trash_retention_positive", sql`trash_retention_days >= 1`),
+    uniqueIndex("users_email_uq").on(table.email),
+    // Partial: `PasswordUser` rows leave both SSO columns NULL and must
+    // not collide with each other.
+    uniqueIndex("users_sso_identity_uq")
+      .on(table.ssoProvider, table.ssoProviderSubject)
+      .where(sql`sso_provider IS NOT NULL`),
   ],
 );
 
@@ -47,8 +88,9 @@ export const outboxEvents = sqliteTable(
     // same row. `claimed_at` is stamped at claim time; a row is
     // re-claimable once `claimed_at <= now - leaseMs` (covers crashed
     // workers without an explicit unclaim step). `claimed_by` is a
-    // free-form worker id (from `IdGenerator`) — used only for
-    // diagnostics.
+    // free-form worker id minted by the relay worker itself
+    // (`crypto.randomUUID()`, not the `IdGenerator` port) — used only
+    // for diagnostics.
     claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     claimedBy: text("claimed_by"),
   },

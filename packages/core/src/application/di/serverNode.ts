@@ -1,11 +1,9 @@
-// Deliberately separate from `./serverCloudflare.ts` so the CF entry
-// never pulls libSQL / node-only imports and vice versa. Both factories
-// return the same `RequestContainer` / `WorkerContainer` shapes.
-
 import type { Database } from "@repo/core/adapters/libsql/client";
 import { LibsqlIdempotencyStore } from "@repo/core/adapters/libsql/repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "@repo/core/adapters/libsql/repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "@repo/core/adapters/libsql/unitOfWork";
+import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { content } from "@repo/core/config";
 import { z } from "zod";
 import { SystemClock } from "../ports/clock";
@@ -13,6 +11,7 @@ import { UuidV7Generator } from "../ports/idGenerator";
 import { ConsoleLogger } from "../ports/logger";
 import { NoopRelayTrigger, type RelayTrigger } from "../ports/relayTrigger";
 import type { TuningEnv } from "./env";
+import { type RequestSecrets, requireSessionSecret } from "./secrets";
 import type {
   AppConfig,
   RequestContainer,
@@ -29,6 +28,7 @@ export type NodeServerEnv = Readonly<{
   DATABASE_AUTH_TOKEN?: string | undefined;
   DATABASE_ENCRYPTION_KEY?: string | undefined;
   APP_URL: string;
+  SESSION_SECRET?: string | undefined;
   PORT?: string | undefined;
   HOSTNAME?: string | undefined;
   OUTBOX_BATCH_SIZE?: string | undefined;
@@ -42,6 +42,9 @@ const nodeServerEnvSchema = z.object({
   DATABASE_AUTH_TOKEN: z.string().min(1).optional(),
   DATABASE_ENCRYPTION_KEY: z.string().min(1).optional(),
   APP_URL: z.string().min(1, "APP_URL is required"),
+  // Optional at the schema level, mandatory at the one place that uses
+  // it — see `requireSessionSecret`.
+  SESSION_SECRET: z.string().optional(),
   PORT: z.string().optional(),
   HOSTNAME: z.string().optional(),
   OUTBOX_BATCH_SIZE: z.string().optional(),
@@ -93,6 +96,7 @@ export type NodeRequestServerConfig = AppConfig &
   Readonly<{
     db: Database;
     relayTrigger: RelayTrigger;
+    secrets: RequestSecrets;
   }>;
 
 export function readNodeRequestServerConfig(
@@ -104,6 +108,7 @@ export function readNodeRequestServerConfig(
     appUrl: env.APP_URL,
     db: bindings.db,
     relayTrigger: bindings.relayTrigger ?? NoopRelayTrigger,
+    secrets: { sessionSecret: requireSessionSecret(env.SESSION_SECRET) },
   };
 }
 
@@ -111,7 +116,12 @@ export function readNodeRequestServerConfig(
 export function createNodeRequestContainer(
   config: NodeRequestServerConfig,
 ): RequestContainer {
-  const { db: _db, relayTrigger: _relayTrigger, ...appConfig } = config;
+  const {
+    db: _db,
+    relayTrigger: _relayTrigger,
+    secrets,
+    ...appConfig
+  } = config;
   return {
     ...buildSharedDeps(),
     config: appConfig satisfies AppConfig,
@@ -121,6 +131,10 @@ export function createNodeRequestContainer(
       UuidV7Generator,
       config.relayTrigger,
     ),
+    passwordHasher: createPbkdf2PasswordHasher(),
+    sessionCodec: createHmacSessionCodec({
+      secret: secrets.sessionSecret,
+    }),
   };
 }
 

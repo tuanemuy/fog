@@ -7,9 +7,9 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 ### Unit (`pnpm test:unit`)
 
 - **Targets**: domain-layer + application-layer logic (the pure parts).
-- **Dependencies**: the only fakes kept on hand are the two under `packages/core/src/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream) and `FakeLogger` (a recording Logger). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
+- **Dependencies**: the only fakes kept on hand are the three under `packages/core/src/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream), `FakeLogger` (a recording Logger), and `FakePasswordHasher` (a cheap deterministic digest). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
 - **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `retry()`.
-- **Speed**: a few to a dozen-or-so milliseconds. Vitest's `--exclude '**/*.integration.test.ts'` skips integration.
+- **Speed**: a few to a dozen-or-so milliseconds. `vitest.config.ts` excludes `**/*.integration.test.ts`, so nothing here touches a DB.
 - **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `events.test.ts`, `retry.test.ts`).
 
 ### Integration (`pnpm test:integration`)
@@ -18,7 +18,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 - **Dependencies**: real SQLite (in-memory). `setupTestContainer()` builds a container with migrations applied on top of `:memory:`, and closes the client in afterEach.
 - **Aim**: realistically verify transaction rollback, the adapter's built-in `SQLITE_BUSY` retry, `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
 - **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
-- **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `todo.integration.test.ts`, `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
+- **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `identity.integration.test.ts`, `userRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
 
 ### Property-based (fast-check)
 
@@ -30,12 +30,13 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 ## Fake policy
 
-Currently the following two are the only fakes kept under `packages/core/src/application/__tests__/fakes/`:
+Currently the following three are the only fakes kept under `packages/core/src/application/__tests__/fakes/`:
 
-- **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration validation (`IdGenerator.validate`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via `seed`, and the prefix is set to `f0...` so that generated ids sort after the test's outbox rows (they come after the test-fixed `01950000-...` series when sorting by `(createdAt, id)`).
+- **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration validation (`IdGenerator.validate`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via the constructor, and the prefix is `ffffffff-...` so that generated ids sort after the test's fixed rows (they come after the `01950000-...` series when sorting by `(createdAt, id)`).
 - **`FakeLogger`** — merely records each `info` / `warn` / `error` call into an `entries` array. Use `byLevel("error")` to extract them and assert on the observability behavior of the relay worker / usecase.
+- **`FakePasswordHasher`** — a cheap deterministic digest, so integration suites don't pay a real key derivation per registration / login (the real algorithm is covered by the WebCrypto adapter's own unit tests, and a test that genuinely needs a PBKDF2 round trip injects `createPbkdf2PasswordHasher({ iterations })` at a low count instead). Its output deliberately does **not** embed the plaintext: every suite using it asserts "no plaintext reached `users.password_hash`" against that value, and a fake that prefixed the password would make the assertion hold by accident.
 
-Fakes for repositories, the UoW, and the Clock are intentionally not kept.
+The `FakePasswordHasher` case is the criterion for adding a fake at all: the port is a pure CPU-bound transform whose real implementation is separately unit-tested, and the fake preserves the one property the tests read off it. Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
 - Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like transactions, `SQLITE_BUSY` retry, or `OptimisticLockFailure`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
 - `Clock` is just a `() => Date`, so it's enough to construct a constant like `new Date(0)` within a test and pass it to the usecase / domain. There's no need to fake it as a port object.
@@ -44,7 +45,8 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
 - Integration tests run against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `packages/core/src/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
 - `setupTestContainer()` (`packages/core/src/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
-- File names are `*.integration.test.ts`. The Node pool's `vitest.config.ts` excludes this pattern and runs only unit tests.
+- The libSQL adapter and the Node worker runner can't run in a Workers isolate, so they have a second integration config: `vitest.config.integration.node.ts` (`pnpm test:integration:node`), a Node pool whose `include` names those directories explicitly. Each test there provisions its own libSQL database.
+- File names are `*.integration.test.ts`. The unit `vitest.config.ts` excludes this pattern and runs only unit tests.
 - When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `OptimisticLockFailure`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
 
 ## Property-based policy
@@ -65,9 +67,10 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 |---|---|
 | All | `pnpm test` |
 | Unit only | `pnpm test:unit` |
-| Integration only | `pnpm test:integration` |
-| Specific domain (application) | `TEST_DOMAIN=todo pnpm test:domain` |
-| Specific domain (domain) | `TEST_DOMAIN=todo pnpm test:domain-layer` |
+| Integration only (both pools) | `pnpm test:integration` |
+| Integration, Workers pool + D1 | `pnpm test:integration:cf` |
+| Integration, Node pool + libSQL | `pnpm test:integration:node` |
+| A single file or path pattern | `pnpm test:unit packages/core/src/domain/identity` |
 
 ## Coverage
 

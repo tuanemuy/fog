@@ -1,9 +1,18 @@
-import { CodedError, type SerializedErrorBase } from "@repo/core/lib/error";
+import {
+  CodedError,
+  type FieldErrors,
+  type SerializedErrorBase,
+} from "@repo/core/lib/error";
 
 export type { FieldErrors } from "@repo/core/lib/error";
 
 export type SerializedNotFoundError = SerializedErrorBase & {
   kind: "notFound";
+};
+
+export type SerializedValidationError = SerializedErrorBase & {
+  kind: "validation";
+  fieldErrors?: FieldErrors;
 };
 
 export type SerializedConflictError = SerializedErrorBase & {
@@ -64,6 +73,50 @@ export class ConflictError extends ApplicationError {
 
 export function isConflictError(error: unknown): error is ConflictError {
   return error instanceof ConflictError;
+}
+
+/**
+ * Input / credential verification failure raised by a usecase.
+ *
+ * Distinct from `BusinessRuleError` (a domain invariant was violated) and
+ * from the presentation layer's `InputValidationError` (the transport
+ * payload did not match its shape schema). Use this when a usecase
+ * deliberately collapses several verification outcomes into one
+ * indistinguishable answer — `loginWithPassword` reporting
+ * `INVALID_CREDENTIALS` whether the email was malformed, the account is
+ * absent, or the password did not match.
+ *
+ * Shares `kind: "validation"` (and therefore HTTP 422) with
+ * `InputValidationError`; `fieldErrors` is optional so usecase-level
+ * failures that name no field use the same serialized shape.
+ */
+export class ValidationError extends ApplicationError {
+  override readonly name = "ValidationError";
+
+  constructor(
+    code: string,
+    message: string,
+    private readonly fieldErrors?: FieldErrors,
+    cause?: unknown,
+  ) {
+    super(code, message, cause);
+  }
+
+  override toSerialized(): SerializedValidationError {
+    return {
+      kind: "validation",
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      ...(this.fieldErrors !== undefined
+        ? { fieldErrors: this.fieldErrors }
+        : {}),
+    };
+  }
+}
+
+export function isValidationError(error: unknown): error is ValidationError {
+  return error instanceof ValidationError;
 }
 
 /**
@@ -134,6 +187,16 @@ export function isForbiddenError(error: unknown): error is ForbiddenError {
 export const SystemErrorCode = {
   DatabaseError: "DATABASE_ERROR",
   DataIntegrityError: "DATA_INTEGRITY_ERROR",
+  // The crypto subsystem (WebCrypto) refused to compute — key import or
+  // derivation threw. Kept apart from `DataIntegrityError`, which is what
+  // a *stored* hash in an unreadable encoding raises.
+  CryptoError: "CRYPTO_ERROR",
+  // Writing or clearing the session cookie failed. Deliberately not
+  // `DatabaseError`: routing "the storage layer threw" and "the response
+  // header could not be written" to the same alert makes the former
+  // unreadable. Not retryable — a second attempt writes the same header
+  // into the same broken response.
+  SessionError: "SESSION_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

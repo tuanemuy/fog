@@ -10,8 +10,8 @@ import {
   type EventDraft,
   EventId,
 } from "@repo/core/domain/common/event";
-import { TodoEvents } from "@repo/core/domain/todo/events";
-import { TodoId, TodoTitle } from "@repo/core/domain/todo/valueObject";
+import { IdentityEvents } from "@repo/core/domain/identity/events";
+import { UserId } from "@repo/core/domain/identity/valueObject";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNodeWorkerRunner } from "@/worker/node/runner";
 
@@ -22,9 +22,9 @@ const nextEventId = (): EventId => {
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-9000-b00000000000`,
   );
 };
-const nextTodoId = () => {
+const nextUserId = () => {
   counter += 1;
-  return TodoId.create(
+  return UserId.create(
     `0193e7d0-${counter.toString(16).padStart(4, "0")}-7000-9000-c00000000000`,
   );
 };
@@ -63,9 +63,9 @@ describe("createNodeWorkerRunner (integration)", () => {
 
   it("processes a pending outbox row end-to-end via the relay trigger", async () => {
     container = await createTestContainer();
-    const todoId = nextTodoId();
-    const title = TodoTitle.create("runner-integration");
-    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    const event = withId(
+      IdentityEvents.userRegistered(nextUserId(), "password", new Date()),
+    );
     await seedOutboxRow(container, event, new Date());
 
     const received: DomainEvent[] = [];
@@ -106,7 +106,6 @@ describe("createNodeWorkerRunner (integration)", () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.id).toBe(event.id);
 
-    // The outbox row should now be processed (processed_at stamped).
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processedAt).not.toBeNull();

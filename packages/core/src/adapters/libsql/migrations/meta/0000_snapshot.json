@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "af932aaa-df9c-40d1-90a9-1f5d92ef329d",
+  "id": "5b8c703b-92fd-49d8-a308-7fe180f876b1",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "_occ_guard": {
@@ -159,8 +159,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "todos": {
-      "name": "todos",
+    "users": {
+      "name": "users",
       "columns": {
         "id": {
           "name": "id",
@@ -169,16 +169,44 @@
           "notNull": true,
           "autoincrement": false
         },
-        "title": {
-          "name": "title",
+        "email": {
+          "name": "email",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "status": {
-          "name": "status",
+        "auth_method": {
+          "name": "auth_method",
           "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sso_provider": {
+          "name": "sso_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sso_provider_subject": {
+          "name": "sso_provider_subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "trash_retention_days": {
+          "name": "trash_retention_days",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -188,8 +216,7 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": 0
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
@@ -207,16 +234,43 @@
         }
       },
       "indexes": {
-        "idx_todos_created_id": {
-          "name": "idx_todos_created_id",
-          "columns": ["\"created_at\" desc", "\"id\" desc"],
-          "isUnique": false
+        "users_email_uq": {
+          "name": "users_email_uq",
+          "columns": ["email"],
+          "isUnique": true
+        },
+        "users_sso_identity_uq": {
+          "name": "users_sso_identity_uq",
+          "columns": ["sso_provider", "sso_provider_subject"],
+          "isUnique": true,
+          "where": "sso_provider IS NOT NULL"
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "users_auth_method_sum": {
+          "name": "users_auth_method_sum",
+          "value": "(auth_method = 'password' AND password_hash IS NOT NULL AND sso_provider IS NULL AND sso_provider_subject IS NULL) OR (auth_method = 'sso' AND password_hash IS NULL AND sso_provider IS NOT NULL AND sso_provider_subject IS NOT NULL)"
+        },
+        "users_auth_method_valid": {
+          "name": "users_auth_method_valid",
+          "value": "auth_method IN ('password','sso')"
+        },
+        "users_sso_provider_valid": {
+          "name": "users_sso_provider_valid",
+          "value": "sso_provider IS NULL OR sso_provider IN ('google','apple')"
+        },
+        "users_sso_subject_nonempty": {
+          "name": "users_sso_subject_nonempty",
+          "value": "sso_provider_subject IS NULL OR length(sso_provider_subject) > 0"
+        },
+        "users_trash_retention_positive": {
+          "name": "users_trash_retention_positive",
+          "value": "trash_retention_days >= 1"
+        }
+      }
     }
   },
   "views": {},
@@ -227,17 +281,6 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {
-      "idx_todos_created_id": {
-        "columns": {
-          "\"created_at\" desc": {
-            "isExpression": true
-          },
-          "\"id\" desc": {
-            "isExpression": true
-          }
-        }
-      }
-    }
+    "indexes": {}
   }
 }

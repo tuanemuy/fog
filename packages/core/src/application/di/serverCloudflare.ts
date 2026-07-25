@@ -1,12 +1,11 @@
-// Deliberately separate from `./serverNode.ts` so the Node entry never
-// pulls Workers-only imports and vice versa. Both factories return the
-// same `RequestContainer` / `WorkerContainer` shapes.
 import type { D1Database, Fetcher } from "@cloudflare/workers-types";
 import { ServiceBindingRelayTrigger } from "@repo/core/adapters/cloudflare/serviceBindingRelayTrigger";
 import { getDatabase } from "@repo/core/adapters/d1/client";
 import { D1IdempotencyStore } from "@repo/core/adapters/d1/repositories/idempotencyStore";
 import { D1OutboxRepository } from "@repo/core/adapters/d1/repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "@repo/core/adapters/d1/unitOfWork";
+import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { content } from "@repo/core/config";
 import { SystemClock } from "../ports/clock";
 import { UuidV7Generator } from "../ports/idGenerator";
@@ -19,6 +18,7 @@ import {
   readPruneTuning as readPruneTuningShared,
   readRelayTuning as readRelayTuningShared,
 } from "./env";
+import { type RequestSecrets, requireSessionSecret } from "./secrets";
 import type {
   AppConfig,
   RequestContainer,
@@ -52,6 +52,7 @@ export type RequestServerConfig = AppConfig &
     // the originating request. Required when `relay` is set; ignored
     // otherwise.
     waitUntil?: (promise: Promise<unknown>) => void;
+    secrets: RequestSecrets;
   }>;
 
 /**
@@ -63,6 +64,11 @@ export type ServerEnv = Readonly<{
   DB: D1Database;
   APP_URL: string;
   RELAY?: Fetcher;
+  // Delivered as a wrangler secret (`wrangler secret put` / `.dev.vars`),
+  // never as a `[vars]` entry. Optional here — like the zod-validated
+  // runtimes, the request path is what demands it (see
+  // `requireSessionSecret`), so workers boot without one.
+  SESSION_SECRET?: string;
   // Worker tuning knobs. Wrangler `[vars]` deliver strings — parse +
   // default via `readRelayTuning` / `readPruneTuning` at the worker
   // entry boundary. Missing values fall back to the application-layer
@@ -104,6 +110,7 @@ export function readRequestServerConfig(
           waitUntil: (promise: Promise<unknown>) => ctx.waitUntil(promise),
         }
       : {}),
+    secrets: { sessionSecret: requireSessionSecret(env.SESSION_SECRET) },
   };
 }
 
@@ -124,7 +131,7 @@ export function createRequestContainer(
   config: RequestServerConfig,
 ): RequestContainer {
   const db = getDatabase(config.binding);
-  const { binding: _binding, relay, waitUntil, ...appConfig } = config;
+  const { binding: _binding, relay, waitUntil, secrets, ...appConfig } = config;
   const relayTrigger: RelayTrigger =
     relay && waitUntil
       ? new ServiceBindingRelayTrigger(relay, waitUntil, ConsoleLogger)
@@ -138,6 +145,10 @@ export function createRequestContainer(
       UuidV7Generator,
       relayTrigger,
     ),
+    passwordHasher: createPbkdf2PasswordHasher(),
+    sessionCodec: createHmacSessionCodec({
+      secret: secrets.sessionSecret,
+    }),
   };
 }
 

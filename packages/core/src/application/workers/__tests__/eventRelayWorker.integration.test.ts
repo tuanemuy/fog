@@ -1,23 +1,32 @@
 import * as schema from "@repo/core/adapters/d1/schema";
 import type { DomainEvent } from "@repo/core/domain/common/event";
-import { TodoEvents } from "@repo/core/domain/todo/events";
-import { TodoId, TodoTitle } from "@repo/core/domain/todo/valueObject";
+import { IdentityEvents } from "@repo/core/domain/identity/events";
+import {
+  TrashRetentionDays,
+  type UserId,
+  UserId as UserIdVo,
+} from "@repo/core/domain/identity/valueObject";
 import { asc, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";
 import { setupTestContainer } from "../../__tests__/helpers";
-import { changeTodoStatus } from "../../todo/changeTodoStatus";
-import { createTodo } from "../../todo/createTodo";
-import { deleteTodo } from "../../todo/deleteTodo";
+import { registerWithPassword } from "../../identity/registerWithPassword";
 import { type EventDispatcher, processOutboxEvents } from "../eventRelayWorker";
 
 const T0 = new Date(0);
+const DAYS = TrashRetentionDays.create(7);
 
-// A `FakeIdGenerator` shared across the file feeds deterministic `TodoId`s.
+// A `FakeIdGenerator` shared across the file feeds deterministic `UserId`s.
 // Outbox event ids are minted by the container's UoW when drafts are
-// buffered — tests no longer thread `EventId` through manually.
+// buffered — tests never thread `EventId` through manually.
 const ids = new FakeIdGenerator();
-const nextTodoId = (): TodoId => TodoId.create(ids.next());
+const nextUserId = (): UserId => UserIdVo.create(ids.next());
+
+let emailCounter = 0;
+const nextEmail = (): string => {
+  emailCounter += 1;
+  return `relay-${emailCounter}@example.com`;
+};
 
 const makeAllSucceed = (): EventDispatcher =>
   vi.fn(async (events: readonly DomainEvent[]) =>
@@ -39,15 +48,18 @@ describe("processOutboxEvents", () => {
   it("dispatches decoded events with branded payloads and marks rows processed", async () => {
     const container = getContainer();
 
-    const { todo: a } = await createTodo({
+    const email = nextEmail();
+    const { userId } = await registerWithPassword({
       container,
-      input: { title: "A" },
+      input: { email, password: "correct horse" },
     });
-    await changeTodoStatus({
-      container,
-      input: { id: a.id, status: "completed" },
+    const id = UserIdVo.create(userId);
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([IdentityEvents.passwordChanged(id, T0)]);
     });
-    await deleteTodo({ container, input: { id: a.id } });
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([IdentityEvents.trashRetentionChanged(id, DAYS, T0)]);
+    });
 
     const beforeRows = await container.db
       .select()
@@ -72,22 +84,24 @@ describe("processOutboxEvents", () => {
       payload: unknown;
     }>;
     expect(events.map((e) => e.type)).toEqual([
-      "todo.created",
-      "todo.toggled",
-      "todo.deleted",
+      "identity.userRegistered",
+      "identity.passwordChanged",
+      "identity.trashRetentionChanged",
     ]);
 
-    const created = events[0]?.payload as { todoId: string; title: string };
-    expect(created.todoId).toBe(a.id);
-    expect(created.title).toBe("A");
-    const toggled = events[1]?.payload as {
-      todoId: string;
-      completed: boolean;
+    const registered = events[0]?.payload as {
+      userId: string;
+      authMethod: string;
     };
-    expect(toggled.todoId).toBe(a.id);
-    expect(toggled.completed).toBe(true);
-    const deleted = events[2]?.payload as { todoId: string };
-    expect(deleted.todoId).toBe(a.id);
+    expect(registered.userId).toBe(userId);
+    expect(registered.authMethod).toBe("password");
+    const changed = events[1]?.payload as { userId: string };
+    expect(changed.userId).toBe(userId);
+    const retention = events[2]?.payload as {
+      userId: string;
+      retentionDays: number;
+    };
+    expect(retention.retentionDays).toBe(7);
 
     const afterRows = await container.db.select().from(schema.outboxEvents);
     expect(afterRows.every((r) => r.processedAt !== null)).toBe(true);
@@ -103,13 +117,12 @@ describe("processOutboxEvents", () => {
 
   it("respects the batchSize option", async () => {
     const container = getContainer();
-    const id = nextTodoId();
-    const title = TodoTitle.create("batched");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(id, title, T0),
-        TodoEvents.toggled(id, true, T0),
-        TodoEvents.deleted(id, T0),
+        IdentityEvents.userRegistered(id, "password", T0),
+        IdentityEvents.passwordChanged(id, T0),
+        IdentityEvents.trashRetentionChanged(id, DAYS, T0),
       ]);
     });
 
@@ -129,7 +142,7 @@ describe("processOutboxEvents", () => {
         mock: { calls: ReadonlyArray<readonly unknown[]> };
       }
     ).mock.calls;
-    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(2);
+    expect(calls[0]?.[0] as readonly unknown[] | undefined).toHaveLength(2);
     const pending = await container.db
       .select({ id: schema.outboxEvents.id })
       .from(schema.outboxEvents)
@@ -198,22 +211,20 @@ describe("processOutboxEvents", () => {
     const container = getContainer();
 
     const badId = "01950000-0000-7000-8000-000000000002";
-    const goodId = nextTodoId();
-    const goodTitle = TodoTitle.create("ok");
-    // `TodoId.create` is intentionally format-agnostic at the domain
-    // layer (UUIDv7 enforcement is on the adapter side). A malformed
-    // payload here violates a still-load-bearing invariant: the title
-    // must be non-empty.
+    const goodId = nextUserId();
+    // `UserId.create` is intentionally format-agnostic at the domain layer
+    // (UUIDv7 enforcement is on the adapter side). A retention of 0 is a
+    // still-load-bearing invariant: `TrashRetentionDays` requires >= 1.
     await container.db.insert(schema.outboxEvents).values({
       id: badId,
-      eventType: "todo.created",
+      eventType: "identity.trashRetentionChanged",
       aggregateId: badId,
-      payload: { todoId: badId, title: "" },
+      payload: { userId: badId, retentionDays: 0 },
       occurredAt: new Date(0),
       createdAt: new Date(0),
     });
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(goodId, goodTitle, T0)]);
+      collectEvents([IdentityEvents.userRegistered(goodId, "password", T0)]);
     });
 
     const dispatch = makeAllSucceed();
@@ -228,7 +239,7 @@ describe("processOutboxEvents", () => {
         mock: { calls: ReadonlyArray<readonly unknown[]> };
       }
     ).mock.calls;
-    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(1);
+    expect(calls[0]?.[0] as readonly unknown[] | undefined).toHaveLength(1);
 
     const rows = await container.db
       .select()
@@ -242,13 +253,12 @@ describe("processOutboxEvents", () => {
   it("tolerates dispatcher failure on one row without dropping the rest of the batch", async () => {
     const container = getContainer();
 
-    const idA = nextTodoId();
-    const idB = nextTodoId();
-    const title = TodoTitle.create("allSettled");
+    const idA = nextUserId();
+    const idB = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(idA, title, T0),
-        TodoEvents.created(idB, title, T0),
+        IdentityEvents.userRegistered(idA, "password", T0),
+        IdentityEvents.userRegistered(idB, "password", T0),
       ]);
     });
 
@@ -281,10 +291,9 @@ describe("processOutboxEvents", () => {
   it("leaves rows unprocessed when every dispatch fails", async () => {
     const container = getContainer();
 
-    const id = nextTodoId();
-    const title = TodoTitle.create("all-fail");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     const dispatch = makeAllFail(new Error("consumer is always angry"));
@@ -301,10 +310,9 @@ describe("processOutboxEvents", () => {
   it("accepts a caller-supplied decoder registry", async () => {
     const container = getContainer();
 
-    const id = nextTodoId();
-    const title = TodoTitle.create("custom-registry");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     const dispatch = makeAllSucceed();
@@ -319,10 +327,9 @@ describe("processOutboxEvents", () => {
 
   it("schedules a backed-off retry after a dispatch failure", async () => {
     const container = getContainer();
-    const id = nextTodoId();
-    const title = TodoTitle.create("retry-backoff");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     const dispatch = makeAllFail(new Error("transient downstream blip"));
@@ -333,8 +340,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(1);
     expect(row.processedAt).toBeNull();
     expect(row.failedAt).toBeNull();
@@ -344,10 +352,9 @@ describe("processOutboxEvents", () => {
 
   it("caps a runaway error message before persisting it to last_error", async () => {
     const container = getContainer();
-    const id = nextTodoId();
-    const title = TodoTitle.create("oversize-error");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     const huge = "x".repeat(20_000);
@@ -359,8 +366,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.lastError).not.toBeNull();
     expect(row.lastError?.length ?? 0).toBeLessThanOrEqual(4096);
     expect(row.lastError).toMatch(/…\(truncated\)$/);
@@ -368,10 +376,9 @@ describe("processOutboxEvents", () => {
 
   it("excludes rows whose nextAttemptAt is still in the future from claimPending", async () => {
     const container = getContainer();
-    const id = nextTodoId();
-    const title = TodoTitle.create("not-yet");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     const failing = makeAllFail(new Error("first failure"));
@@ -396,10 +403,9 @@ describe("processOutboxEvents", () => {
     const container = getContainer();
     const logger = new FakeLogger();
     const containerWithLogger = { ...container, logger };
-    const id = nextTodoId();
-    const title = TodoTitle.create("poison");
+    const id = nextUserId();
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([IdentityEvents.userRegistered(id, "password", T0)]);
     });
 
     // Pre-bump the row to one attempt below the cap so a single failing
@@ -413,8 +419,9 @@ describe("processOutboxEvents", () => {
     });
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(2);
     expect(row.failedAt).toBeInstanceOf(Date);
     expect(row.nextAttemptAt).toBeNull();
@@ -460,8 +467,9 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
 
     const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
     const row = rows[0];
-    if (!row) return;
+    if (!row) throw new Error("outbox row disappeared");
     expect(row.attempts).toBe(2);
     expect(row.failedAt).toBeInstanceOf(Date);
     expect(row.lastError).toMatch(/No decoder registered/);
@@ -469,11 +477,10 @@ describe("processOutboxEvents", () => {
 
   it("hands the whole decoded batch to the dispatcher in a single call", async () => {
     const container = getContainer();
-    const title = TodoTitle.create("batched-call");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents(
         Array.from({ length: 10 }, () =>
-          TodoEvents.created(nextTodoId(), title, T0),
+          IdentityEvents.userRegistered(nextUserId(), "password", T0),
         ),
       );
     });
@@ -488,16 +495,15 @@ describe("processOutboxEvents", () => {
         mock: { calls: ReadonlyArray<readonly unknown[]> };
       }
     ).mock.calls;
-    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(10);
+    expect(calls[0]?.[0] as readonly unknown[] | undefined).toHaveLength(10);
   });
 
   it("treats a thrown dispatcher as a batch-wide failure", async () => {
     const container = getContainer();
-    const title = TodoTitle.create("all-or-nothing");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(nextTodoId(), title, T0),
-        TodoEvents.created(nextTodoId(), title, T0),
+        IdentityEvents.userRegistered(nextUserId(), "password", T0),
+        IdentityEvents.userRegistered(nextUserId(), "password", T0),
       ]);
     });
 
@@ -521,11 +527,10 @@ describe("processOutboxEvents", () => {
 
   it("treats events missing from the dispatcher's outcomes as failures", async () => {
     const container = getContainer();
-    const title = TodoTitle.create("partial-outcome");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(nextTodoId(), title, T0),
-        TodoEvents.created(nextTodoId(), title, T0),
+        IdentityEvents.userRegistered(nextUserId(), "password", T0),
+        IdentityEvents.userRegistered(nextUserId(), "password", T0),
       ]);
     });
 

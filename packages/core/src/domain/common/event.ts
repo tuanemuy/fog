@@ -4,7 +4,7 @@ declare const eventIdBrand: unique symbol;
 
 export type EventId = string & { readonly [eventIdBrand]: true };
 
-// As with `TodoId`, the domain treats event ids as opaque, non-empty
+// As with `UserId`, the domain treats event ids as opaque, non-empty
 // strings. Format (UUIDv7 in this template) is the `IdGenerator`'s
 // responsibility, validated on rehydration by storage adapters.
 export const EventId = {
@@ -41,8 +41,8 @@ export type DomainEvent = DomainEventBase;
 // usecases lift drafts into `DomainEvent` via `attachEventIds`.
 //
 // The conditional is what makes this **distributive** over event unions:
-// `EventDraft<TodoCreatedEvent | TodoToggledEvent>` expands to
-// `Omit<TodoCreatedEvent, "id"> | Omit<TodoToggledEvent, "id">` rather than
+// `EventDraft<UserRegisteredEvent | PasswordChangedEvent>` expands to
+// `Omit<UserRegisteredEvent, "id"> | Omit<PasswordChangedEvent, "id">` rather than
 // collapsing to a single shape — which is what preserves the `type`
 // discriminator and lets consumers narrow on `draft.type`.
 export type EventDraft<TEvent extends DomainEvent = DomainEvent> =

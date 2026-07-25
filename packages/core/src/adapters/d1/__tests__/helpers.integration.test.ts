@@ -2,7 +2,7 @@ import { isConflictError, isSystemError } from "@repo/core/application/errors";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { mapDbError } from "../repositories/helpers";
-import { todos } from "../schema";
+import { users } from "../schema";
 import { createTestContainer } from "./helpers";
 
 // Pins the SQLITE_CONSTRAINT_* → ConflictError classification end-to-end
@@ -11,33 +11,56 @@ import { createTestContainer } from "./helpers";
 // and the exact surface depends on D1 / Workers runtime / Drizzle. If any
 // of those changes the error format, these tests fire — they are the
 // canary for the classification regressing into a generic SystemError.
+//
+// `registerWithPassword` reads `UNIQUE_VIOLATION` as
+// `EMAIL_ALREADY_REGISTERED`, so this classification is the foundation
+// that translation stands on.
 describe("mapDbError SQLITE_CONSTRAINT_* classification (integration)", () => {
   const NOW = new Date("2026-01-01T00:00:00.000Z");
+  const row = (id: string, email: string) => ({
+    id,
+    email,
+    authMethod: "password",
+    passwordHash: "stored-hash",
+    ssoProvider: null,
+    ssoProviderSubject: null,
+    trashRetentionDays: 30,
+    version: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
 
   it("maps SQLITE_CONSTRAINT_PRIMARYKEY to ConflictError(UNIQUE_VIOLATION)", async () => {
     const container = createTestContainer();
-    const id = "todo-pk-collision";
+    const id = "user-pk-collision";
 
-    await container.db.insert(todos).values({
-      id,
-      title: "first",
-      status: "active",
-      version: 0,
-      createdAt: NOW,
-      updatedAt: NOW,
-    });
+    await container.db.insert(users).values(row(id, "first@example.com"));
 
     let caught: unknown;
     try {
       await mapDbError("collision", () =>
-        container.db.insert(todos).values({
-          id,
-          title: "second",
-          status: "active",
-          version: 0,
-          createdAt: NOW,
-          updatedAt: NOW,
-        }),
+        container.db.insert(users).values(row(id, "second@example.com")),
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isConflictError(caught)).toBe(true);
+    if (isConflictError(caught)) {
+      expect(caught.code).toBe("UNIQUE_VIOLATION");
+    }
+  });
+
+  it("maps a users_email_uq violation to ConflictError(UNIQUE_VIOLATION)", async () => {
+    const container = createTestContainer();
+    const email = "duplicate@example.com";
+
+    await container.db.insert(users).values(row("user-email-a", email));
+
+    let caught: unknown;
+    try {
+      await mapDbError("collision", () =>
+        container.db.insert(users).values(row("user-email-b", email)),
       );
     } catch (error) {
       caught = error;

@@ -17,7 +17,7 @@ import type { Database } from "./client";
 import { PendingBatch } from "./pendingBatch";
 import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
 import { D1OutboxRepository } from "./repositories/outboxRepository";
-import { D1TodoRepository } from "./repositories/todoRepository";
+import { D1UserRepository } from "./repositories/userRepository";
 
 /**
  * D1 implementation of `UnitOfWorkProvider`.
@@ -36,8 +36,10 @@ import { D1TodoRepository } from "./repositories/todoRepository";
  *      `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. Other driver errors
  *      are translated through `mapDbError`.
  *
- * Read-your-write within the same UoW is unsupported by design — see
- * `D1TodoRepository` for the rationale.
+ * Read-your-write within the same UoW is unsupported by design: DDD
+ * usecases mutate the loaded aggregate in memory and persist once, so a
+ * usecase that needs the post-write row back must let this UoW commit
+ * and read from a fresh one.
  *
  * No application-level retry: D1 surfaces transient conditions
  * (`SQLITE_BUSY` / `SQLITE_LOCKED`) as connection-level errors that
@@ -60,7 +62,7 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
     const pending = new PendingBatch(this.db);
     const collected: DomainEvent[] = [];
 
-    const todoRepository = new D1TodoRepository(
+    const userRepository = new D1UserRepository(
       this.db,
       pending,
       this.idGenerator,
@@ -73,7 +75,7 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
     );
 
     const ctx: UnitOfWorkContext = {
-      todoRepository,
+      userRepository,
       // `EventId` is minted here, on the path between domain emission
       // and outbox persistence — keeping id generation a single
       // application-layer concern. Domain factories return identity-less

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:test";
+import { FakePasswordHasher } from "@repo/core/application/__tests__/fakes";
 import type {
   RequestContainer,
   WorkerContainer,
@@ -7,6 +8,7 @@ import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { content } from "@repo/core/config";
+import { createHmacSessionCodec } from "../../webcrypto/hmacSessionCodec";
 import { type Database, getDatabase } from "../client";
 import { D1IdempotencyStore } from "../repositories/idempotencyStore";
 import { D1OutboxRepository } from "../repositories/outboxRepository";
@@ -20,14 +22,26 @@ export type TestContainer = RequestContainer &
     db: Database;
   };
 
+export const TEST_SESSION_SECRET = "test-session-secret-0123456789abcdef";
+
+export type TestContainerOverrides = Partial<
+  Pick<RequestContainer, "passwordHasher" | "sessionCodec">
+>;
+
 /**
  * Builds a fresh container around the test-isolate's `env.DB` D1 binding.
  *
  * The binding is a singleton per Workers isolate but row cleanup is
  * driven by the file-level `setup.ts` (TRUNCATE in `beforeEach`), so
  * each test sees a clean database.
+ *
+ * `passwordHasher` defaults to the fake so the cost of key derivation
+ * does not multiply across the suite; pass a real one for the few tests
+ * where the round trip itself is the subject.
  */
-export function createTestContainer(): TestContainer {
+export function createTestContainer(
+  overrides: TestContainerOverrides = {},
+): TestContainer {
   const db = getDatabase(env.DB);
   return {
     config: {
@@ -39,6 +53,10 @@ export function createTestContainer(): TestContainer {
       SystemClock,
       UuidV7Generator,
     ),
+    passwordHasher: overrides.passwordHasher ?? new FakePasswordHasher(),
+    sessionCodec:
+      overrides.sessionCodec ??
+      createHmacSessionCodec({ secret: TEST_SESSION_SECRET }),
     // The relay-worker variant of the outbox repo (no PendingBatch).
     // UoW-internal saves go through a per-UoW instance constructed
     // inside `D1UnitOfWorkProvider.run`.

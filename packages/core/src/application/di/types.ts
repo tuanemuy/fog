@@ -1,9 +1,11 @@
+import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import type { UnitOfWorkProvider } from "../execution/unitOfWork";
 import type { Clock } from "../ports/clock";
 import type { IdempotencyStore } from "../ports/idempotencyStore";
 import type { IdGenerator } from "../ports/idGenerator";
 import type { Logger } from "../ports/logger";
 import type { OutboxRepository } from "../ports/outboxRepository";
+import type { SessionCodec } from "../ports/sessionCodec";
 
 export type AppConfig = Readonly<{
   appUrl: string;
@@ -35,11 +37,25 @@ export type SharedDeps = Readonly<{
  * to enqueue a domain event uses the UoW's `collectEvents`, which
  * funnels through the transactional outbox write inside the unit of
  * work — never touching the repository directly.
+ *
+ * Repositories likewise stay out: `UnitOfWorkContext` is their single
+ * point of issue, which is what keeps every aggregate access inside a
+ * unit of work. `passwordHasher` is a deliberate exception to that rule
+ * — it is a domain port but not a repository, it touches no storage, and
+ * spec/usecases/identity.md requires hashing to happen *before* the unit
+ * of work opens so a CPU-bound derivation never sits inside a
+ * transaction.
+ *
+ * `sessionCodec` is for the presentation layer only — usecases are handed
+ * `UsecaseContainer`, which omits it. The session secret itself is not on
+ * the container at all: it is consumed while constructing the codec.
  */
 export type RequestContainer = SharedDeps &
   Readonly<{
     config: AppConfig;
     unitOfWorkProvider: UnitOfWorkProvider;
+    passwordHasher: PasswordHasher;
+    sessionCodec: SessionCodec;
   }>;
 
 /**
