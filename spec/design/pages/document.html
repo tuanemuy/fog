@@ -391,6 +391,10 @@
       .doc-body p + p {
         margin-top: 1.3em;
       }
+      /* 余白は原則「次の要素の margin-top」に寄せるが、本文（レンダリング済み
+         Markdown）の見出しだけ下余白を残す。em は余白を持つ要素の font-size で
+         解決されるので、次要素へ移すと見出し基準 15.1px が本文基準 13.7px に
+         変わってしまう。担い手を動かせない余白 */
       .doc-body h2 {
         font-size: var(--text-lg);
         font-weight: var(--weight-bold);
@@ -576,7 +580,11 @@
         height: 4px;
         border-radius: 4px;
         background: var(--color-neutral-300);
-        margin: 0 auto 14px;
+        margin: 0 auto;
+      }
+
+      .nav-sheet .handle + * {
+        margin-top: 14px;
       }
       .nav-item {
         display: flex;
