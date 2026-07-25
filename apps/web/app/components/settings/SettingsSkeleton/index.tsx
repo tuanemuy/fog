@@ -12,8 +12,8 @@ export function SettingsSkeleton() {
   return (
     <section role="status" aria-live="polite">
       <span className="sr-only">読み込み中</span>
-      <Skeleton className={`mb-sm ${BAR}`} />
-      <div className={ROW}>
+      <Skeleton className={BAR} />
+      <div className={`${ROW} mt-sm`}>
         <Skeleton className={BAR} />
         <Skeleton className={BAR} />
       </div>
