@@ -432,7 +432,12 @@
         font-weight: var(--weight-semibold);
         padding: var(--space-lg) 0 var(--space-md);
       }
-      .day-head:first-child {
+      /* 上 padding は前の日付グループとの区切りなので、エリア先頭では要らない
+         （.inner 側が上 padding を持つ）。閉じた絞り込みバーはレイアウト上
+         存在しないため、その直後も先頭として扱う。
+         区切りを margin に寄せると .entry + * と同特異度で負けるので padding のまま */
+      .day-head:first-child,
+      .filter-bar:not(.show) + .day-head {
         padding-top: 0;
       }
       .day-head .sub {
