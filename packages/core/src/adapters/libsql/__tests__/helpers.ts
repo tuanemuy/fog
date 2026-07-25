@@ -1,36 +1,17 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import { createLibsqlClient, type Database, getDatabase } from "../client";
 import { LibsqlIdempotencyStore } from "../repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "../repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "../unitOfWork";
 
 const MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../migrations");
-
-type MigrationJournal = Readonly<{
-  entries: ReadonlyArray<{ readonly tag: string }>;
-}>;
-
-// Driven by drizzle's journal rather than a hard-coded file name: a
-// regenerated migration gets a new tag, and later ones stack up, so
-// pinning `0000_initial.sql` would silently apply a stale (or missing)
-// schema.
-async function applyMigrations(client: Client): Promise<void> {
-  const journal = JSON.parse(
-    readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
-  ) as MigrationJournal;
-  for (const { tag } of journal.entries) {
-    const ddl = readFileSync(path.join(MIGRATIONS_DIR, `${tag}.sql`), "utf8");
-    // Strip drizzle's statement-breakpoint markers; libSQL's
-    // executeMultiple consumes a plain semicolon-delimited script.
-    await client.executeMultiple(ddl.replace(/--> statement-breakpoint/g, ""));
-  }
-}
 
 /** Test container bundling request- and worker-side dependencies. */
 export type TestContainer = Readonly<{
@@ -47,7 +28,7 @@ export type TestContainer = Readonly<{
 
 /**
  * Builds an isolated libSQL DB backed by a per-test temp file, applies
- * every migration in the journal, and wires a full container.
+ * the drizzle migrations, and wires a full container.
  *
  * Temp file (not `:memory:`): libSQL's sqlite3 backend reopens its
  * connection on `client.transaction()`, and a fresh `:memory:`
@@ -65,9 +46,14 @@ export async function createTestContainer(): Promise<TestContainer> {
   await client.execute("PRAGMA foreign_keys = ON");
   await client.execute("PRAGMA busy_timeout = 5000");
 
-  await applyMigrations(client);
+  if (!existsSync(path.join(MIGRATIONS_DIR, "meta/_journal.json"))) {
+    throw new Error(
+      `No migrations in ${MIGRATIONS_DIR}. Run \`pnpm db:generate:node\` first.`,
+    );
+  }
 
   const db = getDatabase(client);
+  await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
   return {
     unitOfWorkProvider: new LibsqlUnitOfWorkProvider(
       db,
