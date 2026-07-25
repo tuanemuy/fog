@@ -12,10 +12,6 @@ import { NAV_ITEMS } from "./navItems";
  * Lives in `_app.tsx`'s `component`, never inside a leaf's
  * `renderServerComponent(...)`: putting it in the RSC payload would remount
  * it on every navigation and drop the nav sheet's open state.
- *
- * Wide viewports get the permanent sidebar; below `lg` the same items are
- * reached from the header menu as a bottom sheet — the implemented form of
- * 「モバイルは下部タブ相当」 (`spec/design/pages/timeline.html`).
  */
 
 const LINK_FOCUS =

@@ -12,9 +12,8 @@ export const Route = createFileRoute("/password-reset")({
   component: PasswordResetPage,
 });
 
-// Placeholder for the password-reset slice. The link from /login has to
-// actually go somewhere, and a page that states its own status honours that
-// better than a dead control.
+// Placeholder: the link from /login has to go somewhere, and a page that
+// states its own status beats a dead control.
 function PasswordResetPage() {
   return (
     <AuthSheet title="パスワードリセット" description="この機能は準備中です">

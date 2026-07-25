@@ -151,8 +151,7 @@
   --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
   --container-padding: clamp(0.875rem, 4vw, 2rem);
   --sidebar-w: 200px;
-  /* 単一カラムのカードの最大幅。認証シートが最初の利用者だが、狭いカードなら
-     どこでも使える幅として持つ */
+  /* 単一カラムの狭いカードの最大幅 */
   --narrow-max: 26rem;
 
   /* ヘッダーとシートが共有する横フレーム。余った幅はページ背景へ逃がす */
