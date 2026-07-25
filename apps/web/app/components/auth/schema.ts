@@ -17,8 +17,17 @@ import { z } from "zod";
  */
 export const AUTH_FIELD_MAX_LENGTH = 1024;
 
-const emailField = z.string().min(1).max(AUTH_FIELD_MAX_LENGTH);
-const passwordField = z.string().min(1).max(AUTH_FIELD_MAX_LENGTH);
+// Messages are Japanese because they reach the field they belong to
+// verbatim (`toAuthErrorDisplay`); zod's English defaults would surface as-is.
+const emailField = z
+  .string({ message: "メールアドレスを入力してください" })
+  .min(1, { message: "メールアドレスを入力してください" })
+  .max(AUTH_FIELD_MAX_LENGTH, { message: "メールアドレスが長すぎます" });
+
+const passwordField = z
+  .string({ message: "パスワードを入力してください" })
+  .min(1, { message: "パスワードを入力してください" })
+  .max(AUTH_FIELD_MAX_LENGTH, { message: "パスワードが長すぎます" });
 
 export const loginSchema = z.object({
   email: emailField,

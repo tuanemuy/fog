@@ -113,7 +113,7 @@ export function readRequestServerConfig(
           waitUntil: (promise: Promise<unknown>) => ctx.waitUntil(promise),
         }
       : {}),
-    secrets: { sessionSecret: env.SESSION_SECRET ?? "" },
+    secrets: { sessionSecret: requireSessionSecret(env.SESSION_SECRET) },
   };
 }
 
@@ -150,7 +150,7 @@ export function createRequestContainer(
     ),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({
-      secret: requireSessionSecret(secrets.sessionSecret),
+      secret: secrets.sessionSecret,
     }),
   };
 }

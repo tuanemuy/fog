@@ -53,6 +53,18 @@ async function capture(fn: () => Promise<unknown>): Promise<unknown> {
   throw new Error("expected the repository to reject");
 }
 
+// Drizzle wraps the driver error in one that only names the statement,
+// so the constraint name lives further down the chain.
+function causeChain(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  while (current instanceof Error) {
+    messages.push(current.message);
+    current = current.cause;
+  }
+  return messages.join(" | ");
+}
+
 const rawRow = (overrides: Partial<typeof users.$inferInsert>) => ({
   id: nextId(),
   email: `raw-${counter}@example.com`,
@@ -195,6 +207,103 @@ describe("LibsqlUserRepository (integration)", () => {
 
     expect(isConflictError(error)).toBe(true);
     expect(isConflictError(error) && error.code).toBe("UNIQUE_VIOLATION");
+  });
+
+  // The partial index is what lets ADR-008 read any UNIQUE_VIOLATION
+  // raised by a `PasswordUser` insert as EMAIL_ALREADY_REGISTERED: with
+  // both SSO columns NULL the index cannot match, so the email index is
+  // the only one left that could have fired. Losing the `WHERE` clause
+  // would make that reading wrong, and nothing else would notice.
+  it("keeps password accounts out of the partial SSO identity index", async () => {
+    container = await createTestContainer();
+    const seeded = container;
+
+    await insert(seeded, passwordUser("first@example.com"));
+    await insert(seeded, passwordUser("second@example.com"));
+
+    expect(await seeded.db.select().from(users)).toHaveLength(2);
+  });
+
+  it("rejects a second SSO identity with the same provider and subject", async () => {
+    container = await createTestContainer();
+    const seeded = container;
+    const shared = (email: string) =>
+      User.registerWithSso(
+        {
+          id: nextId(),
+          email,
+          provider: SsoProvider.create("apple"),
+          providerSubject: "shared-subject",
+        },
+        NOW,
+      ).entity;
+
+    await insert(seeded, shared("one@example.com"));
+
+    const error = await capture(() =>
+      insert(seeded, shared("two@example.com")),
+    );
+
+    expect(isConflictError(error)).toBe(true);
+    expect(isConflictError(error) && error.code).toBe("UNIQUE_VIOLATION");
+  });
+
+  // Raw inserts on purpose: these rows cannot be built through the
+  // domain, and the point is that the database refuses them even when a
+  // future writer bypasses it. `mapDbError` flattens every CHECK to the
+  // same code, so the constraint *name* in the driver message is the only
+  // evidence that the right invariant fired.
+  it.each([
+    [
+      "a password row carrying an SSO identity",
+      { ssoProvider: "apple", ssoProviderSubject: "sub" },
+      /users_auth_method_sum/,
+    ],
+    [
+      "an SSO row carrying a password hash",
+      { authMethod: "sso", ssoProvider: "apple", ssoProviderSubject: "sub" },
+      /users_auth_method_sum/,
+    ],
+    [
+      "an unknown auth method",
+      { authMethod: "ldap" },
+      /users_auth_method_(sum|valid)/,
+    ],
+    [
+      "an unsupported SSO provider",
+      {
+        authMethod: "sso",
+        passwordHash: null,
+        ssoProvider: "github",
+        ssoProviderSubject: "sub",
+      },
+      /users_sso_provider_valid/,
+    ],
+    [
+      "an empty SSO subject",
+      {
+        authMethod: "sso",
+        passwordHash: null,
+        ssoProvider: "apple",
+        ssoProviderSubject: "",
+      },
+      /users_sso_subject_nonempty/,
+    ],
+    [
+      "a retention window below one day",
+      { trashRetentionDays: 0 },
+      /users_trash_retention_positive/,
+    ],
+  ])("refuses %s", async (_label, overrides, constraint) => {
+    container = await createTestContainer();
+    const seeded = container;
+
+    const error = await capture(() =>
+      seeded.db.insert(users).values(rawRow(overrides)),
+    );
+
+    expect(causeChain(error)).toMatch(constraint);
+    expect(await seeded.db.select().from(users)).toHaveLength(0);
   });
 
   it("raises SystemError(DATA_INTEGRITY_ERROR) for a stored id the generator disowns", async () => {

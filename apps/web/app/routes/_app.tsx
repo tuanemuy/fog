@@ -1,15 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { AppShell } from "@/components/layout/AppShell";
-import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
+import { readAuthStateFn } from "@/presentation/authState";
 import { toSafeRedirect } from "@/presentation/redirectSearch";
-
-const readAuthStateFn = createServerFn({ method: "GET" })
-  .middleware([errorResponseMiddleware])
-  .handler(async () => {
-    const { getCurrentUserId } = await import("@/presentation/currentUser");
-    return { authenticated: (await getCurrentUserId()) !== null };
-  });
 
 export const Route = createFileRoute("/_app")({
   // Router-cache entries for protected screens must not survive a logout,

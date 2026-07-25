@@ -43,6 +43,13 @@ function renderValidationMessage(code: string | null): string | null {
   }
 }
 
+// Field keys come from the transport schemas and are internal names. A key
+// with no entry here is dropped rather than shown raw.
+const FIELD_LABELS: Readonly<Record<string, string>> = {
+  email: "メールアドレス",
+  password: "パスワード",
+};
+
 function formatFieldErrors(
   fieldErrors: Readonly<Record<string, readonly string[]>>,
 ): string | null {
@@ -50,7 +57,8 @@ function formatFieldErrors(
   for (const [field, messages] of Object.entries(fieldErrors)) {
     const first = messages[0];
     if (first === undefined) continue;
-    parts.push(field ? `${field}: ${first}` : first);
+    const label = FIELD_LABELS[field];
+    parts.push(label === undefined ? first : `${label}: ${first}`);
   }
   return parts.length > 0 ? parts.join(" / ") : null;
 }

@@ -1,5 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { AuthSheet } from "@/components/ui/AuthSheet";
+import { TextLink } from "@/components/ui/TextLink";
 import { buildHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/password-reset")({
@@ -23,12 +24,7 @@ function PasswordResetPage() {
   return (
     <AuthSheet title="パスワードリセット" description="この機能は準備中です">
       <div className="text-center text-sm">
-        <Link
-          to="/login"
-          className="rounded-(--radius-sm) text-primary-dark transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-        >
-          ログインに戻る
-        </Link>
+        <TextLink to="/login">ログインに戻る</TextLink>
       </div>
     </AuthSheet>
   );

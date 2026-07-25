@@ -20,7 +20,7 @@ const ROW = "flex items-center justify-between gap-md py-(--pad-row)";
 
 export async function CurrentUserPanel() {
   const userId = await requireUserId();
-  const { user } = await loadCurrentUser(userId);
+  const user = await loadCurrentUser(userId);
 
   return (
     <section>

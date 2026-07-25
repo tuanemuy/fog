@@ -1,6 +1,7 @@
 import type { Database as LibsqlDatabase } from "@repo/core/adapters/libsql/client";
 import { content } from "@repo/core/config";
 import { describe, expect, it } from "vitest";
+import { requireSessionSecret } from "../secrets";
 import { createAwsRequestContainer } from "../serverAws";
 import { createRequestContainer } from "../serverCloudflare";
 import { createGcpRequestContainer } from "../serverGcp";
@@ -22,7 +23,7 @@ const APP_CONFIG_KEYS = [
   "themeColor",
 ].sort();
 
-const SESSION_SECRET = "0123456789abcdef0123456789abcdef";
+const SESSION_SECRET = requireSessionSecret("0123456789abcdef0123456789abcdef");
 const APP_URL = "http://localhost:3000";
 
 // The factories only stash the handle on their unit-of-work provider;

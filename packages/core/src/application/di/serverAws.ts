@@ -133,7 +133,7 @@ export function readAwsRequestServerConfig(
     appUrl: env.APP_URL,
     db: bindings.db,
     relayTrigger: bindings.relayTrigger ?? NoopRelayTrigger,
-    secrets: { sessionSecret: env.SESSION_SECRET ?? "" },
+    secrets: { sessionSecret: requireSessionSecret(env.SESSION_SECRET) },
   };
 }
 
@@ -158,7 +158,7 @@ export function createAwsRequestContainer(
     ),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({
-      secret: requireSessionSecret(secrets.sessionSecret),
+      secret: secrets.sessionSecret,
     }),
   };
 }

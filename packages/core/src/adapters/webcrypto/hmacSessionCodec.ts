@@ -4,6 +4,17 @@ import { fromBase64Url, toBase64Url } from "./encoding";
 /** Seven days — short enough to bound a stateless token's blast radius. */
 export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Floor for the HMAC key length, asserted by the factory below.
+ *
+ * A shorter key than the hash's block-equivalent output buys nothing:
+ * HMAC-SHA256 forgeries cost the key's entropy, not the payload's. The
+ * DI layer states the same requirement in operator-facing terms; this is
+ * the invariant of the construction boundary itself, so paths that build
+ * the codec directly (tests, a future app package) cannot skip it.
+ */
+export const MIN_SESSION_SECRET_LENGTH = 32;
+
 export type HmacSessionCodecOptions = Readonly<{
   secret: string;
   ttlMs?: number;
@@ -40,15 +51,25 @@ function parsePayload(raw: string): Payload | null {
  * MAC in constant time. Every rejection path — malformed token, bad
  * signature, expired payload — returns `null`; nothing about *why* a
  * token was refused reaches the caller.
+ *
+ * @throws if `secret` is shorter than {@link MIN_SESSION_SECRET_LENGTH}.
  */
 export function createHmacSessionCodec(
   options: HmacSessionCodecOptions,
 ): SessionCodec {
+  if (options.secret.length < MIN_SESSION_SECRET_LENGTH) {
+    throw new Error(
+      `Session secret must be at least ${MIN_SESSION_SECRET_LENGTH} characters`,
+    );
+  }
+
   const ttlMs = options.ttlMs ?? DEFAULT_SESSION_TTL_MS;
   const encoder = new TextEncoder();
 
-  // Imported once and shared: `importKey` is async, and re-running it per
-  // request would add a needless await to every authenticated hit.
+  // Shared by every call on this codec instance, which in the shipped
+  // wiring means the calls of a single request: the DI factories build a
+  // container per request, so this collapses `issue` + `verify` within
+  // one hit rather than amortising `importKey` across the process.
   let keyPromise: Promise<CryptoKey> | null = null;
   const getKey = (): Promise<CryptoKey> => {
     keyPromise ??= crypto.subtle.importKey(

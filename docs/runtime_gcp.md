@@ -58,6 +58,7 @@ For local container runs, pass `--env-file=.env.gcp` to `docker run` (or invoke 
 | `DATABASE_URL`                    | all roles                   | —       | libSQL URL (`libsql://...` for Turso).                                                        |
 | `DATABASE_AUTH_TOKEN`             | all roles                   | —       | Turso bearer token. Prefer Secret Manager via `DATABASE_AUTH_TOKEN_SECRET_NAME`.              |
 | `APP_URL`                         | all roles                   | —       | Public origin for absolute-URL building.                                                      |
+| `SESSION_SECRET`                  | `app`                       | —       | HMAC key signing session cookies, 32 characters minimum. Bound to the `app` service only — the relay / consumer / DLQ roles never touch a session. |
 | `WORKER_ROLE`                     | all roles                   | `app`   | One of `app`, `relay`, `consumer`, `dlq`. Drives the role dispatch in `server.gcp.ts`.        |
 | `GCP_PROJECT_ID`                  | `relay`                     | (auto)  | Pub/Sub client project. Defaults to the Cloud Run metadata server.                            |
 | `EVENTS_TOPIC`                    | `relay`                     | —       | Pub/Sub topic the relay publishes to (no `projects/...` prefix).                              |
@@ -135,6 +136,20 @@ pnpm db:migrate:gcp     # tsx apps/web/scripts/migrate.gcp.ts against DATABASE_U
 2. **Explicit loader** — set `DATABASE_AUTH_TOKEN_SECRET_NAME=projects/.../secrets/.../versions/latest` and the boot loader (`packages/core/src/adapters/gcp/secretsLoader.ts`) fetches the value at cold start. Use this when the deployment surface (e.g. an ad-hoc `gcloud run deploy`) cannot declare the binding.
 
 The Turso URL (`DATABASE_URL`) is treated as low-sensitivity and lives as a plain env var; rotate the token, not the URL.
+
+`SESSION_SECRET` is the second secret, needed by the `app` role alone. The reference Terraform passes it as a `sensitive = true` variable into the `app` service's env (`infra/gcp/example/services/main.tf`); back it with Secret Manager the same way as the Turso token for anything beyond a demo.
+
+### Session secret rotation
+
+Session cookies are stateless: an HMAC-signed `{ uid, exp }` payload with no server-side record (`packages/core/src/adapters/webcrypto/hmacSessionCodec.ts`). Nothing can revoke a single session ahead of its expiry, which defaults to 7 days. **Rotating `SESSION_SECRET` is the only kill switch** — every previously issued cookie fails signature verification at once, which logs out every user.
+
+Use it when a cookie or the key itself may have leaked:
+
+1. Generate a replacement: `openssl rand -base64 48`.
+2. Apply it to the `app` service (`terraform apply -var "session_secret=..."`, or a new Secret Manager version plus a revision that picks it up). Cloud Run env changes roll a new revision, so no running instance keeps the old key.
+3. Confirm an existing browser session now lands on `/login`.
+
+Old and new keys are never accepted together — there is no rolling window, so the logout is immediate and total. To shrink the exposure window instead, lower `ttlMs` where the codec is constructed.
 
 ## Local development
 

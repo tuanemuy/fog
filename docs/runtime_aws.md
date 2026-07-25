@@ -69,6 +69,8 @@ The schema is declared in `packages/core/src/application/di/serverAws.ts` and va
 | `DATABASE_URL`                    | yes      | Turso URL (`libsql://...` in production).                                            |
 | `DATABASE_AUTH_TOKEN`             | yes\*    | Turso bearer token. \*Required at runtime, but populated from Secrets Manager when `DATABASE_AUTH_TOKEN_SECRET_ARN` is set. |
 | `APP_URL`                         | yes      | Public origin. After the first deploy, set to the CloudFront `DistributionUrl`.      |
+| `SESSION_SECRET`                  | app      | HMAC key signing session cookies, 32 characters minimum. Populated at cold start from `SESSION_SECRET_ARN`; set it directly only for local scripting. |
+| `SESSION_SECRET_ARN`              | app      | Secrets Manager ARN holding the session key. Set by CDK on the `app` Lambda alone — the relay / consumer / pruner / DLQ Lambdas never touch a session, so the key is not distributed to them. |
 | `EVENTS_QUEUE_URL`                | relay    | SQS queue URL the relay publishes to. Provided by CDK as a Lambda env var.           |
 | `RELAY_FUNCTION_NAME`             | relay/app| Relay Lambda function name for async self-invoke and request-path kick.              |
 | `DATABASE_AUTH_TOKEN_SECRET_ARN`  | no       | Secrets Manager ARN. When set, the boot loader fetches the secret and populates `DATABASE_AUTH_TOKEN` before the libSQL client is constructed. |
@@ -106,11 +108,20 @@ turso db show tanstack-start-template-staging --url
 
 ## Deployment
 
-CDK is invoked from `infra/aws/`. The `infra/aws/bin/app.ts` entry reads stage-keyed env vars (`TURSO_URL_STAGING`, `TURSO_AUTH_TOKEN_SECRET_ARN_STAGING`, `APP_URL_STAGING`, and the `_PRODUCTION` equivalents) and instantiates one `AppStack-<stage>` per configured stage. Stages without env vars are silently skipped, so partial configurations stay synth-able.
+CDK is invoked from `infra/aws/`. The `infra/aws/bin/app.ts` entry reads four stage-keyed env vars (`TURSO_URL_STAGING`, `TURSO_AUTH_TOKEN_SECRET_ARN_STAGING`, `SESSION_SECRET_ARN_STAGING`, `APP_URL_STAGING`, and the `_PRODUCTION` equivalents) and instantiates one `AppStack-<stage>` per configured stage. A stage with **none** of them set is skipped, so a staging-only configuration stays synth-able; a stage with **some** of them set fails synth naming the missing variables, because a silently absent stack is indistinguishable from a deploy that did nothing.
+
+Create the session-key secret alongside the Turso token before the first deploy:
+
+```bash
+aws secretsmanager create-secret \
+  --name tanstack-start-template/staging/session-secret \
+  --secret-string "$(openssl rand -base64 48)"
+```
 
 ```bash
 TURSO_URL_STAGING=libsql://... \
 TURSO_AUTH_TOKEN_SECRET_ARN_STAGING=arn:aws:secretsmanager:... \
+SESSION_SECRET_ARN_STAGING=arn:aws:secretsmanager:... \
 APP_URL_STAGING=https://staging.example.com \
 pnpm deploy:aws:synth                # cdk synth
 pnpm deploy:aws:diff                 # cdk diff
@@ -172,11 +183,24 @@ The user-visible attempt count is the **product** of those numbers (15 by defaul
 | Concern                       | Default storage                              | Notes                                                                                       |
 | ----------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `DATABASE_AUTH_TOKEN`         | Secrets Manager (referenced by ARN env var)  | The boot loader (`secretsLoader.ts`) populates `process.env.DATABASE_AUTH_TOKEN` cold-start. |
+| `SESSION_SECRET`              | Secrets Manager (referenced by `SESSION_SECRET_ARN`) | Same idiom as the Turso token, so the value never lands in the CloudFormation template. Granted to the `app` Lambda only. |
 | `DATABASE_URL`                | Lambda env var (plaintext)                   | Low sensitivity — Turso URLs are non-secret without the matching token.                     |
 | `APP_URL`                     | Lambda env var (plaintext)                   | Public origin.                                                                              |
 | Application secrets (`JWT_*`) | Secrets Manager (add bindings to `serverAws.ts`) | Extend `loadSecretsIntoEnv` bindings in `apps/web/app/server.aws.ts` and worker handlers.            |
 
 Rotation: a non-empty existing env value wins over the secret, so local overrides (e.g. `.env.aws` for migrations) keep working without unsetting the ARN. To force a refresh after rotation in a long-lived dev shell, unset the env var.
+
+### Session secret rotation
+
+Session cookies are stateless: an HMAC-signed `{ uid, exp }` payload with no server-side record (`packages/core/src/adapters/webcrypto/hmacSessionCodec.ts`). Nothing can revoke a single session ahead of its expiry, which defaults to 7 days. **Rotating `SESSION_SECRET` is the only kill switch** — every previously issued cookie fails signature verification at once, which logs out every user.
+
+Use it when a cookie or the key itself may have leaked:
+
+1. `aws secretsmanager put-secret-value --secret-id <session secret> --secret-string "$(openssl rand -base64 48)"`.
+2. Force new Lambda containers — warm ones keep the cold-start value. Publishing a new version or redeploying the `app` Lambda is enough.
+3. Confirm an existing browser session now lands on `/login`.
+
+Old and new keys are never accepted together — there is no rolling window, so the logout is immediate and total. To shrink the exposure window instead, lower `ttlMs` where the codec is constructed.
 
 The consumer / DLQ Lambdas can run with a read-only Turso token if you prefer least-privilege; mint a separate secret and split the `tursoAuthSecretArn` prop. The shipped CDK uses one full-access secret for simplicity.
 

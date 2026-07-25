@@ -286,6 +286,21 @@ describe("User.reconstruct", () => {
     ["sso row without a provider", { ...ssoRow, ssoProvider: null }],
     ["sso row with an unsupported provider", { ...ssoRow, ssoProvider: "x" }],
     ["sso row without a subject", { ...ssoRow, ssoProviderSubject: null }],
+    // The other direction of the same CHECK: a row carrying the columns
+    // of the variant it is not. Dropping them silently would rehydrate a
+    // user whose stored identity no longer matches the one in memory.
+    [
+      "password row carrying an SSO provider",
+      { ...passwordRow, ssoProvider: "google" },
+    ],
+    [
+      "password row carrying an SSO subject",
+      { ...passwordRow, ssoProviderSubject: "sub-123" },
+    ],
+    [
+      "sso row carrying a password hash",
+      { ...ssoRow, passwordHash: HASH as string },
+    ],
     ["empty id", { ...passwordRow, id: "" }],
     ["malformed email", { ...passwordRow, email: "not-an-email" }],
     ["retention below 1", { ...passwordRow, trashRetentionDays: 0 }],

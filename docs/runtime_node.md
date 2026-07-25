@@ -8,6 +8,7 @@ This is the default runtime: `pnpm dev` / `pnpm build` / `pnpm start` all alias 
 
 - [Quick start](#quick-start)
 - [Environment variables](#environment-variables)
+- [Session secret rotation](#session-secret-rotation)
 - [The libSQL data file](#the-libsql-data-file)
 - [SQLite PRAGMAs applied at boot](#sqlite-pragmas-applied-at-boot)
 - [Worker runner (relay / consumer / pruner)](#worker-runner-relay--consumer--pruner)
@@ -47,6 +48,7 @@ The flow:
 | ------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`            | yes      | `file:./data/app.db`     | libSQL URL. `file:` opens an embedded SQLite file; `:memory:` is ephemeral; `libsql://` is remote.   |
 | `APP_URL`                 | yes      | `http://localhost:3000`  | Public origin used to build absolute URLs (canonical / OG image / OAuth callbacks).                  |
+| `SESSION_SECRET`          | yes      | (unset)                  | HMAC key signing session cookies, 32 characters minimum (`openssl rand -base64 48`). Required by the request path only — the worker roles boot without it. Rotating it logs everyone out. |
 | `PORT`                    | no       | `3000`                   | HTTP listener port.                                                                                  |
 | `HOSTNAME`                | no       | `0.0.0.0`                | HTTP listener bind address.                                                                          |
 | `DATABASE_AUTH_TOKEN`     | no       | (unset)                  | Bearer token for remote libSQL / Turso. Leave unset for local files.                                 |
@@ -57,6 +59,20 @@ The flow:
 | `OUTBOX_RETENTION_MS`     | no       | `604800000` (7 days)     | Retention window before processed outbox rows are pruned.                                            |
 
 The outbox tuning variables are shared with the Cloudflare runtime; the schema is declared once in `packages/core/src/application/di/env.ts` and consumed by both `serverNode.ts` and the wrangler `[vars]` readers.
+
+`SESSION_SECRET` is optional in the env schema on purpose: `readNodeServerEnv()` also boots the worker runner, which never touches a session. The request path asserts it instead (`packages/core/src/application/di/secrets.ts`), so only the role that consumes the key demands it.
+
+## Session secret rotation
+
+Session cookies are stateless: an HMAC-signed `{ uid, exp }` payload with no server-side record (`packages/core/src/adapters/webcrypto/hmacSessionCodec.ts`). Nothing can revoke a single session ahead of its expiry, which defaults to 7 days. **Rotating `SESSION_SECRET` is the only kill switch** — every previously issued cookie fails signature verification at once, which logs out every user.
+
+Use it when a cookie or the key itself may have leaked:
+
+1. Generate a replacement: `openssl rand -base64 48`.
+2. Put it in `.env` and restart the process (`pnpm start`).
+3. Confirm an existing browser session now lands on `/login`.
+
+Old and new keys are never accepted together — there is no rolling window, so the logout is immediate and total. To shrink the exposure window instead, lower `ttlMs` where the codec is constructed.
 
 ## The libSQL data file
 
@@ -145,6 +161,19 @@ Workflow:
 4. `pnpm db:migrate` to apply against the local libSQL file.
 
 Drizzle's programmatic migrator writes its bookkeeping into the `__drizzle_migrations` table inside the database, so re-running `pnpm db:migrate` is idempotent.
+
+### Replacing a migration in place
+
+`0000_initial` is regenerated in place rather than superseded by a `0001_*` while the schema is still pre-deployment. That is safe for a fresh database and broken for any database that already applied the old contents: the journal's newer timestamp makes the migrator treat the tag as unapplied and re-run it, which fails on the first `CREATE TABLE ... already exists`.
+
+Delete the local database before migrating whenever the initial migration has been regenerated:
+
+```bash
+rm -f apps/web/data/app.db apps/web/data/app.db-wal apps/web/data/app.db-shm
+pnpm db:migrate
+```
+
+Once the schema ships to an environment holding real data, stop replacing the tag and add `0001_*` migrations instead.
 
 ## Graceful shutdown
 

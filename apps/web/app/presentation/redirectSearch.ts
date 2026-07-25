@@ -18,16 +18,35 @@ import { z } from "zod";
  */
 export const REDIRECT_MAX_LENGTH = 2048;
 
+// Underscore-prefixed paths are the framework's own (`/_serverFn/...`).
+// They are same-origin and would pass every other rule, but landing a
+// signed-in user on a POST-only endpoint is a dead end, and fog has no
+// public URL that starts with `_`.
+const INTERNAL_PATH_PREFIX = "/_";
+
+// A decoded CR/LF would be a header-injection attempt if any runtime ever
+// accepted one in a `Location` value; refuse the whole C0/DEL range at the
+// boundary rather than relying on the header implementation.
+function hasControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 export const redirectPathSchema = z
   .string()
   .max(REDIRECT_MAX_LENGTH)
   .refine(
     (value) =>
       value.startsWith("/") &&
+      !value.startsWith(INTERNAL_PATH_PREFIX) &&
       !value.includes("//") &&
       !value.includes("\\") &&
       !value.startsWith("/%2f") &&
-      !value.startsWith("/%2F"),
+      !value.startsWith("/%2F") &&
+      !hasControlCharacter(value),
     { message: "リダイレクト先が不正です" },
   );
 

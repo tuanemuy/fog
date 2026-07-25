@@ -17,13 +17,13 @@ import { User } from "@repo/core/domain/identity/entity";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   Email,
-  PasswordHash,
   SsoProvider,
   TrashRetentionDays,
   UserId,
 } from "@repo/core/domain/identity/valueObject";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { FakePasswordHasher } from "../../__tests__/fakes";
 import {
   createTestContainer,
   type TestContainer,
@@ -64,6 +64,7 @@ async function seedSsoUser(
 }
 
 const throwingHasher = (method: "hash" | "verify"): PasswordHasher => {
+  const delegate = new FakePasswordHasher();
   const boom = () => {
     throw new SystemError(
       SystemErrorCode.CryptoError,
@@ -71,38 +72,60 @@ const throwingHasher = (method: "hash" | "verify"): PasswordHasher => {
     );
   };
   return {
-    hash: async (plain) =>
-      method === "hash" ? boom() : PasswordHash.create(`fake$${plain}`),
+    hash: async (plain) => (method === "hash" ? boom() : delegate.hash(plain)),
     verify: async (plain, hash) =>
-      method === "verify" ? boom() : hash === `fake$${plain}`,
+      method === "verify" ? boom() : delegate.verify(plain, hash),
   };
 };
+
+// Renaming `users` away is the only way to make a non-constraint DB
+// fault (ADR-019), and a rename that outlives its test takes the pool's
+// global `DELETE FROM users` with it — and every later test in the file.
+// So the rename and its undo are never written apart: both fault
+// injectors below own a `finally`, and the table name lives in one
+// place.
+const HIDDEN_USERS_TABLE = "users_hidden";
+
+const hideUsersTable = (container: TestContainer) =>
+  container.db.run(
+    sql.raw(`ALTER TABLE users RENAME TO ${HIDDEN_USERS_TABLE}`),
+  );
+
+const revealUsersTable = (container: TestContainer) =>
+  container.db.run(
+    sql.raw(`ALTER TABLE ${HIDDEN_USERS_TABLE} RENAME TO users`),
+  );
 
 /** Makes every `users` statement fail with a non-constraint DB error. */
 async function withUsersTableHidden<T>(
   container: TestContainer,
   fn: () => Promise<T>,
 ): Promise<T> {
-  await container.db.run(sql`ALTER TABLE users RENAME TO users_hidden`);
+  await hideUsersTable(container);
   try {
     return await fn();
   } finally {
-    await container.db.run(sql`ALTER TABLE users_hidden RENAME TO users`);
+    await revealUsersTable(container);
   }
 }
 
 /**
- * Unit-of-work provider that hides the `users` table *after* the usecase
- * has registered its insert, so the batch fails at flush time on the
- * write rather than on the pre-check read.
+ * Runs `fn` against a container whose unit of work hides the `users`
+ * table *after* the usecase has registered its insert, so the batch
+ * fails at flush time on the write rather than on the pre-check read.
+ *
+ * That ordering is what makes the injection honest, and `hidden` records
+ * it: if the usecase never reached `insert`, the test asserted nothing
+ * about writes and must fail rather than pass quietly.
  */
-function providerBreakingAtInsert(
-  container: TestContainer,
-): UnitOfWorkProvider {
-  const base = container.unitOfWorkProvider;
-  return {
-    run: (fn) =>
-      base.run((ctx) => {
+async function withInsertBreakingProvider<T>(
+  base: TestContainer,
+  fn: (container: TestContainer) => Promise<T>,
+): Promise<T> {
+  let hidden = false;
+  const unitOfWorkProvider: UnitOfWorkProvider = {
+    run: (callback) =>
+      base.unitOfWorkProvider.run((ctx) => {
         const wrapped: UnitOfWorkContext = {
           collectEvents: (drafts) => ctx.collectEvents(drafts),
           userRepository: {
@@ -112,15 +135,22 @@ function providerBreakingAtInsert(
               ctx.userRepository.save(user, expectedVersion),
             insert: async (user) => {
               await ctx.userRepository.insert(user);
-              await container.db.run(
-                sql`ALTER TABLE users RENAME TO users_hidden`,
-              );
+              await hideUsersTable(base);
+              hidden = true;
             },
           },
         };
-        return fn(wrapped);
+        return callback(wrapped);
       }),
   };
+
+  try {
+    const result = await fn({ ...base, unitOfWorkProvider });
+    expect(hidden).toBe(true);
+    return result;
+  } finally {
+    if (hidden) await revealUsersTable(base);
+  }
 }
 
 const userRows = (container: TestContainer) =>
@@ -149,7 +179,7 @@ describe("registerWithPassword (integration)", () => {
       trashRetentionDays: 30,
       version: 0,
     });
-    expect(users[0]?.passwordHash).not.toBe(PASSWORD);
+    expect(users[0]?.passwordHash).not.toContain(PASSWORD);
 
     const outbox = await outboxRows(container);
     expect(outbox).toHaveLength(1);
@@ -192,6 +222,52 @@ describe("registerWithPassword (integration)", () => {
     expect(await userRows(container)).toHaveLength(0);
     expect(await outboxRows(container)).toHaveLength(0);
   });
+
+  // TC-registerWithPassword-005 — the VO's own boundary tests stop at
+  // `Email.create`; spec's expectation is that the *registration*
+  // succeeds, which is the only way the transport ceiling in
+  // `components/auth/schema.ts` and the domain limit are checked against
+  // each other.
+  it("registers an address that is exactly 320 characters (TC-registerWithPassword-005)", async () => {
+    const container = createTestContainer();
+    const email = `${"a".repeat(308)}@example.com`;
+    expect(email).toHaveLength(320);
+
+    const { userId } = await registerWithPassword({
+      container,
+      input: { email, password: PASSWORD },
+    });
+
+    const users = await userRows(container);
+    expect(users).toHaveLength(1);
+    expect(users[0]?.id).toBe(userId);
+    expect(users[0]?.email).toBe(email);
+    expect(users[0]?.email).toHaveLength(320);
+  });
+
+  // TC-registerWithPassword-007 / TC-registerWithPassword-008
+  it.each([
+    ["shortest accepted", 8],
+    ["longest accepted", 128],
+  ])(
+    "registers with a %s password of exactly %i characters (TC-registerWithPassword-007 / TC-registerWithPassword-008)",
+    async (_label, length) => {
+      const container = createTestContainer();
+      const password = "p".repeat(length);
+      expect(password).toHaveLength(length);
+
+      const { userId } = await registerWithPassword({
+        container,
+        input: { email: `user${length}@example.com`, password },
+      });
+
+      const users = await userRows(container);
+      expect(users).toHaveLength(1);
+      expect(users[0]?.id).toBe(userId);
+      expect(users[0]?.passwordHash).not.toContain(password);
+      expect(await outboxRows(container)).toHaveLength(1);
+    },
+  );
 
   // TC-registerWithPassword-011
   it("rejects a duplicate address at the pre-check (TC-registerWithPassword-011)", async () => {
@@ -276,18 +352,29 @@ describe("registerWithPassword (integration)", () => {
       registerWithPassword({ container, input }),
     ]);
 
-    const rejected = results.filter((r) => r.status === "rejected");
-    expect(rejected.length).toBeGreaterThanOrEqual(1);
-    for (const failure of rejected) {
-      expect(isConflictError(failure.reason)).toBe(true);
-      expect(isConflictError(failure.reason) && failure.reason.code).toBe(
-        "EMAIL_ALREADY_REGISTERED",
-      );
-    }
+    // Exactly one winner: "nobody registered" would satisfy every
+    // assertion below on its own, and that is the regression this test
+    // exists to catch.
+    expect(results.map((r) => r.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
 
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    expect(await userRows(container)).toHaveLength(fulfilled.length);
-    expect(await outboxRows(container)).toHaveLength(fulfilled.length);
+    const failure = results.find((r) => r.status === "rejected");
+    expect(isConflictError(failure?.reason)).toBe(true);
+    expect(isConflictError(failure?.reason) && failure?.reason.code).toBe(
+      "EMAIL_ALREADY_REGISTERED",
+    );
+    // The pre-check path (`findByEmail` saw the row) raises without a
+    // `cause`; only ADR-008's UNIQUE_VIOLATION reading carries one. This
+    // is the sole test that walks that catch, so it pins the path too —
+    // otherwise the reading could die and nothing would notice.
+    expect(
+      isConflictError(failure?.reason) && failure?.reason.cause,
+    ).toBeDefined();
+
+    expect(await userRows(container)).toHaveLength(1);
+    expect(await outboxRows(container)).toHaveLength(1);
   });
 
   // TC-registerWithPassword-015
@@ -315,22 +402,15 @@ describe("registerWithPassword (integration)", () => {
   // so neither would ever reach `SystemError`.
   it("rolls back and reports SystemError when the insert hits a DB fault (TC-registerWithPassword-016)", async () => {
     const base = createTestContainer();
-    const container: TestContainer = {
-      ...base,
-      unitOfWorkProvider: providerBreakingAtInsert(base),
-    };
 
-    let error: unknown;
-    try {
-      error = await capture(() =>
+    const error = await withInsertBreakingProvider(base, (container) =>
+      capture(() =>
         registerWithPassword({
           container,
           input: { email: "user@example.com", password: PASSWORD },
         }),
-      );
-    } finally {
-      await base.db.run(sql`ALTER TABLE users_hidden RENAME TO users`);
-    }
+      ),
+    );
 
     expect(isSystemError(error)).toBe(true);
     expect(isSystemError(error) && error.code).toBe("DATABASE_ERROR");
@@ -494,6 +574,41 @@ describe("loginWithPassword (integration)", () => {
     });
   });
 
+  // The serialized answers above are identical; response time has to be
+  // too, or the wall clock reports what the message refuses to. Counting
+  // verifications is the observable stand-in for that cost — a timing
+  // assertion would be flaky, this one is not.
+  it("pays for one verification on every credential path, matched or not", async () => {
+    const counted: string[] = [];
+    const delegate = new FakePasswordHasher();
+    const container = createTestContainer({
+      passwordHasher: {
+        hash: (plain) => delegate.hash(plain),
+        verify: async (plain, hash) => {
+          counted.push(hash);
+          return delegate.verify(plain, hash);
+        },
+      },
+    });
+    await seedPasswordUser(container, "user@example.com");
+    await seedSsoUser(container, "sso@example.com");
+
+    for (const email of [
+      "nobody@example.com",
+      "sso@example.com",
+      "user@example.com",
+    ]) {
+      await capture(() =>
+        loginWithPassword({
+          container,
+          input: { email, password: "wrong-password" },
+        }),
+      );
+    }
+
+    expect(counted).toHaveLength(3);
+  });
+
   // TC-loginWithPassword-009 — the one case that pays for a real key
   // derivation, since the boundary being checked is the round trip.
   it("verifies an 8-character password through the real hasher (TC-loginWithPassword-009)", async () => {
@@ -512,6 +627,13 @@ describe("loginWithPassword (integration)", () => {
         input: { email: "user@example.com", password: "pass1234" },
       }),
     ).resolves.toEqual({ userId });
+
+    // The only place a real derivation reaches storage, so it is also the
+    // only place "the column holds the hasher's output, not what the user
+    // typed" can be observed for real rather than through a fake.
+    const users = await userRows(container);
+    expect(users[0]?.passwordHash).toMatch(/^pbkdf2-sha256\$1000\$/);
+    expect(users[0]?.passwordHash).not.toContain("pass1234");
   });
 
   // TC-loginWithPassword-010
@@ -565,12 +687,10 @@ describe("getCurrentUser (integration)", () => {
     await expect(
       getCurrentUser({ container, input: { userId } }),
     ).resolves.toEqual({
-      user: {
-        userId,
-        email: "user@example.com",
-        authMethod: "password",
-        trashRetentionDays: 30,
-      },
+      userId,
+      email: "user@example.com",
+      authMethod: "password",
+      trashRetentionDays: 30,
     });
   });
 
@@ -579,7 +699,7 @@ describe("getCurrentUser (integration)", () => {
     const container = createTestContainer();
     const userId = await seedSsoUser(container, "sso@example.com");
 
-    const { user } = await getCurrentUser({ container, input: { userId } });
+    const user = await getCurrentUser({ container, input: { userId } });
     expect(user.authMethod).toBe("sso");
     expect(user.email).toBe("sso@example.com");
   });
@@ -592,7 +712,7 @@ describe("getCurrentUser (integration)", () => {
       input: { email: "user@example.com", password: PASSWORD },
     });
 
-    const { user } = await getCurrentUser({ container, input: { userId } });
+    const user = await getCurrentUser({ container, input: { userId } });
 
     expect(Object.keys(user).sort()).toEqual([
       "authMethod",
@@ -610,7 +730,7 @@ describe("getCurrentUser (integration)", () => {
     const container = createTestContainer();
     const userId = await seedSsoUser(container, "sso@example.com");
 
-    const { user } = await getCurrentUser({ container, input: { userId } });
+    const user = await getCurrentUser({ container, input: { userId } });
 
     expect(Object.keys(user).sort()).toEqual([
       "authMethod",
@@ -644,7 +764,7 @@ describe("getCurrentUser (integration)", () => {
       },
     );
 
-    const { user } = await getCurrentUser({ container, input: { userId } });
+    const user = await getCurrentUser({ container, input: { userId } });
     expect(user.trashRetentionDays).toBe(1);
   });
 
@@ -662,6 +782,29 @@ describe("getCurrentUser (integration)", () => {
     expect(isNotFoundError(error)).toBe(true);
     expect(isNotFoundError(error) && error.code).toBe("USER_NOT_FOUND");
   });
+
+  // TC-getCurrentUser-008 — spec states this at the usecase, not at
+  // `UserId.create`: a session that decodes to a blank subject must be
+  // refused before any lookup happens, and nothing must be written or
+  // read on the way out.
+  it.each([
+    ["empty", ""],
+    ["whitespace only", "   "],
+  ])(
+    "refuses a %s userId with BusinessRuleError (TC-getCurrentUser-008)",
+    async (_label, userId) => {
+      const container = createTestContainer();
+
+      const error = await capture(() =>
+        getCurrentUser({ container, input: { userId } }),
+      );
+
+      expect(isBusinessRuleError(error)).toBe(true);
+      expect(isBusinessRuleError(error) && error.code).toBe(
+        "IDENTITY_INVALID_USER_ID",
+      );
+    },
+  );
 
   // TC-getCurrentUser-009
   it("surfaces a findById DB fault as SystemError (TC-getCurrentUser-009)", async () => {

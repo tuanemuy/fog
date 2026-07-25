@@ -1,6 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { navTitle } from "@/components/layout/AppShell/navItems";
+import { buildHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/_app/trash")({
+  head: ({ match }) => {
+    const config = match.context.config;
+    if (!config) return {};
+    return {
+      meta: buildHead(config, { title: navTitle("/trash"), path: "/trash" })
+        .meta,
+    };
+  },
   component: TrashPage,
 });
 

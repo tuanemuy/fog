@@ -1,17 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { SignupForm } from "@/components/auth/SignupForm";
 import { AuthSheet } from "@/components/ui/AuthSheet";
-import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
+import { readAuthStateFn } from "@/presentation/authState";
 import { buildHead } from "@/presentation/head";
 import { DEFAULT_REDIRECT_PATH } from "@/presentation/redirectSearch";
-
-const readAuthStateFn = createServerFn({ method: "GET" })
-  .middleware([errorResponseMiddleware])
-  .handler(async () => {
-    const { getCurrentUserId } = await import("@/presentation/currentUser");
-    return { authenticated: (await getCurrentUserId()) !== null };
-  });
 
 export const Route = createFileRoute("/signup")({
   // Signup takes no `?redirect=`, so an already-signed-in visitor goes home.

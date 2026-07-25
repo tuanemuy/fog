@@ -3,11 +3,20 @@ import {
   PasswordHash,
   PlainPassword,
 } from "@repo/core/domain/identity/valueObject";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPbkdf2PasswordHasher,
   DEFAULT_PBKDF2_ITERATIONS,
 } from "../pbkdf2PasswordHasher";
+
+async function capture(fn: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the hasher to reject");
+}
 
 // Production strength is 210k iterations; the tests run at a cost the
 // runner can afford, which is exactly what the factory argument exists
@@ -61,13 +70,13 @@ describe("createPbkdf2PasswordHasher", () => {
   });
 
   it("reads the iteration count back from the stored hash rather than its own setting", async () => {
-    const weak = createPbkdf2PasswordHasher({ iterations: 500 });
+    const weak = createPbkdf2PasswordHasher({ iterations: 1_000 });
     const strong = createPbkdf2PasswordHasher({ iterations: 2_000 });
 
     const weakHash = await weak.hash(PASSWORD);
     const strongHash = await strong.hash(PASSWORD);
 
-    expect(weakHash.split("$")[1]).toBe("500");
+    expect(weakHash.split("$")[1]).toBe("1000");
     expect(strongHash.split("$")[1]).toBe("2000");
     // Raising the cost must not invalidate hashes made at the old one.
     await expect(strong.verify(PASSWORD, weakHash)).resolves.toBe(true);
@@ -98,4 +107,51 @@ describe("createPbkdf2PasswordHasher", () => {
       expect(isSystemError(caught) && caught.code).toBe("DATA_INTEGRITY_ERROR");
     },
   );
+});
+
+// The other half of the split ADR-014 makes: a corrupted stored value is
+// `DataIntegrityError` (above), a failing computation is `CryptoError`.
+// Usecases pass `SystemError` through untouched, so if this translation
+// were missing the raw WebCrypto rejection would reach the client as
+// `kind: "unknown"` and nothing else in the suite would notice.
+describe("createPbkdf2PasswordHasher under a failing WebCrypto", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("translates a deriveBits failure during hash into SystemError(CRYPTO_ERROR)", async () => {
+    const cause = new Error("boom");
+    vi.spyOn(crypto.subtle, "deriveBits").mockRejectedValue(cause);
+
+    const caught = await capture(() => hasher.hash(PASSWORD));
+
+    expect(isSystemError(caught)).toBe(true);
+    expect(isSystemError(caught) && caught.code).toBe("CRYPTO_ERROR");
+    expect(isSystemError(caught) && caught.cause).toBe(cause);
+  });
+
+  it("translates an importKey failure during hash into SystemError(CRYPTO_ERROR)", async () => {
+    const cause = new Error("no key material");
+    vi.spyOn(crypto.subtle, "importKey").mockRejectedValue(cause);
+
+    const caught = await capture(() => hasher.hash(PASSWORD));
+
+    expect(isSystemError(caught)).toBe(true);
+    expect(isSystemError(caught) && caught.code).toBe("CRYPTO_ERROR");
+    expect(isSystemError(caught) && caught.cause).toBe(cause);
+  });
+
+  it("translates a deriveBits failure during verify into SystemError(CRYPTO_ERROR)", async () => {
+    const stored = await hasher.hash(PASSWORD);
+    const cause = new Error("boom");
+    vi.spyOn(crypto.subtle, "deriveBits").mockRejectedValue(cause);
+
+    const caught = await capture(() => hasher.verify(PASSWORD, stored));
+
+    expect(isSystemError(caught)).toBe(true);
+    // Deliberately not the `false` that means "wrong password": a
+    // computation that never ran says nothing about the password.
+    expect(isSystemError(caught) && caught.code).toBe("CRYPTO_ERROR");
+    expect(isSystemError(caught) && caught.cause).toBe(cause);
+  });
 });

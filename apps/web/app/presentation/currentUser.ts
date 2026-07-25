@@ -2,7 +2,7 @@ import "@tanstack/react-start/server-only";
 
 import { getContainer } from "@repo/core/application/di/containerStore";
 import { redirect } from "@tanstack/react-router";
-import { getRequestUrl } from "@tanstack/react-start/server";
+import { getRequestUrl, setResponseHeader } from "@tanstack/react-start/server";
 import { cache } from "react";
 import { toSafeRedirect } from "./redirectSearch";
 import { readSessionToken } from "./session";
@@ -35,8 +35,18 @@ export const getCurrentUserId = cache(async (): Promise<string | null> => {
  */
 export async function requireUserId(): Promise<string> {
   const userId = await getCurrentUserId();
-  if (userId !== null) return userId;
+  if (userId !== null) {
+    // The guard is also the authoritative "this response is per-user" point:
+    // anything that got here carries protected data and must stay out of the
+    // browser's history / heuristic caches (a logout must not be undone by
+    // the back button).
+    setResponseHeader("cache-control", "no-store, private");
+    return userId;
+  }
 
+  // `getRequestUrl()` is whatever URL is being served, which for a server
+  // function is `/_serverFn/...` — never a place to send a signed-in user
+  // back to. `toSafeRedirect` drops those, leaving the default landing page.
   const url = getRequestUrl();
   const from = toSafeRedirect(`${url.pathname}${url.search}`);
   throw redirect({

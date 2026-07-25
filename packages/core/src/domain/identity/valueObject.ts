@@ -1,3 +1,4 @@
+import { codePointLength } from "@repo/core/domain/common/text";
 import { BusinessRuleError } from "@repo/core/domain/error";
 import { IdentityErrorCode } from "./errorCode";
 
@@ -44,7 +45,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 export const Email = {
   create: (raw: string): Email => {
     const normalized = raw.trim().toLowerCase();
-    if (normalized.length > EMAIL_MAX_LENGTH) {
+    if (codePointLength(normalized) > EMAIL_MAX_LENGTH) {
       throw new BusinessRuleError(
         IdentityErrorCode.InvalidEmail,
         `Email exceeds maximum length (${EMAIL_MAX_LENGTH})`,
@@ -76,7 +77,8 @@ export type PlainPassword = string & { readonly [plainPasswordBrand]: true };
 
 export const PlainPassword = {
   create: (raw: string): PlainPassword => {
-    if (raw.length < PASSWORD_MIN_LENGTH || raw.length > PASSWORD_MAX_LENGTH) {
+    const length = codePointLength(raw);
+    if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH) {
       throw new BusinessRuleError(
         IdentityErrorCode.PasswordTooWeak,
         `Password must be between ${PASSWORD_MIN_LENGTH} and ${PASSWORD_MAX_LENGTH} characters`,
@@ -148,7 +150,7 @@ export const ClientName = {
         "Client name cannot be empty",
       );
     }
-    if (trimmed.length > CLIENT_NAME_MAX_LENGTH) {
+    if (codePointLength(trimmed) > CLIENT_NAME_MAX_LENGTH) {
       throw new BusinessRuleError(
         IdentityErrorCode.InvalidClientName,
         `Client name exceeds maximum length (${CLIENT_NAME_MAX_LENGTH})`,

@@ -13,6 +13,23 @@ const DERIVED_BITS = 256;
 /** OWASP's recommendation for PBKDF2-HMAC-SHA256 (2023 cheat sheet). */
 export const DEFAULT_PBKDF2_ITERATIONS = 210_000;
 
+/**
+ * Floor for the factory's `iterations` argument. Well below any usable
+ * production cost — the argument exists so test runs stay affordable —
+ * but high enough that a typo or an uninitialised config value cannot
+ * quietly stand up a hasher that offers no work factor at all.
+ */
+export const MIN_PBKDF2_ITERATIONS = 1_000;
+
+/**
+ * Ceiling accepted when reading an iteration count back out of a stored
+ * hash. A row carrying an absurd count would otherwise turn one login
+ * into an unbounded CPU burn (a Worker killed by its CPU limit, a Node
+ * worker thread pinned indefinitely). Reaching it requires database
+ * write access, so this guards data corruption rather than an attacker.
+ */
+export const MAX_PBKDF2_ITERATIONS = 10_000_000;
+
 export type Pbkdf2PasswordHasherOptions = Readonly<{
   iterations?: number;
 }>;
@@ -71,8 +88,16 @@ function parse(stored: string): StoredHash {
       "Stored password hash is not in a recognised encoding",
     );
   }
-  const iterations = Number(iterationsRaw);
-  if (!Number.isInteger(iterations) || iterations < 1) {
+  // `Number` would accept `" 12 "` / `"1e5"` / `"0x10"`; the encoder only
+  // ever writes plain digits, so anything else is a corrupted row.
+  const iterations = /^\d+$/.test(iterationsRaw)
+    ? Number(iterationsRaw)
+    : Number.NaN;
+  if (
+    !Number.isInteger(iterations) ||
+    iterations < 1 ||
+    iterations > MAX_PBKDF2_ITERATIONS
+  ) {
     throw new SystemError(
       SystemErrorCode.DataIntegrityError,
       "Stored password hash declares an invalid iteration count",
@@ -118,11 +143,19 @@ function parse(stored: string): StoredHash {
  *
  * A mismatch is `false`, never an error — see the port's contract. Only
  * the computation failing raises (`SystemError`).
+ *
+ * @throws if `iterations` is not an integer of at least
+ * {@link MIN_PBKDF2_ITERATIONS}.
  */
 export function createPbkdf2PasswordHasher(
   options: Pbkdf2PasswordHasherOptions = {},
 ): PasswordHasher {
   const iterations = options.iterations ?? DEFAULT_PBKDF2_ITERATIONS;
+  if (!Number.isInteger(iterations) || iterations < MIN_PBKDF2_ITERATIONS) {
+    throw new Error(
+      `PBKDF2 iterations must be an integer of at least ${MIN_PBKDF2_ITERATIONS}`,
+    );
+  }
 
   return {
     async hash(plain: PlainPassword): Promise<PasswordHash> {

@@ -81,7 +81,7 @@ describe("D1UnitOfWorkProvider (integration)", () => {
     const found = await container.unitOfWorkProvider.run(
       async ({ userRepository }) => userRepository.findById(created.id),
     );
-    if (!found) return;
+    if (!found) throw new Error("seeded user disappeared");
     const { entity: bumped } = User.changeTrashRetentionDays(
       found.entity,
       TrashRetentionDays.create(7),

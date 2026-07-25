@@ -1,3 +1,4 @@
+import { isConflictError } from "@repo/core/application/errors";
 import { User } from "@repo/core/domain/identity/entity";
 import { IdentityEvents } from "@repo/core/domain/identity/events";
 import {
@@ -51,7 +52,7 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
     const found = await container.unitOfWorkProvider.run(
       async ({ userRepository }) => userRepository.findById(user.id),
     );
-    if (!found) return;
+    if (!found) throw new Error("seeded user disappeared");
     const { entity: updated } = User.changeTrashRetentionDays(
       found.entity,
       TrashRetentionDays.create(7),
@@ -75,7 +76,7 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
     const found = await container.unitOfWorkProvider.run(
       async ({ userRepository }) => userRepository.findById(created.id),
     );
-    if (!found) return;
+    if (!found) throw new Error("seeded user disappeared");
     const { entity: bumped } = User.changeTrashRetentionDays(
       found.entity,
       TrashRetentionDays.create(7),
@@ -85,7 +86,7 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
       await userRepository.save(bumped, found.expectedVersion);
     });
 
-    let threw = false;
+    let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(
         async ({ userRepository, collectEvents }) => {
@@ -93,10 +94,15 @@ describe("OCC guard via _occ_guard CHECK constraint (libSQL)", () => {
           collectEvents([IdentityEvents.passwordChanged(created.id, NOW)]);
         },
       );
-    } catch {
-      threw = true;
+    } catch (error) {
+      caught = error;
     }
-    expect(threw).toBe(true);
+    // Not merely "something threw": a broken schema would satisfy that
+    // while proving nothing about the guard.
+    expect(isConflictError(caught)).toBe(true);
+    expect(isConflictError(caught) && caught.code).toBe(
+      "OPTIMISTIC_LOCK_FAILURE",
+    );
 
     // Guard table must stay empty — the CHECK aborts the transaction before
     // any row can persist on either the success or conflict path.

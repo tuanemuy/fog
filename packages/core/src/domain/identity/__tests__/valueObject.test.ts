@@ -96,6 +96,20 @@ describe("PlainPassword", () => {
       IdentityErrorCode.PasswordTooWeak,
     );
   });
+
+  // The bound is code points: four emoji are four characters, however
+  // many UTF-16 units they occupy. Counting units would let them pass an
+  // eight-character minimum.
+  it("measures length in code points, not UTF-16 units", () => {
+    expect(codeOf(() => PlainPassword.create("😀".repeat(4)))).toBe(
+      IdentityErrorCode.PasswordTooWeak,
+    );
+    expect(PlainPassword.create("😀".repeat(8))).toBe("😀".repeat(8));
+    expect(PlainPassword.create("😀".repeat(128))).toBe("😀".repeat(128));
+    expect(codeOf(() => PlainPassword.create("😀".repeat(129)))).toBe(
+      IdentityErrorCode.PasswordTooWeak,
+    );
+  });
 });
 
 describe("PasswordHash", () => {

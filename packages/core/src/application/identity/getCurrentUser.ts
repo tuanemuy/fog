@@ -7,9 +7,7 @@ export type GetCurrentUserInput = {
   userId: string;
 };
 
-export type GetCurrentUserOutput = {
-  user: CurrentUserView;
-};
+export type GetCurrentUserOutput = CurrentUserView;
 
 /**
  * Reads the signed-in user for the settings screen (UC-identity-013).
@@ -31,5 +29,5 @@ export async function getCurrentUser({
     throw new NotFoundError("USER_NOT_FOUND", `User not found: ${userId}`);
   }
 
-  return { user: toCurrentUserView(found.entity) };
+  return toCurrentUserView(found.entity);
 }

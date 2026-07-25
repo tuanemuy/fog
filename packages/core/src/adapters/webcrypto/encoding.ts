@@ -1,9 +1,22 @@
+/**
+ * Encodes bytes as standard (padded) base64.
+ *
+ * This is the wire format of the stored password hash's salt and derived
+ * key, so changing it invalidates every persisted hash.
+ */
 export function toBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
+/**
+ * Decodes standard base64 back to bytes, throwing on input `atob` refuses.
+ *
+ * Decoding is *forgiving* in the same way `atob` is: embedded whitespace
+ * and missing padding are accepted. Treat the byte output as the value,
+ * never the string that produced it.
+ */
 export function fromBase64(value: string): Uint8Array {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
@@ -11,6 +24,10 @@ export function fromBase64(value: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Encodes bytes as unpadded base64url (RFC 4648 §5) — the alphabet the
+ * session token uses so it survives a cookie value untouched.
+ */
 export function toBase64Url(bytes: Uint8Array): string {
   return toBase64(bytes)
     .replace(/\+/g, "-")
@@ -18,6 +35,18 @@ export function toBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/, "");
 }
 
+/**
+ * Decodes base64url back to bytes, re-adding the padding this module's
+ * encoder strips.
+ *
+ * **The decoding is not canonical.** It inherits `atob`'s forgiving
+ * behaviour, so standard-base64 `+` / `/`, redundant padding and embedded
+ * whitespace all decode rather than being rejected — several distinct
+ * strings can therefore yield the same bytes. That is harmless for
+ * signature verification (the bytes are what gets compared), but it means
+ * a token string must never be treated as a canonical identity: do not
+ * compare, index or deduplicate on the encoded form.
+ */
 export function fromBase64Url(value: string): Uint8Array {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/");
   return fromBase64(padded.padEnd(Math.ceil(padded.length / 4) * 4, "="));

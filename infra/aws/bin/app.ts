@@ -18,13 +18,34 @@ for (const stage of stages) {
   const sessionSecretArn = process.env[`SESSION_SECRET_ARN_${upper}`];
   const appUrl = process.env[`APP_URL_${upper}`];
 
+  const stageEnv = {
+    [`TURSO_URL_${upper}`]: tursoUrl,
+    [`TURSO_AUTH_TOKEN_SECRET_ARN_${upper}`]: tursoAuthSecretArn,
+    [`SESSION_SECRET_ARN_${upper}`]: sessionSecretArn,
+    [`APP_URL_${upper}`]: appUrl,
+  };
+
   if (
     tursoUrl === undefined ||
     tursoAuthSecretArn === undefined ||
     sessionSecretArn === undefined ||
     appUrl === undefined
   ) {
-    // Skip stages that have not been configured yet — synth stays
+    const missing = Object.entries(stageEnv)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => key);
+
+    if (missing.length < Object.keys(stageEnv).length) {
+      // A partially configured stage is a mistake, not an opt-out.
+      // Skipping it silently yields a successful synth with the stack
+      // absent, which surfaces later as "cdk deploy did nothing" with
+      // no message to trace back to the unset variable.
+      throw new Error(
+        `Stage "${stage}" is partially configured: ${missing.join(", ")} unset. Set them, or unset every variable of the stage to skip it.`,
+      );
+    }
+
+    // Skip stages that have not been configured at all — synth stays
     // useful for the stage(s) that are wired up.
     continue;
   }

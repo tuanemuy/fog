@@ -781,3 +781,341 @@ plan.md のテスト方針は TC-logout-003 に条件付きの指示を置いて
 
 - 良い点: TC-logout-003 が「翻訳する純関数」ではなく「実際に翻訳が起きる関数（`endSession`）」で検証される。plan.md が代替案として許容していた範囲より強い
 - トレードオフ: `apps/web` 配下の単体テストが `server-only` の解決可能性に依存する。TanStack Start のバージョン更新で解決が壊れると `session.test.ts` だけが落ちるが、そのときは受け皿（`sessionCookie.test.ts` 側の `toSessionSystemError` テスト）がそのまま代替になる
+
+---
+
+## ADR-021: 暗号アダプターのファクトリで自分の引数を検証する
+
+### Status
+
+Accepted（レビュー指摘 review-001-adapters W-004 / W-006 への対応）
+
+### Context
+
+`createHmacSessionCodec({ secret })` と `createPbkdf2PasswordHasher({ iterations })` はどちらも引数を無検査で受けていた。鍵長32文字以上という不変条件は `application/di/secrets.ts` の `requireSessionSecret` にしかなく、反復回数の下限はどこにも無い。したがってアダプターを直接構築する経路（テストヘルパー、将来の `apps/*` パッケージ、新しいエントリポイント）は不変条件を1つも通らない。
+
+CLAUDE.md は「Validate at the boundaries（transport in, value-object construction）」と定めており、ファクトリはこれらのアダプターにとっての construction boundary である。ADR-003 は反復回数をファクトリ引数にした帰結として「呼び出し側が誤って低い値を渡す余地」を認めつつ、運用上の約束だけで塞いでいた。
+
+あわせて `verify` の `parse()` は保存ハッシュの反復回数に下限（`>= 1`）しか課しておらず、`Number()` が `" 12 "` のような非正規表現も受理していた。桁の異常な値は1回のログインを CPU バウンドで事実上ハングさせる。
+
+### Decision
+
+- `MIN_SESSION_SECRET_LENGTH = 32` を `hmacSessionCodec.ts` に置き、ファクトリが下回る `secret` を throw する。`di/secrets.ts` の同名定数は**共有せず二重に持つ**。DI 側は「env の欠落を運用者に読める言葉で伝える」役割、アダプター側は「構築境界の不変条件」で、目的が違う。`packages/core` の内部依存を application → adapters の向きに増やさない利点もある（現状 DI がアダプターを import する向きしかない）
+- `MIN_PBKDF2_ITERATIONS = 1_000` を置き、整数でない／下回る `iterations` を throw する。本番強度ではなくテスト実行可能性を残す高さに取る（ADR-003 が「テストが払えるコストで動かすための引数」と定めているため）
+- `parse()` に `MAX_PBKDF2_ITERATIONS = 10_000_000` の上限と `/^\d+$/` の事前検査を足し、逸脱を既存の `DataIntegrityError` に落とす。ADR-014 の「保存値が読めない = データの問題」の分類をそのまま使う
+
+throw は素の `Error`。到達するのは配線の誤りだけで、ユーザーに見せるエラーコードを名乗る意味がない（ADR-012 の `reconstruct` と同じ整理）。
+
+### Consequences
+
+- 良い点:
+  - 不変条件が「秘密を実際に使う地点」に移り、DI を経由しない構築経路でも守られる
+  - 上限検査により、破損行1件が1リクエストを無期限に占有する経路が閉じる
+- トレードオフ:
+  - `MIN_SESSION_SECRET_LENGTH` が2箇所に存在する。値が食い違うと DI 側だけが緩い状態になりうるが、厳しい側（アダプター）が最後に効くのでフェイルクローズ
+  - `MIN_PBKDF2_ITERATIONS` は 210,000 に対して3桁低く、「安全な下限」ではない。防いでいるのは `0` / `1` のような明らかな誤配線だけである点を JSDoc に明記した
+  - 既存テスト `pbkdf2PasswordHasher.test.ts` が反復回数の読み戻しを 500 / 2,000 で表明していたので、1,000 / 2,000 に変更した（表明の内容は変わらない）
+
+---
+
+## ADR-022: AWS の CloudFront は Cookie / クエリを転送し、部分設定のステージは synth で失敗させる
+
+### Status
+
+Accepted（レビュー指摘 review-001-security W-007 / review-001-adapters W-002 への対応）
+
+### Context
+
+2つとも「AWS ランタイムでだけ、設定の不在が無症状で現れる」種類の問題である。
+
+1. `appStack.ts` の `defaultBehavior` は `cachePolicy: CachePolicy.CACHING_DISABLED` だけを持ち `originRequestPolicy` を指定していなかった。CloudFront がオリジンへ転送するのは「キャッシュポリシー ∪ オリジンリクエストポリシー」に含まれる値だけで、`CachingDisabled` は cookies / headers / query strings のすべてが `none` である。したがって Lambda に `Cookie` が届かず、**AWS ではログイン状態が維持できない**。`?redirect=` も同様に落ちる。テンプレート由来の設定だが、Cookie 認証を最初に載せたのが本 Issue なので本 Issue で閉じる
+2. `bin/app.ts` は ADR-015 で `SESSION_SECRET_ARN_<STAGE>` を必須化したが、未設定のステージは既存の `continue` で黙って synth から消える。`docs/runtime_aws.md` は3変数しか列挙していなかったため、手順どおりに `cdk deploy` した人はスタックが生成されない理由に到達できない
+
+### Decision
+
+- `defaultBehavior` に `originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER` を足す。**`cachePolicy` は `CACHING_DISABLED` のまま維持する** — ここを `CACHING_OPTIMIZED` 等に変えると、キャッシュキーに Cookie が入らないまま認証済みレスポンスがキャッシュされ、他人のセッションが配られる。この理由をコードのコメントに残す。`Host` を除外するのは API Gateway オリジンの名前解決を壊さないため
+- `bin/app.ts` は「4変数すべて未設定 = そのステージを使わない」だけをスキップとして扱い、**一部だけ設定されているステージは missing 変数名を挙げて throw する**。部分設定は意思表示ではなく設定漏れであり、黙って消えると「cdk deploy が何もしなかった」という追跡不能な形で現れる
+- `docs/runtime_{node,cloudflare,aws}.md` に `SESSION_SECRET` の記載を足す（Node は環境変数表、CF は `wrangler secret put`、AWS は stage-keyed 変数・synth 例・秘密の表）。ADR-015 の「4ワーカーには配らない」も各所に1行添える
+
+### Consequences
+
+- 良い点:
+  - AWS ランタイムでセッション Cookie が往復し、ADR-015 で作り込んだ秘密鍵配布が実際に機能する
+  - 認証済みレスポンスが共有キャッシュに載らない性質は変わらない（`CACHING_DISABLED` を維持したため）
+  - ステージ設定漏れがデプロイ前に、変数名付きで検出される
+- トレードオフ:
+  - `ALL_VIEWER_EXCEPT_HOST_HEADER` は全ビューアヘッダーを転送するので、`/assets/*` 以外はキャッシュヒット率を論じる余地が最初から無くなる。動的レスポンスのみを通す経路なので実害はない
+  - 「未設定ステージは黙ってスキップ」という**テンプレート由来の挙動を一部変更した**。完全未設定のステージのスキップは維持しているので、staging だけを配線する使い方は従来どおり成立する
+
+---
+
+## ADR-023: 値オブジェクトの長さ制約は Unicode コードポイントで数える
+
+### Status
+
+Accepted（レビュー指摘 review-001-domain-usecase W-004 への対応）
+
+### Context
+
+`PlainPassword`（8〜128）・`Email`（320）・`ClientName`（100）はいずれも `String.prototype.length`、すなわち UTF-16 コードユニット数で長さを検証していた。`spec/domains/identity.md` は単位を書かず「8文字以上128文字以下」とだけ書くが、同じ spec 群の他ドメインは単位を明示しており、`DOM-memo-004` は「10,000 **コードポイント**上限」、`spec/testcases/memo/postMemo.md` は「UTF-16 コード単位数ではない」とまで書いている。
+
+コードユニット基準はサロゲートペアを2として数えるので、絵文字4個（4文字）のパスワードが最小長8を通過する。パスワード強度の下限に直接効く実効的な緩和であり、上限側も逆向きに厳しくなる。
+
+### Decision
+
+**コードポイント基準に統一する。** `packages/core/src/domain/common/text.ts` に `codePointLength` を置き、identity の3つの VO がこれを使う。`for...of` はサロゲートペアを1回で回すため、`[...value].length` と違って中間配列を作らない。
+
+`domain/common/` に置いたのは、この単位が identity 固有ではなく「spec の『N 文字』はコードポイントである」というドメイン横断の約束だからで、後続スライスの `MemoBody`（10,000）・エクスポートのスラッグ切り詰め（50）が同じ関数を共有する。
+
+### Consequences
+
+- 良い点:
+  - 「文字」の定義が1箇所に集まり、memo / export スライスが単位を再発明しない
+  - パスワード最小長が非 BMP 文字でも要件どおりに効く
+- トレードオフ:
+  - 書記素クラスタ（結合文字・ZWJ 絵文字）は依然として複数と数える。人間の見た目の「1文字」とは一致しないが、spec が採る単位はコードポイントであり、`Intl.Segmenter` に踏み込む理由は今のところない
+  - `spec/domains/identity.md` の各 VO に単位の明記が無い点は spec 側の更新対象として残る（spec-sync 対象）
+
+---
+
+## ADR-024: `changeTrashRetentionDays` の同値 no-op を戻り値の形ではなくコメントで表明する
+
+### Status
+
+Accepted（レビュー指摘 review-001-domain-usecase W-001 への対応）
+
+### Context
+
+`User.changeTrashRetentionDays` は現在値と同じ値を渡されたとき、version を進めず・イベントも出さず・受け取った `user` をそのまま返す。`spec/testcases/identity/changeTrashRetentionDays.md` は「現在と同じ値 → 正常終了する（同一値の禁止規則は存在しない）」としか書いておらず、version とイベントの扱いを規定していない。
+
+memo / knowledge の spec は同じ状況を戻り値で明示する設計になっている（`newRevision: null` / `changed: false`）。identity だけ暗黙で、しかも根拠がコードに無かった。
+
+選択肢は (a) WHY コメントを足す、(b) `changed: boolean` 相当を戻り値に載せる、の2つ。
+
+### Decision
+
+**(a) を採る。** `spec/domains/identity.md#User` はこのファクトリの戻り値を `WithEventDrafts<User, IdentityEvent>` と型まで書いており、(b) は spec からの逸脱になる。no-op の判定は `entity === user`（同値なら同一参照）か `eventDrafts.length === 0` で呼び出し側から観測でき、UC-identity-012 を配線するときに `save` をスキップする判断はそれで足りる。判定手段があることも含めてコメントに書いた。
+
+### Consequences
+
+- 良い点: 空更新で version を進めない理由（設定画面の再送信が OCC 競合を作らない・保持期限を動かさないイベントを購読者に配らない）がコードの隣に残る
+- トレードオフ: 「変わったか」が型に現れないので、呼び出し側が無条件に `save` を呼ぶ実装は依然として書ける。UC-identity-012 は本スライス外なので、配線時にこのコメントが読まれることに依存している
+- `spec/domains/identity.md#User` への no-op 規則の追記は spec-sync 対象として残る
+
+---
+
+## ADR-025: `SESSION_SECRET` の検証を request config の構築時に寄せ、検証済みの型で持ち回る
+
+### Status
+
+Accepted（レビュー指摘 review-001-domain-usecase W-006 / review-001-adapters W-007 / review-001-security W-008 への対応）
+
+### Context
+
+3つのレビューが同じ `application/di/secrets.ts` を指していた。
+
+- `RequestSecrets.sessionSecret` の型が `string` なので、4ランタイムの `readXxxRequestServerConfig` がすべて `env.SESSION_SECRET ?? ""` というセンチネルを噛ませていた。「秘密鍵が無い」が `""` という一見有効な値に化けている
+- `requireSessionSecret` を呼ぶのは `createXxxRequestContainer` であり、これは**リクエスト毎**に走る。設定ミスは「起動は成功、全リクエストが素の 500」という形で現れ、PR 説明の「起動時エラー」とも食い違う
+- Node ではその throw が `storage.run(...)` の前に出るので `errorResponseMiddleware`（redaction 境界）を通らない
+
+ADR-004 の「env スキーマは optional、必須性は消費地点で」という判断自体は維持したい。ワーカー用のエントリポイントが同じ env リーダーを共有しており、必須にすると起動できなくなるためである。
+
+### Decision
+
+**検証を「コンテナ構築時」から「request config 構築時」へ1段上げ、結果をブランド型で持ち回る。**
+
+- `SessionSecret = string & { readonly [sessionSecretBrand]: true }` を新設し、`requireSessionSecret` だけがこれを返す。`RequestSecrets.sessionSecret` の型をこれにする
+- 4本の `readXxxRequestServerConfig` が `requireSessionSecret(env.SESSION_SECRET)` を呼ぶ。`?? ""` は消える
+- `createXxxRequestContainer` は `secrets.sessionSecret` をそのまま `createHmacSessionCodec` に渡す（再検証しない）
+
+Node / AWS / GCP は request config を boot / コールドスタートで**1回だけ**組むので、これで検証が起動時に移る。Cloudflare は `env` が fetch の引数として初めて現れる構造上リクエスト毎のままだが、ADR-004 の「消費地点で検証する」は変わらず成立する。
+
+throw は素の `Error` のまま据え置く。到達するのは配線の誤りだけであり、値ではなく変数名しか含まないメッセージなので redaction を要しない（ADR-021 と同じ整理）。
+
+### Consequences
+
+- 良い点:
+  - 「秘密鍵が未設定」という不正状態が `RequestSecrets` の型から消える。センチネルを4箇所から削除でき、将来 `secrets` を別経路から読む配線が増えても未検証値が入らない
+  - Node / AWS / GCP では設定ミスがプロセス起動失敗として現れ、デプロイのヘルスチェックで捕まる
+  - 検証が1リクエスト1回から1プロセス1回になる
+- トレードオフ:
+  - Cloudflare だけは依然としてリクエスト毎の検証で、起動時には検出されない。`.issue/1/testing.md` と PR 説明の「起動時エラー」はランタイム別に書き分ける必要がある
+  - `RequestSecrets` をテストから組むには `requireSessionSecret` を通す必要がある（`requestContainerConfig.test.ts` を1行変更した）。ブランド型の狙いどおりの摩擦なので受け入れる
+
+---
+
+## ADR-026: ログインのタイミングオラクルを固定ダミーハッシュへの verify で潰す
+
+### Status
+
+Accepted（レビュー指摘 review-001-domain-usecase W-005 への対応）
+
+### Context
+
+`loginWithPassword` は失敗応答を `kind` / `code` / `message` まで完全に同一化しているが、応答時間は同一化していなかった。未登録アドレス・SSO アカウントは `verify` を呼ばずに即 throw し、登録済み＋パスワード誤りは PBKDF2 210,000 回を回してから throw する。同一化の目的が「登録有無の推測材料を与えない」ことである以上、数十 ms の差はその目的に対する穴である。
+
+### Decision
+
+**未登録・SSO の分岐でも `PasswordHasher.verify` を1回走らせてから同じエラーを投げる。** 照合先はモジュール定数のダミーハッシュで、アダプターの本番パラメータ（PBKDF2-HMAC-SHA256 / 210,000 回）で生成した固定値。保存ハッシュは自己記述形式なので、テスト用に低い反復回数のハッシャーを差し替えても、このダミーは自分の宣言どおりのコストで検証される（テストの既定は `FakePasswordHasher` なので実コストは発生しない）。
+
+ダミー verify の**例外は握り潰す**。アルゴリズム差し替えでこの定数が読めなくなったときに、未登録アドレスへのログインが 500 に化けてはいけないためである。その場合は等時間化が今日の挙動まで劣化するだけで、ログインは動き続ける。
+
+VO 生成失敗（メール形式不正・パスワード長違反）の経路は対象外とした。ストレージに触れないので登録有無を何も語らず、呼び出し側が自分で入力した内容しか反映しない。
+
+### Consequences
+
+- 良い点:
+  - `spec/usecases/identity.md#loginWithPassword` が要求する「失敗応答の同一性」が、内容だけでなく所要時間についても成立する
+  - 既存の失敗応答の同一性（TC-loginWithPassword-008）は変更していない
+  - 「どの資格情報経路も verify を1回払う」ことを統合テストで表明した。時間そのものを測る表明は不安定なので、観測可能な代理として verify 呼び出し回数を数えている
+- トレードオフ:
+  - アプリケーション層のモジュール定数がアダプターの保存形式（`pbkdf2-sha256$...`）を1つ抱える。ポートに「ダミーハッシュ」を生やす案もあったが、spec が定義するポートの面（`hash` / `verify`）を実装都合で広げるほうが害が大きいと判断した。定数の役割と失効時の挙動は JSDoc に書いてある
+  - 未登録アドレスへのログイン試行も本物と同じ CPU を消費するので、認証エンドポイントのレート制限の必要性は（N-005 の指摘どおり）むしろ上がる。本 Issue の範囲外
+
+---
+
+## ADR-027: `FakePasswordHasher` を「平文を含まないダイジェスト」にし、CHECK 制約は名前で表明する
+
+### Status
+
+Accepted（レビュー指摘 review-001-test W-007 / review-001-adapters W-005 への対応）
+
+### Context
+
+2つの独立した指摘が、同じ形の問題を指していた — **表明が実際には何も縛っていない**。
+
+1. `FakePasswordHasher.hash` は `` `fake$${plain}` `` を返していた。つまり既定コンテナでの `users.password_hash` は**平文を部分文字列として含む**。ADR-011 が「永続化への漏出は `users` に平文列が無いことで構造的に閉じている」と言うのは正しいが、「hash の結果を保存している（平文をそのまま入れていない）」という別の性質は、`expect(passwordHash).not.toBe(PASSWORD)` では前置詞1つで必ず真になるため縛れていなかった
+2. `users` の名前付き CHECK 6本と部分一意インデックスは、証拠が生成 SQL のテキストだけだった。`mapDbError` は `SQLITE_CONSTRAINT_CHECK` をすべて `ConflictError("CONSTRAINT_VIOLATION")` に潰すので、**どの CHECK が消えてもユースケースからの見え方は変わらない**（無症状の退行）
+
+### Decision
+
+- **`FakePasswordHasher` を FNV-1a ダイジェストに変える**（`fake$<8桁hex>`）。レビューが挙げた2案のうち、TC-001 の表明だけを `not.toContain` に直す案ではなく、フェイク自体を直す案を採る。前者は1テストしか強くならないのに対し、後者は**フェイクを使う全テストで「平文が列に入らない」が効く**。あわせて TC-registerWithPassword-001 の表明を `not.toContain(PASSWORD)` に、境界パスワードの登録（TC-007 / 008）にも同じ表明を置いた
+- **実ハッシャーでの担保を1件足す**。TC-loginWithPassword-009 は実 PBKDF2（1,000回）を注入する唯一のテストなので、そこで `users.password_hash` が `pbkdf2-sha256$1000$` で始まり平文を含まないことを表明する。フェイクの側で縛れるのは「フェイクの出力が保存されている」ことまでで、「実アダプターの出力形式が保存されている」ことは実物でしか見られない
+- **CHECK 制約は「拒否されること」ではなく「どの制約名で拒否されたか」を表明する**。ドライバの例外メッセージは制約名を含むが、drizzle が文だけを名乗る例外で包むので、`cause` を辿って連結した文字列に対して制約名の正規表現をあてる（`causeChain()`）。行はドメインを迂回した生 insert で作る — ドメイン経由では作れない行を DB が拒むことこそが検証対象だからである
+- 制約名を1つに特定できるよう、**violating row は1本の CHECK だけに触れるように組む**。例外は `users_auth_method_valid` で、`auth_method` が値域外なら直和 CHECK も必ず同時に落ちるため、そこだけ `users_auth_method_(sum|valid)` を許容する
+
+### Consequences
+
+- 良い点:
+  - 「平文が永続化されない」が、構造（列が無い）だけでなく**振る舞い**としても全統合テストで縛られる
+  - AC-5 の「名前付き制約6本＋インデックス2本」が、生成 SQL の目視ではなく実行で確認される。とくに ADR-008 の安全性論拠が依存する `users_sso_identity_uq` の**部分性**（password 行を巻き込まないこと）が、d1 / libsql 双方で表明された
+  - フェイクの JSDoc に「出力に平文を埋め込んではならない」と理由付きで書いたので、次に触る人が元の形へ戻す事故を防げる
+- トレードオフ:
+  - `causeChain()` はドライバの例外メッセージ文言に依存する。SQLite 系の「`CHECK constraint failed: <name>`」は d1 / libsql とも安定しているが、ドライバを替えるとこの6件が落ちる。落ち方は「制約が消えた」と区別できないので、そのときは失敗の読み替えが要る
+  - フェイクのダイジェストは 32bit なので原理的には衝突しうる。テストが使うパスワードは十数種で実害は無いが、フェイクを「暗号的に正しい」と読まないこと
+
+---
+
+## ADR-028: レビュー 001 で追加した役割名トークン（skeleton / nav-sheet-pad-b）
+
+### Status
+
+Accepted（レビュー修正時に決定）
+
+### Context
+
+レビュー 001（frontend W-002 / W-011）が2件の生値を指摘した。
+
+- `RoutePendingFallback` の `space-y-4` / `p-4` / `h-8` / `w-48` / `max-w-2xl` — いずれも Tailwind 既定スケール（`--spacing` / `--container-*`）由来で、`tokens.css` にも `theme.css` にも無い値。W-001 の修正で `/settings` に per-fragment のスケルトンを足すと、同じ寸法が2箇所に必要になる
+- ボトムシートの `pb-2xl` — 基準形 `spec/design/pages/timeline.html` は `max(40px, env(safe-area-inset-bottom, 0px) + 24px)` で、safe-area 分が落ちている
+
+`spec/design/index.md` は「生の値を書きたくなったら (a) 既存トークンに寄せるべき思いつきか、(b) トークン化すべき意図的な新しい役割のどちらか。後者なら役割の名前で追加してから使う」と定めている。スケルトンの行の高さは既存のどのトークン（`--icon-*` は「アイコン寸法」、`--space-*` は「余白」）とも役割が違うので (b)。
+
+### Decision
+
+ADR-017 の流儀（tokens.md に無い派生トークンは役割名で `tokens.css` に足す）に従い、次の4本を追加する。
+
+| トークン | 値 | 役割 |
+|---|---|---|
+| `--skeleton-line-h` | `1rem` | プレースホルダーの本文1行分の高さ |
+| `--skeleton-title-h` | `2rem` | プレースホルダーの見出し・ボタン1つ分の高さ |
+| `--skeleton-line-w-short` | `12rem` | 短い行（ラベル・末尾行）の幅 |
+| `--nav-sheet-pad-b` | `max(--space-2xl, calc(env(safe-area-inset-bottom, 0px) + --space-lg))` | ボトムシートの下端。ホームインジケータ帯を避ける |
+
+`--nav-sheet-pad-b` は基準形の `40px` / `24px` を `--space-2xl` / `--space-lg` に置き換えた同値で、`env()` を含む式をトークン側に閉じ込めている（利用側は `pb-(--nav-sheet-pad-b)` の1語になり、任意値構文で `env()` を書き散らさない）。いずれも `theme.css` には投影しない — 対応する Tailwind の名前空間が無く、`h-(--skeleton-line-h)` の形で参照すればトークン経由が保たれるため（`--pad-*` / `--icon-*` と同じ扱い）。
+
+### Consequences
+
+- 良い点: `apps/web/app` から Tailwind 既定スケール由来のクラスが消え、AC-18 が spacing 側でも成立する。スケルトンの寸法が2箇所（route-level / settings）で自動的に揃う
+- トレードオフ: `spec/design/tokens.md` に無いトークンが4本増える（ADR-017 の12本と合わせて16本）。tokens.md への昇格は、他の画面でも同じ役割が必要になった時点で判断する
+
+---
+
+## ADR-029: 認証フォームの入力値保持は制御入力ではなく `FormState` + `defaultValue` で行う
+
+### Status
+
+Accepted（レビュー修正時に決定）
+
+### Context
+
+レビュー 001（frontend B-002）のとおり、React 19 は `action` に関数を渡した `<form>` の送信時、アクション本体の実行前に無条件でフォームリセットを予約する。したがって非制御の `TextField` を並べた `LoginForm` / `SignupForm` は、失敗時にもメールアドレスが消える。テンプレートの基準形 `CreateTodoForm` は `useState` の制御入力でこれを回避していた。
+
+選択肢は (1) 基準形どおり制御入力にする、(2) `FormState` に送信値を持たせて `defaultValue` に流す（リセットは「現在の `defaultValue` に戻す」動作なので、再レンダー後の値に落ち着く）。
+
+### Decision
+
+**(2) を採り、保持するのはメールアドレスだけとする。**
+
+- 制御入力にすると `TextField` に `value` / `onChange` を足すことになり、プリミティブが「フォームの状態を知っている」側へ寄る。`defaultValue` は `TextField` が既に持っていた prop で、配線が漏れていただけだった
+- パスワードは保持しない。`defaultValue` に流すと平文が DOM 属性として残るうえ、失敗の主因（`INVALID_CREDENTIALS` / `PASSWORD_TOO_WEAK`）はパスワードの打ち直しを促すのが正しい。AC-10 / AC-12 が要求する「再入力できる」の対象はメールアドレスで満たす
+- あわせて、失敗後に**項目エラーを持つ最初のフィールドへフォーカスを移す**（W-004）。`TextField` に `inputRef` を足し、`useActionState` の state 更新を契機に移す。項目に帰属しないエラー（フォーム全体のバナー）ではフォーカスを動かさない — `FormMessage` の `role="alert"` が読み上げるので、移すと入力位置を奪うだけになる
+- 送信中の入力欄 `disabled` は外す（W-012）。無効化はボタンだけで、`disabled` によってフォーカスが `<body>` に落ちる問題ごと消える
+
+### Consequences
+
+- 良い点: 失敗しても打ち直しはパスワードだけで済み、キーボード / SR 利用者はフォーカス移動でエラーの所在を知る。`TextField` は非制御のままなので、後続スライスのフォームも同じ形で書ける
+- トレードオフ: 「送信値を state に持つ」ことを各フォームが自前で書く（共通化しない）。フォームが3つ4つに増えたら `useFormValues` 相当に括る判断が要る
+- 副作用: `defaultValue` を state から与えるため、成功時に `initialState` を返す経路が「入力欄を空に戻す」役割も兼ねる（現状は成功後に必ず遷移するので視認できない）
+
+---
+
+## ADR-030: 認証後シェルを `h-dvh` + シート内スクロールにする
+
+### Status
+
+Accepted（レビュー修正時に決定）
+
+### Context
+
+レビュー 001（frontend W-006）のとおり、承認済みデザインの共通シェルは `.app { height: 100dvh; display: flex }` + `.sheet { flex: 1; overflow-y: auto }` で、**サイドバーとヘッダーは固定されシートだけがスクロールする**。実装は `min-h-dvh` + `main` に `overflow-y` 指定なしで、ページ全体がスクロールしていた。本スライスは中身が空なので見た目には現れないが、全認証後画面が乗る土台である。
+
+### Decision
+
+外側を `h-dvh`、`main` を `flex-1 overflow-y-auto` にして基準形と同じスクロールコンテナ構成にする。
+
+**含意（後続スライスへの申し送り）**: ウィンドウがスクロールしなくなるため、`router.tsx` の `scrollRestoration: true`（window スクロールの復元）は認証後画面では実質的に無効になる。タイムラインのように長い一覧を持つ画面で「戻ったときのスクロール位置」が要るときは、TanStack Router の要素スクロール復元（`useElementScrollRestoration` + スクロールコンテナへの `data-scroll-restoration-id`）を `main` に配線する。本スライスはスクロールする内容を持たないので配線しない。
+
+### Consequences
+
+- 良い点: PC のサイドバーとヘッダーが常設になり、AC-14 / PAGE-common-001 の「PC はサイドバー（常設）」と `spec/design/index.md` の「1画面=1シート」が実装として成立する。土台の修正がタイムラインスライスより前に済む
+- トレードオフ: 上記のとおりスクロール復元の配線が別途必要になる。モバイル Safari の動的ツールバーに対しては `dvh` が基準形と同じ挙動になる（基準形も `100dvh`）
+
+---
+
+## ADR-031: `requireUserId()` をキャッシュ禁止の権威点にし、`/_` 始まりを復帰先から除く
+
+### Status
+
+Accepted（レビュー修正時に決定）
+
+### Context
+
+security レビュー 001 の W-005 / W-009 / W-010。
+
+- 認証を要するレスポンスに `Cache-Control` が付いていない。ルーターのメモリキャッシュ側（`_app.tsx` の `staleTime: 0` + ログアウト時の `invalidate()` → `replace: true`）は塞いであるが、ブラウザの履歴 / ヒューリスティックキャッシュは HTTP ヘッダーでしか塞げない
+- `?redirect=` が制御文字（`%0d%0a`）を素通しする。WHATWG `Headers` が CR/LF を拒否するので実害は無いが、ランタイム実装への依存が残る
+- `requireUserId()` の復帰先は `getRequestUrl()`（= 処理中のリクエスト URL）なので、server function 経由で未認証だと `/_serverFn/...` になる。ログイン後に POST 専用エンドポイントへ GET で飛ばされる
+
+### Decision
+
+- **`Cache-Control: no-store, private` は `requireUserId()` の成功パスで付ける。** ガードの権威点をキャッシュ禁止の権威点と同じにすると、「保護データを読むのにヘッダーを付け忘れる」経路が構造的に作れない。逆に、保護データを読まないレスポンス（空のタイムライン等）には付かない — 付ける根拠が無いため
+- **`/_` 始まりのパスを `redirectPathSchema` の拒否リストに入れる。** fog の公開 URL に `_` 始まりは存在せず、フレームワーク内部パス（`/_serverFn/...`）だけが該当する。`toSafeRedirect()` が `undefined` を返すので、復帰先は既定のランディング（`/`）に落ちる。呼び出し側にオーバーロードを足す案は、`requireUserId()` を呼ぶ地点すべてに「正しい復帰先」を書かせることになり、付け忘れが復活する
+- **制御文字（C0 + DEL）を同じ `refine` で拒否する。** 正規表現ではなくコードポイント走査にしたのは、制御文字リテラルを含む正規表現が lint 対象になるため。ADR-016 の「二重スキーマは presentation の1箇所」は保たれる
+
+### Consequences
+
+- 良い点: ログアウト後の戻るボタンが HTTP キャッシュ層でも成立する（`/settings` の実測で `cache-control: no-store, private` を確認）。オープンリダイレクト防御の判定が引き続き1関数に閉じ、監査点が増えない
+- トレードオフ:
+  - `/_` 始まりを一律に拒否するので、将来 `_` 始まりの公開 URL を作ると復帰しなくなる。デザイン・IA 上その予定は無く、拒否リストの理由はコメントに残した
+  - `no-store` は `requireUserId()` を通るレスポンスにしか付かない。保護データを読むのに `requireUserId()` を通らない実行地点を作ればヘッダーも落ちるが、それは ADR-005 のガード自体の違反であり、そちらのレビュー観点で捕まえる

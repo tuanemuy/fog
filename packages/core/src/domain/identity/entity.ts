@@ -118,6 +118,13 @@ function changeTrashRetentionDays(
   retentionDays: TrashRetentionDays,
   now: Date,
 ): WithEventDrafts<User, IdentityEvent> {
+  // Re-submitting the current value is not an error (the spec's test cases
+  // require it to succeed), but it is not a change either: bumping the
+  // version would make a settings screen that re-posts its form fight
+  // concurrent writers over OCC, and `identity.trashRetentionChanged`
+  // subscribers would recompute retention windows that did not move. The
+  // caller can detect the no-op by identity (`entity === user`) or by the
+  // empty draft list before deciding whether to `save`.
   if (retentionDays === user.trashRetentionDays) {
     return { entity: user, eventDrafts: [] };
   }
@@ -133,6 +140,12 @@ function changeTrashRetentionDays(
       IdentityEvents.trashRetentionChanged(next.id, retentionDays, now),
     ],
   };
+}
+
+function assertUnset(value: string | null, column: string): void {
+  if (value !== null) {
+    throw new Error(`Column ${column} must be null for this auth method`);
+  }
 }
 
 // Loose-typed because adapters feed untrusted persistence rows; each field
@@ -167,9 +180,12 @@ export const User = {
   // invalid". The same failure on a stored row means something else —
   // persisted data has drifted from the schema — so wrap everything here
   // in `RehydrationError`, which adapters translate to
-  // `SystemError(DataIntegrityError)`. Rows that violate the `users`
-  // sum-type CHECK (auth_method `password` with a null hash, and so on)
-  // are unreachable in practice and land on the same path.
+  // `SystemError(DataIntegrityError)`. Rows violating the `users` sum-type
+  // CHECK are unreachable in practice; both directions of that drift land
+  // on the same path — a missing column because its value object rejects
+  // the empty string, a column belonging to the *other* variant because
+  // `assertUnset` rejects it. Without the latter check such a row would
+  // rehydrate silently with the foreign columns dropped.
   reconstruct: (input: ReconstructInput): User => {
     try {
       const base = {
@@ -181,6 +197,8 @@ export const User = {
         updatedAt: input.updatedAt,
       };
       if (input.authMethod === "password") {
+        assertUnset(input.ssoProvider, "ssoProvider");
+        assertUnset(input.ssoProviderSubject, "ssoProviderSubject");
         return {
           ...base,
           authMethod: "password",
@@ -188,6 +206,7 @@ export const User = {
         } satisfies PasswordUser;
       }
       if (input.authMethod === "sso") {
+        assertUnset(input.passwordHash, "passwordHash");
         return {
           ...base,
           authMethod: "sso",

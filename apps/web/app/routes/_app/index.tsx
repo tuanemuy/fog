@@ -1,6 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { navTitle } from "@/components/layout/AppShell/navItems";
+import { buildHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/_app/")({
+  head: ({ match }) => {
+    const config = match.context.config;
+    if (!config) return {};
+    return {
+      meta: buildHead(config, { title: navTitle("/"), path: "/" }).meta,
+    };
+  },
   component: TimelinePage,
 });
 

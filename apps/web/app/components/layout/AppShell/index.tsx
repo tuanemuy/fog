@@ -1,8 +1,9 @@
 "use client";
 
 import { Link, useRouterState } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Brand } from "@/components/ui/Brand";
+import { NAV_ITEMS } from "./navItems";
 
 /**
  * The shell every signed-in screen shares (PAGE-common-001).
@@ -15,14 +16,6 @@ import { Brand } from "@/components/ui/Brand";
  * are reached from the header menu as a bottom sheet — the implemented form
  * of "モバイルは下部タブ相当" in `spec/design/pages/timeline.html`.
  */
-
-const NAV_ITEMS = [
-  { to: "/", label: "タイムライン" },
-  { to: "/topics", label: "トピック" },
-  { to: "/search", label: "検索" },
-  { to: "/trash", label: "ゴミ箱" },
-  { to: "/settings", label: "設定" },
-] as const;
 
 const LINK_FOCUS =
   "focus-visible:outline-2 focus-visible:outline-focus focus-visible:-outline-offset-2";
@@ -48,7 +41,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   // navigating away close it without an effect.
   const [openedAt, setOpenedAt] = useState<string | null>(null);
   const navOpen = openedAt === pathname;
-  const setNavOpen = (open: boolean) => setOpenedAt(open ? pathname : null);
+
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  // Only an explicit close returns focus to the trigger; closing because the
+  // user navigated must leave focus to the incoming page.
+  const restoreFocus = useRef(false);
+
+  const openNav = () => setOpenedAt(pathname);
+  const closeNav = () => {
+    restoreFocus.current = true;
+    setOpenedAt(null);
+  };
 
   const current = NAV_ITEMS.find((item) => item.to === pathname);
   const title = current?.label ?? "fog";
@@ -56,15 +60,32 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!navOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenedAt(null);
+      if (event.key !== "Escape") return;
+      restoreFocus.current = true;
+      setOpenedAt(null);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [navOpen]);
 
+  // Runs after the `inert` toggle below has been committed, so the element we
+  // aim at is focusable by the time we call it.
+  useEffect(() => {
+    if (navOpen) {
+      sheetRef.current?.querySelector("a")?.focus();
+      return;
+    }
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    menuButtonRef.current?.focus();
+  }, [navOpen]);
+
   return (
     <>
-      <div className="flex min-h-dvh lg:mx-auto lg:max-w-(--container-max)">
+      <div
+        inert={navOpen}
+        className="flex h-dvh lg:mx-auto lg:max-w-(--container-max)"
+      >
         <aside className="hidden w-(--sidebar-w) flex-none flex-col px-lg pt-2xl pb-lg lg:flex">
           <Link
             to="/"
@@ -108,10 +129,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <button
               type="button"
+              ref={menuButtonRef}
               aria-label="メニュー"
               aria-expanded={navOpen}
               aria-controls="global-nav-sheet"
-              onClick={() => setNavOpen(!navOpen)}
+              onClick={() => (navOpen ? closeNav() : openNav())}
               className={`cursor-pointer rounded-(--radius-md) p-sm text-neutral-500 transition-colors hover:bg-bg-hover hover:text-neutral-900 lg:hidden ${LINK_FOCUS}`}
             >
               <svg
@@ -136,7 +158,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </header>
 
-          <main className="mx-auto w-(--sheet-w) flex-1 rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)">
+          {/* Only the sheet scrolls: header and sidebar stay put, matching
+              `.app { height: 100dvh }` + `.sheet { overflow-y: auto }` in
+              `spec/design/pages/timeline.html`. */}
+          <main className="mx-auto w-(--sheet-w) flex-1 overflow-y-auto rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)">
             <div className="mx-auto max-w-(--content-max) px-lg pt-2xl pb-2xl sm:px-2xl">
               {children}
             </div>
@@ -148,15 +173,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           aria-label="メニューを閉じる"
-          onClick={() => setNavOpen(false)}
+          onClick={closeNav}
           className="fixed inset-0 z-20 bg-overlay lg:hidden"
         />
       ) : null}
       {navOpen ? (
         <nav
           id="global-nav-sheet"
+          ref={sheetRef}
           aria-label="グローバルナビゲーション"
-          className="fixed bottom-0 z-30 rounded-t-(--radius-lg) bg-bg-card px-lg pt-md pb-2xl shadow-lg [inset-inline:var(--nav-sheet-inset)] lg:hidden"
+          className="fixed bottom-0 z-30 rounded-t-(--radius-lg) bg-bg-card px-lg pt-md pb-(--nav-sheet-pad-b) shadow-lg [inset-inline:var(--nav-sheet-inset)] lg:hidden"
         >
           <div
             aria-hidden="true"

@@ -127,6 +127,12 @@
   --size-handle-w: 36px; /* ボトムシートのハンドル */
   --size-handle-h: 4px;
 
+  /* Skeleton — 読み込み中のプレースホルダー行の寸法。tokens.md に対応する
+     役割がないため、役割名で持つ（ADR-028） */
+  --skeleton-line-h: 1rem;
+  --skeleton-title-h: 2rem;
+  --skeleton-line-w-short: 12rem;
+
   /* Shadow — 影は「浮遊」の表現専用。3段のみ */
   --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);
   --shadow-md: 0 12px 36px oklch(0.21 0.006 270 / 0.18);
@@ -151,4 +157,11 @@
   --sheet-w: min(100% - 2 * var(--space-md), var(--sheet-max));
   --sheet-w-md: min(100% - 2 * var(--space-lg), var(--sheet-max));
   --nav-sheet-inset: max(var(--space-md), calc((100% - var(--sheet-max)) / 2));
+
+  /* ボトムシートの下端。ホームインジケータ帯に最後の項目が重ならないよう
+     safe-area を足し込む（基準形 timeline.html の `.nav-sheet` と同値） */
+  --nav-sheet-pad-b: max(
+    var(--space-2xl),
+    calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))
+  );
 }

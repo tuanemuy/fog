@@ -3,10 +3,14 @@ import {
   HeadContent,
   Outlet,
   Scripts,
+  useRouter,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { createServerFn } from "@tanstack/react-start";
 import type { ReactNode } from "react";
+import { AuthSheet } from "@/components/ui/AuthSheet";
+import { Button } from "@/components/ui/Button";
+import { TextLink } from "@/components/ui/TextLink";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { buildHead } from "@/presentation/head";
@@ -50,20 +54,50 @@ export const Route = createRootRoute({
   component: RootComponent,
   errorComponent: ({ error }) => (
     <RootDocument>
-      <div>
-        <h1>Something went wrong</h1>
-        <pre>{sanitizeRouteError(error)}</pre>
-      </div>
+      <ErrorScreen message={sanitizeRouteError(error)} />
     </RootDocument>
   ),
   notFoundComponent: () => (
     <RootDocument>
-      <div>
-        <h1>404 Not Found</h1>
-      </div>
+      <AuthSheet
+        title="ページが見つかりません"
+        description="URL が変わったか、削除された可能性があります"
+      >
+        <p className="text-center text-sm">
+          <TextLink to="/">タイムラインへ</TextLink>
+        </p>
+      </AuthSheet>
     </RootDocument>
   ),
 });
+
+/**
+ * The last-resort failure surface (spec/pages/index.md 共通レイアウト: 通信
+ * エラーはリトライ導線付きで扱う). `invalidate()` re-runs the loaders that
+ * failed, so a transient failure recovers without a full page load.
+ */
+const ERROR_TITLE = "エラーが発生しました";
+
+function ErrorScreen({ message }: { message: string }) {
+  const router = useRouter();
+  return (
+    <AuthSheet
+      title={ERROR_TITLE}
+      // The generic fallback message is the heading itself; repeating it
+      // under the heading says nothing.
+      {...(message === ERROR_TITLE ? {} : { description: message })}
+    >
+      <div className="flex flex-col gap-lg">
+        <Button type="button" fullWidth onClick={() => router.invalidate()}>
+          再読み込み
+        </Button>
+        <p className="text-center text-sm">
+          <TextLink to="/">タイムラインへ</TextLink>
+        </p>
+      </div>
+    </AuthSheet>
+  );
+}
 
 function RootComponent() {
   return (

@@ -1,11 +1,12 @@
 "use client";
 
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/Button";
 import { FormMessage } from "@/components/ui/FormMessage";
 import { TextField } from "@/components/ui/TextField";
+import { TextLink } from "@/components/ui/TextLink";
 import {
   extractSerializedError,
   type SerializedError,
@@ -15,33 +16,46 @@ import { toAuthErrorDisplay } from "../errorField";
 import { AUTH_FIELD_MAX_LENGTH } from "../schema";
 import { signupFn } from "./action";
 
-type FormState = { error: SerializedError | null };
-const initialState: FormState = { error: null };
+// React 19 resets a `<form action={fn}>` before the action runs, whatever the
+// outcome. Carrying the submitted address in the state and feeding it back as
+// `defaultValue` is what the reset lands on, so "already registered" no longer
+// costs the user their typing. The password is deliberately not carried back.
+type FormState = { error: SerializedError | null; email: string };
+const initialState: FormState = { error: null, email: "" };
 
 export function SignupForm() {
   const router = useRouter();
   const signup = useServerFn(signupFn);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
+      const email = String(formData.get("email") ?? "");
       try {
         await signup({
-          data: {
-            email: String(formData.get("email") ?? ""),
-            password: String(formData.get("password") ?? ""),
-          },
+          data: { email, password: String(formData.get("password") ?? "") },
         });
         await router.invalidate();
         await router.navigate({ to: DEFAULT_REDIRECT_PATH });
         return initialState;
       } catch (error) {
-        return { error: extractSerializedError(error) };
+        return { error: extractSerializedError(error), email };
       }
     },
     initialState,
   );
 
   const display = toAuthErrorDisplay(state.error);
+
+  // Failure leaves focus on the submit button, where nothing describes what
+  // went wrong. Moving it to the offending field reads label, invalid state
+  // and message in one go.
+  useEffect(() => {
+    const target = toAuthErrorDisplay(state.error);
+    if (target.email !== undefined) emailRef.current?.focus();
+    else if (target.password !== undefined) passwordRef.current?.focus();
+  }, [state]);
 
   return (
     <form action={formAction} className="flex flex-col gap-lg">
@@ -57,19 +71,15 @@ export function SignupForm() {
         autoComplete="email"
         placeholder="you@example.com"
         maxLength={AUTH_FIELD_MAX_LENGTH}
-        disabled={isPending}
+        defaultValue={state.email}
+        inputRef={emailRef}
         required
         {...(display.email !== undefined ? { error: display.email } : {})}
       />
 
       {display.showLoginLink ? (
         <p className="text-sm">
-          <Link
-            to="/login"
-            className="rounded-(--radius-sm) text-primary-dark transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-          >
-            このメールアドレスでログインする
-          </Link>
+          <TextLink to="/login">このメールアドレスでログインする</TextLink>
         </p>
       ) : null}
 
@@ -82,7 +92,7 @@ export function SignupForm() {
         placeholder="パスワード"
         helperText="8文字以上128文字以下"
         maxLength={AUTH_FIELD_MAX_LENGTH}
-        disabled={isPending}
+        inputRef={passwordRef}
         required
         {...(display.password !== undefined ? { error: display.password } : {})}
       />
@@ -97,12 +107,7 @@ export function SignupForm() {
       </Button>
 
       <div className="mt-section flex flex-col gap-sm text-center text-sm text-neutral-600">
-        <Link
-          to="/login"
-          className="rounded-(--radius-sm) text-primary-dark transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-        >
-          ログイン
-        </Link>
+        <TextLink to="/login">ログイン</TextLink>
       </div>
     </form>
   );

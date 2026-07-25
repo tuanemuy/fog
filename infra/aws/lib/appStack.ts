@@ -28,6 +28,7 @@ import {
   AllowedMethods,
   CachePolicy,
   Distribution,
+  OriginRequestPolicy,
   ViewerProtocolPolicy,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
@@ -236,7 +237,16 @@ export class AppStack extends Stack {
         viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: AllowedMethods.ALLOW_ALL,
         // The app produces dynamic HTML / RSC payloads — bypass the cache.
+        // Keep it disabled: a caching policy here would key responses
+        // without the session cookie and hand one user's authenticated
+        // page to the next viewer.
         cachePolicy: CachePolicy.CACHING_DISABLED,
+        // CloudFront forwards only what the cache policy and the origin
+        // request policy name, and `CachingDisabled` names nothing. Without
+        // this the origin never sees `Cookie` (no one stays logged in) or
+        // the query string (`?redirect=`, server-function arguments).
+        // `Host` stays excluded so the API Gateway origin keeps resolving.
+        originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
       additionalBehaviors: {
         "/assets/*": {
