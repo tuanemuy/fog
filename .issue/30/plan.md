@@ -63,7 +63,7 @@
 | `AppShell` ブランド | `.brand { padding: 0 var(--space-md) var(--space-2xl) }` |
 | `AppShell` ハンドル | `.handle { margin: 0 auto }` + `.handle + * { margin-top: 14px }` |
 
-`children` の余白の担い手が問題になる。設計の `.auth-form { margin-top }` は「children 自身が上余白を宣言する」形だが、実装の children は 5 箇所すべて形が違い `ErrorRetry` は `className` を受け取らない。利用側 5 箇所に `mt-section` を配らせると、付け忘れれば余白が消え、`AuthSheet` の内部レイアウトの責務が外に漏れる。`AuthSheet` 側で `<div className="mt-section">` にラップし、シートが自分の縦リズムを持ち切る（ADR-001）。
+`children` の余白の担い手が問題になる。設計の `.auth-form { margin-top }` は「children 自身が上余白を宣言する」形だが、実装の children は 5 箇所すべて形が違い `ErrorRetry` は `className` を受け取らない。利用側 5 箇所に `mt-section` を配らせると、付け忘れれば余白が消え、`AuthSheet` の内部レイアウトの責務が外に漏れる。`AuthSheet` 側で `<div className="mt-section flex flex-col">` にラップし、シートが自分の縦リズムを持ち切る。ラッパーを flex にするのは、裸のブロックだと children 先頭の `mt-*` と親子マージン相殺を起こしてシートの余白が children 依存になるため（ADR-001）。
 
 サイドバーのブランドは設計が `padding-bottom` で持っているが、リンク要素の padding はクリック領域を広げるため現行の挙動が変わる。Issue のチェックリストどおり `<nav>` 側の `mt-2xl` に移す（ADR-002）。
 
@@ -76,7 +76,7 @@
   - ブランドの `div` から `mb-section` を削除
   - h1 を `mt-section` の固定クラスにし、`description === undefined ? … : …` の三項演算子を削除
   - p を `mb-section` → `mt-lg`
-  - `{children}` を `<div className="mt-section">` でラップ
+  - `{children}` を `<div className="mt-section flex flex-col">` でラップし、children は上余白を持たない前提を JSDoc に明記する
 - **理由:** AC-1〜AC-4。各要素が自分の前の余白を自分で宣言する形にすると、description の有無を h1 が知る必要がなくなる
 
 ### 2. `CurrentUserPanel` の `mb-sm` を反転
@@ -96,8 +96,8 @@
 - **対象ファイル:** `apps/web/app/components/layout/AppShell/index.tsx`
 - **変更内容:**
   - `:84` `BrandLink` の `mb-2xl` を削除し、直後の `<nav>` に `mt-2xl` を付ける
-  - `:188` ハンドルの `mb-md` を削除（`mx-auto` は維持）し、先頭のナビ項目（`index === 0`）に `mt-md` を付ける
-- **理由:** AC-1 / AC-7。ハンドルは設計側でも `margin: 0 auto` + `+ *` に分割済み
+  - `:188` ハンドルの `mb-md` を削除（`mx-auto` は維持）し、`.map()` 全体を `<div className="mt-md">` で包んで、そのラッパーに余白を持たせる
+- **理由:** AC-1 / AC-7。ハンドルは設計側でも `margin: 0 auto` + `+ *` に分割済み。設計の `.nav-sheet .handle + *` が指すのは「ハンドルの次に来るブロック」なので、ラッパーがそのアンカーに 1:1 で対応する。先頭項目（`index === 0`）側に付ける形にすると、余白の分岐が境界線の `index === 0 ? "" : "border-t …"` と絡んで 2 つの関心事が混ざる
 
 ### 5. 静的チェック
 
@@ -114,9 +114,10 @@
 
 ## リスクと注意点
 
-- ナビシート先頭項目に付ける `mt-md` は既存の `index === 0 ? "" : "border-t …"` と同じ条件分岐に乗る。境界線の分岐と取り違えないこと
+- ナビシートの `mt-md` はラッパーの `<div>` が持ち、境界線の `index === 0 ? "" : "border-t …"` とは独立している。余白を項目側の条件分岐に戻すと 2 つの関心事が再び混ざるので戻さないこと
 - `CurrentUserPanel` / `SettingsSkeleton` の `ROW` 定数は複数行で共有されている。定数側に `mt-sm` を足すと全行に付いてしまうので、先頭行のクラスにだけ足す
 - `AuthSheet` の children ラップは DOM ノードが 1 段増える。`ErrorRetry fullWidth` がブロック幅で描画されることを実機で確認する
+- `AuthSheet` のラッパーは flex なので、children 先頭が `mt-*` を持つとラッパーの `mt-section` に加算される（相殺されない）。設計 HTML の `.auth-form { margin-top }` を実装に補おうとすると余白が二重になるため、その旨を JSDoc とフォーム側コメントに残す
 
 ## テスト方針
 

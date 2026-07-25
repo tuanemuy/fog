@@ -12,6 +12,11 @@ type AuthSheetProps = {
  * (`.auth-container` / `.auth-sheet` in `spec/design/pages/login.html`).
  * Signed-out screens have no global nav, so this container is the `main`
  * landmark — nothing else on these screens could carry it.
+ *
+ * The body's top margin belongs to the sheet (`.auth-form { margin-top }` in
+ * the design): `children` must not declare one of its own. The wrapper is a
+ * flex column, so a child's `margin-top` adds to the sheet's
+ * `--space-section` instead of collapsing into it.
  */
 export function AuthSheet({ title, description, children }: AuthSheetProps) {
   return (
@@ -28,9 +33,9 @@ export function AuthSheet({ title, description, children }: AuthSheetProps) {
             {description}
           </p>
         ) : null}
-        {/* 本文の上余白はシート側が持つ。children は 5 画面で形が不揃いで、
-            ErrorRetry は className を受け取らない。flex にするのは、children
-            先頭が mt-* を持ったときに親子マージン相殺で 36px が消えないため */}
+        {/* 本文の上余白はシート側が持つ。children の形は画面ごとに不揃いで、
+            ErrorRetry は className を受け取らないため。flex にするのは、children
+            先頭の mt-* が親子マージン相殺に飲まれて和にならないのを避けるため */}
         <div className="mt-section flex flex-col">{children}</div>
       </div>
     </main>

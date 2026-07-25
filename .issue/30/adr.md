@@ -18,11 +18,13 @@ Proposed
 選択肢は 2 つ。
 
 1. 利用側 5 箇所それぞれに `mt-section` を付ける（設計の CSS と 1:1）
-2. `AuthSheet` が `{children}` を `<div className="mt-section">` でラップする
+2. `AuthSheet` が `{children}` をラッパーの `<div>` で包み、そこに `mt-section` を持たせる
 
 ### Decision
 
 2 を選ぶ。`ErrorRetry` は `className` を受け取らないため 1 は API 追加なしには成立せず、成立させたとしても「シート内の縦リズム」という `AuthSheet` の内部事情が利用側 5 箇所に漏れる。付け忘れれば余白が黙って消える種類の漏れなので、シートが持ち切るほうが壊れにくい。
+
+ラッパーは `<div className="mt-section flex flex-col">` とする。裸のブロックにすると、children 先頭が `mt-*` を宣言したときに親子マージン相殺が起きてラッパーの `mt-section` と融合し、シートの余白が children の中身に左右されてしまう（相殺の結果は `max(--space-section, 子の値)` で、消えるのは小さいほう＝和にはならない）。flex コンテナは子とマージン相殺しないので、ラッパーの余白は children の形に関わらず保存される。
 
 設計 CSS との 1:1 対応は崩れるが、余白の**向き**（上に付ける）と**値**（`--space-section`）は保存される。本 Issue が反映するのは向きのルールであって、セレクタの形ではない。
 
@@ -30,6 +32,8 @@ Proposed
 
 - 良い点: 利用側は本文を渡すだけでよく、新しい pre-auth 画面を足しても余白が自動で揃う。`ErrorRetry` に `className` を生やさずに済む
 - トレードオフ: DOM ノードが 1 段増える。`ErrorRetry fullWidth` のようにブロック幅を前提とする子は、ラッパー越しでも意図どおり広がることを実機で確認する必要がある
+- トレードオフ: flex 化で相殺は止まるが、その代わり children 先頭の `mt-*` はラッパーの `mt-section` に**加算**される。「children は上余白を持たない」という約束が必要になるので、`AuthSheet` の JSDoc（= 利用側から見える唯一の説明）に不変条件として明記し、設計 HTML の `.auth-form { margin-top }` を実装側で落としていることを `LoginForm` / `SignupForm` にもコメントで残す
+- 注意: ラッパーは裸の `<div>` に見えるが、`mt-section` の担い手であり相殺を止める役目も持つ。不要と判断して外すと余白が children 依存になる
 
 ---
 
