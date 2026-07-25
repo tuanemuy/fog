@@ -136,6 +136,14 @@ pbkdf2-sha256$<iterations>$<saltBase64>$<hashBase64>
 
 保存形式に `iterations` が埋まっているので、反復回数を変えても既存ハッシュの `verify` は壊れない。
 
+### 実測結果（plan.md ステップ10 / 2026-07-25）
+
+捨てテスト `packages/core/src/adapters/webcrypto/__tests__/_probe.integration.test.ts` を Miniflare（workerd）プールで実行し、`crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", iterations: 210_000 }, key, 256)` を1回計測した（確認後に削除済み）。
+
+- **成功。所要時間 16ms。** workerd の WebCrypto は 210,000 回に上限を課さない
+- したがって Decision の代替案 (i)（identity 統合テストの node プール移設）／(ii)（反復回数を10万に下げる）は**いずれも不要**。本番の反復回数は既定の 210,000 のまま
+- ただしフェイクハッシャー注入の方針は維持する。1回16ms は許容範囲でも、登録・ログインを繰り返す統合テスト全体では無視できない累積になるため、`createTestContainer` / `setupTestContainer` の `passwordHasher` 既定値は `FakePasswordHasher` とし、実ハッシャーが要るテストだけが明示的に注入する
+
 ### Consequences
 
 - 良い点:
@@ -539,3 +547,77 @@ RFC 5322 準拠の完全な文法を実装するか、spec の字面どおり構
 
 - 良い点: spec の字面と1対1で、テストケースの期待と一致する。境界値（320文字ちょうど）も素直に通る
 - トレードオフ: `user@example`（ドット無しドメイン）が有効として通る。実運用でメール到達性が要るのはパスワードリセット（P-03、後続スライス）であり、そこで送信基盤が弾く。より厳しい検証が必要になった場合は `EMAIL_PATTERN` 1箇所の差し替えで済む
+
+---
+
+## ADR-014: パスワードハッシュ計算の失敗に `SystemErrorCode.CryptoError` を新設する
+
+### Status
+
+Accepted（実装時に決定）
+
+### Context
+
+`spec/usecases/identity.md` と plan.md ステップ10 は「ハッシュ計算失敗は `SystemError`」と定めるが、どの `SystemErrorCode` を使うかは決めていない。既存のコード表は `DatabaseError` / `DataIntegrityError` / `NetworkError` / `ExternalApiError` の4つで、WebCrypto の `importKey` / `deriveBits` が throw したケースに当てはまるものが無い。
+
+同ファイルの `SystemErrorCode` の JSDoc は「Add a new entry per external resource you integrate」と拡張を明示的に促しており、ADR-010（`SessionError` の新設）が既に同じ判断を採っている。
+
+なお `verify` の失敗には**性質の異なる2種類**がある。
+
+1. 保存済みハッシュが `pbkdf2-sha256$<iterations>$<salt>$<hash>` 形式として読めない（形式不正・base64 破損・反復回数が非整数）
+2. 計算そのものが失敗した（WebCrypto が throw した）
+
+### Decision
+
+- `SystemErrorCode` に **`CryptoError: "CRYPTO_ERROR"`** を追加する（`RETRYABLE_SYSTEM_CODES` には入れない）。`hash` / `verify` のうち **2（`importKey` / `deriveBits` の throw）** をこのコードに翻訳する
+- **1（保存値が読めない）は `DataIntegrityError` を使う。** JSDoc が `DataIntegrityError` を "stored data violates the shape we expect" と定義しており、まさにこのケースに一致する。`users.password_hash` に schema-skew した値が入っている＝マイグレーションかデータ移行の破綻であって、暗号サブシステムの障害ではない。両者を分けることでログ・アラートのルーティングが「CRYPTO_ERROR の急増 = ランタイムの暗号実装の問題」「DATA_INTEGRITY_ERROR の急増 = データの問題」と読める
+
+### Consequences
+
+- 良い点:
+  - 「保存値が壊れている」と「計算できない」が運用上区別できる。前者はデータ修復、後者はランタイム調査と対処が異なる
+  - `redactForClient` が `kind: "system"` の `code` を潰すので、コードを増やしてもクライアント表示・情報漏洩には影響しない
+  - 将来 Argon2id(WASM) へ移行しても、WASM のロード失敗・メモリ不足は同じ `CryptoError` に収まる
+- トレードオフ:
+  - テンプレートが提供する `SystemErrorCode` の値集合に fog 固有のエントリが（ADR-010 の `SessionError` に続いて）もう1つ増える。テンプレート追従時の差分になるが、JSDoc 自身が拡張を前提にしている
+  - 実際に発火する経路は本スライスでは存在しない（WebCrypto が throw する状況をテストで再現しない限り通らない）
+
+---
+
+## ADR-015: AWS の `SESSION_SECRET` は Secrets Manager 参照で配る
+
+### Status
+
+Accepted（実装時に決定）
+
+### Context
+
+plan.md ステップ11-7-2 は「`infra/aws/lib/appStack.ts` の `appFn.environment` に足す（Secrets Manager 参照が妥当なら `DATABASE_AUTH_TOKEN_SECRET_ARN` と同じ流儀で）」と、2つの実現手段を選択肢として残していた。
+
+- (a) 平文の環境変数として `appFn.environment.SESSION_SECRET` に載せる
+- (b) `DATABASE_AUTH_TOKEN_SECRET_ARN` と同じく ARN を渡し、Lambda のコールドスタート時に `loadSecretsIntoEnv` で解決する
+
+(a) は CDK の変更だけで閉じるが、値が CloudFormation テンプレートと Lambda コンソールに平文で残る。(b) は `apps/web/app/server.aws.ts` の `boot()` に binding を1つ足す必要がある（plan.md ステップ11の対象ファイル一覧には含まれていない）。
+
+### Decision
+
+**(b) を採る。** 追加は次の4点。
+
+- `AppStackProps` に `sessionSecretArn` を追加し、`bin/app.ts` が `SESSION_SECRET_ARN_{STAGE}` から読む（未設定のステージは既存の `continue` でスキップされる）
+- `appFn.environment.SESSION_SECRET_ARN` にだけ載せる。**`sharedEnv` には入れない**ので relay / consumer / pruner / dlq の4 Lambda には配られない
+- `sessionSecret.grantRead(appFn)` のみ付与する（他の Lambda には付与しない）
+- `server.aws.ts` の `boot()` が `SESSION_SECRET_ARN` を既存の `secretBindings` 配列に追加し、`SESSION_SECRET` として `process.env` に展開してから `readAwsServerEnv()` を呼ぶ
+
+`server.aws.ts` への波及は6行で、既存の Turso トークンと同じ配列に1エントリ足すだけ。plan.md の対象ファイル一覧を1本超えるが、(b) を選ぶ以上この配線なしには値が届かない。
+
+GCP 側は Terraform 変数（`sensitive = true`）のまま据え置く。Cloud Run は Secret Manager のマウントが標準機能として存在し、`DATABASE_AUTH_TOKEN_SECRET_NAME` の既存コメントも「Cloud Run's built-in secret mounting usually removes the need for this」と書いている。ここで独自のブートストラップ経路を増やすより、変数を露出させて運用側にマウントの選択を委ねるほうがランタイムの流儀に合う。
+
+### Consequences
+
+- 良い点:
+  - セッション鍵が CloudFormation テンプレート・スタック差分・Lambda コンソールのどこにも平文で現れない
+  - 秘密の配布範囲がリクエストパスの1関数に限定され、IAM 上も `grantRead` が1つだけになるので「誰が読めるか」が監査で一目でわかる
+  - Turso トークンと同じ流儀なので、運用手順（Secrets Manager にシークレットを作り ARN を env で渡す）が1つで済む
+- トレードオフ:
+  - コールドスタートに Secrets Manager 呼び出しが1回増える（Turso トークンと同一の `loadSecretsIntoEnv` 呼び出しにまとまるので往復自体は増えない）
+  - `bin/app.ts` の必須 env が1つ増える。未設定のステージは synth からスキップされるだけなので、気づかず不完全なスタックが出る心配はない

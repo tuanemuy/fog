@@ -187,6 +187,10 @@ export function isForbiddenError(error: unknown): error is ForbiddenError {
 export const SystemErrorCode = {
   DatabaseError: "DATABASE_ERROR",
   DataIntegrityError: "DATA_INTEGRITY_ERROR",
+  // The crypto subsystem (WebCrypto) refused to compute — key import or
+  // derivation threw. Kept apart from `DataIntegrityError`, which is what
+  // a *stored* hash in an unreadable encoding raises.
+  CryptoError: "CRYPTO_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

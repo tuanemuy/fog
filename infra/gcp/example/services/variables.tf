@@ -30,6 +30,12 @@ variable "app_url" {
   type        = string
 }
 
+variable "session_secret" {
+  description = "HMAC key that signs session cookies (32+ chars). Applied to the app service only; the worker services never handle sessions. Prefer sourcing it from Secret Manager rather than a plaintext tfvars entry."
+  type        = string
+  sensitive   = true
+}
+
 variable "outbox_tuning" {
   description = "Optional outbox tuning overrides. Empty values fall back to the application-layer defaults."
   type = object({

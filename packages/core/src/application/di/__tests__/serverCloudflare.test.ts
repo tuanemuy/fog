@@ -20,6 +20,10 @@ function envWith(overrides: Partial<ServerEnv> = {}): ServerEnv {
   return {
     DB: {} as ServerEnv["DB"],
     APP_URL: "http://localhost:8787",
+    // Long enough to satisfy `requireSessionSecret` so any test that
+    // builds a request container from this env is exercising tuning, not
+    // tripping the secret check.
+    SESSION_SECRET: "0123456789abcdef0123456789abcdef",
     ...overrides,
   };
 }

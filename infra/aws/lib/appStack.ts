@@ -58,6 +58,10 @@ export type AppStackProps = StackProps &
     // Secrets Manager ARN that holds the Turso auth token. The Lambdas
     // read it at cold start via the boot-time secrets loader.
     tursoAuthSecretArn: string;
+    // Secrets Manager ARN holding the session-cookie HMAC key. Only the
+    // request-path Lambda reads it; the worker Lambdas never touch a
+    // session, so the secret is not distributed to them.
+    sessionSecretArn: string;
     // Public origin (custom domain, or the auto-generated API Gateway URL).
     appUrl: string;
   }>;
@@ -70,6 +74,12 @@ export class AppStack extends Stack {
       this,
       "TursoAuthTokenSecret",
       props.tursoAuthSecretArn,
+    );
+
+    const sessionSecret = Secret.fromSecretCompleteArn(
+      this,
+      "SessionSecret",
+      props.sessionSecretArn,
     );
 
     // ---- SQS ---------------------------------------------------------
@@ -162,6 +172,12 @@ export class AppStack extends Stack {
       environment: {
         ...sharedEnv,
         RELAY_FUNCTION_NAME: relayFn.functionName,
+        // Deliberately not in `sharedEnv`: the session key goes to the
+        // request path and nowhere else. Passed as a Secrets Manager ARN
+        // (same idiom as the Turso token) so the value never lands in the
+        // CloudFormation template; `server.aws.ts` resolves it at cold
+        // start into `SESSION_SECRET`.
+        SESSION_SECRET_ARN: props.sessionSecretArn,
       },
     });
 
@@ -249,6 +265,7 @@ export class AppStack extends Stack {
     tursoSecret.grantRead(consumerFn);
     tursoSecret.grantRead(prunerFn);
     tursoSecret.grantRead(dlqFn);
+    sessionSecret.grantRead(appFn);
 
     // Relay → SQS (publish)
     eventsQueue.grantSendMessages(relayFn);

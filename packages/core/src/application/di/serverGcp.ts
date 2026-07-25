@@ -2,6 +2,8 @@ import type { Database } from "@repo/core/adapters/libsql/client";
 import { LibsqlIdempotencyStore } from "@repo/core/adapters/libsql/repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "@repo/core/adapters/libsql/repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "@repo/core/adapters/libsql/unitOfWork";
+import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { content } from "@repo/core/config";
 import { z } from "zod";
 import { SystemClock } from "../ports/clock";
@@ -15,6 +17,7 @@ import {
   readRelayTuning as readRelayTuningShared,
   type TuningEnv,
 } from "./env";
+import { type RequestSecrets, requireSessionSecret } from "./secrets";
 import type {
   AppConfig,
   RequestContainer,
@@ -31,6 +34,7 @@ export type GcpServerEnv = Readonly<{
   DATABASE_URL: string;
   DATABASE_AUTH_TOKEN?: string | undefined;
   APP_URL: string;
+  SESSION_SECRET?: string | undefined;
   GCP_PROJECT_ID?: string | undefined;
   EVENTS_TOPIC?: string | undefined;
   RELAY_URL?: string | undefined;
@@ -44,6 +48,10 @@ const gcpServerEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   DATABASE_AUTH_TOKEN: z.string().min(1).optional(),
   APP_URL: z.string().min(1, "APP_URL is required"),
+  // Optional at the schema level so the relay / consumer / DLQ services —
+  // which share this reader and never touch a session — still boot
+  // without it. The request path enforces it via `requireSessionSecret`.
+  SESSION_SECRET: z.string().optional(),
   GCP_PROJECT_ID: z.string().min(1).optional(),
   EVENTS_TOPIC: z.string().min(1).optional(),
   RELAY_URL: z.string().min(1).optional(),
@@ -96,6 +104,7 @@ export type GcpRequestServerConfig = AppConfig &
   Readonly<{
     db: Database;
     relayTrigger: RelayTrigger;
+    secrets: RequestSecrets;
   }>;
 
 export function readGcpRequestServerConfig(
@@ -107,13 +116,19 @@ export function readGcpRequestServerConfig(
     appUrl: env.APP_URL,
     db: bindings.db,
     relayTrigger: bindings.relayTrigger ?? NoopRelayTrigger,
+    secrets: { sessionSecret: env.SESSION_SECRET ?? "" },
   };
 }
 
 export function createGcpRequestContainer(
   config: GcpRequestServerConfig,
 ): RequestContainer {
-  const { db: _db, relayTrigger: _relayTrigger, ...appConfig } = config;
+  const {
+    db: _db,
+    relayTrigger: _relayTrigger,
+    secrets,
+    ...appConfig
+  } = config;
   return {
     ...buildSharedDeps(),
     config: appConfig satisfies AppConfig,
@@ -123,6 +138,10 @@ export function createGcpRequestContainer(
       UuidV7Generator,
       config.relayTrigger,
     ),
+    passwordHasher: createPbkdf2PasswordHasher(),
+    sessionCodec: createHmacSessionCodec({
+      secret: requireSessionSecret(secrets.sessionSecret),
+    }),
   };
 }
 

@@ -33,10 +33,14 @@ resource "google_cloud_run_v2_service" "app" {
       ports {
         container_port = 8080
       }
+      # SESSION_SECRET is merged in here rather than into `shared_env`:
+      # only the request path signs session cookies, so the relay /
+      # consumer / dlq services never receive the key.
       dynamic "env" {
         for_each = merge(local.shared_env, {
-          WORKER_ROLE = "app"
-          RELAY_URL   = google_cloud_run_v2_service.relay.uri
+          WORKER_ROLE    = "app"
+          RELAY_URL      = google_cloud_run_v2_service.relay.uri
+          SESSION_SECRET = var.session_secret
         })
         content {
           name  = env.key

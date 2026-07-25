@@ -3,7 +3,9 @@ import {
   type EventDecoder,
   EventId,
 } from "@repo/core/domain/common/event";
+import type { IdentityEvent } from "@repo/core/domain/identity/events";
 import type { WorkerContainer } from "../di/types";
+import { identityEventDecoders } from "../identity/eventDecoders";
 import type { OutboxEntry, OutboxFailure } from "../ports/outboxRepository";
 
 // Delivery is at-least-once with NO ordering guarantee. Per-row failures
@@ -38,7 +40,10 @@ export type EventDispatcher = (
   events: readonly DomainEvent[],
 ) => Promise<readonly EventDispatchOutcome[]>;
 
-type AllDomainEvents = never;
+// Union of every event any domain can emit. Widen it as domains are
+// added — the `satisfies` on `defaultEventDecoderRegistry` below then
+// forces the matching decoder to be registered.
+type AllDomainEvents = IdentityEvent;
 
 export type DefaultEventDecoderRegistry = {
   readonly [K in AllDomainEvents["type"]]: EventDecoder<
@@ -52,8 +57,9 @@ export type DefaultEventDecoderRegistry = {
 // its decoder.
 export type EventDecoderRegistry = Partial<DefaultEventDecoderRegistry>;
 
-export const defaultEventDecoderRegistry =
-  {} satisfies DefaultEventDecoderRegistry;
+export const defaultEventDecoderRegistry = {
+  ...identityEventDecoders,
+} satisfies DefaultEventDecoderRegistry;
 
 export type ProcessOutboxEventsOptions = {
   batchSize?: number;

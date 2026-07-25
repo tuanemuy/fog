@@ -15,11 +15,13 @@ for (const stage of stages) {
   const tursoUrl = process.env[`TURSO_URL_${upper}`];
   const tursoAuthSecretArn =
     process.env[`TURSO_AUTH_TOKEN_SECRET_ARN_${upper}`];
+  const sessionSecretArn = process.env[`SESSION_SECRET_ARN_${upper}`];
   const appUrl = process.env[`APP_URL_${upper}`];
 
   if (
     tursoUrl === undefined ||
     tursoAuthSecretArn === undefined ||
+    sessionSecretArn === undefined ||
     appUrl === undefined
   ) {
     // Skip stages that have not been configured yet — synth stays
@@ -32,6 +34,7 @@ for (const stage of stages) {
     stage,
     tursoUrl,
     tursoAuthSecretArn,
+    sessionSecretArn,
     appUrl,
   });
 }

@@ -59,6 +59,13 @@ async function boot(): Promise<Booted> {
       envVar: "DATABASE_AUTH_TOKEN",
     });
   }
+  const sessionSecretArn = process.env["SESSION_SECRET_ARN"];
+  if (sessionSecretArn !== undefined && sessionSecretArn !== "") {
+    secretBindings.push({
+      secretId: sessionSecretArn,
+      envVar: "SESSION_SECRET",
+    });
+  }
   if (secretBindings.length > 0) {
     const secretsClient = new SecretsManagerClient({});
     await loadSecretsIntoEnv({

@@ -42,7 +42,8 @@ cd infra/gcp/example
     -var "turso_auth_token=$TURSO_AUTH_TOKEN" )
 ( cd services && terraform init && terraform apply -var "project_id=$PROJECT" \
     -var "image=gcr.io/$PROJECT/server:latest" \
-    -var "turso_database_url=libsql://..." -var "app_url=https://app.example.com" )
+    -var "turso_database_url=libsql://..." -var "session_secret=$SESSION_SECRET" \
+    -var "app_url=https://app.example.com" )
 ( cd wiring   && terraform init && terraform apply -var "project_id=$PROJECT" )
 ```
 

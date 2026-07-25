@@ -1,0 +1,25 @@
+import { UserId } from "@repo/core/domain/identity/valueObject";
+import type { ServiceArgs } from "../types";
+
+export type LogoutInput = {
+  userId: string;
+};
+
+/**
+ * Logs out (S-AC-04 / UC-identity-004).
+ *
+ * Nothing to do in the domain: identity has no session state and no
+ * logout event, and destroying the session cookie belongs to the
+ * presentation layer. The usecase exists so the application layer offers
+ * the same surface for logout as for login rather than leaving one half
+ * of the pair to be discovered in a route handler.
+ *
+ * It touches no repository and collects no event — asserted by
+ * TC-logout-001 — so `UserId.create` is the only work: a caller passing
+ * an empty id has a broken session and should hear about it here.
+ */
+export async function logout({
+  input,
+}: ServiceArgs<LogoutInput>): Promise<void> {
+  UserId.create(input.userId);
+}

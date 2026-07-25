@@ -67,6 +67,7 @@ cd infra/gcp/example
     -var "region=us-central1" \
     -var "image=us-central1-docker.pkg.dev/your-gcp-project/app/server:abc123" \
     -var "turso_database_url=libsql://your-db.turso.io" \
+    -var "session_secret=$SESSION_SECRET" \
     -var "app_url=https://app.example.com" )
 
 # 3) Subscriptions + Scheduler + invoker bindings
