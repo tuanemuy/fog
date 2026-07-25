@@ -9,12 +9,12 @@ import { requireSessionSecret } from "../secrets";
 // it actually refuses.
 //
 // The length comes from the adapter's exported constant because that is
-// where the floor is now defined — `createHmacSessionCodec` asserts the
-// same one at construction. Reading it here rather than restating 32
-// keeps this suite honest if the floor is ever raised, and keeps the two
-// checks from splitting again: a DI layer that branded a secret the codec
-// then rejects would throw a bare `Error` outside the error middleware,
-// i.e. a plain 500 on every request.
+// where the floor is defined — `createHmacSessionCodec` asserts the same
+// one at construction. Reading it here rather than restating 32 keeps
+// this suite honest if the floor is raised, and keeps the two checks
+// from splitting: a DI layer that branded a secret the codec then
+// rejects would throw a bare `Error` outside the error middleware, i.e.
+// a plain 500 on every request.
 describe("requireSessionSecret", () => {
   it.each([
     ["unset", undefined],

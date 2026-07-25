@@ -130,7 +130,7 @@ describe("pruner Worker — runPruneTick", () => {
     await seedOutbox([event]);
 
     const db = getDatabase(env.DB);
-    const recent = new Date(Date.now() - 60 * 1000); // 1 min ago
+    const recent = new Date(Date.now() - 60 * 1000);
     await db
       .update(outboxEvents)
       .set({ processedAt: recent })

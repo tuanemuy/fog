@@ -165,7 +165,6 @@ const outboxRows = (container: TestContainer) =>
   container.db.select().from(schema.outboxEvents);
 
 describe("registerWithPassword (integration)", () => {
-  // TC-registerWithPassword-001
   it("creates a version-0 PasswordUser and its userRegistered event in one commit (TC-registerWithPassword-001)", async () => {
     const container = createTestContainer();
 
@@ -197,7 +196,6 @@ describe("registerWithPassword (integration)", () => {
     expect(outbox[0]?.payload).toEqual({ userId, authMethod: "password" });
   });
 
-  // TC-registerWithPassword-002
   it("stores the trimmed, lowercased address (TC-registerWithPassword-002)", async () => {
     const container = createTestContainer();
 
@@ -210,7 +208,6 @@ describe("registerWithPassword (integration)", () => {
     expect(users[0]?.email).toBe("user@example.com");
   });
 
-  // TC-registerWithPassword-003
   it("rejects a malformed address with BusinessRuleError and writes nothing (TC-registerWithPassword-003)", async () => {
     const container = createTestContainer();
 
@@ -229,11 +226,10 @@ describe("registerWithPassword (integration)", () => {
     expect(await outboxRows(container)).toHaveLength(0);
   });
 
-  // TC-registerWithPassword-005 — the VO's own boundary tests stop at
-  // `Email.create`; spec's expectation is that the *registration*
-  // succeeds, which is the only way the transport ceiling in
-  // `components/auth/schema.ts` and the domain limit are checked against
-  // each other.
+  // The VO's own boundary tests stop at `Email.create`; spec's
+  // expectation is that the *registration* succeeds, which is the only
+  // way the transport ceiling in `components/auth/schema.ts` and the
+  // domain limit are checked against each other.
   it("registers an address that is exactly 320 characters (TC-registerWithPassword-005)", async () => {
     const container = createTestContainer();
     const email = `${"a".repeat(308)}@example.com`;
@@ -251,7 +247,6 @@ describe("registerWithPassword (integration)", () => {
     expect(users[0]?.email).toHaveLength(320);
   });
 
-  // TC-registerWithPassword-007 / TC-registerWithPassword-008
   it.each([
     ["shortest accepted", 8],
     ["longest accepted", 128],
@@ -275,7 +270,6 @@ describe("registerWithPassword (integration)", () => {
     },
   );
 
-  // TC-registerWithPassword-011
   it("rejects a duplicate address at the pre-check (TC-registerWithPassword-011)", async () => {
     const container = createTestContainer();
     await registerWithPassword({
@@ -297,7 +291,6 @@ describe("registerWithPassword (integration)", () => {
     expect(await userRows(container)).toHaveLength(1);
   });
 
-  // TC-registerWithPassword-012
   it("refuses to link a password account onto an existing SSO address (TC-registerWithPassword-012)", async () => {
     const container = createTestContainer();
     const ssoId = await seedSsoUser(container, "user@example.com");
@@ -322,7 +315,6 @@ describe("registerWithPassword (integration)", () => {
     });
   });
 
-  // TC-registerWithPassword-013
   it("detects a duplicate that only matches after normalisation (TC-registerWithPassword-013)", async () => {
     const container = createTestContainer();
     await registerWithPassword({
@@ -344,11 +336,10 @@ describe("registerWithPassword (integration)", () => {
     expect(await userRows(container)).toHaveLength(1);
   });
 
-  // TC-registerWithPassword-014 — both callers pass the `findByEmail`
-  // pre-check, so the loser only learns of the collision when
-  // `users_email_uq` fires at flush time. The assertions stay loose
-  // enough to hold under either failure shape (D1 aborts the losing
-  // batch; libSQL fails the transaction).
+  // Both callers pass the `findByEmail` pre-check, so the loser only
+  // learns of the collision when `users_email_uq` fires at flush time.
+  // The assertions stay loose enough to hold under either failure shape
+  // (D1 aborts the losing batch; libSQL fails the transaction).
   it("collapses a concurrent registration race onto EMAIL_ALREADY_REGISTERED (TC-registerWithPassword-014)", async () => {
     const container = createTestContainer();
     const input = { email: "race@example.com", password: PASSWORD };
@@ -384,7 +375,6 @@ describe("registerWithPassword (integration)", () => {
     expect(await outboxRows(container)).toHaveLength(1);
   });
 
-  // TC-registerWithPassword-015
   it("surfaces a hashing failure as SystemError without creating a user (TC-registerWithPassword-015)", async () => {
     const container = createTestContainer({
       passwordHasher: throwingHasher("hash"),
@@ -403,10 +393,10 @@ describe("registerWithPassword (integration)", () => {
     expect(await outboxRows(container)).toHaveLength(0);
   });
 
-  // TC-registerWithPassword-016 — a non-constraint failure on purpose: a
-  // constraint violation would be classified as `ConflictError`, and a
-  // UNIQUE / PK one would be read as EMAIL_ALREADY_REGISTERED
-  // (.issue/1/adr.md ADR-008), so neither would ever reach `SystemError`.
+  // A non-constraint failure on purpose: a constraint violation would be
+  // classified as `ConflictError`, and a UNIQUE / PK one would be read as
+  // EMAIL_ALREADY_REGISTERED (.issue/1/adr.md ADR-008), so neither would
+  // ever reach `SystemError`.
   it("rolls back and reports SystemError when the insert hits a DB fault (TC-registerWithPassword-016)", async () => {
     const base = createTestContainer();
 
@@ -439,7 +429,6 @@ describe("loginWithPassword (integration)", () => {
     return userId;
   }
 
-  // TC-loginWithPassword-001
   it("returns the userId for correct credentials (TC-loginWithPassword-001)", async () => {
     const container = createTestContainer();
     const userId = await seedPasswordUser(container, "user@example.com");
@@ -452,7 +441,6 @@ describe("loginWithPassword (integration)", () => {
     ).resolves.toEqual({ userId });
   });
 
-  // TC-loginWithPassword-002
   it("matches on the normalised address (TC-loginWithPassword-002)", async () => {
     const container = createTestContainer();
     const userId = await seedPasswordUser(container, "user@example.com");
@@ -465,7 +453,6 @@ describe("loginWithPassword (integration)", () => {
     ).resolves.toEqual({ userId });
   });
 
-  // TC-loginWithPassword-003
   it("rejects an unknown address as INVALID_CREDENTIALS (TC-loginWithPassword-003)", async () => {
     const container = createTestContainer();
 
@@ -480,7 +467,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-004
   it("rejects a wrong password as INVALID_CREDENTIALS (TC-loginWithPassword-004)", async () => {
     const container = createTestContainer();
     await seedPasswordUser(container, "user@example.com");
@@ -496,7 +482,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-005
   it("does not reveal that an address belongs to an SSO account (TC-loginWithPassword-005)", async () => {
     const container = createTestContainer();
     await seedSsoUser(container, "sso@example.com");
@@ -512,7 +497,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-006
   it("converts a malformed address into INVALID_CREDENTIALS, not BusinessRuleError (TC-loginWithPassword-006)", async () => {
     const container = createTestContainer();
 
@@ -528,7 +512,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-007
   it("converts a too-short password into INVALID_CREDENTIALS, not PasswordTooWeak (TC-loginWithPassword-007)", async () => {
     const container = createTestContainer();
 
@@ -544,9 +527,8 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-008 — the uniformity is the feature: any
-  // difference between these would let an attacker probe which addresses
-  // are registered and how.
+  // The uniformity is the feature: any difference between these would let
+  // an attacker probe which addresses are registered and how.
   it("answers every failure mode identically (TC-loginWithPassword-008)", async () => {
     const container = createTestContainer();
     await seedPasswordUser(container, "user@example.com");
@@ -693,8 +675,8 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // TC-loginWithPassword-009 — the one case that pays for a real key
-  // derivation, since the boundary being checked is the round trip.
+  // The one case that pays for a real key derivation, since the boundary
+  // being checked is the round trip.
   it("verifies an 8-character password through the real hasher (TC-loginWithPassword-009)", async () => {
     const container = createTestContainer({
       passwordHasher: createPbkdf2PasswordHasher({ iterations: 1_000 }),
@@ -720,7 +702,6 @@ describe("loginWithPassword (integration)", () => {
     expect(users[0]?.passwordHash).not.toContain("pass1234");
   });
 
-  // TC-loginWithPassword-010
   it("surfaces a findByEmail DB fault as SystemError (TC-loginWithPassword-010)", async () => {
     const container = createTestContainer();
 
@@ -737,8 +718,8 @@ describe("loginWithPassword (integration)", () => {
     expect(isSystemError(error) && error.code).toBe("DATABASE_ERROR");
   });
 
-  // TC-loginWithPassword-011 — a failed computation is a SystemError,
-  // deliberately distinct from the `false` that means "wrong password".
+  // A failed computation is a SystemError, deliberately distinct from the
+  // `false` that means "wrong password".
   it("distinguishes a failing verify computation from a mismatch (TC-loginWithPassword-011)", async () => {
     const seeding = createTestContainer();
     await seedPasswordUser(seeding, "user@example.com");
@@ -760,7 +741,6 @@ describe("loginWithPassword (integration)", () => {
 });
 
 describe("getCurrentUser (integration)", () => {
-  // TC-getCurrentUser-001 / TC-getCurrentUser-005
   it("returns the password account's projection with the default retention (TC-getCurrentUser-001 / TC-getCurrentUser-005)", async () => {
     const container = createTestContainer();
     const { userId } = await registerWithPassword({
@@ -778,7 +758,6 @@ describe("getCurrentUser (integration)", () => {
     });
   });
 
-  // TC-getCurrentUser-002
   it("reports authMethod sso for an SSO account (TC-getCurrentUser-002)", async () => {
     const container = createTestContainer();
     const userId = await seedSsoUser(container, "sso@example.com");
@@ -788,7 +767,6 @@ describe("getCurrentUser (integration)", () => {
     expect(user.email).toBe("sso@example.com");
   });
 
-  // TC-getCurrentUser-003
   it("exposes no credential material for a password account (TC-getCurrentUser-003)", async () => {
     const container = createTestContainer();
     const { userId } = await registerWithPassword({
@@ -809,7 +787,6 @@ describe("getCurrentUser (integration)", () => {
     expect(JSON.stringify(user)).not.toContain(PASSWORD);
   });
 
-  // TC-getCurrentUser-004
   it("exposes no SSO subject for an SSO account (TC-getCurrentUser-004)", async () => {
     const container = createTestContainer();
     const userId = await seedSsoUser(container, "sso@example.com");
@@ -826,7 +803,6 @@ describe("getCurrentUser (integration)", () => {
     expect(JSON.stringify(user)).not.toContain("sub-sso@example.com");
   });
 
-  // TC-getCurrentUser-006
   it("reflects a changed retention window (TC-getCurrentUser-006)", async () => {
     const container = createTestContainer();
     const { userId } = await registerWithPassword({
@@ -852,7 +828,6 @@ describe("getCurrentUser (integration)", () => {
     expect(user.trashRetentionDays).toBe(1);
   });
 
-  // TC-getCurrentUser-007
   it("reports NotFoundError when the session outlived the account (TC-getCurrentUser-007)", async () => {
     const container = createTestContainer();
 
@@ -867,10 +842,9 @@ describe("getCurrentUser (integration)", () => {
     expect(isNotFoundError(error) && error.code).toBe("USER_NOT_FOUND");
   });
 
-  // TC-getCurrentUser-008 — spec states this at the usecase, not at
-  // `UserId.create`: a session that decodes to a blank subject must be
-  // refused before any lookup happens, and nothing must be written or
-  // read on the way out.
+  // Spec states this at the usecase, not at `UserId.create`: a session
+  // that decodes to a blank subject must be refused before any lookup
+  // happens, and nothing must be written or read on the way out.
   it.each([
     ["empty", ""],
     ["whitespace only", "   "],
@@ -890,7 +864,6 @@ describe("getCurrentUser (integration)", () => {
     },
   );
 
-  // TC-getCurrentUser-009
   it("surfaces a findById DB fault as SystemError (TC-getCurrentUser-009)", async () => {
     const container = createTestContainer();
     const { userId } = await registerWithPassword({

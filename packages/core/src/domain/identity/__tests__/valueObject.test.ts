@@ -30,14 +30,12 @@ describe("UserId", () => {
     );
   });
 
-  // TC-getCurrentUser-008
   it("rejects an empty id with BusinessRuleError (TC-getCurrentUser-008)", () => {
     expect(codeOf(() => UserId.create(""))).toBe(
       IdentityErrorCode.InvalidUserId,
     );
   });
 
-  // TC-getCurrentUser-008
   it("rejects a whitespace-only id with BusinessRuleError (TC-getCurrentUser-008)", () => {
     expect(codeOf(() => UserId.create("   \t\n "))).toBe(
       IdentityErrorCode.InvalidUserId,
@@ -46,7 +44,6 @@ describe("UserId", () => {
 });
 
 describe("Email", () => {
-  // TC-registerWithPassword-002
   it("normalises by trimming and lowercasing (TC-registerWithPassword-002)", () => {
     expect(Email.create("  User@Example.COM  ")).toBe("user@example.com");
   });
@@ -55,7 +52,6 @@ describe("Email", () => {
     expect(Email.create("user@example.com")).toBe("user@example.com");
   });
 
-  // TC-registerWithPassword-003
   it.each([
     ["missing @", "userexample.com"],
     ["empty domain", "local@"],
@@ -74,14 +70,12 @@ describe("Email", () => {
 });
 
 describe("PlainPassword", () => {
-  // TC-registerWithPassword-006
   it("rejects a 7-character password (TC-registerWithPassword-006)", () => {
     expect(codeOf(() => PlainPassword.create("a".repeat(7)))).toBe(
       IdentityErrorCode.PasswordTooWeak,
     );
   });
 
-  // TC-registerWithPassword-010
   it("rejects the empty password (TC-registerWithPassword-010)", () => {
     expect(codeOf(() => PlainPassword.create(""))).toBe(
       IdentityErrorCode.PasswordTooWeak,

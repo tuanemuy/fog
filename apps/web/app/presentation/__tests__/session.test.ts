@@ -17,7 +17,6 @@ const NOW = new Date("2026-01-01T00:00:00.000Z");
 const TOKEN = "issued.session.token";
 
 describe("endSession", () => {
-  // TC-logout-002
   it("writes the expiry cookie through the header sink (TC-logout-002)", () => {
     const written: string[] = [];
     endSession((value) => {
@@ -29,7 +28,6 @@ describe("endSession", () => {
     expect(written[0]).toContain("Max-Age=0");
   });
 
-  // TC-logout-003
   it("translates a failing header write into SystemError(SESSION_ERROR) (TC-logout-003)", () => {
     const cause = new Error("response already committed");
 
@@ -47,10 +45,10 @@ describe("endSession", () => {
     expect(isSystemError(caught) && caught.cause).toBe(cause);
   });
 
-  // TC-logout-003 — the point of the translation: `serializeError` falls
-  // back to `kind: "unknown"` for anything that is not a
-  // `SerializableError`, so a bare throw would never reach the client as
-  // a system error (.issue/1/adr.md ADR-010).
+  // The point of the translation: `serializeError` falls back to
+  // `kind: "unknown"` for anything that is not a `SerializableError`, so a
+  // bare throw would never reach the client as a system error
+  // (.issue/1/adr.md ADR-010).
   it("serializes to kind: system at the transport boundary (TC-logout-003)", () => {
     let caught: unknown;
     try {

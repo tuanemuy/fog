@@ -40,7 +40,6 @@ describe("buildSessionCookie", () => {
     ).toContain("Max-Age=60");
   });
 
-  // TC-logout-002
   it("expires the cookie with an empty value and Max-Age=0 (TC-logout-002)", () => {
     const cookie = buildSessionCookie(null, { secure: false });
 
@@ -53,8 +52,8 @@ describe("buildSessionCookie", () => {
     ]);
   });
 
-  // TC-logout-002 — a browser only drops a cookie when the expiring
-  // Set-Cookie repeats the attribute set it was issued with.
+  // A browser only drops a cookie when the expiring Set-Cookie repeats the
+  // attribute set it was issued with.
   it("expires with the same attribute set it issues with (TC-logout-002)", () => {
     const issued = attributes(buildSessionCookie("t", { secure: true }));
     const expired = attributes(buildSessionCookie(null, { secure: true }));
@@ -68,8 +67,8 @@ describe("buildSessionCookie", () => {
     expect(withoutValueAndAge(expired)).toEqual(withoutValueAndAge(issued));
   });
 
-  // TC-logout-002 — an explicit max age must not survive into the
-  // expiry cookie, or logout would silently re-issue a live session.
+  // An explicit max age must not survive into the expiry cookie, or logout
+  // would silently re-issue a live session.
   it("ignores maxAgeSeconds when expiring (TC-logout-002)", () => {
     expect(
       buildSessionCookie(null, { secure: false, maxAgeSeconds: 3_600 }),
@@ -78,7 +77,6 @@ describe("buildSessionCookie", () => {
 });
 
 describe("toSessionSystemError", () => {
-  // TC-logout-003
   it("wraps a cookie-write failure as SystemError(SESSION_ERROR) (TC-logout-003)", () => {
     const cause = new Error("headers already sent");
     const error = toSessionSystemError(cause);
@@ -88,8 +86,8 @@ describe("toSessionSystemError", () => {
     expect(error.cause).toBe(cause);
   });
 
-  // TC-logout-003 — retrying writes the same header into the same
-  // broken response, so the failure must not be advertised as retryable.
+  // Retrying writes the same header into the same broken response, so the
+  // failure must not be advertised as retryable.
   it("is not retryable and serializes as kind: system (TC-logout-003)", () => {
     const serialized = toSessionSystemError(new Error("boom")).toSerialized();
 

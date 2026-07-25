@@ -43,7 +43,6 @@ function trippingContainer(): {
 }
 
 describe("logout", () => {
-  // TC-logout-001
   it("resolves to void without touching persistence or events (TC-logout-001)", async () => {
     const { container, touched } = trippingContainer();
 

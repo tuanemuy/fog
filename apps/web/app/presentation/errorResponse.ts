@@ -14,7 +14,7 @@ import {
 
 // Re-exported so `validator.ts` (and other presentation modules) keep a
 // single import site for the serialized-error contract even though the
-// validation variant is now owned by the application layer.
+// validation variant is owned by the application layer.
 export type { SerializedValidationError } from "@repo/core/application/errors";
 export type {
   FieldErrors,

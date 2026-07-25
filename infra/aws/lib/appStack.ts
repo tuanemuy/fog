@@ -2,14 +2,6 @@
 // Mirrors the wrangler `[env.*]` pattern in CF: one declarative bundle of
 // every Lambda + queue + schedule + IAM grant for one environment.
 //
-// Resources declared here:
-//   - 5 Lambda functions: app, relay, consumer, pruner, dlq
-//   - HTTP API (API Gateway v2) fronting `app`
-//   - CloudFront distribution + S3 bucket for `/assets/*` (client bundle)
-//   - SQS standard queue + DLQ with redrive policy
-//   - 2 EventBridge Scheduler schedules (relay 5min / pruner daily)
-//   - IAM grants between them
-//
 // Turso itself is NOT managed here — create the database with the
 // `turso` CLI and pass the URL / auth-token secret ARN as stack props.
 
@@ -278,10 +270,8 @@ export class AppStack extends Stack {
     tursoSecret.grantRead(dlqFn);
     sessionSecret.grantRead(appFn);
 
-    // Relay → SQS (publish)
     eventsQueue.grantSendMessages(relayFn);
 
-    // Consumer → events queue (event source mapping)
     consumerFn.addEventSource(
       new SqsEventSource(eventsQueue, {
         batchSize: 10,
@@ -290,10 +280,9 @@ export class AppStack extends Stack {
       }),
     );
 
-    // DLQ → dlq lambda (event source mapping). The handler always acks
-    // every message (the DLQ has no further dead-letter target so a
-    // re-failure would loop), hence `reportBatchItemFailures` is left
-    // off intentionally.
+    // `reportBatchItemFailures` is left off intentionally: the handler always
+    // acks every message, because the DLQ has no further dead-letter target
+    // and a re-failure would loop.
     dlqFn.addEventSource(
       new SqsEventSource(dlq, {
         batchSize: 10,

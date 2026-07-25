@@ -106,7 +106,6 @@ describe("createNodeWorkerRunner (integration)", () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.id).toBe(event.id);
 
-    // The outbox row should now be processed (processed_at stamped).
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processedAt).not.toBeNull();

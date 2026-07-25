@@ -25,14 +25,12 @@ function rejectionCode(fn: () => unknown): string | null {
 }
 
 describe("Email length boundary", () => {
-  // TC-registerWithPassword-005
   it("accepts exactly 320 characters (TC-registerWithPassword-005)", () => {
     const raw = emailOfLength(EMAIL_MAX_LENGTH);
     expect(raw).toHaveLength(EMAIL_MAX_LENGTH);
     expect(Email.create(raw)).toHaveLength(EMAIL_MAX_LENGTH);
   });
 
-  // TC-registerWithPassword-004
   it("rejects 321 characters (TC-registerWithPassword-004)", () => {
     const raw = emailOfLength(EMAIL_MAX_LENGTH + 1);
     expect(raw).toHaveLength(EMAIL_MAX_LENGTH + 1);
@@ -80,7 +78,6 @@ describe("Email length boundary", () => {
 });
 
 describe("PlainPassword length boundary", () => {
-  // TC-registerWithPassword-006
   it("rejects exactly 7 characters (TC-registerWithPassword-006)", () => {
     expect(
       rejectionCode(() =>
@@ -89,21 +86,18 @@ describe("PlainPassword length boundary", () => {
     ).toBe(IdentityErrorCode.PasswordTooWeak);
   });
 
-  // TC-registerWithPassword-007
   it("accepts exactly 8 characters (TC-registerWithPassword-007)", () => {
     expect(PlainPassword.create("a".repeat(PASSWORD_MIN_LENGTH))).toHaveLength(
       PASSWORD_MIN_LENGTH,
     );
   });
 
-  // TC-registerWithPassword-008
   it("accepts exactly 128 characters (TC-registerWithPassword-008)", () => {
     expect(PlainPassword.create("a".repeat(PASSWORD_MAX_LENGTH))).toHaveLength(
       PASSWORD_MAX_LENGTH,
     );
   });
 
-  // TC-registerWithPassword-009
   it("rejects 129 characters (TC-registerWithPassword-009)", () => {
     expect(
       rejectionCode(() =>

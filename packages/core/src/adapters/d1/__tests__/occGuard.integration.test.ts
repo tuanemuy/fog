@@ -4,17 +4,13 @@ import { drizzle } from "drizzle-orm/d1";
 import { describe, expect, it } from "vitest";
 import { occGuard, outboxEvents, users } from "../schema";
 
-// Phase-1 hypothesis check: does the `_occ_guard` CHECK-constraint trick
-// actually abort an entire D1 batch when an OCC-guarded UPDATE matches
-// zero rows?
-//
-// The deferred-batch UoW design hinges on this. If D1 happens to commit
-// the batch despite the CHECK violation (or if `changes()` does not
-// reflect the prior statement's row count inside a batch), the whole
-// approach is unworkable and we need a different abort mechanism.
-//
-// These tests pin the contract end-to-end against a real Workers /
-// Miniflare D1 binding.
+// Pins, end-to-end against a real Workers / Miniflare D1 binding, that
+// the `_occ_guard` CHECK-constraint trick aborts an entire D1 batch when
+// an OCC-guarded UPDATE matches zero rows. The deferred-batch UoW design
+// hinges on it: if D1 committed the batch despite the CHECK violation
+// (or if `changes()` did not reflect the prior statement's row count
+// inside a batch), the whole approach would need a different abort
+// mechanism.
 describe("OCC guard via _occ_guard CHECK constraint", () => {
   const now = new Date();
   const seedRow = (id: string) => ({
