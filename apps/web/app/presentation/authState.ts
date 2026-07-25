@@ -13,8 +13,8 @@ import { noStoreMiddleware } from "./noStoreMiddleware";
  *
  * It is, however, the one call every protected document passes through
  * (`_app.tsx`'s `beforeLoad`), which is why `noStoreMiddleware` sits here:
- * it is what puts `Cache-Control: no-store` on `/`, `/topics`, `/search`
- * and `/trash` (manual TC-23).
+ * it is what puts `Cache-Control: no-store` on every route under `_app`
+ * (manual TC-23).
  *
  * Referenced only from route modules, which the RSC manifest already sees;
  * no side-effect import in `__root.tsx` is needed.

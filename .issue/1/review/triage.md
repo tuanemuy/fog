@@ -94,3 +94,9 @@
 | `UsecaseContainer の @ts-expect-error が空振り` | R4 | fix | コメントが名指しした退行を検出しない（実測で typecheck が通る） | 1 |
 | `fromBase64Url の空白拒否の記述` | R4 | fix | 実測で長さが4の倍数に収まる空白は受理される | 1 |
 | `__root JSDoc / ADR-048 Decision / currentUser.test の ADR 参照` | R4 | fix | 記述が実測・実装と食い違う（マージ条件ではないが同一コミットで直す） | 0 |
+| `Brand の accent 唯一記述` | R5 | fix | 実測で2箇所（AppShell に直書きあり） | 1 |
+| `RoutePendingFallback / CLAUDE.md の never trigger 記述` | R5 | fix | 実ブラウザで t=253ms に発火することを実測 | 1 |
+| `断定と実測の食い違い（ADR-051 / AC-5 / containerStore / authState / schema / appStack / Deferred）` | R5 | fix | 同一カテゴリの記述精度をまとめて是正 | 1 |
+| `entity.test の PLAINTEXT 表明が空振り` | R5 | fix | ミューテーションで検出できないことを実測 | 0 |
+| `GCP /prune の無認証` | R5 | defer | #26。本 PR の差分外（テンプレート由来） | 0 |
+| `D1 PendingBatch の OCC 競合誤帰属` | R5 | defer | #26。本 PR の差分外（テンプレート由来） | 0 |

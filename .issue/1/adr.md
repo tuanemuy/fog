@@ -1433,7 +1433,7 @@ Accepted（レビュー指摘 review-003-domain-adapters B-001 への対応）
 
 ### Context
 
-`packages/core/src` / `apps/web/app` のコメントには本 Issue の判断を指す `ADR-NNN` 参照が44箇所ある。ところがリポジトリには `spec/adr/001〜006` という長命な ADR が既に実在し、`spec/domains/identity.md:5` が `[ADR-004](../adr/004-domain-boundaries.md)` と相対リンクしているため、「ADR-NNN」は既に `spec/adr/NNN` を意味する語彙として確立している。結果、無修飾の `ADR-002`（意図はセッション方式）は `spec/adr/002-export-scope.md` に解決し、007 以降はどこにも解決しない。
+`packages/core/src` / `apps/web/app` のコメントには本 Issue の判断を指す `ADR-NNN` 参照が44箇所ある（本 ADR 制定時点。その後の修正で増え、本 PR 完了時点では `grep -rnoE 'ADR-[0-9]+' packages/core/src apps/web/app infra` が52箇所）。ところがリポジトリには `spec/adr/001〜006` という長命な ADR が既に実在し、`spec/domains/identity.md:5` が `[ADR-004](../adr/004-domain-boundaries.md)` と相対リンクしているため、「ADR-NNN」は既に `spec/adr/NNN` を意味する語彙として確立している。結果、無修飾の `ADR-002`（意図はセッション方式）は `spec/adr/002-export-scope.md` に解決し、007 以降はどこにも解決しない。
 
 選択肢は3つあった。(a) `.issue/1/adr.md` の判断を `spec/adr/007-*.md` 以降として切り出す。(b) コード側の参照を全件パス付きに直す。(c) `.issue/1/adr.md` の採番を 100 番台へ振り直す。
 
@@ -1445,8 +1445,8 @@ Accepted（レビュー指摘 review-003-domain-adapters B-001 への対応）
 
 ### Consequences
 
-- 良い点: `grep -rnoE 'ADR-[0-9]+' packages/core/src apps/web/app infra` の全ヒットが、直前のパスによって一意に解決する。番号空間の衝突は解消した
-- トレードオフ: 出荷コードが issue 単位の作業ディレクトリを参照し続ける歪みは残る。`.issue/1/adr.md` を `spec/adr/007-*.md` 以降へ切り出す作業は未了で、その時点で44箇所の再置換が必要になる
+- 良い点: `grep -rnoE 'ADR-[0-9]+' packages/core/src apps/web/app infra` の全ヒットが、直前のパスによって一意に解決する。番号空間の衝突は解消した（本 PR 完了時点で52箇所すべてが `.issue/1/adr.md ` 直後に現れることを実測）
+- トレードオフ: 出荷コードが issue 単位の作業ディレクトリを参照し続ける歪みは残る。`.issue/1/adr.md` を `spec/adr/007-*.md` 以降へ切り出す作業は未了で、その時点で52箇所の再置換が必要になる
 
 ---
 
@@ -1584,6 +1584,6 @@ DB は要らない（`findByEmail` が `null` を返すスタブで十分）の�
 
 ### Consequences
 
-- 良い点: ミューテーションで実効性を確認した。ラッチの2行を削ると (3) が落ち、`cause` の射影を生のまま渡す形に戻すと3件が落ちる（いずれも実測後 revert 済み）
+- 良い点: ミューテーションで実効性を確認した。ラッチの2行を削ると (3) が落ち、`cause` の射影を生のまま渡す形に戻すと2件が落ちる（424件中 422 passed。いずれも実測後 revert 済み）
 - 良い点: `PasswordHasher` の「例外に平文を載せない」契約（ADR-047）の消費側の守り方が、初めてテストで固定された
 - トレードオフ: `vi.resetModules()` を使うテストはモジュールグラフを作り直すので、静的 import した型ガード（`isValidationError` 等）とはインスタンスが別になる。このスイートはログだけを見て例外の同一性を見ないことでそれを回避している。ラッチ以外の `loginWithPassword` の表明は従来どおり `identity.integration.test.ts` が持つ

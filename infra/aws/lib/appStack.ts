@@ -265,8 +265,9 @@ export class AppStack extends Stack {
     });
 
     // ---- IAM grants --------------------------------------------------
-    // Request path → relay (async invoke) + SQS read for DLQ requeue +
-    // Turso auth token from Secrets Manager.
+    // Request path → relay (async invoke) + Turso auth token and session
+    // secret from Secrets Manager. No SQS grant: the app never touches a
+    // queue directly.
     relayFn.grantInvoke(appFn);
     // Relay self-chains when a batch saturates `maxIterations`.
     relayFn.grantInvoke(relayFn);

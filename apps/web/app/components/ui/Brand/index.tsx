@@ -1,6 +1,11 @@
 /**
- * Wordmark plus the accent dot — the one place the accent colour is
- * allowed to appear (spec/design/index.md「色は役割」).
+ * Wordmark plus the accent dot.
+ *
+ * The accent colour is allowed to appear only as this 6px dot
+ * (spec/design/index.md「色は役割」). `bg-accent` has exactly two call
+ * sites: here and `layout/AppShell`'s mobile header, which repeats the
+ * same dot next to the page title without going through this component.
+ * Change the accent's treatment in both.
  */
 export function Brand() {
   return (

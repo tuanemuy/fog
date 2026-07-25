@@ -78,6 +78,12 @@ describe("User.registerWithPassword", () => {
       "authMethod",
       "userId",
     ]);
+    // Positive control: `registerWithPassword` takes no plaintext, so the
+    // plaintext scan below can only ever pass. Prove the scanner reaches
+    // the depth a payload sits at first, or it asserts nothing.
+    expect(
+      containsString([{ payload: { password: PLAINTEXT } }], PLAINTEXT),
+    ).toBe(true);
     expect(containsString(eventDrafts, PLAINTEXT)).toBe(false);
     expect(containsString(eventDrafts, HASH)).toBe(false);
   });

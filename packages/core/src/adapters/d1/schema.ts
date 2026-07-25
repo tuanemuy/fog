@@ -88,8 +88,9 @@ export const outboxEvents = sqliteTable(
     // same row. `claimed_at` is stamped at claim time; a row is
     // re-claimable once `claimed_at <= now - leaseMs` (covers crashed
     // workers without an explicit unclaim step). `claimed_by` is a
-    // free-form worker id (from `IdGenerator`) — used only for
-    // diagnostics.
+    // free-form worker id minted by the relay worker itself
+    // (`crypto.randomUUID()`, not the `IdGenerator` port) — used only
+    // for diagnostics.
     claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
     claimedBy: text("claimed_by"),
   },

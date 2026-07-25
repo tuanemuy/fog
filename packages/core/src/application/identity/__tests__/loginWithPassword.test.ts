@@ -92,7 +92,8 @@ async function attempt(
 }
 
 // .issue/1/adr.md ADR-034 makes this warning the only signal that login's
-// timing equalisation has stopped working, and ADR-047 then latched it.
+// timing equalisation has stopped working, and .issue/1/adr.md ADR-047 then
+// latched it.
 // Both halves need pinning: a latch that never fires and a latch that
 // never holds are equally silent failures of that signal.
 describe("burnVerificationTime's unreadable-dummy warning", () => {

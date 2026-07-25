@@ -4,9 +4,15 @@ import { Skeleton } from "@/components/ui/Skeleton";
  * Generic, route-level navigation pending UI.
  *
  * Wired as the router's `defaultPendingComponent`: shown while a route whose
- * loader genuinely blocks resolves (past `defaultPendingMs`). Routes that
- * stream their own content via `<Suspense>` settle their loader instantly and
- * never trigger this — they rely on a per-fragment skeleton instead.
+ * loader stays unresolved past `defaultPendingMs` resolves.
+ *
+ * A streaming route (`routes/_app/settings.tsx`) leans on a per-fragment
+ * skeleton instead, but it is not exempt: its loader still awaits the
+ * `createServerFn` call that hands over the unresolved RSC promise. That
+ * await is free under SSR (same process) and on client navigation costs one
+ * `/_serverFn/...` round trip, so a hop slower than `defaultPendingMs` shows
+ * this first and the fragment skeleton after. Measured at 253ms with 1500ms
+ * injected into the handler.
  *
  * `role="status"` + `aria-live="polite"` + the sr-only label give one polite
  * announcement for the whole region; the bars are `aria-hidden` via `Skeleton`.
