@@ -28,7 +28,10 @@ export function AuthSheet({ title, description, children }: AuthSheetProps) {
             {description}
           </p>
         ) : null}
-        <div className="mt-section">{children}</div>
+        {/* 本文の上余白はシート側が持つ。children は 5 画面で形が不揃いで、
+            ErrorRetry は className を受け取らない。flex にするのは、children
+            先頭が mt-* を持ったときに親子マージン相殺で 36px が消えないため */}
+        <div className="mt-section flex flex-col">{children}</div>
       </div>
     </main>
   );

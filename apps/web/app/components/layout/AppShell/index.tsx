@@ -187,22 +187,24 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-hidden="true"
             className="mx-auto h-handle-h w-handle-w rounded-full bg-neutral-300"
           />
-          {NAV_ITEMS.map((item, index) => {
-            const isCurrent = item.to === pathname;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                aria-current={isCurrent ? "page" : undefined}
-                className={`${NAV_ITEM} ${
-                  index === 0 ? "mt-md" : "border-t border-neutral-100"
-                } ${isCurrent ? "font-semibold" : ""}`}
-              >
-                <Mark current={isCurrent} />
-                {item.label}
-              </Link>
-            );
-          })}
+          <div className="mt-md">
+            {NAV_ITEMS.map((item, index) => {
+              const isCurrent = item.to === pathname;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  aria-current={isCurrent ? "page" : undefined}
+                  className={`${NAV_ITEM} ${
+                    index === 0 ? "" : "border-t border-neutral-100"
+                  } ${isCurrent ? "font-semibold" : ""}`}
+                >
+                  <Mark current={isCurrent} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       ) : null}
     </>
