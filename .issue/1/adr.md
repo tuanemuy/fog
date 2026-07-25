@@ -713,3 +713,71 @@ plan.md のスコープ節は「動かない SSO ボタンは置かない」と�
 
 - 良い点: 画面が課す規則と実装が課す規則が一致し、`IDENTITY_PASSWORD_TOO_WEAK` の日本語文言（「パスワードは8文字以上128文字以下で入力してください」）とも矛盾しない
 - トレードオフ: 承認済みデザイン HTML との差分が2箇所（SSO ブロック・ヘルパー文）になる。どちらも「実装が仕様に合わせた」差分なので、SSO スライスとあわせて spec-sync / デザイン更新の対象として記録する
+
+---
+
+## ADR-019: 統合テストの障害注入は「ポートのスタブ」と「テーブルの一時 rename」で行う
+
+### Status
+
+Accepted（実装時に決定）
+
+### Context
+
+失敗系の TC が5件あり、どれも「実 DB / 実アダプターの経路で失敗を再現する」ことを要求する。
+
+| TC | 再現すべき失敗 |
+|---|---|
+| TC-registerWithPassword-015 | `PasswordHasher.hash` の失敗 |
+| TC-registerWithPassword-016 | `UserRepository.insert` の DB 例外（ロールバック・イベント未記録つき） |
+| TC-loginWithPassword-010 | `findByEmail` の DB 例外 |
+| TC-loginWithPassword-011 | `PasswordHasher.verify` の計算失敗 |
+| TC-getCurrentUser-009 | `findById` の DB 例外 |
+
+DB 側の障害を「制約違反」で作ることはできない。`mapDbError` は `SQLITE_CONSTRAINT*` をすべて `ConflictError` に分類し、さらに UNIQUE / PK は `constraintViolationCode` が同じ `UNIQUE_VIOLATION` に潰すので、ADR-008 の読み替えを通って `EMAIL_ALREADY_REGISTERED` に化ける。`SystemError` には到達しない。
+
+### Decision
+
+**ハッシャー系はポートのスタブ、DB 系はテーブルの一時 rename** で注入する。
+
+1. **`PasswordHasher` の失敗**（015 / 011）— `createTestContainer({ passwordHasher })` に `SystemError(CryptoError)` を投げるスタブを渡す。**この形なので、テストが表明しているのは「ユースケースがアダプター由来の `SystemError` を握り潰さず・翻訳もせずそのまま通す」ことである**（`PasswordHasher` ポートの契約上、失敗を `SystemError` にするのはアダプターの責務であって、ユースケースは何もしないのが正しい）。あわせて「ユーザー行が作られない」「outbox が空」も表明し、単なる再送ではないことを担保する。
+2. **読み取りの DB 障害**（010 / 009）— `ALTER TABLE users RENAME TO users_hidden` で読み取り対象を消し、`finally` で戻す。非制約系なので `mapDbError` は `SystemError(DATABASE_ERROR)` に落とす（`d1/__tests__/helpers.integration.test.ts` の「非制約系は DATABASE_ERROR」と同じ経路）。
+3. **insert の DB 障害**（016）— rename を**ユースケース呼び出しの前に置くと `findByEmail`（事前検証の読み）で落ちてしまい、insert を検証したことにならない**。そこで `UnitOfWorkContext` をラップし、`userRepository.insert` が実 insert を pending batch に登録した**直後に** rename する `UnitOfWorkProvider` をテスト内で組む。UoW は遅延バッチなので実際の失敗は flush 時に起き、「insert の書き込みが DB 例外で落ちる」形になる。ロールバックは `users` / `outbox_events` がともに空であることで表明する。
+
+### Consequences
+
+- 良い点:
+  - 5件すべてが実アダプター・実 DB の経路を通る。リポジトリのフェイクを持ち込まずに済み、`docs/test.md` の「リポジトリのフェイクは置かない」方針と整合する
+  - 016 が「事前検証の読み」ではなく「書き込み」の失敗を実際に検証できる
+  - rename は `try / finally` で必ず戻すので、`d1/__tests__/setup.ts` の `beforeEach` TRUNCATE（`DELETE FROM users`）を壊さない
+- トレードオフ:
+  - 016 のラッパーは `UnitOfWorkContext` のメソッドを1つずつ委譲するので、ポートにメソッドが増えるとこのテストも足す必要がある（型検査で検出される）
+  - `finally` の rename が失敗すると同一ファイルの後続テストが道連れになる。`ALTER TABLE` は D1 でも同期的に成功する単純な DDL なので許容する
+
+---
+
+## ADR-020: `session.ts`（`server-only`）を node プールの単体テストで直接の対象にする
+
+### Status
+
+Accepted（実装時に決定）
+
+### Context
+
+plan.md のテスト方針は TC-logout-003 に条件付きの指示を置いていた: 「ステップ2の疎通確認で `server-only` の import が node プールで通らないと判明した場合は、`session.test.ts` を置かず `sessionCookie.test.ts` 側で純関数 `toSessionSystemError` を対象にする」。
+
+実測したところ、`apps/web/app/presentation/session.ts` は `@tanstack/react-start/server-only` と `@tanstack/react-start/server` を import しているにもかかわらず、ルートの node プール（`vitest.config.ts`）で問題なく読み込め、`endSession(setCookieHeader)` を直接呼べた。
+
+### Decision
+
+**両方を置く。**
+
+- `sessionCookie.test.ts` — Cookie 組み立ての純関数と `toSessionSystemError` 単体（TC-logout-002 / 003 の受け皿部分）
+- `session.test.ts` — throw する `setCookieHeader` スタブを渡した `endSession` が `SystemError(SessionError)` を投げ、`serializeError` が `kind: "system"` を返すこと（TC-logout-003 の本体）
+
+`toSessionSystemError` は「node プールで読めなかった場合の受け皿」として作られたが、読めた今も残す。`session.ts` の `catch` 節が「なぜ握り潰さずに包み直すのか」を1箇所に閉じ込める役割は変わらないため。
+
+### Consequences
+
+- 良い点: TC-logout-003 が「翻訳する純関数」ではなく「実際に翻訳が起きる関数（`endSession`）」で検証される。plan.md が代替案として許容していた範囲より強い
+- トレードオフ: `apps/web` 配下の単体テストが `server-only` の解決可能性に依存する。TanStack Start のバージョン更新で解決が壊れると `session.test.ts` だけが落ちるが、そのときは受け皿（`sessionCookie.test.ts` 側の `toSessionSystemError` テスト）がそのまま代替になる
