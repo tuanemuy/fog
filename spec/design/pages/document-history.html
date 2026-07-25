@@ -224,10 +224,6 @@
         text-overflow: ellipsis;
         min-width: 0;
       }
-      .h-title h1 {
-        font-size: inherit;
-        font-weight: inherit;
-      }
       .icon-btn {
         border: none;
         background: none;
@@ -349,6 +345,13 @@
 
       /* ==== ドキュメント履歴固有 ==== */
 
+      .doc-title {
+        font-size: var(--text-xl);
+        font-weight: var(--weight-bold);
+        line-height: var(--leading-tight);
+        color: var(--color-neutral-900);
+        margin-bottom: var(--space-section);
+      }
       .list-label {
         font-size: var(--text-xs);
         font-weight: var(--weight-semibold);
@@ -689,8 +692,7 @@
               </svg>
             </button>
             <div class="h-title">
-              <h1 class="title-text">サイト構成の方針</h1
-              ><span class="dot"></span>
+              <span class="title-text">履歴</span><span class="dot"></span>
             </div>
           </div>
           <div class="h-actions">
@@ -702,6 +704,7 @@
 
         <main class="sheet">
           <div class="inner">
+            <h1 class="doc-title">サイト構成の方針</h1>
             <div class="list-label">履歴</div>
 
             <div class="revision-list">
