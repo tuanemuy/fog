@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>fog — アイコン × Wordmark 提案 v1</title>
+<style>
+  :root {
+    --color-bg-page: #e9e9ed;
+    --color-bg-card: #ffffff;
+    --color-ink: #191a1d;
+    --color-ink-secondary: #6e7076;
+    --color-ink-tertiary: #9b9da4;
+    --color-hairline: #eeeef1;
+    --color-surface: #f6f6f8;
+    --color-accent: #e8590c;
+    --font-sans: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --radius-lg: 18px;
+    --shadow-sm: 0 2px 24px rgba(25, 26, 29, 0.05);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--color-bg-page); color: var(--color-ink); font-family: var(--font-sans); letter-spacing: -0.003em; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 64px 24px; }
+
+  header.page { margin-bottom: 40px; }
+  header.page h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 400; letter-spacing: -0.022em; margin: 0 0 12px; }
+  header.page h1 .dot { display: inline-block; width: 0.22em; height: 0.22em; border-radius: 999px; background: var(--color-accent); margin-left: 0.18em; vertical-align: 0.06em; }
+  header.page p { margin: 0 0 10px; max-width: 66ch; color: var(--color-ink-secondary); line-height: 1.7; font-size: 15px; }
+
+  .card { border: 1px solid var(--color-hairline); border-radius: var(--radius-lg); background: var(--color-bg-card); box-shadow: var(--shadow-sm); margin-bottom: 24px; overflow: hidden; }
+  .card .head { padding: 24px 28px 18px; }
+  .head .titleline { display: flex; align-items: baseline; gap: 10px; }
+  .head .titleline h2 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.014em; }
+  .head .titleline .jp { font-size: 13px; color: var(--color-ink-tertiary); }
+  .head .desc { margin: 8px 0 0; font-size: 13px; color: var(--color-ink-secondary); line-height: 1.7; max-width: 64ch; }
+
+  .grouplabel { font-size: 12px; font-weight: 600; color: var(--color-ink-secondary); letter-spacing: 0.02em; padding: 18px 28px 2px; border-top: 1px solid var(--color-hairline); }
+  .grouplabel + .band { border-top: none; }
+
+  /* light / dark 横並び比較 */
+  .band { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--color-hairline); }
+  .band .pane { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 38px 24px; min-height: 140px; }
+  .band .pane.light { background: var(--color-bg-card); color: var(--color-ink); }
+  .band .pane.dark  { background: var(--color-ink); color: #ffffff; }
+  .band .pane svg { width: 50px; height: 50px; flex: none; display: block; }
+  .band .wm-band { font-size: 40px; font-weight: 400; letter-spacing: -0.022em; color: currentColor; white-space: nowrap; }
+
+  .lk { display: flex; align-items: center; gap: 18px; padding: 20px 28px; border-top: 1px solid var(--color-hairline); }
+  .lk svg.ic { width: 42px; height: 42px; flex: none; color: var(--color-ink); display: block; }
+  .lk .wm { color: var(--color-ink); white-space: nowrap; line-height: 1.05; }
+  .lk .note { margin-left: auto; font-size: 12px; color: var(--color-ink-tertiary); text-align: right; flex: none; }
+
+  .variants { display: flex; gap: 28px; align-items: flex-start; padding: 18px 28px; border-top: 1px solid var(--color-hairline); color: var(--color-ink); }
+  .variants .label { font-size: 11px; color: var(--color-ink-tertiary); align-self: center; }
+  .variants .o { display: grid; justify-items: center; gap: 6px; }
+  .variants .o svg { width: 40px; height: 40px; }
+  .variants .o small { font-size: 10px; color: var(--color-ink-tertiary); }
+
+  .applist { display: flex; gap: 12px; align-items: center; padding: 18px 28px 24px; border-top: 1px solid var(--color-hairline); flex-wrap: wrap; }
+  .applist .label { font-size: 11px; color: var(--color-ink-tertiary); margin-right: 4px; }
+  .tile { width: 52px; height: 52px; border-radius: 13px; display: grid; place-items: center; }
+  .tile svg { width: 29px; height: 29px; }
+  .tile.dark { background: var(--color-ink); color: #fff; }
+  .tile.light { background: var(--color-surface); color: var(--color-ink); border: 1px solid var(--color-hairline); }
+
+  /* アプリ内実寸（サイドバーの brand 行を再現） */
+  .ctx { display: flex; align-items: center; gap: 24px; padding: 16px 28px; border-top: 1px solid var(--color-hairline); background: var(--color-bg-page); }
+  .ctx .label { font-size: 11px; color: var(--color-ink-tertiary); }
+  .ctx .mini { display: flex; align-items: center; gap: 8px; }
+  .ctx .mini svg { width: 18px; height: 18px; color: var(--color-ink); display: block; }
+  .ctx .miniwm { font-size: 17px; font-weight: 600; letter-spacing: -0.003em; }
+  .ctx .minidot { width: 6px; height: 6px; border-radius: 999px; background: var(--color-accent); }
+
+  /* fonts */
+  .f-helv { font-family: "Helvetica Neue", Arial, sans-serif; }
+  .f-aven { font-family: "Avenir Next", "Avenir", sans-serif; }
+
+  /* wordmark cases */
+  .lc { font-weight: 400; letter-spacing: -0.022em; font-size: 40px; }
+  .uc { font-weight: 400; letter-spacing: 0.18em; text-transform: uppercase; font-size: 31px; padding-left: 0.18em; }
+
+  .footer { margin-top: 16px; padding-top: 26px; border-top: 1px solid rgba(25, 26, 29, 0.12); color: var(--color-ink-secondary); font-size: 13px; line-height: 1.7; }
+  .footer code { font-family: var(--font-mono); background: rgba(255, 255, 255, 0.7); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page">
+    <h1>fog — アイコン × Wordmark 提案 v1<span class="dot"></span></h1>
+    <p>現行ブランドはサイドバーの「fog ＋ 橙ドット」のみで、アイコン・favicon は未定義。ここでは 4 案のアイコンを提案する。各案は <b>上段に light / dark の横並び比較</b>、<b>下段に Helvetica Neue / Avenir Next ×（小文字 / 大文字）の 4 パターン</b>の lockup、<b>バリアント比較</b>、<b>App icon タイル</b>、<b>アプリ内実寸（サイドバー再現）</b>。</p>
+    <p>アイコンはすべてデザイン様式（ソフトミニマリズム）に従い 1.6〜1.7px の線画・単色。橙はブランドの「点」専用というトークン規約があるため、差し色はドット部分にのみ許可（案 2 に比較あり）。フォントは macOS 標準で表示されるもので、アプリの UI 書体は Helvetica Neue スタック。</p>
+  </header>
+
+  <!-- ============ 1. Haze ============ -->
+  <section class="card">
+    <div class="head">
+      <div class="titleline"><h2>Haze</h2><span class="jp">霞 — 漂う三筋</span></div>
+      <p class="desc">互い違いにずれた 3 本の線＝流れる霧。「雑に書き留めたメモがタイムラインに積もる」を最小の要素で表す。もっとも「fog」の語義に忠実な案。</p>
+    </div>
+    <div class="band">
+      <div class="pane light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm-band f-helv">fog</span></div>
+      <div class="pane dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm-band f-helv">fog</span></div>
+    </div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm f-helv lc">fog</span><span class="note">Helvetica Neue / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm f-helv uc">fog</span><span class="note">Helvetica Neue / UPPERCASE</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm f-aven lc">fog</span><span class="note">Avenir Next / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="wm f-aven uc">fog</span><span class="note">Avenir Next / UPPERCASE</span></div>
+    <div class="variants"><span class="label">並び</span>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><small>互い違い</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H19.5 M4.5 12 H15 M4.5 16 H11"/></svg><small>左揃え（文章風）</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 8 H17 M4.5 12 H19.5 M8.5 16 H15.5"/></svg><small>中央揃え</small></div>
+    </div>
+    <div class="applist"><span class="label">App icon</span>
+      <div class="tile dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg></div>
+      <div class="tile light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg></div>
+    </div>
+    <div class="ctx"><span class="label">アプリ内実寸（サイドバー）</span>
+      <span class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 8 H15.5 M8.5 12 H19.5 M6 16 H14"/></svg><span class="miniwm">fog</span><span class="minidot"></span></span>
+    </div>
+  </section>
+
+  <!-- ============ 2. Dot & Mist ============ -->
+  <section class="card">
+    <div class="head">
+      <div class="titleline"><h2>Dot &amp; Mist</h2><span class="jp">点と霧 — 既存ブランドの継承</span></div>
+      <p class="desc">霧の線に、現行ヘッダーの橙ドットをそのまま迎え入れる案。「霧（雑多なメモ）の中に確かな一点（価値）がある」。既存 UI と一貫し、差し色を使える唯一の案。</p>
+    </div>
+    <div class="band">
+      <div class="pane light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm-band f-helv">fog</span></div>
+      <div class="pane dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm-band f-helv">fog</span></div>
+    </div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm f-helv lc">fog</span><span class="note">Helvetica Neue / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm f-helv uc">fog</span><span class="note">Helvetica Neue / UPPERCASE</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm f-aven lc">fog</span><span class="note">Avenir Next / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="wm f-aven uc">fog</span><span class="note">Avenir Next / UPPERCASE</span></div>
+    <div class="variants"><span class="label">点の位置</span>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><small>右上</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M9 16 H17"/></svg><small>左上</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="17.3" cy="14.5" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 9.5 H19.5 M4.5 14.5 H13.5"/></svg><small>行末（句点風）</small></div>
+    </div>
+    <div class="variants"><span class="label">差し色</span>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><small>単色</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="#e8590c" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><small>点のみ橙</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="17.3" cy="14.5" r="1.8" fill="#e8590c" stroke="none"/><path d="M4.5 9.5 H19.5 M4.5 14.5 H13.5"/></svg><small>行末 × 橙</small></div>
+    </div>
+    <div class="applist"><span class="label">App icon / 単色</span>
+      <div class="tile dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg></div>
+      <div class="tile light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="currentColor" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg></div>
+      <span class="label" style="margin-left:16px">点のみ橙</span>
+      <div class="tile dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="#e8590c" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg></div>
+      <div class="tile light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="#e8590c" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg></div>
+    </div>
+    <div class="ctx"><span class="label">アプリ内実寸（サイドバー）</span>
+      <span class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16.5" cy="7" r="1.8" fill="#e8590c" stroke="none"/><path d="M4.5 12 H19.5 M7 16 H15"/></svg><span class="miniwm">fog</span><span class="minidot"></span></span>
+    </div>
+  </section>
+
+  <!-- ============ 3. Condense ============ -->
+  <section class="card">
+    <div class="head">
+      <div class="titleline"><h2>Condense</h2><span class="jp">凝縮 — 点が積もって層になる</span></div>
+      <p class="desc">点 → 短い線 → 長い線。三層ドメイン（メモ＝アトム → ドキュメント → トピック）をそのまま図形にした案。「雑な一滴が AI に紡がれて価値の層になる」というプロダクトの構造を語れる。</p>
+    </div>
+    <div class="band">
+      <div class="pane light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm-band f-helv">fog</span></div>
+      <div class="pane dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm-band f-helv">fog</span></div>
+    </div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm f-helv lc">fog</span><span class="note">Helvetica Neue / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm f-helv uc">fog</span><span class="note">Helvetica Neue / UPPERCASE</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm f-aven lc">fog</span><span class="note">Avenir Next / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="wm f-aven uc">fog</span><span class="note">Avenir Next / UPPERCASE</span></div>
+    <div class="variants"><span class="label">向き</span>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><small>点が上（積もる）</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="17" r="1.6" fill="currentColor" stroke="none"/><path d="M5 7 H19 M8.5 12 H15.5"/></svg><small>点が下（蒸留）</small></div>
+    </div>
+    <div class="applist"><span class="label">App icon</span>
+      <div class="tile dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg></div>
+      <div class="tile light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg></div>
+    </div>
+    <div class="ctx"><span class="label">アプリ内実寸（サイドバー）</span>
+      <span class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M8.5 12 H15.5 M5 17 H19"/></svg><span class="miniwm">fog</span><span class="minidot"></span></span>
+    </div>
+  </section>
+
+  <!-- ============ 4. Emerge ============ -->
+  <section class="card">
+    <div class="head">
+      <div class="titleline"><h2>Emerge</h2><span class="jp">現出 — 霧の向こうに主題の輪郭</span></div>
+      <p class="desc">霧の地平から半円の輪郭が現れる。「溜めたメモから、AI とともに主題（トピック）が浮かび上がる」。気象アイコンの語彙に近く一目で「fog」と読めるが、その分ジェネリックに寄るリスクを引き受ける案。</p>
+    </div>
+    <div class="band">
+      <div class="pane light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm-band f-helv">fog</span></div>
+      <div class="pane dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm-band f-helv">fog</span></div>
+    </div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm f-helv lc">fog</span><span class="note">Helvetica Neue / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm f-helv uc">fog</span><span class="note">Helvetica Neue / UPPERCASE</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm f-aven lc">fog</span><span class="note">Avenir Next / lowercase</span></div>
+    <div class="lk"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="wm f-aven uc">fog</span><span class="note">Avenir Next / UPPERCASE</span></div>
+    <div class="variants"><span class="label">構図</span>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><small>地平に接する</small></div>
+      <div class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 11 A4 4 0 0 1 16 11"/><path d="M4.5 14.5 H19.5 M7 18 H15"/></svg><small>浮遊する</small></div>
+    </div>
+    <div class="applist"><span class="label">App icon</span>
+      <div class="tile dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg></div>
+      <div class="tile light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg></div>
+    </div>
+    <div class="ctx"><span class="label">アプリ内実寸（サイドバー）</span>
+      <span class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7.5 13 A4.5 4.5 0 0 1 16.5 13"/><path d="M4.5 13 H19.5 M7 16.5 H15"/></svg><span class="miniwm">fog</span><span class="minidot"></span></span>
+    </div>
+  </section>
+
+  <p class="footer">
+    全 4 案 × {Helvetica Neue, Avenir Next} × {lowercase, UPPERCASE} = 各 4 パターンの lockup。気に入った「アイコン × バリアント × フォント × 大小文字（＋差し色の有無）」1 組を指定してくれれば、字間・プロポーションを詰めて lockup を確定し、<code>.svg</code> 化＋favicon 一式（<code>favicon.ico</code> / <code>apple-touch-icon</code> / <code>og:image</code> / <code>mask-icon</code>）と、サイドバー brand・認証画面ヘッダーへの組み込み方針まで仕上げる。差し色（橙）を使う場合はトークン規約「橙は点専用・面に使わない」を維持する。
+  </p>
+</div>
+</body>
+</html>
