@@ -3,10 +3,12 @@
    with `tokens.css`: a token that is not listed here has no utility, and a
    name listed here that no longer exists there resolves to nothing.
 
-   Tokens with no matching Tailwind namespace (`--pad-*`, `--icon-*`,
-   `--border-input`, `--content-max`, `--sidebar-w`, …) are intentionally
-   absent — they are consumed as `p-(--pad-btn)`-style arbitrary values,
-   which still routes every value through a token. */
+   A token goes into whatever namespace can carry it, even when its name does
+   not look like a scale step: single-value widths and paddings ride
+   `--spacing-*`, max-widths ride `--container-*`. Only values no namespace can
+   hold — the multi-value shorthands `--pad-btn` / `--pad-input` / `--pad-menu`
+   and `--border-input` — stay out and are consumed as `p-(--pad-btn)`-style
+   arbitrary values (ADR-053 narrowed ADR-017 to just those). */
 @theme {
   /* Colors */
   --color-primary-lighter: var(--color-primary-lighter);
@@ -78,6 +80,40 @@
   --spacing-xl: var(--space-xl);
   --spacing-2xl: var(--space-2xl);
   --spacing-section: var(--space-section);
+
+  /* Spacing — safe-area 込みの段（`pt-safe-t-xl` / `pb-safe-b-2xl`） */
+  --spacing-safe-t-lg: var(--space-safe-t-lg);
+  --spacing-safe-t-xl: var(--space-safe-t-xl);
+  --spacing-safe-b-xl: var(--space-safe-b-xl);
+  --spacing-safe-b-2xl: var(--space-safe-b-2xl);
+
+  /* Spacing — 単値の役割寸法。スケールの段ではないが `--spacing-*` に載るので
+     ユーティリティになる（複合値の `--pad-btn` / `--pad-input` / `--pad-menu`
+     だけは名前空間に載らず `p-(--pad-btn)` のまま） */
+  --spacing-row: var(--pad-row);
+  --spacing-sheet: var(--sheet-w);
+  --spacing-sheet-md: var(--sheet-w-md);
+  --spacing-sheet-inset: var(--nav-sheet-inset);
+  --spacing-sidebar: var(--sidebar-w);
+  --spacing-icon-lg: var(--icon-lg);
+  --spacing-icon-md: var(--icon-md);
+  --spacing-icon-sm: var(--icon-sm);
+  --spacing-icon-xs: var(--icon-xs);
+  --spacing-dot: var(--size-dot);
+  --spacing-mark: var(--size-mark);
+  --spacing-handle-w: var(--size-handle-w);
+  --spacing-handle-h: var(--size-handle-h);
+  --spacing-skeleton-line: var(--skeleton-line-h);
+  --spacing-skeleton-title: var(--skeleton-title-h);
+  --spacing-skeleton-short: var(--skeleton-line-w-short);
+
+  /* Container — `max-w-*` が読む名前空間。`--container-max` を `max-w-max`
+     として出すと Tailwind 組み込みの `max-width: max-content` と衝突するので、
+     投影名は `page` にする */
+  --container-page: var(--container-max);
+  --container-content: var(--content-max);
+  --container-narrow: var(--narrow-max);
+  --container-skeleton-short: var(--skeleton-line-w-short);
 
   /* Radius */
   --radius-sm: var(--radius-sm);

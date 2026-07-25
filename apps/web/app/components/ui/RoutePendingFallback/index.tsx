@@ -21,10 +21,10 @@ export function RoutePendingFallback() {
   return (
     <div role="status" aria-live="polite" className="flex flex-col gap-md p-lg">
       <span className="sr-only">読み込み中</span>
-      <Skeleton className="h-(--skeleton-title-h) w-(--skeleton-line-w-short)" />
-      <Skeleton className="h-(--skeleton-line-h) w-full max-w-(--content-max)" />
-      <Skeleton className="h-(--skeleton-line-h) w-full max-w-(--content-max)" />
-      <Skeleton className="h-(--skeleton-line-h) w-full max-w-(--skeleton-line-w-short)" />
+      <Skeleton className="h-skeleton-title w-skeleton-short" />
+      <Skeleton className="h-skeleton-line w-full max-w-content" />
+      <Skeleton className="h-skeleton-line w-full max-w-content" />
+      <Skeleton className="h-skeleton-line w-full max-w-skeleton-short" />
     </div>
   );
 }

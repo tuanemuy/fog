@@ -62,57 +62,64 @@ export function SignupForm() {
   }, [state]);
 
   return (
-    <form action={formAction} className="flex flex-col gap-lg">
-      {display.form !== undefined ? (
-        <FormMessage ref={formMessageRef}>{display.form}</FormMessage>
-      ) : null}
+    <>
+      <form action={formAction} className="flex flex-col gap-lg">
+        {display.form !== undefined ? (
+          <FormMessage ref={formMessageRef}>{display.form}</FormMessage>
+        ) : null}
 
-      <TextField
-        id="signup-email"
-        name="email"
-        label="メールアドレス"
-        type="email"
-        autoComplete="email"
-        placeholder="you@example.com"
-        maxLength={AUTH_FIELD_MAX_LENGTH}
-        defaultValue={state.email}
-        inputRef={emailRef}
-        required
-        {...(display.email !== undefined ? { error: display.email } : {})}
-      />
+        <TextField
+          id="signup-email"
+          name="email"
+          label="メールアドレス"
+          type="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          maxLength={AUTH_FIELD_MAX_LENGTH}
+          defaultValue={state.email}
+          inputRef={emailRef}
+          required
+          {...(display.email !== undefined ? { error: display.email } : {})}
+        />
 
-      {display.showLoginLink ? (
-        <p className="text-sm">
-          <TextLink to="/login">このメールアドレスでログインする</TextLink>
-        </p>
-      ) : null}
+        {display.showLoginLink ? (
+          <p className="text-sm">
+            <TextLink to="/login">このメールアドレスでログインする</TextLink>
+          </p>
+        ) : null}
 
-      <TextField
-        id="signup-password"
-        name="password"
-        label="パスワード"
-        type="password"
-        autoComplete="new-password"
-        placeholder="パスワード"
-        helperText="8文字以上128文字以下"
-        maxLength={AUTH_FIELD_MAX_LENGTH}
-        inputRef={passwordRef}
-        required
-        {...(display.password !== undefined ? { error: display.password } : {})}
-      />
+        <TextField
+          id="signup-password"
+          name="password"
+          label="パスワード"
+          type="password"
+          autoComplete="new-password"
+          placeholder="パスワード"
+          helperText="8文字以上128文字以下"
+          maxLength={AUTH_FIELD_MAX_LENGTH}
+          inputRef={passwordRef}
+          required
+          {...(display.password !== undefined
+            ? { error: display.password }
+            : {})}
+        />
 
-      <Button
-        type="submit"
-        fullWidth
-        pending={isPending}
-        pendingLabel="登録中…"
-      >
-        登録する
-      </Button>
+        <Button
+          type="submit"
+          fullWidth
+          pending={isPending}
+          pendingLabel="登録中…"
+        >
+          登録する
+        </Button>
+      </form>
 
+      {/* モックでは `.form-links` が `<form>` の兄弟。中に入れると flex の
+          gap-lg (24px) と mt-section (36px) を二重取りしてカード外周の
+          余白 (40px) を超える */}
       <div className="mt-section flex flex-col gap-sm text-center text-sm text-neutral-600">
         <TextLink to="/login">ログイン</TextLink>
       </div>
-    </form>
+    </>
   );
 }

@@ -2,7 +2,7 @@ import { createLink } from "@tanstack/react-router";
 import type { AnchorHTMLAttributes, Ref } from "react";
 
 const TEXT_LINK =
-  "rounded-(--radius-sm) text-primary-dark transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+  "rounded-sm text-primary-dark transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 type TextLinkAnchorProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   ref?: Ref<HTMLAnchorElement>;

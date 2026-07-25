@@ -21,15 +21,15 @@ import { NAV_ITEMS } from "./navItems";
 const LINK_FOCUS =
   "focus-visible:outline-2 focus-visible:outline-focus focus-visible:-outline-offset-2";
 
-const SIDE_LINK = `flex items-center gap-sm rounded-(--radius-md) p-(--pad-menu) text-base font-medium transition-colors hover:bg-bg-hover hover:text-neutral-900 ${LINK_FOCUS}`;
+const SIDE_LINK = `flex items-center gap-sm rounded-md p-(--pad-menu) text-base font-medium transition-colors hover:bg-bg-hover hover:text-neutral-900 ${LINK_FOCUS}`;
 
-const NAV_ITEM = `flex w-full items-center gap-sm px-xs py-(--pad-row) text-base font-medium text-neutral-900 ${LINK_FOCUS} focus-visible:rounded-(--radius-md)`;
+const NAV_ITEM = `flex w-full items-center gap-sm px-xs py-row text-base font-medium text-neutral-900 ${LINK_FOCUS} focus-visible:rounded-md`;
 
 function Mark({ current }: { current: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={`size-(--size-mark) flex-none rounded-full ${
+      className={`size-mark flex-none rounded-full ${
         current ? "bg-primary" : "bg-transparent"
       }`}
     />
@@ -83,15 +83,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div
-        inert={navOpen}
-        className="flex h-dvh lg:mx-auto lg:max-w-(--container-max)"
-      >
-        <aside className="hidden w-(--sidebar-w) flex-none flex-col px-lg pt-2xl pb-lg lg:flex">
-          <BrandLink
-            to="/"
-            className={`mb-2xl px-md ${LINK_FOCUS} rounded-(--radius-md)`}
-          >
+      <div inert={navOpen} className="flex h-dvh lg:mx-auto lg:max-w-page">
+        <aside className="hidden w-sidebar flex-none flex-col px-lg pt-2xl pb-lg lg:flex">
+          <BrandLink to="/" className={`mb-2xl px-md ${LINK_FOCUS} rounded-md`}>
             <Brand />
           </BrandLink>
           <nav
@@ -120,12 +114,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="mx-auto flex w-(--sheet-w) flex-none items-center justify-between gap-md pt-(--header-pad-t) pb-md md:w-(--sheet-w-md) lg:pt-xl">
+          <header className="mx-auto flex w-sheet flex-none items-center justify-between gap-md pt-safe-t-lg pb-md md:w-sheet-md lg:pt-xl">
             <div className="flex min-w-0 items-center gap-sm text-lg font-semibold">
               <h1 className="truncate text-lg font-semibold">{title}</h1>
               <span
                 aria-hidden="true"
-                className="size-(--size-dot) flex-none rounded-full bg-accent lg:hidden"
+                className="size-dot flex-none rounded-full bg-accent lg:hidden"
               />
             </div>
             <button
@@ -135,13 +129,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               aria-expanded={navOpen}
               aria-controls="global-nav-sheet"
               onClick={() => (navOpen ? closeNav() : openNav())}
-              className={`cursor-pointer rounded-(--radius-md) p-sm text-neutral-500 transition-colors hover:bg-bg-hover hover:text-neutral-900 lg:hidden ${LINK_FOCUS}`}
+              className={`cursor-pointer rounded-md p-sm text-neutral-500 transition-colors hover:bg-bg-hover hover:text-neutral-900 lg:hidden ${LINK_FOCUS}`}
             >
               <svg
                 aria-hidden="true"
                 viewBox="0 0 20 20"
                 fill="none"
-                className="size-(--icon-md)"
+                className="size-icon-md"
               >
                 <path
                   d="M3 7.25H17"
@@ -165,9 +159,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               `scrollToTopSelectors` in `router.tsx` points at. */}
           <main
             data-scroll-restoration-id="app-sheet"
-            className="mx-auto w-(--sheet-w) flex-1 overflow-y-auto rounded-t-(--radius-lg) bg-bg-card shadow-sm md:w-(--sheet-w-md)"
+            className="mx-auto w-sheet flex-1 overflow-y-auto rounded-t-lg bg-bg-card shadow-sm md:w-sheet-md"
           >
-            <div className="mx-auto max-w-(--content-max) px-lg pt-2xl pb-(--sheet-pad-b) sm:px-2xl">
+            <div className="mx-auto max-w-content px-lg pt-2xl pb-safe-b-2xl sm:px-2xl">
               {children}
             </div>
           </main>
@@ -187,11 +181,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           id="global-nav-sheet"
           ref={sheetRef}
           aria-label="グローバルナビゲーション"
-          className="fixed bottom-0 z-30 rounded-t-(--radius-lg) bg-bg-card px-lg pt-md pb-(--nav-sheet-pad-b) shadow-lg [inset-inline:var(--nav-sheet-inset)] lg:hidden"
+          className="fixed bottom-0 z-30 rounded-t-lg bg-bg-card px-lg pt-md pb-safe-b-2xl shadow-lg inset-x-sheet-inset lg:hidden"
         >
           <div
             aria-hidden="true"
-            className="mx-auto mb-md h-(--size-handle-h) w-(--size-handle-w) rounded-full bg-neutral-300"
+            className="mx-auto mb-md h-handle-h w-handle-w rounded-full bg-neutral-300"
           />
           {NAV_ITEMS.map((item, index) => {
             const isCurrent = item.to === pathname;

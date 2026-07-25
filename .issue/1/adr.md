@@ -1587,3 +1587,76 @@ DB は要らない（`findByEmail` が `null` を返すスタブで十分）の�
 - 良い点: ミューテーションで実効性を確認した。ラッチの2行を削ると (3) が落ち、`cause` の射影を生のまま渡す形に戻すと2件が落ちる（424件中 422 passed。いずれも実測後 revert 済み）
 - 良い点: `PasswordHasher` の「例外に平文を載せない」契約（ADR-047）の消費側の守り方が、初めてテストで固定された
 - トレードオフ: `vi.resetModules()` を使うテストはモジュールグラフを作り直すので、静的 import した型ガード（`isValidationError` 等）とはインスタンスが別になる。このスイートはログだけを見て例外の同一性を見ないことでそれを回避している。ラッチ以外の `loginWithPassword` の表明は従来どおり `identity.integration.test.ts` が持つ
+
+---
+
+## ADR-052: 認証シートは縦中央に置き、内側の隙間を外周の余白より狭くする
+
+### Status
+
+Accepted（ユーザー要望「ログイン画面などを中央寄せにしたい」への対応。デザインモックと実装を同時に改訂）
+
+### Context
+
+認証画面（login / signup / password-reset / oauth-authorize）はシートを横中央には置いていたが、縦は上寄せだった。縦中央へ動かすと、シート内側の余白が 上 40px / 下 80px の非対称なので、シートの中で中身が上へずれて見える。
+
+対称化して縦中央に置いたあと、内側の隙間が外周の余白を超えている箇所が2つ見つかった（実測）。**(1) `登録する` → `ログイン` が 60px** — モックでは `.form-links` が `<form>` の兄弟で `margin-top: --space-section`（36px）だけが効くのに、実装は `<form className="flex flex-col gap-lg">` の中に入れて `gap-lg`(24px) と二重取りしていた。実装だけの逸脱。**(2) `fog` → 見出しが 40px** — 外周と同値なのでルール上はセーフだが、見出しの `--leading-tight` 1.5 の分だけ光学的には 51.9px となり、上の余白 44.7px より広く見える（こちらはモックと実装が一致していた）。
+
+この 80px は認証画面固有の意図ではない。`spec/design/review/005.md` 方針2「シート内側の上下余白を拡大（上 40px / 下 80px〜、コンポーザー画面は 140px〜）」が全14ページへ一斉展開されたもので、アプリ画面のシートが**下端をビューポート下端に一致させるスクロールコンテナ**であること（ADR-049 と同じ前提）に由来する — 最終行がボトムナビやホームインジケータ帯に張り付かないための逃げ幅。
+
+### Decision
+
+**`.auth-container` に `justify-content: center` を足し、認証シートに限って内側の上下余白を `--space-2xl` の対称にする**（実装は `AuthSheet` の `justify-center` と `py-2xl`）。認証シートはスクロールしない自己完結カードなので逃げ幅が働く場面が無く、横断ルールから外す理由が立つ。逸脱であることは `spec/design/index.md`「余白と区切り」と `AuthSheet` の JSDoc の両方に理由付きで残す。
+
+縦中央化は `min-height: 100dvh` の上で行うため、中身がビューポートより高い場合はコンテナが伸びて `justify-content` が無効化され、上端は切れない。外側の safe-area 余白（ADR-041 の `--auth-pad-t` / `--auth-pad-b`。ADR-053 で `--space-safe-t-xl` / `--space-safe-b-xl` に改名）はそのまま効く。
+
+あわせて **「内側の隙間は外周の余白を超えない」を明文化し**（`spec/design/index.md`「余白と区切り」）、認証シートを 外周 40px > セクション区切り 36px > フォーム内 24px の3段に整理する。(1) はリンクを `<form>` の**外**へ出してモックと同じ兄弟構造にする（`mt-section` 単独で 36px）。(2) はブランド下を `--space-2xl` → `--space-section` に落とす（モック4枚の `.brand` と `AuthSheet` の両方）。
+
+### Consequences
+
+- 良い点: 実測で確認した — 1280x800 の `/login` `/password-reset` と 375x667 の `/signup` が縦横中央に載り、375x**380**（意図的に潰した高さ）では `scrollY: 0` / シート上端 `top: 30px`（= 上の safe-area 余白の既定値 `--space-xl`）/ `scrollHeight: 631 > innerHeight: 380` となり、上端の欠けなくスクロールで全体に到達できる
+- 良い点: 最終的な `/signup` の実測は 外周 上下 40px / ブランド下 36px / 見出し下 36px / フォーム内 24px / ボタン→リンク 36px（60px から解消）。モック `login.html` 側も 40 / 36 / 40 で一致する
+- 良い点: モック4枚と実装が同じ構造のまま揃う（`.auth-container` / `.auth-sheet` / `.form-links` ↔ `AuthSheet` / `LoginForm` / `SignupForm`）
+- トレードオフ: 認証シートだけが全シート共通の「下 80px」から外れる。`spec/design/index.md` に例外として明記したが、新しい認証系画面を足すときは基準形 `pages/login.html` を写す前提が以前より重要になる
+- トレードオフ: ブランド下 36px でも光学的には 47.9px で、上の余白 44.7px をまだ 3px 上回る。完全に釣り合わせるには 30px（`--space-xl`）まで落とす必要があるが、トークンの段数を増やしてまで詰める差ではないと判断した
+
+---
+
+## ADR-053: トークンは名前空間に載せられる限り載せ、safe-area 余白は役割名をやめてスケールの段にする
+
+### Status
+
+Accepted（ユーザー要望「ドメイン専用トークンより汎用トークンを優先したい」への対応。ADR-017 の「名前空間の無いトークンは任意値構文で消費する」を、**本当に名前空間が無いものだけ**に狭める）
+
+### Context
+
+ADR-017 は `@theme` へ投影するのを「Tailwind の名前空間があるトークン」に限り、残りは `p-(--pad-btn)` / `size-(--icon-md)` / `max-w-(--content-max)` の任意値構文で消費すると決めた。しかしこの線引きは実際より厳しかった。Tailwind v4 の `--spacing-*` は**スケールの段でなくても単値なら載る**（`--spacing-sidebar: 200px` → `w-sidebar`）し、`max-w-*` は `--container-*` を読む。任意値構文が必要なのは、名前空間が無い値 — 複合値の `--pad-btn` / `--pad-input` / `--pad-menu` と、border shorthand の `--border-input` — に限られる。棚卸しの結果、42 箇所の任意値構文のうち**残す必要があるのは 6 箇所だけ**だった。
+
+もう一方の問題は safe-area 余白の役割名。ADR-028 / ADR-041 / ADR-049 で `--nav-sheet-pad-b` → `--header-pad-t` / `--auth-pad-t` / `--auth-pad-b` → `--sheet-pad-b` と、画面が増えるたびに1本ずつ足して5本になった。review-004 N-005 が「`--sheet-pad-b` と `--nav-sheet-pad-b` は式が1バイトも違わない」「次に下端へ接する要素を足すときは既存を流用できないか先に見ると増殖が止まる」と指摘しているが、**役割名である限り流用は名前と矛盾する**ので指摘は守りにくい。加えて `--auth-*` は認証というドメイン名を UI プリミティブに持ち込んでいる。
+
+### Decision
+
+**(1) 名前空間に載せられるトークンはすべて載せる。** `--spacing-*` に単値の役割寸法（`--pad-row` / `--sheet-w` / `--sidebar-w` / `--icon-*` / `--size-*` / `--skeleton-*` / `--nav-sheet-inset`）を、`--container-*` に max-width（`--content-max` / `--container-max` / `--narrow-max`）を投影する。`tokens.css` 側の名前は変えず、`theme.css` が投影名を与える。`--container-max` の投影名だけは `page` にする — `max-w-max` は Tailwind 組み込みの `max-width: max-content` と衝突するため。
+
+**(2) safe-area 余白は役割名をやめ、余白スケールの段の変種にする。** 5本を4本へ:
+
+| 旧（役割名） | 新（スケールの段） | 式 |
+|---|---|---|
+| `--header-pad-t` | `--space-safe-t-lg` | `max(--space-lg, env(top) + --space-md)` |
+| `--auth-pad-t` | `--space-safe-t-xl` | `max(--space-xl, env(top) + --space-md)` |
+| `--auth-pad-b` | `--space-safe-b-xl` | `max(--space-xl, env(bottom) + --space-md)` |
+| `--nav-sheet-pad-b` / `--sheet-pad-b` | `--space-safe-b-2xl` | `max(--space-2xl, env(bottom) + --space-lg)` |
+
+値は1つも変えない。同値だった2本が同じ名前になることで review-004 N-005 の重複が解消し、以後は「下端に接する要素を足す → 既存の段を選ぶ」が名前と矛盾しなくなる。
+
+**(3) ドメイン名の排除。** `--auth-sheet-max` → `--narrow-max`（投影名 `max-w-narrow`）。26rem は「狭い単一カラムのカードの最大幅」であって認証固有の値ではない。
+
+段の基準値が lg / xl / 2xl の3種、内側余白が md / lg の2種でばらついているのは既存のままにした。規則で揃えると算出値が変わり（ノッチ機で 73px → 83px 等）、名前の一貫性のために見た目を動かすことになるため。
+
+### Consequences
+
+- 良い点: 任意値構文が 42 箇所 → 6 箇所（`p-(--pad-btn)` ×1 / `p-(--pad-input)` ×2 / `p-(--pad-menu)` ×1 / `[border:var(--border-input)]` ×2）。`[inset-inline:var(--nav-sheet-inset)]` も `inset-x-sheet-inset` になり、ブラケット構文は border shorthand だけになった
+- 良い点: **safe-area が改名後も発火することを CDP で実測**した（`Emulation.setSafeAreaInsetsOverride` top 59 / bottom 34）。認証シート 30px → 73px / 30px → 48px、ヘッダー 24px → 73px、シート本文下端 40px → 58px。ADR-041 が記録した数値と完全に一致する
+- 良い点: 生成 CSS 側で新ユーティリティ 21 本すべての規則を確認した（`.inset-x-sheet-inset { inset-inline: var(--spacing-sheet-inset) }` など。`lg:max-w-page` / `md:w-sheet-md` のレスポンシブ変種を含む）。算出値も改名前と一致（サイドバー 200px、本文 800px、行 16px/16px、ハンドル 36x4px、ボトムシート inset 14px、認証シート max-width 416px）
+- トレードオフ: `tokens.css` の名前と `theme.css` の投影名が一致しない組が増えた（`--content-max` → `max-w-content`、`--container-max` → `max-w-page`、`--size-dot` → `size-dot`）。theme.css の冒頭コメントが対応表の役割を負う
+- トレードオフ: `pt-safe-t-xl` は `t` が重複して見えるが、`--spacing-*` は上下どちらの余白にも使える名前空間なので、参照する inset の向きは名前に残す必要がある（`pb-safe-t-xl` と書けてしまうのは防げないが、目視で気づける）

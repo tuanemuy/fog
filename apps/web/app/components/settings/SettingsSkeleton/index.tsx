@@ -1,7 +1,7 @@
 import { Skeleton } from "@/components/ui/Skeleton";
 
-const ROW = "flex items-center justify-between gap-md py-(--pad-row)";
-const BAR = "h-(--skeleton-line-h) w-full max-w-(--skeleton-line-w-short)";
+const ROW = "flex items-center justify-between gap-md py-row";
+const BAR = "h-skeleton-line w-full max-w-skeleton-short";
 
 /**
  * Streaming placeholder for `CurrentUserPanel`, shaped like the real DOM
@@ -22,7 +22,7 @@ export function SettingsSkeleton() {
         <Skeleton className={BAR} />
       </div>
       <div className="border-t border-neutral-100 pt-lg">
-        <Skeleton className="h-(--skeleton-title-h) w-(--skeleton-line-w-short)" />
+        <Skeleton className="h-skeleton-title w-skeleton-short" />
       </div>
     </section>
   );

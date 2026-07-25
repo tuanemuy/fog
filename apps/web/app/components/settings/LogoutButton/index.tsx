@@ -38,7 +38,7 @@ export function LogoutButton() {
         onClick={onClick}
         disabled={isPending}
         aria-busy={isPending || undefined}
-        className="cursor-pointer self-start rounded-(--radius-sm) py-sm text-sm font-medium text-error transition-colors hover:text-error-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-danger disabled:cursor-default disabled:text-neutral-400"
+        className="cursor-pointer self-start rounded-sm py-sm text-sm font-medium text-error transition-colors hover:text-error-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-danger disabled:cursor-default disabled:text-neutral-400"
       >
         {isPending ? "ログアウト中…" : "ログアウト"}
       </button>

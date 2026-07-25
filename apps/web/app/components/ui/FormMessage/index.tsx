@@ -23,7 +23,7 @@ export function FormMessage({
       ref={ref}
       role="alert"
       tabIndex={-1}
-      className="rounded-(--radius-md) border border-error bg-error-bg p-(--pad-input) text-sm text-error-dark"
+      className="rounded-md border border-error bg-error-bg p-(--pad-input) text-sm text-error-dark"
     >
       {children}
     </p>

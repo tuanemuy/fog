@@ -151,7 +151,9 @@
   --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
   --container-padding: clamp(0.875rem, 4vw, 2rem);
   --sidebar-w: 200px;
-  --auth-sheet-max: 26rem;
+  /* 単一カラムのカードの最大幅。認証シートが最初の利用者だが、狭いカードなら
+     どこでも使える幅として持つ */
+  --narrow-max: 26rem;
 
   /* ヘッダーとシートが共有する横フレーム。余った幅はページ背景へ逃がす */
   --sheet-w: min(100% - 2 * var(--space-md), var(--sheet-max));
@@ -161,27 +163,28 @@
   /* Safe area — `head.ts` の `viewport-fit=cover` でレイアウトビューポートが
      ノッチ／ホームインジケータ帯まで広がるので、画面端に接する余白は既定値と
      safe-area の大きいほうを取る（基準形 timeline.html / login.html と同形）。
-     cover でなければ env() は 0 に解決され、既定値がそのまま残る */
-  --header-pad-t: max(
+     cover でなければ env() は 0 に解決され、既定値がそのまま残る。
+
+     役割名（ヘッダー／認証シート／ボトムシート…）ではなく **余白スケールの段の
+     変種**として持つ。画面が増えるたびに役割トークンを足さずに済み、どの画面が
+     どの段を使っているかが呼び出し側だけで読める（ADR-053）。`-t` / `-b` は
+     参照する inset の向きで、上下どちらの余白にも使えてしまう名前空間なので
+     名前に残している */
+  --space-safe-t-lg: max(
     var(--space-lg),
     calc(env(safe-area-inset-top, 0px) + var(--space-md))
   );
-  --auth-pad-t: max(
+  --space-safe-t-xl: max(
     var(--space-xl),
     calc(env(safe-area-inset-top, 0px) + var(--space-md))
   );
-  --auth-pad-b: max(
+  --space-safe-b-xl: max(
     var(--space-xl),
     calc(env(safe-area-inset-bottom, 0px) + var(--space-md))
   );
-  --nav-sheet-pad-b: max(
-    var(--space-2xl),
-    calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))
-  );
-  /* シート本文の下端。`<main>` は下端がビューポート下端に一致するスクロール
-     コンテナなので、最後の行とホームインジケータ帯の間隔がここで決まる
-     （.issue/1/adr.md ADR-049） */
-  --sheet-pad-b: max(
+  /* `<main>` は下端がビューポート下端に一致するスクロールコンテナなので、
+     最後の行とホームインジケータ帯の間隔がこの段で決まる（ADR-049） */
+  --space-safe-b-2xl: max(
     var(--space-2xl),
     calc(env(safe-area-inset-bottom, 0px) + var(--space-lg))
   );

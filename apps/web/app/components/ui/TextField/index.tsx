@@ -24,7 +24,7 @@ type TextFieldProps = {
 // never paint. Modern browsers only draw the UA outline on :focus-visible
 // anyway, so dropping it is equivalent.
 const INPUT =
-  "rounded-(--radius-md) [border:var(--border-input)] bg-bg-card p-(--pad-input) font-base text-base text-neutral-900 transition-colors placeholder:text-neutral-400 focus:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-[invalid=true]:border-error";
+  "rounded-md [border:var(--border-input)] bg-bg-card p-(--pad-input) font-base text-base text-neutral-900 transition-colors placeholder:text-neutral-400 focus:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-[invalid=true]:border-error";
 
 /**
  * Label + input + optional helper / error, matching `.form-group` in

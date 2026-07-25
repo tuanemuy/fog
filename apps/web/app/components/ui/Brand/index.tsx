@@ -13,7 +13,7 @@ export function Brand() {
       <span>fog</span>
       <span
         aria-hidden="true"
-        className="size-(--size-dot) flex-none rounded-full bg-accent"
+        className="size-dot flex-none rounded-full bg-accent"
       />
     </span>
   );

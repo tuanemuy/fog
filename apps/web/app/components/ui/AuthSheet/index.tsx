@@ -15,12 +15,16 @@ type AuthSheetProps = {
  * screens could carry it, and without one every signed-out screen (login,
  * signup, password reset, the error and 404 surfaces) leaves its content
  * outside any landmark.
+ *
+ * 上下の余白がアプリ画面のシート（下 80px、`spec/design/review/005.md`）と
+ * 違って対称なのは、あの 80px がスクロールの終わり際の逃げ幅だから。認証
+ * シートはスクロールせず縦中央に置くので、非対称だと中身が上へずれて見える。
  */
 export function AuthSheet({ title, description, children }: AuthSheetProps) {
   return (
-    <main className="flex min-h-dvh flex-col items-center px-md pt-(--auth-pad-t) pb-(--auth-pad-b)">
-      <div className="w-full max-w-(--auth-sheet-max) rounded-(--radius-lg) bg-bg-card px-lg pt-2xl pb-[calc(2*var(--space-2xl))] shadow-sm sm:px-2xl">
-        <div className="mb-2xl flex justify-center">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-md pt-safe-t-xl pb-safe-b-xl">
+      <div className="w-full max-w-narrow rounded-lg bg-bg-card px-lg py-2xl shadow-sm sm:px-2xl">
+        <div className="mb-section flex justify-center">
           <Brand />
         </div>
         <h1

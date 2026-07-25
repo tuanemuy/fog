@@ -17,7 +17,7 @@ const AUTH_METHOD_LABEL = {
   sso: "外部アカウント",
 } as const;
 
-const ROW = "flex items-center justify-between gap-md py-(--pad-row)";
+const ROW = "flex items-center justify-between gap-md py-row";
 
 export async function CurrentUserPanel() {
   // This leaf is streamed, so it renders outside `errorResponseMiddleware`.
