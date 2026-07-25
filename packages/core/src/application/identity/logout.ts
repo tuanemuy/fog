@@ -8,11 +8,9 @@ export type LogoutInput = {
 /**
  * Logs out.
  *
- * Nothing to do in the domain: identity has no session state and no
- * logout event, and destroying the session cookie belongs to the
- * presentation layer. The usecase exists so the application layer offers
- * the same surface for logout as for login rather than leaving one half
- * of the pair to be discovered in a route handler.
+ * Nothing to do in the domain — the usecase exists so the application
+ * layer offers the same surface for logout as for login rather than
+ * leaving one half of the pair to be discovered in a route handler.
  *
  * It touches no repository and collects no event, so `UserId.create` is
  * the only work: a caller passing an empty id has a broken session and

@@ -46,11 +46,9 @@ export type SharedDeps = Readonly<{
  * of work opens so a CPU-bound derivation never sits inside a
  * transaction.
  *
- * `sessionCodec` is here for the presentation layer only; usecases are
- * handed `UsecaseContainer`, which is this type without it, so the ban is
- * a type error rather than a review comment. The session secret itself is
- * not on the container at all — it is consumed while constructing the
- * codec and goes no further.
+ * `sessionCodec` is for the presentation layer only — usecases are handed
+ * `UsecaseContainer`, which omits it. The session secret itself is not on
+ * the container at all: it is consumed while constructing the codec.
  */
 export type RequestContainer = SharedDeps &
   Readonly<{

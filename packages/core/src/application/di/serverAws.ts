@@ -1,8 +1,3 @@
-// Deliberately separate from `./serverNode.ts` and `./serverCloudflare.ts`
-// so the AWS entry never pulls Workers-only imports and the Node entry
-// never pulls AWS-SDK imports. All three factories return the same
-// `RequestContainer` / `WorkerContainer` shapes.
-
 import type { Database } from "@repo/core/adapters/libsql/client";
 import { LibsqlIdempotencyStore } from "@repo/core/adapters/libsql/repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "@repo/core/adapters/libsql/repositories/outboxRepository";

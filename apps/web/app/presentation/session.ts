@@ -8,13 +8,7 @@ import {
   toSessionSystemError,
 } from "./sessionCookie";
 
-/**
- * Session cookie read/write for the request path.
- *
- * The identity domain has no session state and the logout usecase does no
- * domain work, so issuing and destroying the session lives here rather
- * than in a usecase (the 共通事項 section of `spec/usecases/identity.md`).
- */
+/** Session cookie read/write for the request path. */
 
 /** Header sink, swappable so tests can inject a failing writer. */
 export type SetCookieHeader = (value: string) => void;

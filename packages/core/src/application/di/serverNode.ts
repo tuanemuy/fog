@@ -1,7 +1,3 @@
-// Deliberately separate from `./serverCloudflare.ts` so the CF entry
-// never pulls libSQL / node-only imports and vice versa. Both factories
-// return the same `RequestContainer` / `WorkerContainer` shapes.
-
 import type { Database } from "@repo/core/adapters/libsql/client";
 import { LibsqlIdempotencyStore } from "@repo/core/adapters/libsql/repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "@repo/core/adapters/libsql/repositories/outboxRepository";

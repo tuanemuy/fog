@@ -29,8 +29,7 @@ const invalidCredentials = (): ValidationError =>
  * what a real verification costs. Equalisation therefore only holds while
  * it equals the shipped hasher's work factor, and the shipped hasher pins
  * itself to it: `DEFAULT_PBKDF2_ITERATIONS` is declared as `typeof` this
- * constant, so raising one without the other stops compiling. The pin sits
- * on the adapter side because the dependency may only point inward.
+ * constant, so raising one without the other stops compiling.
  */
 export const DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
 

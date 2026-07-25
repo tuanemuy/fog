@@ -1,6 +1,3 @@
-// Deliberately separate from `./serverNode.ts` so the Node entry never
-// pulls Workers-only imports and vice versa. Both factories return the
-// same `RequestContainer` / `WorkerContainer` shapes.
 import type { D1Database, Fetcher } from "@cloudflare/workers-types";
 import { ServiceBindingRelayTrigger } from "@repo/core/adapters/cloudflare/serviceBindingRelayTrigger";
 import { getDatabase } from "@repo/core/adapters/d1/client";
