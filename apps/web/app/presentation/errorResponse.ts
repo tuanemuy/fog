@@ -4,24 +4,23 @@ import type {
   SerializedNotFoundError,
   SerializedSystemError,
   SerializedUnauthorizedError,
+  SerializedValidationError,
 } from "@repo/core/application/errors";
 import type { SerializedBusinessError } from "@repo/core/domain/error";
 import {
-  type FieldErrors,
   isSerializableError,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
 
+// Re-exported so `validator.ts` (and other presentation modules) keep a
+// single import site for the serialized-error contract even though the
+// validation variant is now owned by the application layer.
+export type { SerializedValidationError } from "@repo/core/application/errors";
 export type {
   FieldErrors,
   SerializableError,
   SerializedErrorBase,
 } from "@repo/core/lib/error";
-
-export type SerializedValidationError = SerializedErrorBase & {
-  kind: "validation";
-  fieldErrors?: FieldErrors;
-};
 
 export type SerializedUnknownError = SerializedErrorBase & {
   kind: "unknown";

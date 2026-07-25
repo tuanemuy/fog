@@ -1,8 +1,8 @@
 import type { EventDraft } from "@repo/core/domain/common/event";
-import type { TodoRepository } from "@repo/core/domain/todo/ports/todoRepository";
+import type { UserRepository } from "@repo/core/domain/identity/ports/userRepository";
 
 export interface UnitOfWorkContext {
-  todoRepository: TodoRepository;
+  userRepository: UserRepository;
   /**
    * Enqueue domain event drafts for outbox flush at commit time.
    *

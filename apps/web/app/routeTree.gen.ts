@@ -9,114 +9,27 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TodoRouteRouteImport } from './routes/todo/route'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as TodoIndexRouteImport } from './routes/todo/index'
-import { Route as TodoAboutRouteImport } from './routes/todo/about'
 
-const TodoRouteRoute = TodoRouteRouteImport.update({
-  id: '/todo',
-  path: '/todo',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TodoIndexRoute = TodoIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => TodoRouteRoute,
-} as any)
-const TodoAboutRoute = TodoAboutRouteImport.update({
-  id: '/about',
-  path: '/about',
-  getParentRoute: () => TodoRouteRoute,
-} as any)
-
-export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
-}
-export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/todo/about': typeof TodoAboutRoute
-  '/todo': typeof TodoIndexRoute
-}
+export interface FileRoutesByFullPath {}
+export interface FileRoutesByTo {}
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/todo' | '/todo/about' | '/todo/'
+  fullPaths: never
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/todo/about' | '/todo'
-  id: '__root__' | '/' | '/todo' | '/todo/about' | '/todo/'
+  to: never
+  id: '__root__'
   fileRoutesById: FileRoutesById
 }
-export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  TodoRouteRoute: typeof TodoRouteRouteWithChildren
-}
+export interface RootRouteChildren {}
 
 declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {
-    '/todo': {
-      id: '/todo'
-      path: '/todo'
-      fullPath: '/todo'
-      preLoaderRoute: typeof TodoRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/todo/': {
-      id: '/todo/'
-      path: '/'
-      fullPath: '/todo/'
-      preLoaderRoute: typeof TodoIndexRouteImport
-      parentRoute: typeof TodoRouteRoute
-    }
-    '/todo/about': {
-      id: '/todo/about'
-      path: '/about'
-      fullPath: '/todo/about'
-      preLoaderRoute: typeof TodoAboutRouteImport
-      parentRoute: typeof TodoRouteRoute
-    }
-  }
+  interface FileRoutesByPath {}
 }
 
-interface TodoRouteRouteChildren {
-  TodoAboutRoute: typeof TodoAboutRoute
-  TodoIndexRoute: typeof TodoIndexRoute
-}
-
-const TodoRouteRouteChildren: TodoRouteRouteChildren = {
-  TodoAboutRoute: TodoAboutRoute,
-  TodoIndexRoute: TodoIndexRoute,
-}
-
-const TodoRouteRouteWithChildren = TodoRouteRoute._addFileChildren(
-  TodoRouteRouteChildren,
-)
-
-const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  TodoRouteRoute: TodoRouteRouteWithChildren,
-}
+const rootRouteChildren: RootRouteChildren = {}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()

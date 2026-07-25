@@ -17,7 +17,7 @@ import type { Database } from "./client";
 import { PendingBatch } from "./pendingBatch";
 import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
 import { LibsqlOutboxRepository } from "./repositories/outboxRepository";
-import { LibsqlTodoRepository } from "./repositories/todoRepository";
+import { LibsqlUserRepository } from "./repositories/userRepository";
 
 /**
  * libSQL `UnitOfWorkProvider`. Reads run immediately against `db`;
@@ -39,7 +39,7 @@ export class LibsqlUnitOfWorkProvider implements UnitOfWorkProvider {
     const pending = new PendingBatch();
     const collected: DomainEvent[] = [];
 
-    const todoRepository = new LibsqlTodoRepository(
+    const userRepository = new LibsqlUserRepository(
       this.db,
       pending,
       this.idGenerator,
@@ -52,7 +52,7 @@ export class LibsqlUnitOfWorkProvider implements UnitOfWorkProvider {
     );
 
     const ctx: UnitOfWorkContext = {
-      todoRepository,
+      userRepository,
       // EventId is minted here so domain factories stay identity-less.
       collectEvents: (drafts) => {
         collected.push(

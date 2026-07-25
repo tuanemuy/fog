@@ -3,10 +3,8 @@ import {
   type EventDecoder,
   EventId,
 } from "@repo/core/domain/common/event";
-import type { TodoEvent } from "@repo/core/domain/todo/events";
 import type { WorkerContainer } from "../di/types";
 import type { OutboxEntry, OutboxFailure } from "../ports/outboxRepository";
-import { todoEventDecoders } from "../todo/eventDecoders";
 
 // Delivery is at-least-once with NO ordering guarantee. Per-row failures
 // bump `attempts` and schedule a backed-off retry; once a row exceeds
@@ -40,7 +38,7 @@ export type EventDispatcher = (
   events: readonly DomainEvent[],
 ) => Promise<readonly EventDispatchOutcome[]>;
 
-type AllDomainEvents = TodoEvent;
+type AllDomainEvents = never;
 
 export type DefaultEventDecoderRegistry = {
   readonly [K in AllDomainEvents["type"]]: EventDecoder<
@@ -54,9 +52,8 @@ export type DefaultEventDecoderRegistry = {
 // its decoder.
 export type EventDecoderRegistry = Partial<DefaultEventDecoderRegistry>;
 
-export const defaultEventDecoderRegistry = {
-  ...todoEventDecoders,
-} satisfies DefaultEventDecoderRegistry;
+export const defaultEventDecoderRegistry =
+  {} satisfies DefaultEventDecoderRegistry;
 
 export type ProcessOutboxEventsOptions = {
   batchSize?: number;

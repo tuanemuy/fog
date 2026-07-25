@@ -24,7 +24,7 @@ function findSqliteCode(error: unknown): string | null {
       return code;
     }
     // D1 surfaces some constraint failures only via the message text,
-    // e.g. "D1_ERROR: UNIQUE constraint failed: todos.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)".
+    // e.g. "D1_ERROR: UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)".
     // Both the generic and extended form appear in one string, so pick
     // the longest (most specific) match — otherwise PK / UNIQUE / FK
     // collisions get silently flattened into a generic CONSTRAINT_VIOLATION.
