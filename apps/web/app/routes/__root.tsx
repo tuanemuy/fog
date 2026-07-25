@@ -80,8 +80,7 @@ export const Route = createRootRoute({
  * failure of the root's own `beforeLoad` (`loadAppContext`). A match's
  * `errorComponent` handles that match's own `beforeLoad` / `loader`, so
  * `_app` catches its own failures too; everything under the shell is caught
- * one level lower by `_app`'s `errorComponent`, which keeps the global nav
- * (.issue/1/adr.md ADR-048).
+ * one level lower by `_app`'s `errorComponent`, which keeps the global nav.
  */
 function ErrorScreen({ message }: { message: string }) {
   return (

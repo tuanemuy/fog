@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { SerializedError } from "@/presentation/errorResponse";
 import { toAuthErrorDisplay } from "../errorField";
 
-// AC-10 and AC-12 are decided here and nowhere else: which field an
-// authentication failure lands under, whether the "already registered"
-// case offers the way out, and the exact wording of the deliberately
-// uninformative login failure. All of it is a pure function over
-// `SerializedError`, so none of it needs a DOM.
+// Decided here and nowhere else: which field an authentication failure
+// lands under, whether the "already registered" case offers the way out,
+// and the exact wording of the deliberately uninformative login failure.
+// All of it is a pure function over `SerializedError`, so none of it needs
+// a DOM.
 
 describe("toAuthErrorDisplay", () => {
   it("reports no error for a null input", () => {
@@ -19,8 +19,8 @@ describe("toAuthErrorDisplay", () => {
     });
   });
 
-  // AC-12: a malformed address is actionable, so it belongs under the
-  // field the user has to fix.
+  // A malformed address is actionable, so it belongs under the field the
+  // user has to fix.
   it("puts a malformed address under the email field", () => {
     const error: SerializedError = {
       kind: "business",
@@ -51,8 +51,8 @@ describe("toAuthErrorDisplay", () => {
     });
   });
 
-  // AC-12: "already registered" is only useful next to the way out, so
-  // the login link rides along with the field message.
+  // "Already registered" is only useful next to the way out, so the login
+  // link rides along with the field message.
   it("offers the login link for an address that is already registered", () => {
     const error: SerializedError = {
       kind: "conflict",
@@ -68,9 +68,9 @@ describe("toAuthErrorDisplay", () => {
     });
   });
 
-  // AC-10 verbatim. Naming a field here would tell an attacker which
-  // half of the pair was wrong, so it goes to the banner and offers no
-  // login link — the user is already on the login screen.
+  // The wording is fixed by spec. Naming a field here would tell an
+  // attacker which half of the pair was wrong, so it goes to the banner
+  // and offers no login link — the user is already on the login screen.
   it("shows the uninformative credential failure above the form", () => {
     const error: SerializedError = {
       kind: "validation",

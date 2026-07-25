@@ -13,8 +13,7 @@ import {
  *
  * The identity domain has no session state and the logout usecase does no
  * domain work, so issuing and destroying the session lives here rather
- * than in a usecase (spec/usecases/identity.md 共通事項,
- * .issue/1/adr.md ADR-002 / ADR-005).
+ * than in a usecase (spec/usecases/identity.md 共通事項).
  */
 
 /** Header sink, swappable so tests can inject a failing writer. */
@@ -35,7 +34,7 @@ function writeSessionCookie(
   } catch (cause) {
     // The only broad catch on this path, and it exists to give the failure
     // a `kind`: an un-serializable throw would reach the client as
-    // `kind: "unknown"` instead of `system` (.issue/1/adr.md ADR-010).
+    // `kind: "unknown"` instead of `system`.
     throw toSessionSystemError(cause);
   }
 }

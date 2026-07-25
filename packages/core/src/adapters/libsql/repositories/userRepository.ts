@@ -29,7 +29,7 @@ type UserRow = typeof users.$inferSelect;
  *
  * As on D1, the deferred flush means a unique-constraint violation on
  * `insert` cannot be caught here; `EMAIL_ALREADY_REGISTERED` is
- * translated by the `registerWithPassword` usecase (.issue/1/adr.md ADR-008).
+ * translated by the `registerWithPassword` usecase.
  */
 export class LibsqlUserRepository implements UserRepository {
   constructor(

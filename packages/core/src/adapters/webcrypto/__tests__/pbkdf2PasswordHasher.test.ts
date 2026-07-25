@@ -184,9 +184,8 @@ describe("createPbkdf2PasswordHasher at the iteration ceiling", () => {
   });
 });
 
-// The other half of the split made by .issue/1/adr.md ADR-014: a corrupted
-// stored value is `DataIntegrityError` (above), a failing computation is
-// `CryptoError`.
+// The other half of the split: a corrupted stored value is
+// `DataIntegrityError` (above), a failing computation is `CryptoError`.
 // Usecases pass `SystemError` through untouched, so if this translation
 // were missing the raw WebCrypto rejection would reach the client as
 // `kind: "unknown"` and nothing else in the suite would notice.

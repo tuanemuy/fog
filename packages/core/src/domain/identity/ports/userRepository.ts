@@ -33,7 +33,7 @@ import type { Email, UserId } from "../valueObject";
  * `insert` races against does not surface here. The unit of work buffers
  * writes and flushes them after the callback returns, so the violation is
  * raised at flush time, outside any `insert` frame. `registerWithPassword`
- * owns that translation instead — see .issue/1/adr.md ADR-008.
+ * owns that translation instead.
  */
 export interface UserRepository {
   insert(user: User): Promise<void>;

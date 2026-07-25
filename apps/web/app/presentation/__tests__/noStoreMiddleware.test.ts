@@ -12,7 +12,7 @@ vi.mock("@tanstack/react-start/server", () => ({
 
 const { noStoreMiddleware } = await import("../noStoreMiddleware");
 
-// AC-15 / manual TC-23. `requireUserId()` also sets the header, but on a
+// `requireUserId()` also sets the header, but on a
 // streaming route it runs inside the RSC render, after the response
 // headers were settled — so this middleware is what actually keeps a
 // protected screen out of the browser's history cache. What has to be

@@ -19,7 +19,7 @@ const HASH = PasswordHash.create("pbkdf2-sha256$1$c2FsdA==$aGFzaA==");
 // Recursive scan rather than a key check: `PlainPassword` is a branded
 // `string` with no `toJSON` to override, so the only guard against a
 // plaintext reaching an event payload is asserting it is nowhere in the
-// emitted value (.issue/1/adr.md ADR-011).
+// emitted value.
 function containsString(value: unknown, needle: string): boolean {
   if (typeof value === "string") return value.includes(needle);
   if (Array.isArray(value)) {
@@ -66,8 +66,7 @@ describe("User.registerWithPassword", () => {
     ]);
   });
 
-  // .issue/1/adr.md ADR-011: the plaintext-leak guard the type system
-  // cannot express.
+  // The plaintext-leak guard the type system cannot express.
   it("never carries the plaintext password or the hash into the event payload", () => {
     const { eventDrafts } = User.registerWithPassword(
       { id: ID, email: "user@example.com", passwordHash: HASH },

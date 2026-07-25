@@ -138,7 +138,7 @@ function parse(stored: string): StoredHash {
  * `PasswordHasher` backed by WebCrypto PBKDF2-HMAC-SHA256 — available
  * unchanged on Node 20+, Workers, Lambda and Cloud Run, so all four
  * reference runtimes share one implementation and `packages/core` gains
- * no crypto dependency (.issue/1/adr.md ADR-003).
+ * no crypto dependency.
  *
  * The stored form is self-describing:
  *

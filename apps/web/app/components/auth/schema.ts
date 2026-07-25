@@ -8,8 +8,7 @@ import { z } from "zod";
  * `PlainPassword` / `Email` and must surface as `BusinessRuleError`, so
  * they are deliberately absent here. Encoding 128 at this boundary would
  * turn a 129-character password into a transport `validation` failure and
- * the user would be told the wrong thing about their own input
- * (TC-registerWithPassword-006 / 009).
+ * the user would be told the wrong thing about their own input.
  *
  * The ceiling below exists purely to stop a multi-megabyte body from
  * reaching the key-derivation function, and is set far above any value a

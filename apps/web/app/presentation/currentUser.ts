@@ -12,9 +12,8 @@ import { readSessionToken } from "./session";
  *
  * These live in the presentation layer, not in `@repo/core`, because they
  * are TanStack Start specific — cookies, request headers and typed router
- * redirects (.issue/1/adr.md ADR-005). `getCurrentUserId` is the escape
- * hatch of hitting `getContainer()` directly: a single port call with no
- * usecase module.
+ * redirects. `getCurrentUserId` is the escape hatch of hitting
+ * `getContainer()` directly: a single port call with no usecase module.
  */
 
 export const getCurrentUserId = cache(async (): Promise<string | null> => {

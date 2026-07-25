@@ -16,7 +16,7 @@ import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSes
  * `container.config` and out to the client through `loadAppContext` —
  * with no type error anywhere. Keeping secrets one level down means the
  * spread cannot reach them, and the same protection extends for free to
- * any secret added later (.issue/1/adr.md ADR-002).
+ * any secret added later.
  */
 export type RequestSecrets = Readonly<{
   sessionSecret: SessionSecret;
@@ -45,7 +45,7 @@ export type SessionSecret = string & {
  * entry points, which never touch a session, and a required key there
  * would stop those workers from booting. Requiring it in the
  * request-config readers instead means only the request path — the sole
- * consumer — demands the secret (.issue/1/adr.md ADR-004).
+ * consumer — demands the secret.
  *
  * Node, AWS and GCP build that config once at boot / cold start, so a
  * missing or too-short secret fails the process rather than every request.

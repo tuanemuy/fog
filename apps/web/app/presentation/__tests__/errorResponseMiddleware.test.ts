@@ -139,7 +139,7 @@ describe("errorResponseMiddleware", () => {
     expect(mocks.statuses).toEqual([]);
   });
 
-  // AC-10 / AC-12: the login form reads its wording off `code`, so the
+  // The login form reads its wording off `code`, so the
   // boundary has to carry the usecase's code and field errors through
   // untouched — and must not treat an expected credential failure as an
   // operational incident.
@@ -251,7 +251,7 @@ describe("errorResponseMiddleware", () => {
   });
 });
 
-// .issue/1/adr.md ADR-039: a streaming RSC leaf renders after the handler
+// A streaming RSC leaf renders after the handler
 // returned, so its throws never reach the middleware above. This is the leaf's
 // only redaction and logging point, and forgetting the call is invisible to the
 // compiler — which is exactly why the contract is pinned here.

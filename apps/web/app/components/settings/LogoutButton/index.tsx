@@ -21,8 +21,7 @@ export function LogoutButton() {
       try {
         await logout({});
         // Invalidate first so no protected route keeps a cached match,
-        // then replace the history entry so Back cannot return to one
-        // (manual TC-23).
+        // then replace the history entry so Back cannot return to one.
         await router.invalidate();
         await router.navigate({ to: "/login", replace: true });
       } catch (e) {

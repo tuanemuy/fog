@@ -84,9 +84,8 @@ const throwingHasher = (method: "hash" | "verify"): PasswordHasher => {
 };
 
 // Renaming `users` away is the only way to make a non-constraint DB
-// fault (.issue/1/adr.md ADR-019), and a rename that outlives its test
-// takes the pool's global `DELETE FROM users` with it — and every later
-// test in the file.
+// fault, and a rename that outlives its test takes the pool's global
+// `DELETE FROM users` with it — and every later test in the file.
 // So the rename and its undo are never written apart: both fault
 // injectors below own a `finally`, and the table name lives in one
 // place.
@@ -363,10 +362,9 @@ describe("registerWithPassword (integration)", () => {
       "EMAIL_ALREADY_REGISTERED",
     );
     // The pre-check path (`findByEmail` saw the row) raises without a
-    // `cause`; only the UNIQUE_VIOLATION reading (.issue/1/adr.md ADR-008)
-    // carries one. This is the sole test that walks that catch, so it pins
-    // the path too — otherwise the reading could die and nothing would
-    // notice.
+    // `cause`; only the UNIQUE_VIOLATION reading carries one. This is the
+    // sole test that walks that catch, so it pins the path too — otherwise
+    // the reading could die and nothing would notice.
     expect(
       isConflictError(failure?.reason) && failure?.reason.cause,
     ).toBeDefined();
@@ -395,8 +393,7 @@ describe("registerWithPassword (integration)", () => {
 
   // A non-constraint failure on purpose: a constraint violation would be
   // classified as `ConflictError`, and a UNIQUE / PK one would be read as
-  // EMAIL_ALREADY_REGISTERED (.issue/1/adr.md ADR-008), so neither would
-  // ever reach `SystemError`.
+  // EMAIL_ALREADY_REGISTERED, so neither would ever reach `SystemError`.
   it("rolls back and reports SystemError when the insert hits a DB fault (TC-registerWithPassword-016)", async () => {
     const base = createTestContainer();
 
@@ -656,7 +653,7 @@ describe("loginWithPassword (integration)", () => {
 
   // The other half of that swallow: the JSDoc promises a hasher which
   // cannot read the dummy degrades the equalisation rather than turning
-  // an unknown address into a 500. TC-loginWithPassword-011 only walks
+  // an unknown address into a 500. The failing-verify test above only walks
   // the registered-address path, where the throw is meant to surface.
   it("keeps an unknown address at INVALID_CREDENTIALS when the burn itself throws", async () => {
     const container = createTestContainer({

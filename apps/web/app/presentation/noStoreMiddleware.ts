@@ -15,7 +15,7 @@ import { setResponseHeader } from "@tanstack/react-start/server";
  * During SSR a server function runs in-process, so a route whose
  * `beforeLoad` calls one of these also gets the header on its document
  * response. That is what stops the back button from restoring a protected
- * screen after logout (manual TC-23).
+ * screen after logout.
  *
  * `Vary: Cookie` is a fail-safe for a CDN or reverse proxy placed in front
  * later: `/_serverFn/<id>` URLs are identical for every user.

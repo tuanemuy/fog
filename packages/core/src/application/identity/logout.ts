@@ -6,7 +6,7 @@ export type LogoutInput = {
 };
 
 /**
- * Logs out (S-AC-04 / UC-identity-004).
+ * Logs out.
  *
  * Nothing to do in the domain: identity has no session state and no
  * logout event, and destroying the session cookie belongs to the
@@ -14,9 +14,9 @@ export type LogoutInput = {
  * the same surface for logout as for login rather than leaving one half
  * of the pair to be discovered in a route handler.
  *
- * It touches no repository and collects no event — asserted by
- * TC-logout-001 — so `UserId.create` is the only work: a caller passing
- * an empty id has a broken session and should hear about it here.
+ * It touches no repository and collects no event, so `UserId.create` is
+ * the only work: a caller passing an empty id has a broken session and
+ * should hear about it here.
  */
 export async function logout({
   input,

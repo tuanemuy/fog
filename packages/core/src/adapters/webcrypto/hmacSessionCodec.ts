@@ -12,8 +12,8 @@ export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * the invariant of the construction boundary itself, so paths that build
  * the codec directly (tests, a future app package) cannot skip it.
  *
- * `application/di/secrets.ts` imports it rather than restating it
- * (.issue/1/adr.md ADR-036), so this algorithm-specific floor is also what
+ * `application/di/secrets.ts` imports it rather than restating it, so this
+ * algorithm-specific floor is also what
  * `SESSION_SECRET` is checked against at request-config time. That import
  * is the only reader of this constant outside this file in shipped code,
  * and replacing the codec means replacing it too.
@@ -45,7 +45,7 @@ function parsePayload(raw: string): Payload | null {
  * `SessionCodec` backed by an HMAC-SHA256 signature over a `{ uid, exp }`
  * payload, encoded as `<payloadBase64url>.<signatureBase64url>`.
  *
- * Stateless by design (.issue/1/adr.md ADR-002): no session table, no read
+ * Stateless by design: no session table, no read
  * on the request path, one implementation across all four runtimes. The
  * cost is that a token cannot be revoked server-side before `exp` —
  * acceptable while the product has no "sign out everywhere" requirement,

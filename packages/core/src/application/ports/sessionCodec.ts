@@ -11,7 +11,7 @@
  * The port knows nothing about cookies: it maps a `userId` to a token
  * string and back. Whether that token is a signed stateless blob or a
  * lookup key into a session table is entirely the adapter's business, so
- * the two are interchangeable without touching callers (.issue/1/adr.md ADR-002).
+ * the two are interchangeable without touching callers.
  *
  * `verify` reports every rejection — tampered signature, expired token,
  * unparseable payload — as `null` rather than throwing. "This token is no

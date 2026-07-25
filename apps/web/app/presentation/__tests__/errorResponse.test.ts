@@ -75,7 +75,7 @@ describe("redactForClient", () => {
     expect(redactForClient(SAMPLES[kind])).toEqual(SAMPLES[kind]);
   });
 
-  // AC-10 / AC-12 read their wording off `code`: `errorField.ts` resolves the
+  // The auth forms read their wording off `code`: `errorField.ts` resolves the
   // field through `FIELD_BY_CODE[error.code]` and `errorDisplay.ts` picks the
   // message the same way. Folding `validation` into the redacted branch would
   // turn every login failure into "システムエラーが発生しました", so the

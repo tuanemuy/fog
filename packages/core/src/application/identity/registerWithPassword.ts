@@ -21,7 +21,7 @@ function emailAlreadyRegistered(cause?: unknown): ConflictError {
 }
 
 /**
- * Registers a password account (S-AC-01 / UC-identity-001).
+ * Registers a password account.
  *
  * An already-registered address is rejected outright rather than linked
  * to the existing account, whatever its auth method — silently merging
@@ -63,7 +63,7 @@ export async function registerWithPassword({
     // the same address; the loser only finds out when the unit of work
     // flushes and `users_email_uq` fires. Reading that as
     // EMAIL_ALREADY_REGISTERED gives the racing caller the same answer as
-    // the pre-check would have (.issue/1/adr.md ADR-008).
+    // the pre-check would have.
     //
     // Safe only because of what this unit of work writes: one `users`
     // insert plus its outbox row. The inserted user is a `PasswordUser`,

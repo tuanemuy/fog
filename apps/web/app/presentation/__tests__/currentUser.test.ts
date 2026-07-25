@@ -122,12 +122,11 @@ describe("getCurrentUserId", () => {
 });
 
 describe("requireUserId", () => {
-  // AC-15 / manual TC-23. The header that keeps a logged-out back button
-  // from restoring a protected screen is emitted here as belt-and-braces
-  // alongside `noStoreMiddleware`, which is the authoritative point
-  // (.issue/1/adr.md ADR-038): the guard alone runs too late for a streaming
-  // route. Router-level invalidation cannot reach the browser's history /
-  // heuristic caches; only this header can.
+  // The header that keeps a logged-out back button from restoring a
+  // protected screen is emitted here as belt-and-braces alongside
+  // `noStoreMiddleware`, which is the authoritative point: the guard alone
+  // runs too late for a streaming route. Router-level invalidation cannot
+  // reach the browser's history / heuristic caches; only this header can.
   it("marks an authenticated response as uncacheable", async () => {
     mocks.cookie = TOKEN;
     installContainer({ userId: USER_ID });

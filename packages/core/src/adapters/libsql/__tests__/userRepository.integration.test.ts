@@ -209,12 +209,12 @@ describe("LibsqlUserRepository (integration)", () => {
     expect(isConflictError(error) && error.code).toBe("UNIQUE_VIOLATION");
   });
 
-  // The partial index is what lets the usecase-side translation
-  // (.issue/1/adr.md ADR-008) read any UNIQUE_VIOLATION raised by a
-  // `PasswordUser` insert as EMAIL_ALREADY_REGISTERED: with
-  // both SSO columns NULL the index cannot match, so the email index is
-  // the only one left that could have fired. Losing the `WHERE` clause
-  // would make that reading wrong, and nothing else would notice.
+  // The partial index is what lets the usecase-side translation read any
+  // UNIQUE_VIOLATION raised by a `PasswordUser` insert as
+  // EMAIL_ALREADY_REGISTERED: with both SSO columns NULL the index cannot
+  // match, so the email index is the only one left that could have fired.
+  // Losing the `WHERE` clause would make that reading wrong, and nothing
+  // else would notice.
   it("keeps password accounts out of the partial SSO identity index", async () => {
     container = await createTestContainer();
     const seeded = container;

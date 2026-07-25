@@ -7,9 +7,9 @@ import { content } from "../../../config";
 import { FakeLogger } from "../../__tests__/fakes";
 import { logout } from "../logout";
 
-// Every dependency a usecase could reach for is a tripwire: TC-logout-001
-// says logout performs no domain operation, no persistence and no event,
-// so touching any of these is the failure.
+// Every dependency a usecase could reach for is a tripwire: logout performs
+// no domain operation, no persistence and no event, so touching any of
+// these is the failure.
 function trippingContainer(): {
   container: RequestContainer;
   touched: string[];

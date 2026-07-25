@@ -15,7 +15,7 @@ export const logoutFn = createServerFn({ method: "POST" })
     await module.logout({ container, input: { userId } });
 
     // Destroying the session is presentation work: the identity domain
-    // holds no session state (UC-identity-004).
+    // holds no session state.
     const { endSession } = await import("@/presentation/session");
     endSession();
     return { ok: true } as const;

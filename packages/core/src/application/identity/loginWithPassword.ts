@@ -49,8 +49,8 @@ const DUMMY_PASSWORD_HASH =
 // hasher cannot read the dummy — is a property of the process, not of a
 // request, while the branch that reports it is reachable by unauthenticated
 // traffic (unknown addresses, SSO accounts). Logging per attempt would let
-// that traffic inflate the volume of the one signal
-// .issue/1/adr.md ADR-034 relies on, so it is emitted once per isolate.
+// that traffic inflate the volume of the only signal that the timing
+// equalisation has stopped working, so it is emitted once per isolate.
 let dummyHashUnreadableReported = false;
 
 /**
@@ -90,7 +90,7 @@ async function burnVerificationTime(
 }
 
 /**
- * Authenticates a password account (S-AC-03 / UC-identity-003).
+ * Authenticates a password account.
  *
  * Every way this can fail — malformed email, password outside the length
  * bounds, unknown address, an SSO-only account, a wrong password —

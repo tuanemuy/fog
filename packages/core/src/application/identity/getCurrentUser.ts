@@ -10,7 +10,7 @@ export type GetCurrentUserInput = {
 export type GetCurrentUserOutput = CurrentUserView;
 
 /**
- * Reads the signed-in user for the settings screen (UC-identity-013).
+ * Reads the signed-in user for the settings screen.
  *
  * `userId` comes from the verified session, never from the request body,
  * so a miss means the account was deleted while a session outlived it —

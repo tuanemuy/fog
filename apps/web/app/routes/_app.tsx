@@ -7,12 +7,12 @@ import { toSafeRedirect } from "@/presentation/redirectSearch";
 
 export const Route = createFileRoute("/_app")({
   // Router-cache entries for protected screens must not survive a logout,
-  // or the back button would restore one from memory (manual TC-23).
+  // or the back button would restore one from memory.
   staleTime: 0,
   // A pre-emptive redirect for navigation comfort, not the security
   // boundary: on client-side transitions this runs in the browser. Every
   // server execution point that reads protected data calls
-  // `requireUserId()` itself (.issue/1/adr.md ADR-005).
+  // `requireUserId()` itself.
   beforeLoad: async ({ location }) => {
     const { authenticated } = await readAuthStateFn();
     if (authenticated) return;
@@ -37,7 +37,7 @@ function AppLayout() {
 }
 
 /**
- * The failure surface for every protected screen (.issue/1/adr.md ADR-048).
+ * The failure surface for every protected screen.
  *
  * Wired here rather than per leaf so streaming routes get it by default: an
  * exception from a deferred RSC fragment surfaces during the leaf's render,
