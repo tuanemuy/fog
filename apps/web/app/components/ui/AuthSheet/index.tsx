@@ -14,9 +14,10 @@ type AuthSheetProps = {
  * landmark — nothing else on these screens could carry it.
  *
  * The body's top margin belongs to the sheet (`.auth-form { margin-top }` in
- * the design): `children` must not declare one of its own. The wrapper is a
- * flex column, so a child's `margin-top` adds to the sheet's
- * `--space-section` instead of collapsing into it.
+ * the design): the *first* child must not declare one of its own — the
+ * wrapper is a flex column, so its `margin-top` would add to the sheet's
+ * `--space-section` instead of collapsing into it. Margins between the
+ * children themselves are theirs to own (`.form-links` in the design).
  */
 export function AuthSheet({ title, description, children }: AuthSheetProps) {
   return (
@@ -33,9 +34,8 @@ export function AuthSheet({ title, description, children }: AuthSheetProps) {
             {description}
           </p>
         ) : null}
-        {/* 本文の上余白はシート側が持つ。children の形は画面ごとに不揃いで、
-            ErrorRetry は className を受け取らないため。flex にするのは、children
-            先頭の mt-* が親子マージン相殺に飲まれて和にならないのを避けるため */}
+        {/* 本文の上余白はシート側が持つ。ErrorRetry は className を
+            受け取らないため利用側には配れない */}
         <div className="mt-section flex flex-col">{children}</div>
       </div>
     </main>

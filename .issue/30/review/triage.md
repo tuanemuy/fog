@@ -12,3 +12,6 @@
 | `.issue/30/adr.md・plan.md:記録/実装との食い違い` | R2 | fix | ADR-001 の Decision が flex 化前のまま、plan.md のリスク節が現実装と正反対 | 0 |
 | `.issue/30/adr.md:Status/Proposed のまま` | R2 | wont-fix | `.issue/1/adr.md` は全 ADR が `Proposed` のまま。リポジトリの慣習に合わせる | 0 |
 | `AppShell/index.tsx:BrandLink/設計と違う形にした理由` | R2 | fix | `pb-2xl` に戻すと当たり判定が黙って 40px 広がる。R1 W-004 と同じ構図で扱いを揃える | 0 |
+| `AuthSheet/index.tsx:JSDoc/不変条件のスコープが広すぎる` | R3 | fix | 加算されるのは先頭の子だけ。`.form-links` の `mt-section` は正しいのに違反に見える | 0 |
+| `AuthSheet/index.tsx:JSDoc と JSX コメント/flex の理由が逆向き` | R3 | fix | 「加算は失敗」と「和になるのが目的」が同一ファイルで衝突。ADR-001 の理由に一本化する | 0 |
+| `PR #32 本文:Summary/実装との食い違い` | R3 | fix | R1 で撤回した「先頭項目の mt-md」が残っている。squash merge で履歴に残る | 0 |
