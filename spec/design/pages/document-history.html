@@ -221,8 +221,10 @@
         flex: none;
       }
       .h-title .title-text {
-        font-family: var(--font-brand);
-        font-weight: var(--weight-medium);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
       }
       .icon-btn {
         border: none;
@@ -692,7 +694,7 @@
               </svg>
             </button>
             <div class="h-title">
-              <span class="title-text" lang="en">history</span><span class="dot"></span>
+              <span class="title-text">ブランド刷新</span><span class="dot"></span>
             </div>
           </div>
           <div class="h-actions">

@@ -43,8 +43,6 @@
         --color-focus-danger: var(--color-error); /* 削除・完全削除・空にする等の実行ボタン専用 */
         --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
           "Hiragino Sans", "Noto Sans JP", sans-serif;
-        --font-brand: "Avenir Next", "Avenir", "Helvetica Neue", Arial,
-          sans-serif;
         --text-xs: 0.72rem;
         --text-sm: 0.78rem;
         --text-base: 0.95rem;
@@ -237,23 +235,33 @@
         width: var(--icon-md);
         height: var(--icon-md);
       }
-      .h-title {
+      .back-link {
+        color: var(--color-neutral-900);
+        text-decoration: none;
         font-size: var(--text-lg);
+        font-weight: var(--weight-semibold);
         display: flex;
         align-items: center;
         gap: 8px;
         min-width: 0;
       }
-      .h-title .title-text {
-        font-family: var(--font-brand);
-        font-weight: var(--weight-medium);
+      .back-link span:first-child {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
       }
-      .h-title .dot {
+      .back-link .dot {
         width: 6px;
         height: 6px;
         border-radius: var(--radius-full);
         background: var(--color-accent);
         flex: none;
+      }
+      .back-link:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+        border-radius: var(--radius-md);
       }
       .h-actions {
         display: flex;
@@ -304,7 +312,7 @@
         .menu {
           display: none;
         }
-        .h-title .dot {
+        .back-link .dot {
           display: none;
         }
       }
@@ -345,20 +353,6 @@
       }
 
       /* ==== ドキュメント固有 ==== */
-      .doc-context {
-        font-size: var(--text-sm);
-        color: var(--color-neutral-600);
-        margin-bottom: var(--space-sm);
-      }
-      .doc-context a {
-        color: inherit;
-        text-decoration: none;
-      }
-      .doc-context a:focus-visible {
-        outline: 2px solid var(--color-focus);
-        outline-offset: 2px;
-        border-radius: var(--radius-sm);
-      }
       .doc-title {
         font-size: var(--text-xl);
         font-weight: var(--weight-bold);
@@ -754,7 +748,9 @@
                 />
               </svg>
             </button>
-            <div class="h-title"><span class="title-text" lang="en">document</span><span class="dot"></span></div>
+            <a class="back-link" href="#">
+              <span>ブランド刷新</span><span class="dot"></span>
+            </a>
           </div>
           <div class="h-actions">
             <div class="ops-actions">
@@ -812,7 +808,6 @@
         <main class="sheet">
           <div class="inner">
             <!-- ドキュメントヘッダー -->
-            <p class="doc-context"><a href="#">ブランド刷新</a></p>
             <h1 class="doc-title">サイト構成の方針</h1>
             <div class="doc-meta">
               <span class="m">2026年7月20日 12:42 PM 更新</span>
