@@ -20,7 +20,7 @@ pnpm dev
 
 ### シードデータ
 
-設定画面（確認項目 5・6）だけログインが必要。Issue #1 の確認で作った `test@example.com` / `password123` を使う。存在しなければ `/signup` から同じ資格情報で作成する（本 Issue の確認項目 2 がそのまま登録画面の確認を兼ねる）。
+設定画面（確認項目 5・6）だけログインが必要。ローカル DB の `test@example.com` はパスワードが不明なので使えない（2026-07-26 の検証で確認）。`/signup` から検証用アカウントを作って使う（本 Issue の確認項目 2 がそのまま登録画面の確認を兼ねる）。2026-07-26 の検証では `appshell-check@example.com` / `password123` を作成した。
 
 ### 比較対象
 
@@ -129,9 +129,13 @@ pnpm dev
 
 - **目的:** `AuthSheet` の children ラップ（ADR-001）が `ErrorRetry fullWidth` の横幅を潰していないことを確認する（plan.md のリスク項目）
 - **手順:**
-  1. `pnpm dev` を起動したまま `apps/web/.env` の `DATABASE_URL` を存在しないリモート URL（例 `libsql://invalid.example.invalid`）に書き換え、サーバーを再起動する
-  2. `http://localhost:3000/login` を開き、ルートの `beforeLoad` 失敗でエラー画面を出す
-  3. 確認後、`.env` を元に戻してサーバーを再起動する
+  1. `http://localhost:3000/login` を開き、正常に描画されることを確認する
+  2. サーバーを停止する（`pkill -f "vite.config.node.ts"`）
+  3. 「アカウント登録」リンクをクリックしてクライアントサイド遷移させる。ルートの `beforeLoad`（`loadAppContext`）は dev では `staleTime: 0` で毎回再実行されるため、サーバー関数の fetch が失敗して `__root.tsx` の `errorComponent` が描画される
+  4. 確認後、`pnpm dev` でサーバーを起動し直す
+
+  `.env` の `DATABASE_URL` を壊す方法は dev サーバーでは使えない — SSR が Vite のエラーオーバーレイで落ち、アプリの `ErrorScreen` まで到達しない（2026-07-26 の検証で確認）。
+- **補足:** この経路は `sanitizeRouteError` の返り値が `ERROR_TITLE` と一致するため description が付かない。description ありのエラー画面は本手順ではカバーできない
 - **期待結果:** 再試行ボタンがシートの内側いっぱいの幅で描画され、見出し（または説明文）との間隔が 36px
 - **確認ポイント:** ラッパー `div` を挟んだことでボタンが内容幅に縮んでいないか
 
