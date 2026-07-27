@@ -29,13 +29,18 @@ export function SignupForm() {
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const formMessageRef = useRef<HTMLParagraphElement>(null);
+  const operationIdRef = useRef(crypto.randomUUID());
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
       const email = String(formData.get("email") ?? "");
       try {
         await signup({
-          data: { email, password: String(formData.get("password") ?? "") },
+          data: {
+            operationId: operationIdRef.current,
+            email,
+            password: String(formData.get("password") ?? ""),
+          },
         });
         await router.invalidate();
         await router.navigate({ to: DEFAULT_REDIRECT_PATH });

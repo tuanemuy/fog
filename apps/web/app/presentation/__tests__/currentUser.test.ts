@@ -29,14 +29,36 @@ const USER_ID = "01950000-0000-7000-8000-000000000001";
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const TOKEN = "payload.signature";
 
-type Verified = { userId: string } | null;
+type Verified = { userId: string; sessionEpoch: number } | null;
 
 let verifyCalls: ReadonlyArray<readonly [string, Date]>;
 
-function installContainer(verified: Verified): void {
+function installContainer(
+  verified: Verified,
+  authorityEpoch = verified?.sessionEpoch ?? 0,
+): void {
   verifyCalls = [];
   const container = {
     config: { ...content, appUrl: "https://app.example" },
+    identity: {
+      registerWithPassword: async () => {
+        throw new Error("reading the session must not register");
+      },
+      findPasswordCredential: async () => null,
+      getAccountAuthority: async () =>
+        verified
+          ? {
+              userId: verified.userId as never,
+              status: "active" as const,
+              primaryEmail: null,
+              authMethods: ["password" as const],
+              locators: [],
+              sessionEpoch: authorityEpoch,
+              operationEpoch: 0,
+            }
+          : null,
+      getCurrentAccount: async () => null,
+    },
     passwordHasher: {
       hash: async () => {
         throw new Error("reading the session must not hash");
@@ -85,7 +107,7 @@ beforeEach(() => {
 describe("getCurrentUserId", () => {
   it("reads the session cookie and hands the token to the codec with the container clock", async () => {
     mocks.cookie = TOKEN;
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, sessionEpoch: 0 });
 
     const { getCurrentUserId } = await currentUser();
     await expect(getCurrentUserId()).resolves.toBe(USER_ID);
@@ -93,7 +115,7 @@ describe("getCurrentUserId", () => {
   });
 
   it("reports nobody when the request carries no session cookie", async () => {
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, sessionEpoch: 0 });
 
     const { getCurrentUserId } = await currentUser();
     await expect(getCurrentUserId()).resolves.toBeNull();
@@ -114,6 +136,14 @@ describe("getCurrentUserId", () => {
     await expect(getCurrentUserId()).resolves.toBeNull();
     expect(verifyCalls).toEqual([["tampered.token", NOW]]);
   });
+
+  it("reports nobody when Account Home has advanced the session epoch", async () => {
+    mocks.cookie = TOKEN;
+    installContainer({ userId: USER_ID, sessionEpoch: 3 }, 4);
+
+    const { getCurrentUserId } = await currentUser();
+    await expect(getCurrentUserId()).resolves.toBeNull();
+  });
 });
 
 describe("requireUserId", () => {
@@ -124,7 +154,7 @@ describe("requireUserId", () => {
   // reach the browser's history / heuristic caches; only this header can.
   it("marks an authenticated response as uncacheable", async () => {
     mocks.cookie = TOKEN;
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, sessionEpoch: 0 });
 
     const { requireUserId } = await currentUser();
     await expect(requireUserId()).resolves.toBe(USER_ID);

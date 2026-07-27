@@ -4,10 +4,10 @@ compatibility_date = "2026-07-04"
 compatibility_flags = ["nodejs_compat"]
 
 [secrets]
-required = ["SESSION_SECRET", "DIRECTORY_ROUTING_SECRET_ACTIVE"]
+required = ["SESSION_SECRET", "DIRECTORY_ROUTING_SECRET_ACTIVE", "PITR_OPERATOR_TOKEN"]
 
 [build]
-command = "pnpm vite build --config apps/web/vite.config.cloudflare.ts --mode production"
+command = "pnpm vite build --config apps/web/vite.config.cloudflare.ts --mode staging"
 cwd = "../.."
 
 [assets]

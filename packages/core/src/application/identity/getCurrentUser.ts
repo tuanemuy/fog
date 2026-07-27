@@ -29,5 +29,11 @@ export async function getCurrentUser({
     throw new NotFoundError("USER_NOT_FOUND", `User not found: ${userId}`);
   }
 
-  return account;
+  return {
+    userId: account.auth.userId,
+    email: account.auth.primaryEmail ?? "",
+    authMethods: account.auth.authMethods,
+    displayName: account.profile.displayName,
+    trashRetentionDays: account.profile.trashRetentionDays,
+  };
 }

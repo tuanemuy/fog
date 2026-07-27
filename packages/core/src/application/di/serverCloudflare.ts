@@ -1,5 +1,6 @@
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { CloudflareIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
+import { validateDirectoryKeyring } from "@repo/core/adapters/cloudflare/identityRouting";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { content } from "@repo/core/config";
@@ -10,8 +11,8 @@ import { type ContainerStore, installContainerStore } from "./containerStore";
 import { requireSessionSecret } from "./secrets";
 import type { AppConfig, RequestContainer } from "./types";
 
-export { type ContainerStore, installContainerStore };
 export type { AppConfig, RequestContainer } from "./types";
+export { type ContainerStore, installContainerStore };
 
 export type ServerEnv = Readonly<{
   APP_URL: string;
@@ -43,6 +44,14 @@ function required(value: string | undefined, name: string): string {
 }
 
 export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
+  const hasPreviousSecret = env.DIRECTORY_ROUTING_SECRET_PREVIOUS !== undefined;
+  const hasPreviousGeneration =
+    env.DIRECTORY_ROUTING_GENERATION_PREVIOUS !== undefined;
+  if (hasPreviousSecret !== hasPreviousGeneration) {
+    throw new Error(
+      "Previous directory routing secret and generation must be configured together",
+    );
+  }
   const previous =
     env.DIRECTORY_ROUTING_SECRET_PREVIOUS &&
     env.DIRECTORY_ROUTING_GENERATION_PREVIOUS
@@ -51,6 +60,16 @@ export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
           secret: env.DIRECTORY_ROUTING_SECRET_PREVIOUS,
         }
       : undefined;
+  const directoryRouting = validateDirectoryKeyring({
+    active: {
+      generation: env.DIRECTORY_ROUTING_GENERATION_ACTIVE ?? "generation-1",
+      secret: required(
+        env.DIRECTORY_ROUTING_SECRET_ACTIVE,
+        "DIRECTORY_ROUTING_SECRET_ACTIVE",
+      ),
+    },
+    ...(previous ? { previous } : {}),
+  });
   return {
     ...content,
     appUrl: env.APP_URL,
@@ -58,16 +77,7 @@ export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
     identityDirectory: env.IDENTITY_DIRECTORY,
     accountHome: env.ACCOUNT_HOME,
     sessionSecret: requireSessionSecret(env.SESSION_SECRET),
-    directoryRouting: {
-      active: {
-        generation: env.DIRECTORY_ROUTING_GENERATION_ACTIVE ?? "generation-1",
-        secret: required(
-          env.DIRECTORY_ROUTING_SECRET_ACTIVE,
-          "DIRECTORY_ROUTING_SECRET_ACTIVE",
-        ),
-      },
-      ...(previous ? { previous } : {}),
-    },
+    directoryRouting,
   };
 }
 

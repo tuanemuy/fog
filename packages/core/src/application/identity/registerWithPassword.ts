@@ -1,14 +1,21 @@
-import { Email, PlainPassword } from "@repo/core/domain/identity/valueObject";
+import {
+  Email,
+  PlainPassword,
+  UserId,
+} from "@repo/core/domain/identity/valueObject";
 import { ConflictError } from "../errors";
 import type { ServiceArgs } from "../types";
+import { operationId } from "./contracts";
 
 export type RegisterWithPasswordInput = {
+  operationId: string;
   email: string;
   password: string;
 };
 
 export type RegisterWithPasswordOutput = {
   userId: string;
+  sessionEpoch: number;
 };
 
 function emailAlreadyRegistered(cause?: unknown): ConflictError {
@@ -35,7 +42,8 @@ export async function registerWithPassword({
   input,
 }: ServiceArgs<RegisterWithPasswordInput>): Promise<RegisterWithPasswordOutput> {
   const now = container.clock.now();
-  const id = container.idGenerator.next();
+  const stableOperationId = operationId(input.operationId);
+  const id = UserId.create(stableOperationId);
   const email = Email.create(input.email);
   const plainPassword = PlainPassword.create(input.password);
 
@@ -44,14 +52,14 @@ export async function registerWithPassword({
   try {
     if (!container.identity)
       throw new Error("Identity gateway is not configured");
-    await container.identity.registerWithPassword({
-      operationId: container.idGenerator.next(),
+    const result = await container.identity.registerWithPassword({
+      operationId: stableOperationId,
       userId: id,
       email,
       passwordHash,
       now: now.getTime(),
     });
-    return { userId: id };
+    return { userId: id, sessionEpoch: result.sessionEpoch };
   } catch (error) {
     if (
       error instanceof ConflictError &&

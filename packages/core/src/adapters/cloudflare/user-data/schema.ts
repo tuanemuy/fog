@@ -1,12 +1,7 @@
+import { type OrderedMigration, runOrderedMigrations } from "../migrations";
 import type { DurableSqlStorage } from "../sql";
 
-const VERSION = 1;
-
-const statements = [
-  `CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at INTEGER NOT NULL
-  )`,
+const initialSchema = [
   `CREATE TABLE IF NOT EXISTS profile (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     user_id TEXT NOT NULL,
@@ -33,6 +28,7 @@ const statements = [
     name TEXT NOT NULL,
     source_memo_id TEXT,
     archived_at INTEGER,
+    trashed_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -45,44 +41,84 @@ const statements = [
     topic_archived INTEGER NOT NULL DEFAULT 0,
     trashed_at INTEGER,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(topic_id) REFERENCES topics(id)
   )`,
   `CREATE TABLE IF NOT EXISTS content_revisions (
     content_id TEXT NOT NULL,
-    version INTEGER NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
     title TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    PRIMARY KEY (content_id, version)
+    PRIMARY KEY (content_id, version),
+    FOREIGN KEY(content_id) REFERENCES content(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS content_sources (
     content_id TEXT NOT NULL,
     memo_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    PRIMARY KEY (content_id, memo_id)
+    label TEXT NOT NULL DEFAULT '',
+    linked_at INTEGER NOT NULL,
+    PRIMARY KEY (content_id, memo_id),
+    FOREIGN KEY(content_id) REFERENCES content(id) ON DELETE CASCADE,
+    FOREIGN KEY(memo_id) REFERENCES content(id) ON DELETE CASCADE,
+    CHECK (content_id <> memo_id)
   )`,
+  `CREATE INDEX IF NOT EXISTS content_sources_memo_idx
+   ON content_sources(memo_id, content_id)`,
   `CREATE TABLE IF NOT EXISTS trash (
     content_id TEXT PRIMARY KEY,
     content_kind TEXT NOT NULL,
     trashed_at INTEGER NOT NULL,
-    purge_after INTEGER
+    purge_after INTEGER,
+    FOREIGN KEY(content_id) REFERENCES content(id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS search_entries (
+    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('memo', 'document')),
+    entity_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    topic_id TEXT,
+    UNIQUE(entity_type, entity_id)
   )`,
   `CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-    content_id UNINDEXED,
-    kind UNINDEXED,
     title,
     body,
+    content='search_entries',
+    content_rowid='rowid',
     tokenize='trigram'
   )`,
+  `CREATE TABLE IF NOT EXISTS search_snapshots (
+    id TEXT PRIMARY KEY,
+    query_digest TEXT NOT NULL,
+    total_count INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS search_snapshot_items (
+    snapshot_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    item_json TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, ordinal),
+    FOREIGN KEY(snapshot_id) REFERENCES search_snapshots(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS search_snapshots_expiry_idx
+   ON search_snapshots(expires_at)`,
   `CREATE TABLE IF NOT EXISTS idempotency (
-    operation_id TEXT PRIMARY KEY,
+    namespace TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    command_kind TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
     result_json TEXT NOT NULL,
-    completed_at INTEGER NOT NULL
+    completed_at INTEGER NOT NULL,
+    PRIMARY KEY(namespace, operation_id)
   )`,
   `CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     payload_json TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'leased', 'completed', 'poison')),
     attempt INTEGER NOT NULL DEFAULT 0,
     next_run_at INTEGER NOT NULL,
@@ -90,29 +126,20 @@ const statements = [
     owner_token TEXT,
     provider_idempotency_key TEXT NOT NULL UNIQUE,
     terminal_reason TEXT,
+    terminal_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS jobs_due_idx ON jobs(status, next_run_at)",
+  "CREATE INDEX IF NOT EXISTS jobs_reclaim_idx ON jobs(status, lease_until)",
+  "CREATE INDEX IF NOT EXISTS jobs_terminal_idx ON jobs(status, terminal_at)",
 ] as const;
 
+export const userDataMigrations: readonly OrderedMigration[] = [
+  { version: 1, up: initialSchema },
+];
+
 export function migrateUserData(storage: DurableSqlStorage, now: number): void {
-  storage.transactionSync(() => {
-    storage.sql.exec(statements[0]);
-    const row = storage.sql
-      .exec<{ version: number }>(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
-      )
-      .one();
-    if (row.version > VERSION) {
-      throw new Error(`Unsupported User Data schema version: ${row.version}`);
-    }
-    if (row.version === VERSION) return;
-    for (const statement of statements.slice(1)) storage.sql.exec(statement);
-    storage.sql.exec(
-      "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-      VERSION,
-      now,
-    );
-  });
+  storage.sql.exec("PRAGMA foreign_keys = ON");
+  runOrderedMigrations(storage, now, "User Data", userDataMigrations);
 }

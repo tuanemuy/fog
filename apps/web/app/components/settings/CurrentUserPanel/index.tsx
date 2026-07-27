@@ -39,7 +39,9 @@ export async function CurrentUserPanel() {
       <div className={`${ROW} border-t border-neutral-100`}>
         <span className="text-sm font-medium">認証方式</span>
         <span className="text-sm text-neutral-700">
-          {AUTH_METHOD_LABEL[user.authMethod]}
+          {user.authMethods
+            .map((method) => AUTH_METHOD_LABEL[method])
+            .join("、")}
         </span>
       </div>
       <div className="border-t border-neutral-100 pt-lg">

@@ -26,6 +26,8 @@ pnpm lint
 pnpm test:unit
 pnpm test:integration:cf
 pnpm test:lifecycle:cli
+pnpm audit:legacy
+pnpm audit:test-traceability
 pnpm build:cf
 pnpm deploy:staging:dry
 ```
@@ -48,6 +50,8 @@ production request Worker へ設定する値は次のコマンドで生成する
 openssl rand -base64 32
 pnpm --filter @repo/web exec wrangler secret put SESSION_SECRET --config wrangler.request.production.toml
 pnpm --filter @repo/web exec wrangler secret put DIRECTORY_ROUTING_SECRET_ACTIVE --config wrangler.request.production.toml
+pnpm --filter @repo/web exec wrangler secret put PITR_OPERATOR_TOKEN --config wrangler.request.production.toml
+pnpm --filter @repo/web secrets:check:production
 ```
 
 state/DO Worker config に `SESSION_SECRET` と directory routing secret が存在しないことを dry-run 出力で確認する。
@@ -85,7 +89,7 @@ state/DO Worker config に `SESSION_SECRET` と directory routing secret が存�
   1. `pnpm test:integration:cf` を実行する。
   2. lifecycle contract の memo/document create、update、remove、restore の各結果を確認する。
   3. 本体 write 失敗と projection write 失敗の fault injection が双方 rollback になることを確認する。
-  4. local test Worker の manual CLI が実装されたら、同じfixture操作を実行して結果一覧を目視する。
+  4. `pnpm test:lifecycle:cli` で local-only Worker を一時起動し、同じfixture操作と各操作直後の検索結果一覧を目視する。
 - **期待結果:** commit 成功時だけ本体と索引が同時に変わり、片側だけの状態が残らない。manual CLI は local/test artifact にだけ存在する。
 
 ### 4. 日本語・短語・topic・ゴミ箱・非ベクトル契約が検索結果へ反映される
@@ -138,9 +142,10 @@ state/DO Worker config に `SESSION_SECRET` と directory routing secret が存�
 - **目的:** request Worker と state/DO Worker の class export、binding、RPC version、deploy順序、secret配布を確認する。
 - **手順:**
   1. `pnpm build:cf` を実行する。
-  2. `pnpm deploy:staging:dry` を実行する。
-  3. request/state の生成設定と binding を確認する。
-  4. `pnpm dev` で multi-config local dev を起動し、確認項目1を再実行する。
+  2. `pnpm deploy:staging:dry` を実行し、binding/bundle整合を確認する。
+  3. 認証済みリリース環境で `pnpm --filter @repo/web secrets:check:staging` を実行し、secret名のinventory gateを通す。
+  4. request/state の生成設定と binding を確認する。
+  5. `pnpm dev` で multi-config local dev を起動し、確認項目1を再実行する。
 - **期待結果:** User Data / Identity Credential Shard / Account Home の3 SQLite classがstate Workerにexportされ、request Workerからだけbindingされる。state Workerにsession/routing secretがなく、必要な外部adapter secretだけが最小配布される。
 
 ### 9. PITR・退会削除・export の運用境界が安全である

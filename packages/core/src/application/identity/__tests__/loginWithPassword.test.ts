@@ -41,6 +41,7 @@ function container(
         throw new Error("login must not register");
       },
       findPasswordCredential: async () => null,
+      getAccountAuthority: async () => null,
       getCurrentAccount: async () => {
         throw new Error("login must not load current account");
       },

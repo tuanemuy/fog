@@ -35,11 +35,19 @@ function writeSessionCookie(
 
 export async function startSession(
   userId: string,
-  setCookieHeader: SetCookieHeader = defaultSetCookieHeader,
+  sessionEpochOrHeader: number | SetCookieHeader = 0,
+  maybeSetCookieHeader: SetCookieHeader = defaultSetCookieHeader,
 ): Promise<void> {
+  const sessionEpoch =
+    typeof sessionEpochOrHeader === "number" ? sessionEpochOrHeader : 0;
+  const setCookieHeader =
+    typeof sessionEpochOrHeader === "function"
+      ? sessionEpochOrHeader
+      : maybeSetCookieHeader;
   const container = await getContainer();
   const token = await container.sessionCodec.issue(
     userId,
+    sessionEpoch,
     container.clock.now(),
   );
   writeSessionCookie(token, setCookieHeader);

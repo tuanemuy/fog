@@ -12,6 +12,7 @@ declare const userIdBrand: unique symbol;
 declare const emailBrand: unique symbol;
 declare const plainPasswordBrand: unique symbol;
 declare const passwordHashBrand: unique symbol;
+declare const ssoSubjectBrand: unique symbol;
 declare const aiClientConnectionIdBrand: unique symbol;
 declare const clientNameBrand: unique symbol;
 declare const trashRetentionDaysBrand: unique symbol;
@@ -119,6 +120,21 @@ export const SsoProvider = {
       );
     }
     return raw;
+  },
+};
+
+export type SsoSubject = string & { readonly [ssoSubjectBrand]: true };
+
+export const SsoSubject = {
+  create: (raw: string): SsoSubject => {
+    const normalized = raw.normalize("NFKC").trim();
+    if (normalized.length === 0 || normalized.length > 512) {
+      throw new BusinessRuleError(
+        IdentityErrorCode.InvalidSsoProviderSubject,
+        "Invalid SSO subject",
+      );
+    }
+    return normalized as SsoSubject;
   },
 };
 

@@ -1,12 +1,7 @@
+import { type OrderedMigration, runOrderedMigrations } from "../migrations";
 import type { DurableSqlStorage } from "../sql";
 
-const VERSION = 1;
-
-const statements = [
-  `CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at INTEGER NOT NULL
-  )`,
+const V1 = [
   `CREATE TABLE IF NOT EXISTS credential_mappings (
     opaque_key TEXT PRIMARY KEY,
     generation TEXT NOT NULL,
@@ -22,10 +17,22 @@ const statements = [
     reservation_expires_at INTEGER,
     account_epoch INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    CHECK (
+      state = 'tombstoned'
+      OR
+      (kind = 'password' AND password_hash IS NOT NULL AND provider IS NULL)
+      OR
+      (kind = 'sso' AND password_hash IS NULL AND provider IS NOT NULL
+       )
+    )
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS credential_operation_uq
    ON credential_mappings(operation_id, opaque_key)`,
+  `CREATE INDEX IF NOT EXISTS credential_rotation_scan_idx
+   ON credential_mappings(generation, opaque_key)`,
+  `CREATE INDEX IF NOT EXISTS credential_reservation_expiry_idx
+   ON credential_mappings(state, reservation_expires_at)`,
   `CREATE TABLE IF NOT EXISTS reset_tokens (
     token_hash TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -45,28 +52,29 @@ const statements = [
   )`,
 ] as const;
 
+const V2 = [
+  "ALTER TABLE credential_mappings ADD COLUMN verified_email TEXT",
+  "ALTER TABLE credential_mappings ADD COLUMN bucket INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE reset_tokens ADD COLUMN consumed_operation_id TEXT",
+  `CREATE INDEX IF NOT EXISTS credential_rotation_scan_idx
+   ON credential_mappings(generation, opaque_key)`,
+  `CREATE INDEX IF NOT EXISTS credential_reservation_expiry_idx
+   ON credential_mappings(state, reservation_expires_at)`,
+] as const;
+
+export const identityDirectoryMigrations: readonly OrderedMigration[] = [
+  { version: 1, up: V1 },
+  { version: 2, up: V2 },
+];
+
 export function migrateIdentityDirectory(
   storage: DurableSqlStorage,
   now: number,
 ): void {
-  storage.transactionSync(() => {
-    storage.sql.exec(statements[0]);
-    const current = storage.sql
-      .exec<{ version: number }>(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
-      )
-      .one().version;
-    if (current > VERSION) {
-      throw new Error(
-        `Unsupported Identity Directory schema version: ${current}`,
-      );
-    }
-    if (current === VERSION) return;
-    for (const statement of statements.slice(1)) storage.sql.exec(statement);
-    storage.sql.exec(
-      "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-      VERSION,
-      now,
-    );
-  });
+  runOrderedMigrations(
+    storage,
+    now,
+    "Identity Directory",
+    identityDirectoryMigrations,
+  );
 }

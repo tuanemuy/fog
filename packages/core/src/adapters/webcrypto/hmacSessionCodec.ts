@@ -25,7 +25,7 @@ export type HmacSessionCodecOptions = Readonly<{
   ttlMs?: number;
 }>;
 
-type Payload = Readonly<{ uid: string; exp: number }>;
+type Payload = Readonly<{ uid: string; sep: number; exp: number }>;
 
 function parsePayload(raw: string): Payload | null {
   let decoded: unknown;
@@ -35,10 +35,13 @@ function parsePayload(raw: string): Payload | null {
     return null;
   }
   if (typeof decoded !== "object" || decoded === null) return null;
-  const { uid, exp } = decoded as Record<string, unknown>;
+  const { uid, sep, exp } = decoded as Record<string, unknown>;
   if (typeof uid !== "string" || uid.length === 0) return null;
+  if (typeof sep !== "number" || !Number.isSafeInteger(sep) || sep < 0) {
+    return null;
+  }
   if (typeof exp !== "number" || !Number.isFinite(exp)) return null;
-  return { uid, exp };
+  return { uid, sep, exp };
 }
 
 /**
@@ -91,11 +94,19 @@ export function createHmacSessionCodec(
   };
 
   return {
-    async issue(userId: string, now: Date): Promise<string> {
+    async issue(
+      userId: string,
+      sessionEpoch: number,
+      now: Date,
+    ): Promise<string> {
+      if (!Number.isSafeInteger(sessionEpoch) || sessionEpoch < 0) {
+        throw new TypeError("session epoch must be a non-negative integer");
+      }
       const payload = toBase64Url(
         encoder.encode(
           JSON.stringify({
             uid: userId,
+            sep: sessionEpoch,
             exp: now.getTime() + ttlMs,
           } satisfies Payload),
         ),
@@ -108,7 +119,10 @@ export function createHmacSessionCodec(
       return `${payload}.${toBase64Url(new Uint8Array(signature))}`;
     },
 
-    async verify(token: string, now: Date): Promise<{ userId: string } | null> {
+    async verify(
+      token: string,
+      now: Date,
+    ): Promise<{ userId: string; sessionEpoch: number } | null> {
       const parts = token.split(".");
       const [payloadPart, signaturePart] = parts;
       if (parts.length !== 2 || !payloadPart || !signaturePart) return null;
@@ -128,7 +142,7 @@ export function createHmacSessionCodec(
 
       const payload = parsePayload(payloadPart);
       if (!payload || payload.exp <= now.getTime()) return null;
-      return { userId: payload.uid };
+      return { userId: payload.uid, sessionEpoch: payload.sep };
     },
   };
 }

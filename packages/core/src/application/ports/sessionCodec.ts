@@ -19,6 +19,9 @@
  * longer good" is an expected outcome of an ordinary request, not a fault.
  */
 export interface SessionCodec {
-  issue(userId: string, now: Date): Promise<string>;
-  verify(token: string, now: Date): Promise<{ userId: string } | null>;
+  issue(userId: string, sessionEpoch: number, now: Date): Promise<string>;
+  verify(
+    token: string,
+    now: Date,
+  ): Promise<{ userId: string; sessionEpoch: number } | null>;
 }

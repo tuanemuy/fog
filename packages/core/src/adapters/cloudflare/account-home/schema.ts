@@ -1,12 +1,7 @@
+import { type OrderedMigration, runOrderedMigrations } from "../migrations";
 import type { DurableSqlStorage } from "../sql";
 
-const VERSION = 1;
-
-const statements = [
-  `CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at INTEGER NOT NULL
-  )`,
+const V1 = [
   `CREATE TABLE IF NOT EXISTS account (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     user_id TEXT NOT NULL,
@@ -22,8 +17,8 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS credential_locators (
     opaque_key TEXT PRIMARY KEY,
     generation TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    state TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('password', 'sso')),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'active', 'tombstoned')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -39,26 +34,19 @@ const statements = [
   )`,
 ] as const;
 
+const V2 = [
+  "ALTER TABLE credential_locators ADD COLUMN bucket INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE identity_operations ADD COLUMN operation_epoch INTEGER NOT NULL DEFAULT 0",
+] as const;
+
+export const accountHomeMigrations: readonly OrderedMigration[] = [
+  { version: 1, up: V1 },
+  { version: 2, up: V2 },
+];
+
 export function migrateAccountHome(
   storage: DurableSqlStorage,
   now: number,
 ): void {
-  storage.transactionSync(() => {
-    storage.sql.exec(statements[0]);
-    const current = storage.sql
-      .exec<{ version: number }>(
-        "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations",
-      )
-      .one().version;
-    if (current > VERSION) {
-      throw new Error(`Unsupported Account Home schema version: ${current}`);
-    }
-    if (current === VERSION) return;
-    for (const statement of statements.slice(1)) storage.sql.exec(statement);
-    storage.sql.exec(
-      "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-      VERSION,
-      now,
-    );
-  });
+  runOrderedMigrations(storage, now, "Account Home", accountHomeMigrations);
 }

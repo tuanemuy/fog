@@ -197,6 +197,7 @@ export const SystemErrorCode = {
   // unreadable. Not retryable — a second attempt writes the same header
   // into the same broken response.
   SessionError: "SESSION_ERROR",
+  StorageCapacityExceeded: "STORAGE_CAPACITY_EXCEEDED",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

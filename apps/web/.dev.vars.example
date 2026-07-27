@@ -16,6 +16,9 @@ SESSION_SECRET=""
 # locators. It must not be available to the state Worker.
 DIRECTORY_ROUTING_SECRET_ACTIVE=""
 
+# Authenticates the private PITR operator endpoint. Use a separate random value.
+PITR_OPERATOR_TOKEN=""
+
 # Set only during a routing-key rotation window. Temporarily add this name to
 # `wrangler.request.toml` `[secrets].required` so Wrangler admits it, then
 # remove both declarations after the checkpoint scan confirms no

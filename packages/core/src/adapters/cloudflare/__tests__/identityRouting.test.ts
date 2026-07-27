@@ -4,8 +4,14 @@ import { canonicalSsoCredential, credentialLocators } from "../identityRouting";
 describe("identity directory routing", () => {
   it("is deterministic, secret keyed, and emits active and previous locators", async () => {
     const keyring = {
-      active: { generation: "v2", secret: "active-secret" },
-      previous: { generation: "v1", secret: "previous-secret" },
+      active: {
+        generation: "v2",
+        secret: "active-secret-with-at-least-32-bytes",
+      },
+      previous: {
+        generation: "v1",
+        secret: "previous-secret-with-at-least-32-bytes",
+      },
       buckets: 64,
     };
     const first = await credentialLocators("email:user@example.com", keyring);

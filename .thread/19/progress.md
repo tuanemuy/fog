@@ -6,7 +6,12 @@
 
 自動検証済みの範囲:
 
-- Account Home restore の operator guard
-- restore 前後の Account Home status / epoch 一致契約
-- User Data / Identity Directory だけを restore 対象にできる class allowlist
-- lazy migration、export pagination、deletion tombstone の local workerd contract
+- Account Home 指定を Durable Object RPC より前に拒否する operator HTTP / workflow contract
+- User Data / Identity Directory の class allowlist と restore 前後の Account Home status / epoch 照合順序
+- request main Worker → `script_name` → state auxiliary Worker の generated binding 境界
+- local-only lifecycle Worker/CLI と production entry/config/bundleへの非包含audit
+
+未検証のままリリースゲートに残る範囲:
+
+- staging の実bookmark取得・restore・undo restore
+- staging secret inventory gate（Cloudflare認証情報が必要）

@@ -1,201 +1,506 @@
 import type {
-  CurrentAccount,
-  RpcResult,
+  AccountAuthSummary,
+  CredentialKind,
+  CredentialLocator,
+  IdentityOperation,
+  IdentityOperationKind,
+  IdentityOperationState,
+  OperationId,
 } from "@repo/core/application/identity/contracts";
+import {
+  opaqueCredentialKey,
+  operationId,
+} from "@repo/core/application/identity/contracts";
+import { Email, UserId } from "@repo/core/domain/identity/valueObject";
 import type { DurableSqlStorage } from "../sql";
+
+type OperationRow = {
+  operation_id: string;
+  kind: IdentityOperationKind;
+  state: IdentityOperationState;
+  payload_json: string;
+  operation_epoch: number;
+};
 
 export class AccountHomeStore {
   constructor(private readonly storage: DurableSqlStorage) {}
 
-  beginSignup(input: {
-    operationId: string;
-    userId: string;
-    email: string;
-    opaqueKey: string;
-    generation: string;
+  beginOperation(input: {
+    operationId: OperationId;
+    userId: UserId;
+    kind: IdentityOperationKind;
+    payloadDigest: string;
+    primaryEmail?: Email;
     now: number;
-  }): RpcResult<{ state: string }> {
+  }): IdentityOperation {
     return this.storage.transactionSync(() => {
-      const operation = this.storage.sql
-        .exec<{ state: string }>(
-          "SELECT state FROM identity_operations WHERE operation_id = ?",
-          input.operationId,
+      const existingOperation = this.operation(input.operationId);
+      if (existingOperation) {
+        if (
+          existingOperation.kind !== input.kind ||
+          existingOperation.payloadDigest !== input.payloadDigest
+        ) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return existingOperation;
+      }
+      const account = this.storage.sql
+        .exec<{ user_id: string; status: string; operation_epoch: number }>(
+          `SELECT user_id, status, operation_epoch
+           FROM account WHERE singleton = 1`,
         )
         .toArray()[0];
-      if (operation) return { ok: true, value: { state: operation.state } };
-      const existing = this.storage.sql
-        .exec<{ status: string }>(
-          "SELECT status FROM account WHERE singleton = 1",
-        )
-        .toArray()[0];
-      if (existing && existing.status !== "pending") {
-        return {
-          ok: false,
-          error: {
-            kind: "conflict",
-            code: "ACCOUNT_ALREADY_INITIALIZED",
-            message: "Account is already initialized",
-          },
-        };
+      if (account && account.user_id !== input.userId) {
+        throw new Error("ACCOUNT_OWNER_MISMATCH");
+      }
+      if (account?.status === "deleted") {
+        throw new Error("ACCOUNT_DELETED");
       }
       this.storage.sql.exec(
         `INSERT OR IGNORE INTO account(
            singleton, user_id, status, primary_email, auth_method,
            created_at, updated_at
-         ) VALUES (1, ?, 'pending', ?, 'password', ?, ?)`,
+         ) VALUES (1, ?, 'pending', ?, NULL, ?, ?)`,
         input.userId,
-        input.email,
+        input.primaryEmail ?? null,
         input.now,
         input.now,
       );
-      this.storage.sql.exec(
-        `INSERT INTO credential_locators(
-           opaque_key, generation, kind, state, created_at, updated_at
-         ) VALUES (?, ?, 'password', 'reserved', ?, ?)`,
-        input.opaqueKey,
-        input.generation,
-        input.now,
-        input.now,
-      );
+      const epoch = account?.operation_epoch ?? 0;
       this.storage.sql.exec(
         `INSERT INTO identity_operations(
-           operation_id, kind, state, payload_json, created_at, updated_at
-         ) VALUES (?, 'signup', 'credential-reserved', '{}', ?, ?)`,
+           operation_id, kind, state, payload_json, operation_epoch,
+           created_at, updated_at
+         ) VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
         input.operationId,
+        input.kind,
+        JSON.stringify({ digest: input.payloadDigest }),
+        epoch,
         input.now,
         input.now,
       );
-      return { ok: true, value: { state: "credential-reserved" } };
+      return {
+        operationId: input.operationId,
+        kind: input.kind,
+        state: "pending",
+        payloadDigest: input.payloadDigest,
+        epoch,
+      };
     });
   }
 
-  activateSignup(input: {
-    operationId: string;
-    opaqueKey: string;
+  advanceOperation(input: {
+    operationId: OperationId;
+    userId: UserId;
+    expectedState: IdentityOperationState;
+    nextState: IdentityOperationState;
+    locator?: CredentialLocator;
+    credentialKind?: CredentialKind;
+    primaryEmail?: Email;
+    bumpSessionEpoch?: boolean;
     now: number;
-  }): RpcResult<{ state: string }> {
+  }): IdentityOperation {
     return this.storage.transactionSync(() => {
-      const operation = this.storage.sql
+      const current = this.operation(input.operationId);
+      if (!current) throw new Error("OPERATION_NOT_FOUND");
+      if (current.state !== input.expectedState) {
+        if (
+          current.state === input.nextState ||
+          current.state === "completed"
+        ) {
+          return current;
+        }
+        throw new Error("IDENTITY_OPERATION_PHASE_CONFLICT");
+      }
+      if (input.locator && input.credentialKind) {
+        this.upsertLocator(
+          input.locator,
+          input.credentialKind,
+          input.nextState === "completed" ? "active" : "reserved",
+          input.now,
+        );
+      }
+      this.storage.sql.exec(
+        `UPDATE identity_operations SET state = ?, updated_at = ?
+         WHERE operation_id = ? AND state = ?`,
+        input.nextState,
+        input.now,
+        input.operationId,
+        input.expectedState,
+      );
+      if (input.nextState === "completed") {
+        this.storage.sql.exec(
+          `UPDATE account SET status = 'active',
+             primary_email = COALESCE(?, primary_email),
+             auth_method = COALESCE(auth_method, ?),
+             session_epoch = session_epoch + ?,
+             updated_at = ?
+           WHERE singleton = 1 AND user_id = ?`,
+          input.primaryEmail ?? null,
+          input.credentialKind ?? null,
+          input.bumpSessionEpoch ? 1 : 0,
+          input.now,
+          input.userId,
+        );
+        this.storage.sql.exec(
+          `UPDATE credential_locators SET state = 'active', updated_at = ?
+           WHERE state = 'reserved'`,
+          input.now,
+        );
+      }
+      return this.operation(input.operationId) as IdentityOperation;
+    });
+  }
+
+  getOperation(operation: OperationId): IdentityOperation | null {
+    return this.operation(operation);
+  }
+
+  addCredentialLocator(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: CredentialLocator;
+    kind: CredentialKind;
+    primaryEmail?: Email;
+    bumpSessionEpoch: boolean;
+    now: number;
+  }): AccountAuthSummary {
+    return this.storage.transactionSync(() => {
+      const existing = this.storage.sql
         .exec<{ state: string }>(
           "SELECT state FROM identity_operations WHERE operation_id = ?",
           input.operationId,
         )
         .toArray()[0];
-      if (!operation) {
+      this.upsertLocator(
+        input.locator,
+        input.kind,
+        this.accountStatus() === "active" ? "active" : "reserved",
+        input.now,
+      );
+      if (!existing) {
+        const epoch = this.operationEpoch();
+        this.storage.sql.exec(
+          `INSERT INTO identity_operations(
+             operation_id, kind, state, payload_json, operation_epoch,
+             created_at, updated_at
+           ) VALUES (?, 'sso-link', 'completed', '{"digest":"primitive"}', ?, ?, ?)`,
+          input.operationId,
+          epoch,
+          input.now,
+          input.now,
+        );
+        this.storage.sql.exec(
+          `UPDATE account SET primary_email = COALESCE(?, primary_email),
+             auth_method = CASE
+               WHEN auth_method IS NULL THEN ?
+               WHEN auth_method = ? THEN auth_method
+               ELSE 'sso'
+             END,
+             session_epoch = session_epoch + ?, updated_at = ?
+           WHERE singleton = 1 AND user_id = ? AND status != 'deleted'`,
+          input.primaryEmail ?? null,
+          input.kind,
+          input.kind,
+          input.bumpSessionEpoch ? 1 : 0,
+          input.now,
+          input.userId,
+        );
+      }
+      const summary = this.authSummary();
+      if (!summary) throw new Error("ACCOUNT_NOT_FOUND");
+      return summary;
+    });
+  }
+
+  removeCredentialLocator(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: CredentialLocator;
+    bumpSessionEpoch: boolean;
+    now: number;
+  }): AccountAuthSummary {
+    return this.storage.transactionSync(() => {
+      const activeKindCount = this.storage.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(DISTINCT kind) AS count
+           FROM credential_locators WHERE state = 'active'`,
+        )
+        .one().count;
+      const target = this.storage.sql
+        .exec<{ state: string; kind: CredentialKind }>(
+          "SELECT state, kind FROM credential_locators WHERE opaque_key = ?",
+          input.locator.opaqueKey,
+        )
+        .toArray()[0];
+      if (target?.state === "active" && activeKindCount <= 1) {
+        throw new Error("LAST_CREDENTIAL_UNLINK_FORBIDDEN");
+      }
+      const existing = this.storage.sql
+        .exec<{ operation_id: string }>(
+          "SELECT operation_id FROM identity_operations WHERE operation_id = ?",
+          input.operationId,
+        )
+        .toArray()[0];
+      this.storage.sql.exec(
+        `UPDATE credential_locators SET state = 'tombstoned', updated_at = ?
+         WHERE opaque_key = ?`,
+        input.now,
+        input.locator.opaqueKey,
+      );
+      if (!existing) {
+        this.storage.sql.exec(
+          `INSERT INTO identity_operations(
+             operation_id, kind, state, payload_json, operation_epoch,
+             created_at, updated_at
+           ) VALUES (?, 'sso-unlink', 'completed', '{"digest":"primitive"}', ?, ?, ?)`,
+          input.operationId,
+          this.operationEpoch(),
+          input.now,
+          input.now,
+        );
+        this.storage.sql.exec(
+          `UPDATE account SET session_epoch = session_epoch + ?, updated_at = ?
+           WHERE singleton = 1 AND user_id = ?`,
+          input.bumpSessionEpoch ? 1 : 0,
+          input.now,
+          input.userId,
+        );
+      }
+      const summary = this.authSummary();
+      if (!summary) throw new Error("ACCOUNT_NOT_FOUND");
+      return summary;
+    });
+  }
+
+  replaceCredentialLocator(input: {
+    operationId: OperationId;
+    userId: UserId;
+    previous: CredentialLocator;
+    active: CredentialLocator;
+    kind: CredentialKind;
+    now: number;
+  }): void {
+    this.storage.transactionSync(() => {
+      const account = this.authSummary();
+      if (
+        !account ||
+        account.userId !== input.userId ||
+        account.status !== "active"
+      ) {
+        throw new Error("ACCOUNT_AUTHORITY_MISMATCH");
+      }
+      this.upsertLocator(input.active, input.kind, "active", input.now);
+      this.storage.sql.exec(
+        `UPDATE credential_locators SET state = 'tombstoned', updated_at = ?
+         WHERE opaque_key = ?`,
+        input.now,
+        input.previous.opaqueKey,
+      );
+      this.storage.sql.exec(
+        `INSERT OR IGNORE INTO identity_operations(
+           operation_id, kind, state, payload_json, operation_epoch,
+           created_at, updated_at
+         ) VALUES (?, 'credential-rotation', 'completed',
+           '{"digest":"rotation"}', ?, ?, ?)`,
+        input.operationId,
+        account.operationEpoch,
+        input.now,
+        input.now,
+      );
+    });
+  }
+
+  beginDeletion(input: {
+    operationId: OperationId;
+    userId: UserId;
+    now: number;
+  }): {
+    epoch: number;
+    state: IdentityOperationState;
+    locators: readonly CredentialLocator[];
+  } {
+    return this.storage.transactionSync(() => {
+      const existing = this.operation(input.operationId);
+      if (existing) {
+        if (existing.kind !== "delete-account") {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
         return {
-          ok: false,
-          error: {
-            kind: "not-found",
-            code: "OPERATION_NOT_FOUND",
-            message: "Identity operation was not found",
-          },
+          epoch: existing.epoch,
+          state: existing.state,
+          locators: this.locators(),
         };
       }
-      if (operation.state === "completed") {
-        return { ok: true, value: { state: "completed" } };
-      }
-      this.storage.sql.exec(
-        "UPDATE account SET status = 'active', updated_at = ? WHERE singleton = 1",
-        input.now,
-      );
-      this.storage.sql.exec(
-        `UPDATE credential_locators
-         SET state = 'active', updated_at = ? WHERE opaque_key = ?`,
-        input.now,
-        input.opaqueKey,
-      );
-      this.storage.sql.exec(
-        `UPDATE identity_operations
-         SET state = 'completed', updated_at = ? WHERE operation_id = ?`,
-        input.now,
-        input.operationId,
-      );
-      return { ok: true, value: { state: "completed" } };
-    });
-  }
-
-  current(): CurrentAccount | null {
-    const row = this.storage.sql
-      .exec<{
-        user_id: string;
-        status: string;
-        primary_email: string | null;
-        auth_method: "password" | "sso" | null;
-        session_epoch: number;
-      }>(
-        `SELECT user_id, status, primary_email, auth_method, session_epoch
-         FROM account WHERE singleton = 1`,
-      )
-      .toArray()[0];
-    if (
-      row?.status !== "active" ||
-      row.primary_email === null ||
-      row.auth_method === null
-    ) {
-      return null;
-    }
-    return {
-      userId: row.user_id,
-      email: row.primary_email,
-      authMethod: row.auth_method,
-      trashRetentionDays: 30,
-      sessionEpoch: row.session_epoch,
-    };
-  }
-
-  beginDeletion(now: number): { epoch: number; locators: readonly string[] } {
-    return this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `UPDATE account SET status = 'deleting',
-           operation_epoch = operation_epoch + 1, session_epoch = session_epoch + 1,
-           updated_at = ? WHERE singleton = 1 AND status != 'deleted'`,
-        now,
+           operation_epoch = operation_epoch + 1,
+           session_epoch = session_epoch + 1, updated_at = ?
+         WHERE singleton = 1 AND user_id = ? AND status != 'deleted'`,
+        input.now,
+        input.userId,
       );
-      const epoch = this.storage.sql
-        .exec<{ operation_epoch: number }>(
-          "SELECT operation_epoch FROM account WHERE singleton = 1",
-        )
-        .one().operation_epoch;
-      const locators = this.storage.sql
-        .exec<{ opaque_key: string }>(
-          "SELECT opaque_key FROM credential_locators ORDER BY opaque_key",
-        )
-        .toArray()
-        .map((row) => row.opaque_key);
+      const epoch = this.operationEpoch();
+      this.storage.sql.exec(
+        `INSERT INTO identity_operations(
+           operation_id, kind, state, payload_json, operation_epoch,
+           created_at, updated_at
+         ) VALUES (?, 'delete-account', 'tombstoning',
+           '{"digest":"delete-account"}', ?, ?, ?)`,
+        input.operationId,
+        epoch,
+        input.now,
+        input.now,
+      );
       this.storage.sql.exec(
         "UPDATE credential_locators SET state = 'tombstoned', updated_at = ?",
-        now,
+        input.now,
       );
-      return { epoch, locators };
+      return { epoch, state: "tombstoning", locators: this.locators() };
     });
   }
 
-  finishDeletion(epoch: number, now: number): boolean {
+  finishDeletion(input: {
+    operationId: OperationId;
+    userId: UserId;
+    epoch: number;
+    now: number;
+  }): boolean {
     return this.storage.transactionSync(() => {
       const cursor = this.storage.sql.exec(
         `UPDATE account SET status = 'deleted', primary_email = NULL,
            auth_method = NULL, deleted_at = ?, updated_at = ?
-         WHERE singleton = 1 AND status = 'deleting' AND operation_epoch = ?`,
-        now,
-        now,
-        epoch,
+         WHERE singleton = 1 AND user_id = ? AND status = 'deleting'
+           AND operation_epoch = ?`,
+        input.now,
+        input.now,
+        input.userId,
+        input.epoch,
       );
-      if (cursor.rowsWritten > 0) {
-        this.storage.sql.exec("DELETE FROM credential_locators");
-        this.storage.sql.exec("DELETE FROM identity_operations");
-      }
-      return cursor.rowsWritten > 0;
+      this.storage.sql.exec(
+        `UPDATE identity_operations SET state = 'completed',
+           payload_json = '{"digest":"deleted"}', updated_at = ?
+         WHERE operation_id = ? AND operation_epoch = ?`,
+        input.now,
+        input.operationId,
+        input.epoch,
+      );
+      return cursor.rowsWritten > 0 || this.accountStatus() === "deleted";
     });
   }
 
-  authority(): { status: string; epoch: number } | null {
+  authSummary(): AccountAuthSummary | null {
+    const row = this.storage.sql
+      .exec<{
+        user_id: string;
+        status: AccountAuthSummary["status"];
+        primary_email: string | null;
+        session_epoch: number;
+        operation_epoch: number;
+      }>(
+        `SELECT user_id, status, primary_email, session_epoch, operation_epoch
+         FROM account WHERE singleton = 1`,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    const activeKinds = this.storage.sql
+      .exec<{ kind: CredentialKind }>(
+        `SELECT DISTINCT kind FROM credential_locators
+         WHERE state = 'active' ORDER BY kind`,
+      )
+      .toArray()
+      .map((item) => item.kind);
+    return {
+      userId: UserId.create(row.user_id),
+      status: row.status,
+      primaryEmail:
+        row.primary_email === null ? null : Email.create(row.primary_email),
+      authMethods: activeKinds,
+      locators: this.locators("active"),
+      sessionEpoch: row.session_epoch,
+      operationEpoch: row.operation_epoch,
+    };
+  }
+
+  private operation(id: OperationId): IdentityOperation | null {
+    const row = this.storage.sql
+      .exec<OperationRow>(
+        `SELECT operation_id, kind, state, payload_json, operation_epoch
+         FROM identity_operations WHERE operation_id = ?`,
+        id,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    const payload = JSON.parse(row.payload_json) as { digest?: unknown };
+    if (typeof payload.digest !== "string") {
+      throw new Error("IDENTITY_OPERATION_PAYLOAD_CORRUPT");
+    }
+    return {
+      operationId: operationId(row.operation_id),
+      kind: row.kind,
+      state: row.state,
+      payloadDigest: payload.digest,
+      epoch: row.operation_epoch,
+    };
+  }
+
+  private upsertLocator(
+    locator: CredentialLocator,
+    kind: CredentialKind,
+    state: "reserved" | "active" | "tombstoned",
+    now: number,
+  ): void {
+    this.storage.sql.exec(
+      `INSERT INTO credential_locators(
+         opaque_key, generation, bucket, kind, state, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(opaque_key) DO UPDATE SET
+         generation = excluded.generation, bucket = excluded.bucket,
+         kind = excluded.kind, state = excluded.state,
+         updated_at = excluded.updated_at`,
+      locator.opaqueKey,
+      locator.generation,
+      locator.bucket,
+      kind,
+      state,
+      now,
+      now,
+    );
+  }
+
+  private locators(
+    state?: "reserved" | "active" | "tombstoned",
+  ): readonly CredentialLocator[] {
+    return this.storage.sql
+      .exec<{ opaque_key: string; generation: string; bucket: number }>(
+        `SELECT opaque_key, generation, bucket FROM credential_locators
+         ${state ? "WHERE state = ?" : ""}
+         ORDER BY generation, bucket, opaque_key`,
+        ...(state ? [state] : []),
+      )
+      .toArray()
+      .map((row) => ({
+        opaqueKey: opaqueCredentialKey(row.opaque_key),
+        generation: row.generation,
+        bucket: row.bucket,
+      }));
+  }
+
+  private accountStatus(): AccountAuthSummary["status"] | null {
     return (
       this.storage.sql
-        .exec<{ status: string; epoch: number }>(
-          `SELECT status, operation_epoch AS epoch
-           FROM account WHERE singleton = 1`,
+        .exec<{ status: AccountAuthSummary["status"] }>(
+          "SELECT status FROM account WHERE singleton = 1",
         )
-        .toArray()[0] ?? null
+        .toArray()[0]?.status ?? null
     );
+  }
+
+  private operationEpoch(): number {
+    return this.storage.sql
+      .exec<{ operation_epoch: number }>(
+        "SELECT operation_epoch FROM account WHERE singleton = 1",
+      )
+      .one().operation_epoch;
   }
 }

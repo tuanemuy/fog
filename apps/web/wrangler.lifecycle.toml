@@ -1,0 +1,12 @@
+name = "fog-lifecycle"
+main = "app/testing/lifecycle.integration.worker.ts"
+compatibility_date = "2026-07-04"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+LOCAL_LIFECYCLE_ENABLED = "true"
+
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+script_name = "fog-state"

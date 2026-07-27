@@ -3,6 +3,7 @@ import {
   Email,
   type PasswordHash,
   PlainPassword,
+  UserId,
 } from "@repo/core/domain/identity/valueObject";
 import { ValidationError } from "../errors";
 import type { Logger } from "../ports/logger";
@@ -15,10 +16,14 @@ export type LoginWithPasswordInput = {
 
 export type LoginWithPasswordOutput = {
   userId: string;
+  sessionEpoch: number;
 };
 
 const invalidCredentials = (): ValidationError =>
   new ValidationError("INVALID_CREDENTIALS", "Invalid email or password");
+const DUMMY_AUTHORITY_USER_ID = UserId.create(
+  "00000000-0000-7000-8000-000000000000",
+);
 
 /**
  * The work factor {@link DUMMY_PASSWORD_HASH} declares.
@@ -119,6 +124,9 @@ export async function loginWithPassword({
       input.password as PlainPassword,
       container.logger,
     );
+    if (container.identity) {
+      await container.identity.getAccountAuthority(DUMMY_AUTHORITY_USER_ID);
+    }
     throw invalidCredentials();
   }
 
@@ -131,6 +139,7 @@ export async function loginWithPassword({
       plainPassword,
       container.logger,
     );
+    await container.identity.getAccountAuthority(DUMMY_AUTHORITY_USER_ID);
     throw invalidCredentials();
   }
 
@@ -138,7 +147,21 @@ export async function loginWithPassword({
     plainPassword,
     found.passwordHash,
   );
-  if (!matches) throw invalidCredentials();
+  const authority = await container.identity.getAccountAuthority(found.userId);
+  const locatorIsCurrent = authority?.locators.some(
+    (locator) =>
+      locator.generation === found.locator.generation &&
+      locator.bucket === found.locator.bucket &&
+      locator.opaqueKey === found.locator.opaqueKey,
+  );
+  if (
+    authority?.status !== "active" ||
+    !matches ||
+    authority.operationEpoch !== found.accountEpoch ||
+    locatorIsCurrent !== true
+  ) {
+    throw invalidCredentials();
+  }
 
-  return { userId: found.userId };
+  return { userId: found.userId, sessionEpoch: authority.sessionEpoch };
 }

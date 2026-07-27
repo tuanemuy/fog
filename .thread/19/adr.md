@@ -26,7 +26,7 @@ Proposed
 spec はキーワードとベクトル検索の統合、Vectorize、embedding、RRF を要求しているが、ベクトル検索を必須とする利用上の根拠や評価データはない。User Data DO の SQLite は FTS5 をサポートし、本体データと索引を同じ transaction で更新できる。
 
 ### Decision
-検索は User Data DO 内の SQLite FTS5 に限定する。applicationにはread/queryだけの最小`SearchIndexPort`を残し、upsert/removeは`SemanticCommitPort`実装だけへ渡すtransaction-scoped `SearchProjectionPort`へ分離する。queryはUnicode NFKCで正規化し、UTF-8 50 bytesを超えるpatternを拒否する。日本語を空白分割に依存せず扱うため trigram tokenizer を第一選択とし、1〜2文字はwildcard escape・対象列/page size制限を持つ SQL fallback で扱う。検索 entry と topic は多対多 join で結ぶが、filterはoptional単一topicとし、指定時はrelationにそのtopicを含むcontentだけ、未指定は全体、unknownは空結果とする。順位同点は対象 ID で決定的に並べ、page/offsetの一貫性は同一SQLite snapshot内だけを保証する。ベクトル要素以外の既存契約であるmemo/document種別DTO、activeなsource links、topic配下documentの出典memo、archive済みtopic、UI/AIの同一検索挙動は保持し、source link変更も本体と同じtransactionで投影する。Vectorize、embedding、RRF、`search_embeddings` は設計と実装から削除する。
+検索は User Data DO 内の SQLite FTS5 に限定する。applicationにはread/queryだけの最小`SearchIndexPort`を残し、upsert/removeは`SemanticCommitPort`実装だけへ渡すtransaction-scoped `SearchProjectionPort`へ分離する。queryはUnicode NFKCで正規化し、UTF-8 50 bytesを超えるpatternを拒否する。日本語を空白分割に依存せず扱うため trigram tokenizer を第一選択とし、1〜2文字はwildcard escape・対象列/page size制限を持つ SQL fallback で扱う。検索 entry と topic は正規化したfact/source joinで結び、filterはoptional単一topicとする。指定時は配下documentとactive source memoを返し、unknown/trashed topicは`TOPIC_NOT_FOUND`にする。順位同点は`timestamp DESC, type, id`で決定し、最初のqueryで結果DTOを期限付きsnapshot tableへ固定してopaque cursorから同じ集合を読むため、page間mutationがあっても重複・欠落させない。FTSは`search_entries.rowid`をexternal-content tableのrowidとして使い、更新時の全virtual table scanとFTS側の本文複製を避ける。ベクトル要素以外の既存契約であるmemo/document種別DTO、activeな双方向source IDs、topic配下documentの出典memo、archive済みtopic、UI/AIの同一検索挙動は保持し、source link変更も本体と同じtransactionで確定する。Vectorize、embedding、RRF、`search_embeddings` は設計と実装から削除する。
 
 ### Consequences
 - 良い点: 外部 index と非同期整合性が不要になり、検索結果の説明可能性、運用、コストが単純になる。
@@ -43,7 +43,7 @@ Proposed
 既存構成は D1 Outbox、relay、consumer、DLQ を各ランタイム向けに持つ。User Data DO 内の本体と FTS index は同じ SQLite にあり、分散 delivery を挟む理由がない。一方、外部 I/O と期限付き trash retention は request transaction から分離し、失敗後も回復する必要がある。
 
 ### Decision
-本体と FTS index は同一 SQLite transaction で同期更新する。DO application usecaseは外部I/Oなしのasync prepareを先に完了してsemantic typed commit commandを作り、`SemanticCommitPort`だけが`transactionSync`で本体repositoryとtransaction-scoped `SearchProjectionPort`を同期commitする。transaction callbackにはPromise、暗号、RPC、メール等の外部I/Oを入れず、read/query用`SearchIndexPort`からwrite capabilityへ到達させない。domain event は内向きの業務表現として必要なものだけ保持し、外部配送用 transport Outbox/relay/consumer/DLQ は削除する。外部 I/O と retention だけを永続 job table に記録し、単一の DO Alarm で due job を処理する。jobはoperation key、attempt、nextRunAt、statusに加えて`leaseUntil`、`ownerToken`、provider idempotency key、terminal/poison reasonを持つ。期限切れleaseをreclaimし、owner tokenのCASで完了する。job mutationとDBの最早`nextRunAt`読取は`transactionSync`の戻り値にし、commit後にだけ`await ctx.storage.setAlarm(nextRunAt)`する。過去または現在時刻のdue jobは同じinput中の即時Alarm発火と競合しないよう、DBの`nextRunAt`は変えずplatform alarmだけを現在時刻の1秒後へclampする。設定失敗時は次のDO input gateでDBから最早時刻を再計算する。
+本体と FTS index は同一 SQLite transaction で同期更新する。DO application usecaseは外部I/Oなしのasync prepareを先に完了してsemantic typed commit commandを作り、`SemanticCommitPort`だけが`transactionSync`で本体repositoryとtransaction-scoped `SearchProjectionPort`を同期commitする。transaction callbackにはPromise、暗号、RPC、メール等の外部I/Oを入れず、read/query用`SearchIndexPort`からwrite capabilityへ到達させない。domain event は内向きの業務表現として必要なものだけ保持し、外部配送用 transport Outbox/relay/consumer/DLQ は削除する。外部 I/O と retention だけを永続 job table に記録し、単一の DO Alarm で due job を処理する。jobはoperation key、canonical payload digest、attempt、nextRunAt、statusに加えて`leaseUntil`、`ownerToken`、provider idempotency key、terminal/poison reasonを持つ。同じID/keyの異payloadはconflictとし、期限切れleaseを専用indexからreclaimしてowner tokenのCASで完了する。現在producerが存在するjobはUser Data内で完結するtrash retentionだけなので、汎用enqueue RPCや未設定egress bindingは公開せず、既知の`purge-trash` executorだけを配線する。将来外部I/O jobを追加するときは同じリリースで実executor/secret-bearing egressとproducerを追加する。Alarmは1件ずつclaimして最大25件・10秒のbudgetを各job間で確認し、実完了時刻でcomplete/retryする。job mutationとDBの最早`nextRunAt`読取は`transactionSync`の戻り値にし、commit後は既存alarmより早い場合だけ`await ctx.storage.setAlarm(nextRunAt)`する。過去または現在時刻のdue jobは同じinput中の即時Alarm発火と競合しないよう、DBの`nextRunAt`は変えずplatform alarmだけを現在時刻の1秒後へclampする。設定失敗時は次のDO input gateでDBから最早時刻を再計算する。completed/poison rowは異なるretention期間でpruneし、長期scanをboundedにする。
 
 ### Consequences
 - 良い点: 検索の結果整合性と relay/consumer/DLQ 運用を除去でき、非同期処理の状態が利用者データと同じ場所に残る。
@@ -156,3 +156,22 @@ Proposed
 ### Consequences
 - 良い点: 基盤移行の受け入れ条件を満たしながら、後続Issueのユーザー体験と完成usecaseを先取りしない。
 - トレードオフ: primitiveが存在しても公開UIからは利用できず、後続Issueで認可・presentation・完全なシナリオテストを接続する必要がある。
+
+---
+
+## ADR-010: Account Home を identity saga と session のオンライン権威にする
+
+### Status
+Proposed
+
+### Context
+Directory mapping だけで login を成立させると、signup の部分失敗、退会処理中、Directory PITR、credential mutation 後の旧 session を区別できない。複数 DO の一時状態を stateless session token だけで失効させることもできない。
+
+### Decision
+signup transport は再送中保持する stable operation ID を生成し、その値を proposed user ID として一度だけ確定する。application の `IdentityCoordinator` は Account Home に operation kind・payload fingerprint・phase・epoch を最初に保存し、Directory reservation、User Data 初期化、Directory active 化、Account Home active 化を保存済み phase から再開する。adapter は versioned value envelope の routing／永続化 primitive と typed retry だけを所有する。
+
+login は active/previous Directory lookup と password verify の後、Account Home の `active` status、reverse locator、operation epochを照合する。session tokenには発行時 `sessionEpoch` を署名し、すべての protected execution pointの共通guardが現在の Account Home status/epochと照合する。password reset、link/unlink、deletionは同じoperationの再送ではepochを一度だけ進め、古いtokenを拒否する。
+
+### Consequences
+- 良い点: Directory の一時状態や古い復旧データだけで認証が成立せず、部分失敗と再送を同じoperationへ収束できる。
+- トレードオフ: protected requestごとにAccount Home RPCが1回必要になる。Account Home unavailable時は古いtokenを信頼せずfail closedにする。

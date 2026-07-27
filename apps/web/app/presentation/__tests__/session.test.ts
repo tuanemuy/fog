@@ -72,7 +72,7 @@ describe("endSession", () => {
 });
 
 describe("startSession", () => {
-  let issued: ReadonlyArray<readonly [string, Date]>;
+  let issued: ReadonlyArray<readonly [string, number, Date]>;
 
   beforeEach(() => {
     issued = [];
@@ -87,8 +87,8 @@ describe("startSession", () => {
         },
       },
       sessionCodec: {
-        issue: async (userId: string, now: Date) => {
-          issued = [...issued, [userId, now]];
+        issue: async (userId: string, sessionEpoch: number, now: Date) => {
+          issued = [...issued, [userId, sessionEpoch, now]];
           return TOKEN;
         },
         verify: async () => {
@@ -106,7 +106,7 @@ describe("startSession", () => {
   it("issues exactly one token, stamped with the container clock", async () => {
     await startSession(USER_ID, () => undefined);
 
-    expect(issued).toEqual([[USER_ID, NOW]]);
+    expect(issued).toEqual([[USER_ID, 0, NOW]]);
   });
 
   it("writes the issued token as the session cookie", async () => {

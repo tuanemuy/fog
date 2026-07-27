@@ -1,4 +1,5 @@
 import type { CredentialLocator } from "@repo/core/application/identity/contracts";
+import { opaqueCredentialKey } from "@repo/core/application/identity/contracts";
 
 export type DirectoryKeyring = Readonly<{
   active: Readonly<{ generation: string; secret: string }>;
@@ -7,6 +8,39 @@ export type DirectoryKeyring = Readonly<{
 }>;
 
 const encoder = new TextEncoder();
+export const MIN_DIRECTORY_ROUTING_SECRET_BYTES = 32;
+
+export function validateDirectoryKeyring(
+  keyring: DirectoryKeyring,
+): DirectoryKeyring {
+  const activeBytes = encoder.encode(keyring.active.secret);
+  if (
+    keyring.active.generation.trim().length === 0 ||
+    activeBytes.byteLength < MIN_DIRECTORY_ROUTING_SECRET_BYTES
+  ) {
+    throw new Error(
+      `Active directory routing secret must be at least ${MIN_DIRECTORY_ROUTING_SECRET_BYTES} bytes`,
+    );
+  }
+  if (keyring.previous) {
+    if (
+      keyring.previous.generation.trim().length === 0 ||
+      encoder.encode(keyring.previous.secret).byteLength <
+        MIN_DIRECTORY_ROUTING_SECRET_BYTES
+    ) {
+      throw new Error(
+        `Previous directory routing secret must be at least ${MIN_DIRECTORY_ROUTING_SECRET_BYTES} bytes`,
+      );
+    }
+    if (keyring.previous.generation === keyring.active.generation) {
+      throw new Error("Directory routing generations must be distinct");
+    }
+    if (keyring.previous.secret === keyring.active.secret) {
+      throw new Error("Directory routing secrets must be distinct");
+    }
+  }
+  return keyring;
+}
 
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -40,7 +74,7 @@ async function locatorFor(
   return {
     generation,
     bucket: bucketOf(digest, buckets),
-    opaqueKey: base64Url(digest),
+    opaqueKey: opaqueCredentialKey(base64Url(digest)),
   };
 }
 
@@ -48,6 +82,7 @@ export async function credentialLocators(
   canonicalCredential: string,
   keyring: DirectoryKeyring,
 ): Promise<readonly CredentialLocator[]> {
+  validateDirectoryKeyring(keyring);
   const buckets = keyring.buckets ?? 64;
   if (!Number.isInteger(buckets) || buckets < 1 || buckets > 1024) {
     throw new RangeError("Directory bucket count must be between 1 and 1024");

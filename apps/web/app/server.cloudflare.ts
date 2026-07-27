@@ -11,6 +11,7 @@ import {
 } from "@repo/core/application/di/serverCloudflare";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { default as defaultEntry } from "@tanstack/react-start/server-entry";
+import { handlePitrOperatorRequest } from "./operator/pitr";
 
 // SSR and RSC are separate module graphs in the same isolate; pin the
 // ALS on `globalThis` (and on `import.meta.hot.data` for HMR) so both
@@ -32,7 +33,8 @@ if (import.meta.hot) {
 }
 installContainerStore({ getStore: () => storage.getStore() });
 
-export type AppEnv = ServerEnv;
+export type AppEnv = ServerEnv &
+  Parameters<typeof handlePitrOperatorRequest>[1];
 
 export default {
   async fetch(
@@ -40,6 +42,8 @@ export default {
     env: AppEnv,
     _ctx: ExecutionContext,
   ): Promise<Response> {
+    const operatorResponse = await handlePitrOperatorRequest(request, env);
+    if (operatorResponse !== undefined) return operatorResponse;
     const container = createRequestContainer(readRequestServerConfig(env));
     return storage.run(container, async () => defaultEntry.fetch(request));
   },

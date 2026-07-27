@@ -7,7 +7,7 @@ Worker containing three SQLite-backed Durable Object classes.
 
 | Worker | Entry | Responsibility | Secrets |
 | --- | --- | --- | --- |
-| Request | `app/server.cloudflare.ts` | HTTP, session validation, canonical user routing, RPC error translation | `SESSION_SECRET`, directory-routing keyring |
+| Request | `app/server.cloudflare.ts` | HTTP, session validation, canonical user routing, RPC error translation, authenticated PITR operator boundary | `SESSION_SECRET`, directory-routing keyring, `PITR_OPERATOR_TOKEN` |
 | State | `app/server.state.ts` | User Data, Identity Directory, Account Home DOs and Alarms | Only secrets needed by external job adapters |
 
 The request Worker binds `USER_DATA`, `IDENTITY_DIRECTORY`, and `ACCOUNT_HOME`
@@ -26,11 +26,12 @@ pnpm install
 cp apps/web/.dev.vars.example apps/web/.dev.vars
 openssl rand -base64 48
 openssl rand -base64 48
+openssl rand -base64 48
 pnpm dev
 ```
 
-Use the first generated value for `SESSION_SECRET` and the second for
-`DIRECTORY_ROUTING_SECRET_ACTIVE`.
+Use the generated values for `SESSION_SECRET`,
+`DIRECTORY_ROUTING_SECRET_ACTIVE`, and `PITR_OPERATOR_TOKEN`.
 
 `pnpm dev` runs:
 
@@ -100,10 +101,20 @@ openssl rand -base64 48
 pnpm --filter @repo/web exec wrangler secret put \
   DIRECTORY_ROUTING_SECRET_ACTIVE \
   --config wrangler.request.staging.toml
+
+openssl rand -base64 48
+pnpm --filter @repo/web exec wrangler secret put PITR_OPERATOR_TOKEN \
+  --config wrangler.request.staging.toml
+
+pnpm --filter @repo/web secrets:check:staging
 ```
 
 Repeat against `wrangler.request.production.toml` for production. Never set
-these secrets on `wrangler.state.*.toml`.
+these secrets on `wrangler.state.*.toml`. The secret inventory command is a
+release gate: it reads names only, fails for missing request secrets or
+request-only secrets present on the state Worker, and never reads secret values.
+Wrangler dry-run validates bindings and bundles but is not a substitute for
+this authenticated inventory check.
 
 `SESSION_SECRET` rotation invalidates every existing session immediately. Set
 the replacement on the request Worker and verify an old cookie is rejected.
@@ -212,16 +223,36 @@ For User Data or Identity Directory:
 
 1. Create a disposable staging account and record its current Account Home
    tombstone/epoch.
-2. Through the operator-only wrapper, record
-   `ctx.storage.getCurrentBookmark()`.
-3. Write a recognizable disposable change and obtain a newer bookmark.
-4. Request `onNextSessionRestoreBookmark(oldBookmark)`, abort/restart the
-   object, and confirm only that object returned to the expected state.
-5. Re-read current Account Home. If its tombstone/epoch changed or marks the
+2. Set `PITR_OPERATOR_URL` to the staging request Worker URL and
+   `PITR_OPERATOR_TOKEN` to the separately managed operator credential.
+3. Through the operator-only wrapper, record the current bookmark:
+
+   ```bash
+   pnpm --filter @repo/web pitr:operator -- \
+     bookmark UserDataDurableObject \
+     "$OPAQUE_OBJECT_NAME" "$OPAQUE_ACCOUNT_ID"
+   ```
+
+   Use `IdentityDirectoryDurableObject` for a directory shard. Supplying
+   `AccountHomeDurableObject` is rejected before any Durable Object RPC.
+4. Write a recognizable disposable change and obtain a newer bookmark.
+5. Schedule the old bookmark through the same wrapper:
+
+   ```bash
+   pnpm --filter @repo/web pitr:operator -- \
+     restore UserDataDurableObject \
+     "$OPAQUE_OBJECT_NAME" "$OPAQUE_ACCOUNT_ID" "$OLD_BOOKMARK"
+   ```
+
+   The wrapper enforces class allowlist, current Account Home authority,
+   restore scheduling, and a second authority read in that order. Restart the
+   disposable object session to apply the scheduled restore.
+6. Confirm only that object returned to the expected state. If current Account
+   Home changed or marks the
    account deleted, do not expose the restored data; run reconciliation.
-6. Restore the newer bookmark to undo the smoke and repeat the Account Home
+7. Restore the returned `undoBookmark` to undo the smoke and repeat the Account Home
    check.
-7. Record stage, class, opaque object identifier, bookmarks, timestamps, and
+8. Record stage, class, opaque object identifier, bookmarks, timestamps, and
    outcome without PII.
 
 PITR is not supported by local workerd. Never substitute another storage product's restore commands

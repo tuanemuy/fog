@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 
 import { getContainer } from "@repo/core/application/di/containerStore";
+import { UserId } from "@repo/core/domain/identity/valueObject";
 import { redirect } from "@tanstack/react-router";
 import { getRequestUrl, setResponseHeader } from "@tanstack/react-start/server";
 import { cache } from "react";
@@ -22,7 +23,17 @@ export const getCurrentUserId = cache(async (): Promise<string | null> => {
     token,
     container.clock.now(),
   );
-  return verified?.userId ?? null;
+  if (!verified || !container.identity) return null;
+  const authority = await container.identity.getAccountAuthority(
+    UserId.create(verified.userId),
+  );
+  if (
+    authority?.status !== "active" ||
+    authority.sessionEpoch !== verified.sessionEpoch
+  ) {
+    return null;
+  }
+  return authority.userId;
 });
 
 /**

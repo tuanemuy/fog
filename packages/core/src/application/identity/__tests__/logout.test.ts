@@ -27,6 +27,7 @@ function trippingContainer(): {
       identity: {
         registerWithPassword: async () => trip("identity.register"),
         findPasswordCredential: async () => trip("identity.findCredential"),
+        getAccountAuthority: async () => trip("identity.getAuthority"),
         getCurrentAccount: async () => trip("identity.getCurrent"),
       },
       passwordHasher: {
