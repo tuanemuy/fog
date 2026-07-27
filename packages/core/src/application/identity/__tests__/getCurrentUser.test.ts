@@ -60,6 +60,7 @@ function container(
     accountHome,
     userData,
     newUserId: () => userId,
+    newResetSecret: () => "reset-secret-32-bytes-minimum-value",
   });
 
   return {

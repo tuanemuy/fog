@@ -136,6 +136,15 @@ describe("ordered Durable Object migrations", () => {
            ) VALUES (1, 30, 1, 1)`,
         );
         storage.sql.exec(
+          `INSERT INTO jobs(
+             id, kind, payload_json, payload_digest, status, attempt,
+             next_run_at, provider_idempotency_key, created_at, updated_at
+           ) VALUES (
+             'corrupt-v1', 'purge-trash', '{', 'sha256:invalid',
+             'pending', 0, 10, 'corrupt-v1', 1, 1
+           )`,
+        );
+        storage.sql.exec(
           `INSERT INTO content(
              id, kind, title, body, topic_id, topic_archived, trashed_at,
              trashed_with_topic_id, created_at, updated_at
@@ -166,6 +175,30 @@ describe("ordered Durable Object migrations", () => {
         );
       },
       assertFixture(storage: DurableObjectStorage) {
+        expect(
+          storage.sql
+            .exec<{ trash_retention_days: number; version: number }>(
+              `SELECT trash_retention_days, version FROM settings
+               WHERE singleton = 1`,
+            )
+            .one(),
+        ).toEqual({ trash_retention_days: 30, version: 0 });
+        expect(
+          storage.sql
+            .exec<{
+              payload_json: string;
+              subject_kind: string | null;
+              subject_id: string | null;
+            }>(
+              `SELECT payload_json, subject_kind, subject_id FROM jobs
+               WHERE id = 'corrupt-v1'`,
+            )
+            .one(),
+        ).toEqual({
+          payload_json: "{",
+          subject_kind: null,
+          subject_id: null,
+        });
         expect(
           storage.sql
             .exec<{ user_id: string; version: number }>(

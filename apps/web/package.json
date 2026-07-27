@@ -12,6 +12,7 @@
     "build": "pnpm build:request && pnpm build:state",
     "build:cf": "pnpm build",
     "build:request": "vite build --config vite.config.cloudflare.ts --mode development",
+    "build:request:production-acceptance": "pnpm --filter @repo/infra-cloudflare render:offline production && vite build --config vite.config.cloudflare.ts --mode production",
     "build:state": "wrangler deploy --config wrangler.state.toml --dry-run --outdir dist/state",
     "start": "wrangler dev -c wrangler.request.toml -c wrangler.state.toml --persist-to .wrangler/state",
     "start:cf": "pnpm start",

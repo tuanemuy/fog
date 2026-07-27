@@ -28,19 +28,19 @@ permissions:
   contents: read
 
 jobs:
-  restore-verify-undo:
-    name: Restore, verify, and undo both DO classes
+  user-data:
+    name: Restore, verify, and undo User Data
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: staging-pitr
+    concurrency:
+      group: staging-pitr-user-data-${{ inputs.user_data_target }}
+      cancel-in-progress: false
     env:
       PITR_OPERATOR_URL: ${{ secrets.PITR_OPERATOR_URL }}
       PITR_OPERATOR_TOKEN: ${{ secrets.PITR_OPERATOR_TOKEN }}
-      PITR_NAMESPACE: ${{ inputs.namespace }}
       PITR_USER_DATA_TARGET: ${{ inputs.user_data_target }}
       PITR_USER_DATA_BOOKMARK: ${{ inputs.user_data_bookmark }}
-      PITR_DIRECTORY_TARGET: ${{ inputs.directory_target }}
-      PITR_DIRECTORY_BOOKMARK: ${{ inputs.directory_bookmark }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,8 +67,44 @@ jobs:
             "$(cat .artifacts/pitr/user-data-restore.json)" \
             > .artifacts/pitr/user-data-undo.json
 
+      - name: Upload User Data receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-pitr-user-data-${{ github.run_id }}
+          path: .artifacts/pitr/user-data-*.json
+          retention-days: 1
+
+  identity-directory:
+    name: Restore, verify, and undo Identity Directory
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-pitr
+    concurrency:
+      group: staging-pitr-directory-${{ inputs.directory_target }}
+      cancel-in-progress: false
+    env:
+      PITR_OPERATOR_URL: ${{ secrets.PITR_OPERATOR_URL }}
+      PITR_OPERATOR_TOKEN: ${{ secrets.PITR_OPERATOR_TOKEN }}
+      PITR_DIRECTORY_TARGET: ${{ inputs.directory_target }}
+      PITR_DIRECTORY_BOOKMARK: ${{ inputs.directory_bookmark }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Identity Directory restore and undo
         run: |
+          mkdir -p .artifacts/pitr
           pnpm --filter @repo/web pitr:operator restore identity-directory \
             "$PITR_DIRECTORY_TARGET" \
             "$PITR_DIRECTORY_BOOKMARK" \
@@ -76,6 +112,41 @@ jobs:
           pnpm --filter @repo/web pitr:operator undo \
             "$(cat .artifacts/pitr/identity-directory-restore.json)" \
             > .artifacts/pitr/identity-directory-undo.json
+
+      - name: Upload Identity Directory receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-pitr-identity-directory-${{ github.run_id }}
+          path: .artifacts/pitr/identity-directory-*.json
+          retention-days: 1
+
+  evidence:
+    name: Create protected commit-bound evidence
+    needs: [user-data, identity-directory]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PITR_NAMESPACE: ${{ inputs.namespace }}
+      PITR_USER_DATA_TARGET: ${{ inputs.user_data_target }}
+      PITR_DIRECTORY_TARGET: ${{ inputs.directory_target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download User Data receipts
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-pitr-user-data-${{ github.run_id }}
+          path: .artifacts/pitr
+
+      - name: Download Identity Directory receipts
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-pitr-identity-directory-${{ github.run_id }}
+          path: .artifacts/pitr
 
       - name: Create commit-bound evidence
         run: node scripts/write-pitr-evidence.mjs

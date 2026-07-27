@@ -102,6 +102,7 @@ export function createRequestContainer(
       accountHome,
       userData,
       directoryRouting,
+      sessionSecret,
     ),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({ secret: sessionSecret }),

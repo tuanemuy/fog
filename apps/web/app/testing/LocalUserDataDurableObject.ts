@@ -1,11 +1,13 @@
 import { UserDataSemanticCommit } from "@repo/core/adapters/cloudflare/user-data/semanticCommit";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import type {
-  SearchProjectionPort,
   SemanticCommitResult,
   SemanticRpcCommand,
+  SemanticTransactionCallback,
 } from "@repo/core/application/search/contracts";
+import { applySemanticCommand } from "@repo/core/application/search/applySemanticCommand";
 import { prepareSemanticCommand } from "@repo/core/application/search/prepareSemanticCommand";
+import type { SearchProjectionFaultPoint } from "@repo/core/adapters/cloudflare/user-data/searchIndex";
 import { UserDataDurableObject } from "../durable-objects/UserDataDurableObject";
 
 /**
@@ -48,7 +50,7 @@ export class LocalUserDataDurableObject extends UserDataDurableObject {
       const result = semanticCommit.transactionSync(
         prepared,
         (repositories, projection) => {
-          repositories.apply(prepared, projection);
+          return applySemanticCommand(prepared, repositories, projection);
         },
       );
       await this.ensureAlarm();
@@ -58,25 +60,41 @@ export class LocalUserDataDurableObject extends UserDataDurableObject {
 
   async commitWithProjectionFailure(
     command: SemanticRpcCommand,
+    point: SearchProjectionFaultPoint = "after-entry-insert",
   ): Promise<RpcResult<SemanticCommitResult>> {
     return this.rpc(() => {
       const prepared = prepareSemanticCommand(command, Date.now());
       return new UserDataSemanticCommit(
         this.ctx.storage,
         () => this.profile().trashRetentionDays,
+        (candidate) => {
+          if (candidate === point) {
+            throw new Error(`TEST_PROJECTION_FAILURE_${point}`);
+          }
+        },
       ).transactionSync(prepared, (repositories, projection) => {
-        const failingProjection: SearchProjectionPort = {
-          upsert(entry) {
-            projection.upsert(entry);
-            throw new Error("TEST_PROJECTION_FAILURE_AFTER_UPSERT");
-          },
-          remove(entityType, id) {
-            projection.remove(entityType, id);
-            throw new Error("TEST_PROJECTION_FAILURE_AFTER_REMOVE");
-          },
-        };
-        repositories.apply(prepared, failingProjection);
+        return applySemanticCommand(prepared, repositories, projection);
       });
+    });
+  }
+
+  async commitWithAsyncCallback(
+    command: SemanticRpcCommand,
+  ): Promise<RpcResult<SemanticCommitResult>> {
+    return this.rpc(() => {
+      const prepared = prepareSemanticCommand(command, Date.now());
+      const callback = (async (
+        repositories: Parameters<SemanticTransactionCallback>[0],
+        projection: Parameters<SemanticTransactionCallback>[1],
+      ) => {
+        applySemanticCommand(prepared, repositories, projection);
+        await Promise.resolve();
+        return undefined;
+      }) as unknown as SemanticTransactionCallback;
+      return new UserDataSemanticCommit(
+        this.ctx.storage,
+        () => this.profile().trashRetentionDays,
+      ).transactionSync(prepared, callback);
     });
   }
 
@@ -87,11 +105,11 @@ export class LocalUserDataDurableObject extends UserDataDurableObject {
     this.alarmScheduleFailures = count;
   }
 
-  protected override async ensureAlarm(): Promise<void> {
+  protected override async ensureAlarm(reschedule = false): Promise<void> {
     if (this.alarmScheduleFailures > 0) {
       this.alarmScheduleFailures -= 1;
       throw new Error("TEST_SET_ALARM_FAILURE");
     }
-    await super.ensureAlarm();
+    await super.ensureAlarm(reschedule);
   }
 }

@@ -27,6 +27,7 @@ import {
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
 import {
+  Email,
   PasswordHash,
   SsoProvider,
   UserId,
@@ -47,6 +48,21 @@ type StateEnv = {
 };
 
 const OPERATION_REPLAY_TTL_MS = 24 * 60 * 60_000;
+const encoder = new TextEncoder();
+
+function boundedString(
+  value: unknown,
+  minimumBytes: number,
+  maximumBytes: number,
+): value is string {
+  if (typeof value !== "string") return false;
+  const bytes = encoder.encode(value).byteLength;
+  return bytes >= minimumBytes && bytes <= maximumBytes;
+}
+
+function digestHex(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
+}
 
 const conflictCodes = new Set([
   "CREDENTIAL_ALREADY_REGISTERED",
@@ -484,20 +500,27 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   }
 
   lookupPasswordSignup(
-    request: IdentityRpcQuery<{ opaqueOperationKey: string }>,
+    request: IdentityRpcQuery<{ opaqueOperationKey: string; now: number }>,
   ): Promise<
     RpcResult<{
       userId: string;
       emailEncrypted: string;
       passwordHash: string;
+      payloadFingerprint: string;
       preparedAt: number;
     } | null>
   > {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
-    const invalid = invalidPayload(request.payload, ["opaqueOperationKey"]);
+    const invalid = invalidPayload(request.payload, [
+      "opaqueOperationKey",
+      "now",
+    ]);
     if (invalid) return Promise.resolve(invalid);
-    if (typeof request.payload.opaqueOperationKey !== "string") {
+    if (
+      !digestHex(request.payload.opaqueOperationKey) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
       return Promise.resolve(
         rpcFailure(
           "validation",
@@ -510,6 +533,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).lookupPasswordSignup(
           request.payload.opaqueOperationKey,
+          request.payload.now,
         ),
       ),
     );
@@ -520,6 +544,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       opaqueOperationKey: string;
       proposedUserId: string;
       emailEncrypted: string;
+      payloadFingerprint: string;
       passwordHash: string;
       now: number;
     }>,
@@ -537,10 +562,19 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       "opaqueOperationKey",
       "proposedUserId",
       "emailEncrypted",
+      "payloadFingerprint",
       "passwordHash",
       "now",
     ]);
-    if (invalid || !isSafeNonNegativeInteger(request.payload.now)) {
+    if (
+      invalid ||
+      !digestHex(request.payload.opaqueOperationKey) ||
+      !digestHex(request.payload.payloadFingerprint) ||
+      !boundedString(request.payload.emailEncrypted, 1, 4096) ||
+      !boundedString(request.payload.passwordHash, 1, 2048) ||
+      !boundedString(request.payload.proposedUserId, 1, 128) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
       return Promise.resolve(
         invalid ??
           rpcFailure(
@@ -555,6 +589,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         opaqueOperationKey: request.payload.opaqueOperationKey,
         proposedUserId: UserId.create(request.payload.proposedUserId),
         emailEncrypted: request.payload.emailEncrypted,
+        payloadFingerprint: request.payload.payloadFingerprint,
         passwordHash: PasswordHash.create(request.payload.passwordHash),
         now: request.payload.now,
       }),
@@ -572,6 +607,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       provider: string;
       subjectEncrypted: string;
       emailEncrypted: string;
+      payloadFingerprint: string;
       now: number;
     }>,
   ): Promise<RpcResult<{ userId: string; replayed: boolean }>> {
@@ -583,13 +619,16 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       "provider",
       "subjectEncrypted",
       "emailEncrypted",
+      "payloadFingerprint",
       "now",
     ]);
     if (
       invalid ||
-      typeof request.payload.subjectEncrypted !== "string" ||
-      request.payload.subjectEncrypted.length === 0 ||
-      request.payload.subjectEncrypted.length > 4096 ||
+      !digestHex(request.payload.opaqueOperationKey) ||
+      !digestHex(request.payload.payloadFingerprint) ||
+      !boundedString(request.payload.proposedUserId, 1, 128) ||
+      !boundedString(request.payload.subjectEncrypted, 1, 4096) ||
+      !boundedString(request.payload.emailEncrypted, 1, 4096) ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -608,11 +647,80 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         provider: SsoProvider.create(request.payload.provider),
         subjectEncrypted: request.payload.subjectEncrypted,
         emailEncrypted: request.payload.emailEncrypted,
+        payloadFingerprint: request.payload.payloadFingerprint,
         now: request.payload.now,
       }),
     );
     if (result.ok) {
       await this.scheduleAlarm(request.payload.now + OPERATION_REPLAY_TTL_MS);
+    }
+    return result;
+  }
+
+  async preparePasswordResetRequest(
+    request: IdentityRpcMutation<{
+      userId: string;
+      payloadFingerprint: string;
+      resetSecretEncrypted: string;
+      tokenHash: string;
+      expiresAt: number;
+      now: number;
+    }>,
+  ): Promise<
+    RpcResult<{
+      resetSecretEncrypted: string;
+      tokenHash: string;
+      expiresAt: number;
+      replayed: boolean;
+    }>
+  > {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "userId",
+      "payloadFingerprint",
+      "resetSecretEncrypted",
+      "tokenHash",
+      "expiresAt",
+      "now",
+    ]);
+    if (
+      invalid ||
+      !boundedString(request.payload.userId, 1, 128) ||
+      !digestHex(request.payload.payloadFingerprint) ||
+      !boundedString(request.payload.resetSecretEncrypted, 1, 4096) ||
+      !digestHex(request.payload.tokenHash) ||
+      !isSafeNonNegativeInteger(request.payload.expiresAt) ||
+      request.payload.expiresAt <= request.payload.now ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
+    const result = execute(() =>
+      new IdentityDirectoryStore(this.ctx.storage).preparePasswordResetRequest({
+        operationId: operationId(request.operationId),
+        userId: UserId.create(request.payload.userId),
+        payloadFingerprint: request.payload.payloadFingerprint,
+        resetSecretEncrypted: request.payload.resetSecretEncrypted,
+        tokenHash: request.payload.tokenHash,
+        expiresAt: request.payload.expiresAt,
+        now: request.payload.now,
+      }),
+    );
+    if (result.ok) {
+      await this.scheduleAlarm(
+        Math.max(
+          request.payload.expiresAt,
+          request.payload.now + OPERATION_REPLAY_TTL_MS,
+        ),
+      );
     }
     return result;
   }
@@ -923,10 +1031,20 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     ]);
     if (
       invalid ||
+      (() => {
+        try {
+          Email.create(request.payload.email);
+          UserId.create(request.payload.userId);
+          return false;
+        } catch {
+          return true;
+        }
+      })() ||
       typeof request.payload.resetSecret !== "string" ||
       request.payload.resetSecret.length < 16 ||
       request.payload.resetSecret.length > 256 ||
       !isSafeNonNegativeInteger(request.payload.expiresAt) ||
+      request.payload.expiresAt <= request.payload.now ||
       typeof request.payload.providerIdempotencyKey !== "string" ||
       request.payload.providerIdempotencyKey.length === 0 ||
       request.payload.providerIdempotencyKey.length > 256 ||
@@ -976,6 +1094,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         emailEncrypted,
         deliveryPayloadEncrypted,
         providerIdempotencyKey: request.payload.providerIdempotencyKey,
+        expiresAt: request.payload.expiresAt,
         now: request.payload.now,
       });
       return null;
@@ -1159,6 +1278,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       scanned: number;
       moved: number;
       conflicts: number;
+      accountHomeActive: number;
       completedAt: number | null;
     }>,
   ): Promise<RpcResult<null>> {
@@ -1171,6 +1291,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       "scanned",
       "moved",
       "conflicts",
+      "accountHomeActive",
       "completedAt",
     ]);
     if (
@@ -1183,6 +1304,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       !isSafeNonNegativeInteger(request.payload.scanned) ||
       !isSafeNonNegativeInteger(request.payload.moved) ||
       !isSafeNonNegativeInteger(request.payload.conflicts) ||
+      !isSafeNonNegativeInteger(request.payload.accountHomeActive) ||
       (request.payload.cursor !== null &&
         (typeof request.payload.cursor !== "string" ||
           request.payload.cursor.length > 256)) ||

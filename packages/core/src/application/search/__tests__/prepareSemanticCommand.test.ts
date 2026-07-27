@@ -9,6 +9,7 @@ function createDocument(body: string) {
     version: 1,
     operationId: "create-document",
     type: "create-document",
+    topicExpectedVersion: 0,
     document: {
       id: "document",
       title: "境界値",
@@ -27,6 +28,7 @@ describe("prepareSemanticCommand", () => {
     expect(prepareSemanticCommand(createDocument(body), 2)).toMatchObject({
       type: "create-document",
       document: { body },
+      changeReason: "created",
       completedAt: 2,
     });
   });
@@ -40,8 +42,10 @@ describe("prepareSemanticCommand", () => {
   });
 
   it("requires expectedVersion zero or greater for mutations", () => {
+    const { topicExpectedVersion: _topicExpectedVersion, ...documentCommand } =
+      createDocument("body");
     const update = {
-      ...createDocument("body"),
+      ...documentCommand,
       operationId: "update-document",
       type: "update-document",
       changeReason: "reason",

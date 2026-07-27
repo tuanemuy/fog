@@ -56,6 +56,38 @@ describe("Cloudflare two-Worker configuration", () => {
     expect(vite).toContain('production: "./wrangler.request.production.toml"');
   });
 
+  it("runs production entry acceptance against a production-mode bundle", () => {
+    const rootPackage = JSON.parse(readFileSync("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const webPackage = JSON.parse(
+      readFileSync("apps/web/package.json", "utf8"),
+    ) as { scripts: Record<string, string> };
+    expect(webPackage.scripts["build:request:production-acceptance"]).toContain(
+      "--mode production",
+    );
+    const integration = rootPackage.scripts["test:integration"];
+    expect(integration).toBeDefined();
+    expect(
+      integration.indexOf("test:integration:production:prepare"),
+    ).toBeLessThan(integration.indexOf("vitest.config.production-entry.ts"));
+  });
+
+  it("serializes PITR restore and undo per destructive target", () => {
+    const workflow = readFileSync(
+      ".github/workflows/staging-pitr-smoke.yml",
+      "utf8",
+    );
+    expect(workflow).toMatch(
+      /group: staging-pitr-user-data-\$\{\{ inputs\.user_data_target \}\}/u,
+    );
+    expect(workflow).toMatch(
+      /group: staging-pitr-directory-\$\{\{ inputs\.directory_target \}\}/u,
+    );
+    expect(workflow.match(/cancel-in-progress: false/gu)).toHaveLength(2);
+    expect(workflow).toContain("needs: [user-data, identity-directory]");
+  });
+
   it("keeps raw semantic commits out of the production state artifact", () => {
     const production = readFileSync(
       "apps/web/app/durable-objects/UserDataDurableObject.ts",

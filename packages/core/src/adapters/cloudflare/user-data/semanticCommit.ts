@@ -9,6 +9,7 @@ import type {
   MemoWriteDto,
   SearchContentKind,
   SearchProjectionEntry,
+  SearchProjectionMutation,
   SearchProjectionPort,
   SemanticActor,
   SemanticCommand,
@@ -22,7 +23,10 @@ import { BusinessRuleError } from "@repo/core/domain/error";
 import { type DurableSqlStorage, sqliteErrorCode } from "../sql";
 import { payloadDigest } from "./canonical";
 import { DurableJobStore } from "./jobs";
-import { Fts5SearchAdapter } from "./searchIndex";
+import {
+  Fts5SearchAdapter,
+  type SearchProjectionFaultPoint,
+} from "./searchIndex";
 
 const MAX_TITLE_BYTES = 1_024;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -37,6 +41,15 @@ const MAX_SEMANTIC_IDEMPOTENCY_ROWS = 10_000;
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
 }
 
 function commandPayload(command: SemanticCommand): unknown {
@@ -64,6 +77,9 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   constructor(
     private readonly storage: DurableSqlStorage,
     private readonly retentionDays: () => number,
+    private readonly projectionFault?: (
+      point: SearchProjectionFaultPoint,
+    ) => void,
   ) {}
 
   transactionSync(
@@ -100,25 +116,251 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
             replayed: true,
           };
         }
-        const projection = new Fts5SearchAdapter(this.storage.sql);
+        const projection = new Fts5SearchAdapter(
+          this.storage.sql,
+          this.projectionFault,
+        );
         let applied = false;
+        const useRepository = (
+          expectedType: SemanticCommand["type"],
+          candidate: SemanticCommand,
+          operation: (collector: SearchProjectionPort) => void,
+        ): readonly SearchProjectionMutation[] => {
+          if (
+            applied ||
+            candidate !== command ||
+            candidate.type !== expectedType
+          ) {
+            throw new SystemError(
+              SystemErrorCode.DataIntegrityError,
+              "Semantic transaction repository was used outside its scope",
+            );
+          }
+          applied = true;
+          return this.collectProjectionMutations(operation);
+        };
         const repositories: SemanticTransactionRepositories = {
-          apply: (candidate, candidateProjection) => {
-            if (
-              applied ||
-              candidate !== command ||
-              candidateProjection !== projection
-            ) {
-              throw new SystemError(
-                SystemErrorCode.DataIntegrityError,
-                "Semantic transaction capability was used outside its scope",
-              );
-            }
-            applied = true;
-            this.execute(command, projection);
+          content: {
+            createMemo: (candidate) =>
+              useRepository("create-memo", candidate, (collector) => {
+                this.writeMemo(
+                  candidate.memo,
+                  "create",
+                  undefined,
+                  candidate.actor,
+                  undefined,
+                  collector,
+                );
+              }),
+            updateMemo: (candidate) =>
+              useRepository("update-memo", candidate, (collector) => {
+                this.writeMemo(
+                  candidate.memo,
+                  "update",
+                  candidate.expectedVersion,
+                  candidate.actor,
+                  candidate.changeReason,
+                  collector,
+                );
+              }),
+            trashMemo: (candidate) =>
+              useRepository("trash-memo", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.memoId,
+                  candidate.expectedVersion,
+                );
+                this.trashContent(
+                  candidate.memoId,
+                  "memo",
+                  candidate.trashedAt,
+                  candidate.expectedVersion,
+                  collector,
+                );
+                this.enqueueRetention(
+                  "memo",
+                  candidate.memoId,
+                  candidate.trashedAt,
+                );
+              }),
+            restoreMemo: (candidate) =>
+              useRepository("restore-memo", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.memoId,
+                  candidate.expectedVersion,
+                );
+                this.restoreContent(
+                  candidate.memoId,
+                  "memo",
+                  candidate.restoredAt,
+                  candidate.actor,
+                  candidate.expectedVersion,
+                  undefined,
+                  undefined,
+                  collector,
+                );
+              }),
+            removeMemo: (candidate) =>
+              useRepository("remove-memo", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.memoId,
+                  candidate.expectedVersion,
+                );
+                this.hardDelete(
+                  candidate.memoId,
+                  "memo",
+                  candidate.expectedVersion,
+                  collector,
+                );
+              }),
+            createDocument: (candidate) =>
+              useRepository("create-document", candidate, (collector) => {
+                this.writeDocument(
+                  candidate.document,
+                  "create",
+                  undefined,
+                  candidate.topicExpectedVersion,
+                  candidate.actor,
+                  candidate.changeReason,
+                  collector,
+                );
+              }),
+            updateDocument: (candidate) =>
+              useRepository("update-document", candidate, (collector) => {
+                this.writeDocument(
+                  candidate.document,
+                  "update",
+                  candidate.expectedVersion,
+                  undefined,
+                  candidate.actor,
+                  candidate.changeReason,
+                  collector,
+                );
+              }),
+            trashDocument: (candidate) =>
+              useRepository("trash-document", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.documentId,
+                  candidate.expectedVersion,
+                );
+                this.trashContent(
+                  candidate.documentId,
+                  "document",
+                  candidate.trashedAt,
+                  candidate.expectedVersion,
+                  collector,
+                );
+                this.enqueueRetention(
+                  "document",
+                  candidate.documentId,
+                  candidate.trashedAt,
+                );
+              }),
+            restoreDocument: (candidate) =>
+              useRepository("restore-document", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.documentId,
+                  candidate.expectedVersion,
+                );
+                this.restoreContent(
+                  candidate.documentId,
+                  "document",
+                  candidate.restoredAt,
+                  candidate.actor,
+                  candidate.expectedVersion,
+                  candidate.destinationTopicId,
+                  candidate.topicExpectedVersion,
+                  collector,
+                );
+              }),
+            removeDocument: (candidate) =>
+              useRepository("remove-document", candidate, (collector) => {
+                this.assertExpectedVersion(
+                  candidate.documentId,
+                  candidate.expectedVersion,
+                );
+                this.hardDelete(
+                  candidate.documentId,
+                  "document",
+                  candidate.expectedVersion,
+                  collector,
+                );
+              }),
+          },
+          topics: {
+            createTopic: (candidate) =>
+              useRepository("create-topic", candidate, () => {
+                this.createTopic(candidate.topic);
+              }),
+            setArchived: (candidate) =>
+              useRepository("set-topic-archived", candidate, () => {
+                this.assertTopicExpectedVersion(
+                  candidate.topicId,
+                  candidate.expectedVersion,
+                );
+                this.setTopicArchived(
+                  candidate.topicId,
+                  candidate.archivedAt,
+                  candidate.updatedAt,
+                  candidate.expectedVersion,
+                );
+              }),
+            trashTopic: (candidate) =>
+              useRepository("trash-topic", candidate, (collector) => {
+                this.assertTopicExpectedVersion(
+                  candidate.topicId,
+                  candidate.expectedVersion,
+                );
+                this.setTopicTrash(
+                  candidate.topicId,
+                  candidate.trashedAt,
+                  true,
+                  candidate.expectedVersion,
+                  collector,
+                );
+                this.enqueueRetention(
+                  "topic",
+                  candidate.topicId,
+                  candidate.trashedAt,
+                );
+              }),
+            restoreTopic: (candidate) =>
+              useRepository("restore-topic", candidate, (collector) => {
+                this.assertTopicExpectedVersion(
+                  candidate.topicId,
+                  candidate.expectedVersion,
+                );
+                this.setTopicTrash(
+                  candidate.topicId,
+                  candidate.restoredAt,
+                  false,
+                  candidate.expectedVersion,
+                  collector,
+                );
+              }),
+            removeTopic: (candidate) =>
+              useRepository("remove-topic", candidate, (collector) => {
+                this.assertTopicExpectedVersion(
+                  candidate.topicId,
+                  candidate.expectedVersion,
+                );
+                this.removeTopic(
+                  candidate.topicId,
+                  candidate.expectedVersion,
+                  collector,
+                );
+              }),
           },
         };
-        callback(repositories, projection);
+        const callbackResult: unknown = callback(repositories, projection);
+        if (callbackResult !== undefined) {
+          if (isThenable(callbackResult)) {
+            void Promise.resolve(callbackResult).catch(() => undefined);
+          }
+          throw new SystemError(
+            SystemErrorCode.DataIntegrityError,
+            "Semantic transaction callback must complete synchronously",
+          );
+        }
         if (!applied) {
           throw new SystemError(
             SystemErrorCode.DataIntegrityError,
@@ -186,169 +428,19 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     );
   }
 
-  private execute(
-    command: SemanticCommand,
-    projection: SearchProjectionPort,
-  ): void {
-    switch (command.type) {
-      case "create-memo":
-        this.writeMemo(
-          command.memo,
-          "create",
-          undefined,
-          command.actor,
-          undefined,
-          projection,
-        );
-        return;
-      case "update-memo":
-        this.writeMemo(
-          command.memo,
-          "update",
-          command.expectedVersion,
-          command.actor,
-          command.changeReason,
-          projection,
-        );
-        return;
-      case "trash-memo":
-        this.assertExpectedVersion(command.memoId, command.expectedVersion);
-        this.trashContent(
-          command.memoId,
-          "memo",
-          command.trashedAt,
-          command.expectedVersion,
-          projection,
-        );
-        this.enqueueRetention("memo", command.memoId, command.trashedAt);
-        return;
-      case "restore-memo":
-        this.assertExpectedVersion(command.memoId, command.expectedVersion);
-        this.restoreContent(
-          command.memoId,
-          "memo",
-          command.restoredAt,
-          command.actor,
-          command.expectedVersion,
-          undefined,
-          projection,
-        );
-        return;
-      case "remove-memo":
-        this.assertExpectedVersion(command.memoId, command.expectedVersion);
-        this.hardDelete(
-          command.memoId,
-          "memo",
-          command.expectedVersion,
-          projection,
-        );
-        return;
-      case "create-document":
-        this.writeDocument(
-          command.document,
-          "create",
-          undefined,
-          command.actor,
-          "created",
-          projection,
-        );
-        return;
-      case "update-document":
-        this.writeDocument(
-          command.document,
-          "update",
-          command.expectedVersion,
-          command.actor,
-          command.changeReason,
-          projection,
-        );
-        return;
-      case "trash-document":
-        this.assertExpectedVersion(command.documentId, command.expectedVersion);
-        this.trashContent(
-          command.documentId,
-          "document",
-          command.trashedAt,
-          command.expectedVersion,
-          projection,
-        );
-        this.enqueueRetention(
-          "document",
-          command.documentId,
-          command.trashedAt,
-        );
-        return;
-      case "restore-document":
-        this.assertExpectedVersion(command.documentId, command.expectedVersion);
-        this.restoreContent(
-          command.documentId,
-          "document",
-          command.restoredAt,
-          command.actor,
-          command.expectedVersion,
-          command.destinationTopicId,
-          projection,
-        );
-        return;
-      case "remove-document":
-        this.assertExpectedVersion(command.documentId, command.expectedVersion);
-        this.hardDelete(
-          command.documentId,
-          "document",
-          command.expectedVersion,
-          projection,
-        );
-        return;
-      case "create-topic":
-        this.createTopic(command.topic);
-        return;
-      case "set-topic-archived":
-        this.assertTopicExpectedVersion(
-          command.topicId,
-          command.expectedVersion,
-        );
-        this.setTopicArchived(
-          command.topicId,
-          command.archivedAt,
-          command.updatedAt,
-          command.expectedVersion,
-        );
-        return;
-      case "trash-topic":
-        this.assertTopicExpectedVersion(
-          command.topicId,
-          command.expectedVersion,
-        );
-        this.setTopicTrash(
-          command.topicId,
-          command.trashedAt,
-          true,
-          command.expectedVersion,
-          projection,
-        );
-        this.enqueueRetention("topic", command.topicId, command.trashedAt);
-        return;
-      case "restore-topic":
-        this.assertTopicExpectedVersion(
-          command.topicId,
-          command.expectedVersion,
-        );
-        this.setTopicTrash(
-          command.topicId,
-          command.restoredAt,
-          false,
-          command.expectedVersion,
-          projection,
-        );
-        return;
-      case "remove-topic":
-        this.assertTopicExpectedVersion(
-          command.topicId,
-          command.expectedVersion,
-        );
-        this.removeTopic(command.topicId, command.expectedVersion, projection);
-        return;
-    }
+  private collectProjectionMutations(
+    operation: (collector: SearchProjectionPort) => void,
+  ): readonly SearchProjectionMutation[] {
+    const mutations: SearchProjectionMutation[] = [];
+    operation({
+      upsert(entry) {
+        mutations.push({ type: "upsert", entry });
+      },
+      remove(entityType, id) {
+        mutations.push({ type: "remove", entityType, id });
+      },
+    });
+    return mutations;
   }
 
   private writeMemo(
@@ -411,6 +503,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     document: DocumentWriteDto,
     mode: "create" | "update",
     expectedVersion: number | undefined,
+    topicExpectedVersion: number | undefined,
     actor: SemanticActor,
     changeReason: string | undefined,
     projection: SearchProjectionPort,
@@ -421,6 +514,19 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       this.assertExpectedVersion(document.id, expectedVersion);
     }
     this.assertTopic(document.topicId);
+    if (mode === "create") {
+      if (topicExpectedVersion === undefined) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "Prepared document create command has no topic expected version",
+        );
+      }
+      this.touchTopic(
+        document.topicId,
+        topicExpectedVersion,
+        document.timestamp,
+      );
+    }
     const sourceMemoIds = this.normalizeSources(document.sourceMemoIds);
     this.assertSources(sourceMemoIds);
     if (
@@ -512,6 +618,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     actor: SemanticActor,
     expectedVersion: number,
     destinationTopicId: string | undefined,
+    topicExpectedVersion: number | undefined,
     projection: SearchProjectionPort,
   ): void {
     this.assertTrashed(id, kind);
@@ -538,20 +645,31 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           "A destination topic can only replace a removed original topic",
         );
       }
-      this.assertTopic(destinationTopicId ?? current.topic_id ?? "");
+      const topicId = destinationTopicId ?? current.topic_id ?? "";
+      this.assertTopic(topicId);
+      if (topicExpectedVersion === undefined) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "Prepared document restore command has no topic expected version",
+        );
+      }
+      this.touchTopic(topicId, topicExpectedVersion, restoredAt);
     } else if (destinationTopicId !== undefined) {
       throw new ConflictError(
         SearchErrorCode.TopicRequired,
         "Only a document can select a destination topic",
       );
     }
+    const versionIncrement =
+      kind === "document" && destinationTopicId !== undefined ? 2 : 1;
     const cursor = this.storage.sql.exec(
       `UPDATE content
        SET trashed_at = NULL, topic_id = COALESCE(?, topic_id),
-           version = version + 1, updated_by = ?,
+           version = version + ?, updated_by = ?,
            updated_at = ?
        WHERE id = ? AND kind = ? AND version = ?`,
       destinationTopicId ?? null,
+      versionIncrement,
       actor.id,
       restoredAt,
       id,
@@ -617,6 +735,22 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
        SET archived_at = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND version = ?`,
       archivedAt,
+      updatedAt,
+      topicId,
+      expectedVersion,
+    );
+    this.assertCas(cursor.rowsWritten, "Topic");
+  }
+
+  private touchTopic(
+    topicId: string,
+    expectedVersion: number,
+    updatedAt: number,
+  ): void {
+    const cursor = this.storage.sql.exec(
+      `UPDATE topics
+       SET version = version + 1, updated_at = ?
+       WHERE id = ? AND trashed_at IS NULL AND version = ?`,
       updatedAt,
       topicId,
       expectedVersion,
@@ -798,23 +932,11 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       )
       .one();
     if (row.kind === "memo") {
-      const documentIds = this.storage.sql
-        .exec<{ content_id: string }>(
-          `SELECT cs.content_id FROM content_sources cs
-           JOIN content d ON d.id = cs.content_id
-             AND d.trashed_at IS NULL AND d.trashed_with_topic_id IS NULL
-           JOIN topics t ON t.id = d.topic_id AND t.trashed_at IS NULL
-           WHERE cs.memo_id = ? ORDER BY cs.content_id`,
-          id,
-        )
-        .toArray()
-        .map((link) => link.content_id);
       return {
         type: "memo",
         id,
         body: row.body,
         timestamp: row.updated_at,
-        sourceOfDocumentIds: documentIds,
       };
     }
     if (row.topic_id === null) {
@@ -823,15 +945,6 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         "Document must belong to a topic",
       );
     }
-    const sourceMemoIds = this.storage.sql
-      .exec<{ memo_id: string }>(
-        `SELECT cs.memo_id FROM content_sources cs
-         JOIN content m ON m.id = cs.memo_id AND m.trashed_at IS NULL
-         WHERE cs.content_id = ? ORDER BY cs.memo_id`,
-        id,
-      )
-      .toArray()
-      .map((link) => link.memo_id);
     return {
       type: "document",
       id,
@@ -839,7 +952,6 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       body: row.body,
       timestamp: row.updated_at,
       topicId: row.topic_id,
-      sourceMemoIds,
     };
   }
 
@@ -1013,6 +1125,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       nextRunAt: trashedAt + this.retentionDays() * DAY_MS,
       providerIdempotencyKey: jobId,
       now: trashedAt,
+      subject: { kind, id },
     });
   }
 

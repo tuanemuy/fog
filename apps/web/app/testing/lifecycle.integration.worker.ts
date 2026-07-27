@@ -59,6 +59,7 @@ async function executeLifecycle(
       version: 1,
       type: "create-document",
       operationId: `${runId}:create-document`,
+      topicExpectedVersion: 0,
       document: {
         id: "document-1",
         title: "耐障害性",
@@ -105,6 +106,7 @@ async function executeLifecycle(
       documentId: "document-1",
       restoredAt: 7,
       expectedVersion: 2,
+      topicExpectedVersion: 1,
     },
     {
       version: 1,

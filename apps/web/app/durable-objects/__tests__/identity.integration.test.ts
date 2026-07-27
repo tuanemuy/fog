@@ -59,6 +59,7 @@ function gateway(
       ? faultingNamespace(bindings.USER_DATA, faultHook)
       : (bindings.USER_DATA as never),
     routing,
+    "stable-registry-auth-secret-32-bytes-minimum",
   );
 }
 
@@ -561,6 +562,75 @@ describe("identity Durable Object contract", () => {
     );
   });
 
+  it("reuses the reset secret after partial reset-request persistence", async () => {
+    const identity = gateway();
+    const userId = UserId.create("reset-request-replay-user");
+    const email = Email.create("reset-request-replay@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("reset-request-replay-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("reset-request-replay-hash"),
+      now: 1,
+    });
+    const requestNow = Date.now();
+    const request = {
+      operationId: operationId("reset-request-replay-operation"),
+      email,
+      expiresAt: requestNow + 60_000,
+      now: requestNow,
+    };
+    await identity.requestPasswordReset(request);
+    const locators = await credentialLocators(
+      canonicalPasswordCredential(email),
+      keyring,
+    );
+    const tokenHashes: string[] = [];
+    for (const locator of locators) {
+      const stub = bindings.IDENTITY_DIRECTORY.getByName(
+        directoryObjectName(locator),
+      );
+      await runInDurableObject(stub, async (_instance, state) => {
+        tokenHashes.push(
+          state.storage.sql
+            .exec<{ token_hash: string }>(
+              "SELECT token_hash FROM reset_tokens WHERE operation_id = ?",
+              request.operationId,
+            )
+            .one().token_hash,
+        );
+        state.storage.sql.exec(
+          "DELETE FROM reset_tokens WHERE operation_id = ?",
+          request.operationId,
+        );
+        state.storage.sql.exec(
+          "DELETE FROM identity_mail_jobs WHERE operation_id = ?",
+          request.operationId,
+        );
+      });
+    }
+    expect(new Set(tokenHashes).size).toBe(1);
+
+    await identity.requestPasswordReset({ ...request, now: requestNow + 1 });
+    const replayedHashes: string[] = [];
+    for (const locator of locators) {
+      const stub = bindings.IDENTITY_DIRECTORY.getByName(
+        directoryObjectName(locator),
+      );
+      await runInDurableObject(stub, async (_instance, state) => {
+        replayedHashes.push(
+          state.storage.sql
+            .exec<{ token_hash: string }>(
+              "SELECT token_hash FROM reset_tokens WHERE operation_id = ?",
+              request.operationId,
+            )
+            .one().token_hash,
+        );
+      });
+    }
+    expect(new Set(replayedHashes)).toEqual(new Set(tokenHashes));
+  });
+
   it("links and unlinks every generation of one logical SSO credential", async () => {
     const identity = gateway();
     const userId = UserId.create("logical-credential-operation");
@@ -845,7 +915,12 @@ describe("identity Durable Object contract", () => {
     if (!previous) throw new Error("previous locator missing");
     await expect(
       identity.getDirectoryShardAuthorityStatus(previous),
-    ).resolves.toMatchObject({ active: 0, tombstoned: 1 });
+    ).resolves.toMatchObject({
+      active: 0,
+      tombstoned: 1,
+      accountHomeActive: 0,
+      retirementReady: true,
+    });
     await expect(identity.findPasswordCredential(email)).resolves.toMatchObject(
       {
         userId,
@@ -964,6 +1039,61 @@ describe("identity Durable Object contract", () => {
     ]);
   });
 
+  it("does not call the mail provider after the reset secret expires", async () => {
+    const stub = bindings.IDENTITY_DIRECTORY.getByName("mail-expired");
+    const now = Date.now();
+    value(
+      await stub.enqueuePasswordResetMail({
+        version: 1,
+        operationId: "mail-expired-operation",
+        payload: {
+          userId: "mail-expired-user",
+          email: "mail-expired@example.com",
+          resetSecret: "mail-expired-secret-value",
+          expiresAt: now + 60_000,
+          providerIdempotencyKey: "mail-expired-idempotency",
+          now,
+        },
+      }),
+    );
+    await runInDurableObject(stub, async (instance, state) => {
+      let providerCalls = 0;
+      overrideIdentityEnv(instance, {
+        IDENTITY_MAIL_PROVIDER: {
+          fetch: async () => {
+            providerCalls += 1;
+            return new Response(null, { status: 204 });
+          },
+        } as unknown as Fetcher,
+      });
+      state.storage.sql.exec(
+        `UPDATE identity_mail_jobs SET expires_at = ?
+         WHERE operation_id = ?`,
+        now - 1,
+        "mail-expired-operation",
+      );
+      await (instance as IdentityDirectoryDurableObject).alarm();
+      expect(providerCalls).toBe(0);
+      expect(
+        state.storage.sql
+          .exec<{
+            state: string;
+            email: string;
+            delivery_payload_encrypted: string | null;
+          }>(
+            `SELECT state, email, delivery_payload_encrypted
+             FROM identity_mail_jobs WHERE operation_id = ?`,
+            "mail-expired-operation",
+          )
+          .one(),
+      ).toEqual({
+        state: "poison",
+        email: "",
+        delivery_payload_encrypted: null,
+      });
+    });
+  });
+
   it("backs off reset mail and poisons it after five retryable failures", async () => {
     const stub = bindings.IDENTITY_DIRECTORY.getByName("mail-poison");
     value(
@@ -1016,11 +1146,39 @@ describe("identity Durable Object contract", () => {
         expect(row.next_run_at).toBeGreaterThan(Date.now() - 1);
         expect(row.poison_reason === null).toBe(attempt < 5);
       }
-      expect(await state.storage.getAlarm()).toBeNull();
+      expect(await state.storage.getAlarm()).toBeGreaterThan(Date.now());
+      const terminal = state.storage.sql
+        .exec<{
+          email: string;
+          delivery_payload_encrypted: string | null;
+        }>(
+          `SELECT email, delivery_payload_encrypted FROM identity_mail_jobs
+           WHERE operation_id = ?`,
+          "mail-poison-operation",
+        )
+        .one();
+      expect(terminal.email).toBe("");
+      expect(terminal.delivery_payload_encrypted).toBeNull();
+      state.storage.sql.exec(
+        `UPDATE identity_mail_jobs SET terminal_at = ?
+         WHERE operation_id = ?`,
+        Date.now() - 24 * 60 * 60_000 - 1,
+        "mail-poison-operation",
+      );
+      await (instance as IdentityDirectoryDurableObject).alarm();
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM identity_mail_jobs
+             WHERE operation_id = ?`,
+            "mail-poison-operation",
+          )
+          .one().count,
+      ).toBe(0);
     });
   });
 
-  it("evicts expired encrypted operation registry PII", async () => {
+  it("lazily evicts expired encrypted operation registry PII", async () => {
     const identity = gateway();
     const operation = operationId("registry-ttl-operation");
     const email = Email.create("registry-ttl@example.com");
@@ -1035,7 +1193,7 @@ describe("identity Durable Object contract", () => {
     const registry = bindings.IDENTITY_DIRECTORY.getByName(
       `signup-operation:${digest}`,
     );
-    await runInDurableObject(registry, async (instance, state) => {
+    await runInDurableObject(registry, async (_instance, state) => {
       const stored = state.storage.sql
         .exec<{ email: string; expires_at: number }>(
           `SELECT email, expires_at FROM signup_operations
@@ -1049,14 +1207,54 @@ describe("identity Durable Object contract", () => {
         "UPDATE signup_operations SET expires_at = ?",
         Date.now() - 1,
       );
-      await (instance as IdentityDirectoryDurableObject).alarm();
+    });
+    await expect(
+      identity.preparePasswordSignup({
+        operationId: operation,
+        proposedUserId: UserId.create("registry-ttl-reused-user"),
+        email,
+        passwordHash: PasswordHash.create("registry-ttl-reused-hash"),
+        now: Date.now(),
+      }),
+    ).resolves.toMatchObject({
+      userId: "registry-ttl-reused-user",
+      replayed: false,
+    });
+    await runInDurableObject(registry, async (_instance, state) => {
       expect(
         state.storage.sql
           .exec<{ count: number }>(
             "SELECT COUNT(*) AS count FROM signup_operations",
           )
           .one().count,
-      ).toBe(0);
+      ).toBe(1);
+    });
+  });
+
+  it("returns validation failures for malformed Account Home locators", async () => {
+    const stub = bindings.ACCOUNT_HOME.getByName("malformed-locator-user");
+    const result = await (
+      stub as unknown as {
+        replaceCredentialLocator(input: unknown): Promise<RpcResult<null>>;
+      }
+    ).replaceCredentialLocator({
+      version: 1,
+      operationId: "malformed-locator-operation",
+      payload: {
+        userId: "malformed-locator-user",
+        previous: null,
+        active: {
+          generation: "generation-2",
+          bucket: 0,
+          opaqueKey: "opaque",
+        },
+        kind: "password",
+        now: Date.now(),
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "validation", code: "IDENTITY_RPC_LOCATOR_INVALID" },
     });
   });
 

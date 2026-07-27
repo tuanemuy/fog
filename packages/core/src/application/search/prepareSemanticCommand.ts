@@ -7,6 +7,8 @@ import type {
 } from "./contracts";
 
 const MAX_TOPIC_NAME_CODE_POINTS = 100;
+const MAX_MEMO_BODY_CODE_POINTS = 10_000;
+const MAX_DOCUMENT_TITLE_CODE_POINTS = 200;
 const MAX_DOCUMENT_BODY_CODE_POINTS = 1_000_000;
 const MAX_CHANGE_REASON_CODE_POINTS = 200;
 
@@ -56,14 +58,26 @@ function isActor(value: unknown): value is SemanticActor {
   );
 }
 
-function isMemo(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ["id", "body", "timestamp"]) &&
-    isId(value.id) &&
-    typeof value.body === "string" &&
-    isTimestamp(value.timestamp)
-  );
+function assertMemo(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["id", "body", "timestamp"]) ||
+    !isId(value.id) ||
+    typeof value.body !== "string" ||
+    !isTimestamp(value.timestamp)
+  ) {
+    return false;
+  }
+  if (value.body.trim().length === 0) {
+    throw new BusinessRuleError("EMPTY_MEMO_BODY", "Memo body is required");
+  }
+  if ([...value.body].length > MAX_MEMO_BODY_CODE_POINTS) {
+    throw new BusinessRuleError(
+      "MEMO_BODY_TOO_LONG",
+      `Memo body may have at most ${MAX_MEMO_BODY_CODE_POINTS} characters`,
+    );
+  }
+  return true;
 }
 
 function assertDocument(value: unknown): boolean {
@@ -91,6 +105,24 @@ function assertDocument(value: unknown): boolean {
     throw new BusinessRuleError(
       "DOCUMENT_BODY_TOO_LONG",
       `Document body may have at most ${MAX_DOCUMENT_BODY_CODE_POINTS} characters`,
+    );
+  }
+  if (value.title.trim().length === 0) {
+    throw new BusinessRuleError(
+      "EMPTY_DOCUMENT_TITLE",
+      "Document title is required",
+    );
+  }
+  if (/[\r\n]/u.test(value.title)) {
+    throw new BusinessRuleError(
+      "DOCUMENT_TITLE_MULTILINE",
+      "Document title must be a single line",
+    );
+  }
+  if ([...value.title].length > MAX_DOCUMENT_TITLE_CODE_POINTS) {
+    throw new BusinessRuleError(
+      "DOCUMENT_TITLE_TOO_LONG",
+      `Document title may have at most ${MAX_DOCUMENT_TITLE_CODE_POINTS} characters`,
     );
   }
   return true;
@@ -178,7 +210,7 @@ export function prepareSemanticCommand(
     case "create-memo":
       valid =
         hasOnlyKeys(command, [...base, "memo"], ["actor"]) &&
-        isMemo(command.memo);
+        assertMemo(command.memo);
       break;
     case "update-memo":
       assertChangeReason(command.changeReason, false);
@@ -189,11 +221,16 @@ export function prepareSemanticCommand(
           ["actor", "changeReason"],
         ) &&
         expected() &&
-        isMemo(command.memo);
+        assertMemo(command.memo);
       break;
     case "create-document":
       valid =
-        hasOnlyKeys(command, [...base, "document"], ["actor"]) &&
+        hasOnlyKeys(
+          command,
+          [...base, "document", "topicExpectedVersion"],
+          ["actor"],
+        ) &&
+        isExpectedVersion(command.topicExpectedVersion) &&
         assertDocument(command.document);
       break;
     case "update-document":
@@ -250,12 +287,19 @@ export function prepareSemanticCommand(
       valid =
         hasOnlyKeys(
           command,
-          [...base, "documentId", "restoredAt", "expectedVersion"],
+          [
+            ...base,
+            "documentId",
+            "restoredAt",
+            "expectedVersion",
+            "topicExpectedVersion",
+          ],
           ["actor", "destinationTopicId"],
         ) &&
         isId(command.documentId) &&
         isTimestamp(command.restoredAt) &&
         expected() &&
+        isExpectedVersion(command.topicExpectedVersion) &&
         (command.destinationTopicId === undefined ||
           isId(command.destinationTopicId));
       break;
@@ -300,11 +344,22 @@ export function prepareSemanticCommand(
     actor: _actor,
     ...payload
   } = command as SemanticRpcCommand;
-  return {
+  const prepared = {
     ...payload,
     actor,
     completedAt,
-  } as PreparedSemanticCommand;
+  };
+  if (prepared.type === "create-document") {
+    return {
+      ...prepared,
+      changeReason: "created",
+    } as PreparedSemanticCommand;
+  }
+  return prepared as PreparedSemanticCommand;
 }
 
-export { MAX_DOCUMENT_BODY_CODE_POINTS };
+export {
+  MAX_DOCUMENT_BODY_CODE_POINTS,
+  MAX_DOCUMENT_TITLE_CODE_POINTS,
+  MAX_MEMO_BODY_CODE_POINTS,
+};

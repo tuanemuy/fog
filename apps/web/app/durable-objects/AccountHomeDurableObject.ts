@@ -29,6 +29,7 @@ import {
   Email,
   PasswordHash,
   SsoProvider,
+  SsoSubject,
   UserId,
 } from "@repo/core/domain/identity/valueObject";
 
@@ -115,6 +116,10 @@ function execute<T>(operation: () => T): RpcResult<T> {
 
 function locator(input: PhysicalCredentialLocator): PhysicalCredentialLocator {
   if (
+    typeof input !== "object" ||
+    input === null ||
+    typeof input.generation !== "string" ||
+    typeof input.opaqueKey !== "string" ||
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
     input.bucket > 1023 ||
@@ -154,7 +159,7 @@ function logicalCredential(input: LogicalCredential): LogicalCredential {
       credentialId: input.credentialId,
       kind: input.kind,
       provider: SsoProvider.create(input.provider),
-      subject: input.subject,
+      subject: SsoSubject.create(input.subject),
       verifiedEmail: Email.create(input.verifiedEmail),
     };
   }
@@ -333,7 +338,21 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       ["userId", "locator", "credential", "bumpSessionEpoch", "now"],
       ["primaryEmail"],
     );
-    if (!shape.ok) return Promise.resolve(shape);
+    if (
+      !shape.ok ||
+      typeof request.payload.bumpSessionEpoch !== "boolean" ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).addCredentialLocator({
@@ -367,7 +386,24 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       "bumpSessionEpoch",
       "now",
     ]);
-    if (!shape.ok) return Promise.resolve(shape);
+    if (
+      !shape.ok ||
+      typeof request.payload.credentialId !== "string" ||
+      request.payload.credentialId.length === 0 ||
+      request.payload.credentialId.length > 256 ||
+      typeof request.payload.bumpSessionEpoch !== "boolean" ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).removeCredentialLocator({
@@ -399,7 +435,21 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       "kind",
       "now",
     ]);
-    if (!shape.ok) return Promise.resolve(shape);
+    if (
+      !shape.ok ||
+      (request.payload.kind !== "password" && request.payload.kind !== "sso") ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new AccountHomeStore(this.ctx.storage).replaceCredentialLocator({
@@ -415,6 +465,37 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
     );
   }
 
+  countActiveGeneration(
+    request: IdentityRpcQuery<{ generation: string }>,
+  ): Promise<RpcResult<number>> {
+    const validated = validateRpcQuery(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, ["generation"]);
+    if (
+      !shape.ok ||
+      typeof request.payload.generation !== "string" ||
+      request.payload.generation.length === 0 ||
+      request.payload.generation.length > 64
+    ) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
+    return Promise.resolve(
+      execute(() =>
+        new AccountHomeStore(this.ctx.storage).countActiveGeneration(
+          request.payload.generation,
+        ),
+      ),
+    );
+  }
+
   beginDeletionV1(
     request: IdentityRpcMutation<{ userId: string; now: number }>,
   ): Promise<
@@ -427,7 +508,17 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     const shape = validatePayloadKeys(request.payload, ["userId", "now"]);
-    if (!shape.ok) return Promise.resolve(shape);
+    if (!shape.ok || !isSafeNonNegativeInteger(request.payload.now)) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).beginDeletion({
@@ -453,7 +544,21 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       "epoch",
       "now",
     ]);
-    if (!shape.ok) return Promise.resolve(shape);
+    if (
+      !shape.ok ||
+      !isSafeNonNegativeInteger(request.payload.epoch) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        shape.ok
+          ? rpcFailure(
+              "validation",
+              "IDENTITY_RPC_PAYLOAD_INVALID",
+              "Invalid identity payload",
+            )
+          : shape,
+      );
+    }
     return Promise.resolve(
       execute(() => ({
         completed: new AccountHomeStore(this.ctx.storage).finishDeletion({

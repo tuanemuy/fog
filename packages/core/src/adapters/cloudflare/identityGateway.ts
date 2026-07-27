@@ -80,12 +80,13 @@ function errorChainIncludes(error: unknown, fragment: string): boolean {
 
 type DirectoryStub = {
   lookupPasswordSignup(
-    input: IdentityRpcQuery<{ opaqueOperationKey: string }>,
+    input: IdentityRpcQuery<{ opaqueOperationKey: string; now: number }>,
   ): Promise<
     RpcResult<{
       userId: string;
       emailEncrypted: string;
       passwordHash: string;
+      payloadFingerprint: string;
       preparedAt: number;
     } | null>
   >;
@@ -94,6 +95,7 @@ type DirectoryStub = {
       opaqueOperationKey: string;
       proposedUserId: string;
       emailEncrypted: string;
+      payloadFingerprint: string;
       passwordHash: string;
       now: number;
     }>,
@@ -112,9 +114,27 @@ type DirectoryStub = {
       provider: string;
       subjectEncrypted: string;
       emailEncrypted: string;
+      payloadFingerprint: string;
       now: number;
     }>,
   ): Promise<RpcResult<{ userId: string; replayed: boolean }>>;
+  preparePasswordResetRequest(
+    input: IdentityRpcMutation<{
+      userId: string;
+      payloadFingerprint: string;
+      resetSecretEncrypted: string;
+      tokenHash: string;
+      expiresAt: number;
+      now: number;
+    }>,
+  ): Promise<
+    RpcResult<{
+      resetSecretEncrypted: string;
+      tokenHash: string;
+      expiresAt: number;
+      replayed: boolean;
+    }>
+  >;
   reserve(
     input: IdentityRpcMutation<{
       locator: PhysicalCredentialLocator;
@@ -228,6 +248,7 @@ type DirectoryStub = {
       scanned: number;
       moved: number;
       conflicts: number;
+      accountHomeActive: number;
       completedAt: number | null;
     }>,
   ): Promise<RpcResult<null>>;
@@ -241,6 +262,7 @@ type DirectoryStub = {
       scanned: number;
       moved: number;
       conflicts: number;
+      accountHomeActive: number;
       completedAt: number | null;
     } | null>
   >;
@@ -333,6 +355,9 @@ type AccountHomeStub = {
       now: number;
     }>,
   ): Promise<RpcResult<null>>;
+  countActiveGeneration(
+    input: IdentityRpcQuery<{ generation: string }>,
+  ): Promise<RpcResult<number>>;
   beginDeletionV1(
     input: IdentityRpcMutation<{ userId: string; now: number }>,
   ): Promise<
@@ -450,7 +475,35 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   constructor(
     private readonly namespace: DurableObjectNamespace,
     private readonly keyring: DirectoryKeyring,
+    private readonly registryAuthSecret: string,
   ) {}
+
+  private async registryFingerprint(parts: readonly string[]): Promise<string> {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(this.registryAuthSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const signature = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(JSON.stringify(parts)),
+    );
+    return [...new Uint8Array(signature)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  private registryKeyring(): DirectoryKeyring {
+    return {
+      active: {
+        generation: "registry-v1",
+        secret: this.registryAuthSecret,
+      },
+    };
+  }
 
   async references(
     canonicalCredential: string,
@@ -527,31 +580,19 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
     const existing = await retryRpc(() =>
       operationRegistry.lookupPasswordSignup(
-        rpcQuery({ opaqueOperationKey: operationDigest }),
+        rpcQuery({ opaqueOperationKey: operationDigest, now: input.now }),
       ),
     );
     if (existing) {
-      try {
-        const existingEmail = EmailValue.create(
-          await decryptIdentityValue(
-            existing.emailEncrypted,
-            this.keyring,
-            `signup-operation:${operationDigest}:email`,
-          ),
+      const payloadFingerprint = await this.registryFingerprint([
+        "password-signup",
+        input.email,
+      ]);
+      if (existing.payloadFingerprint !== payloadFingerprint) {
+        throw new ConflictError(
+          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+          "Signup operation does not match its original email",
         );
-        if (existingEmail !== input.email) {
-          throw new ConflictError(
-            "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
-            "Signup operation does not match its original email",
-          );
-        }
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          error.message !== "IDENTITY_ENVELOPE_KEY_UNAVAILABLE"
-        ) {
-          throw error;
-        }
       }
       return {
         userId: UserIdValue.create(existing.userId),
@@ -563,15 +604,20 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     }
     const emailEncrypted = await encryptIdentityValue(
       input.email,
-      this.keyring,
+      this.registryKeyring(),
       `signup-operation:${operationDigest}:email`,
     );
+    const payloadFingerprint = await this.registryFingerprint([
+      "password-signup",
+      input.email,
+    ]);
     const prepared = await retryRpc(() =>
       operationRegistry.preparePasswordSignup(
         rpcMutation(input.operationId, {
           opaqueOperationKey: operationDigest,
           proposedUserId: input.proposedUserId,
           emailEncrypted,
+          payloadFingerprint,
           passwordHash: input.passwordHash,
           now: input.now,
         }),
@@ -605,14 +651,20 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     const [subjectEncrypted, emailEncrypted] = await Promise.all([
       encryptIdentityValue(
         input.subject,
-        this.keyring,
+        this.registryKeyring(),
         `sso-operation:${operationDigest}:subject`,
       ),
       encryptIdentityValue(
         input.email,
-        this.keyring,
+        this.registryKeyring(),
         `sso-operation:${operationDigest}:email`,
       ),
+    ]);
+    const payloadFingerprint = await this.registryFingerprint([
+      "sso-create",
+      input.provider,
+      input.subject,
+      input.email,
     ]);
     const prepared = await retryRpc(() =>
       registry.prepareSsoCreate(
@@ -622,12 +674,73 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
           provider: input.provider,
           subjectEncrypted,
           emailEncrypted,
+          payloadFingerprint,
           now: input.now,
         }),
       ),
     );
     return {
       userId: UserIdValue.create(prepared.userId),
+      replayed: prepared.replayed,
+    };
+  }
+
+  async preparePasswordResetRequest(
+    input: Parameters<
+      CredentialDirectoryPort["preparePasswordResetRequest"]
+    >[0],
+  ): ReturnType<CredentialDirectoryPort["preparePasswordResetRequest"]> {
+    const operationDigest = await this.registryFingerprint([
+      "reset-operation",
+      input.operationId,
+    ]);
+    const registry = stub<DirectoryStub>(
+      this.namespace,
+      `reset-operation:${operationDigest}`,
+    );
+    const payloadFingerprint = await this.registryFingerprint([
+      "password-reset-request",
+      input.userId,
+      input.email,
+      String(input.expiresAt),
+    ]);
+    const resetSecretEncrypted = await encryptIdentityValue(
+      input.proposedResetSecret,
+      this.registryKeyring(),
+      `reset-operation:${operationDigest}:secret`,
+    );
+    const tokenHash = await crypto.subtle
+      .digest(
+        "SHA-256",
+        new TextEncoder().encode(
+          ["password-reset-token", input.proposedResetSecret].join("\u0000"),
+        ),
+      )
+      .then((digest) =>
+        [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join(""),
+      );
+    const prepared = await retryRpc(() =>
+      registry.preparePasswordResetRequest(
+        rpcMutation(input.operationId, {
+          userId: input.userId,
+          payloadFingerprint,
+          resetSecretEncrypted,
+          tokenHash,
+          expiresAt: input.expiresAt,
+          now: input.now,
+        }),
+      ),
+    );
+    return {
+      resetSecret: await decryptIdentityValue(
+        prepared.resetSecretEncrypted,
+        this.registryKeyring(),
+        `reset-operation:${operationDigest}:secret`,
+      ),
+      tokenHash: prepared.tokenHash,
+      expiresAt: prepared.expiresAt,
       replayed: prepared.replayed,
     };
   }
@@ -854,6 +967,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     scanned: number;
     moved: number;
     conflicts: number;
+    accountHomeActive: number;
     completedAt: number | null;
   }): Promise<void> {
     const checkpointId = operationId(
@@ -865,6 +979,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         input.scanned,
         input.moved,
         input.conflicts,
+        input.accountHomeActive,
         input.completedAt ?? "pending",
       ].join(":"),
     );
@@ -896,12 +1011,25 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  shardAuthorityStatus(generation: string, bucket: number) {
-    return retryRpc(() =>
-      this.forBucket(generation, bucket).operatorGetShardAuthorityStatus(
-        rpcQuery({}),
+  async shardAuthorityStatus(generation: string, bucket: number) {
+    const [directory, checkpoint] = await Promise.all([
+      retryRpc(() =>
+        this.forBucket(generation, bucket).operatorGetShardAuthorityStatus(
+          rpcQuery({}),
+        ),
       ),
-    );
+      this.rotationCheckpoint(generation, bucket),
+    ]);
+    const accountHomeActive = checkpoint?.accountHomeActive ?? null;
+    return {
+      ...directory,
+      accountHomeActive,
+      retirementReady:
+        checkpoint?.completedAt !== null &&
+        checkpoint !== null &&
+        directory.active === 0 &&
+        accountHomeActive === 0,
+    };
   }
 
   async markRestoredSession(
@@ -1287,6 +1415,12 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     );
   }
 
+  countActiveGeneration(userId: UserId, generation: string): Promise<number> {
+    return retryRpc(() =>
+      this.forUser(userId).countActiveGeneration(rpcQuery({ generation })),
+    );
+  }
+
   async beginDeletion(
     input: Parameters<AccountHomePort["beginDeletion"]>[0],
   ): ReturnType<AccountHomePort["beginDeletion"]> {
@@ -1423,11 +1557,13 @@ export class CloudflareIdentityGateway
     accountHomes: DurableObjectNamespace,
     userData: DurableObjectNamespace,
     keyring: DirectoryKeyring,
+    registryAuthSecret = keyring.active.secret,
   ) {
     this.keyring = validateDirectoryKeyring(keyring);
     this.directoryPort = new CloudflareCredentialDirectoryAdapter(
       directory,
       this.keyring,
+      registryAuthSecret,
     );
     this.accountHomePort = new CloudflareAccountHomeAdapter(accountHomes);
     this.userDataPort = new CloudflareUserDataIdentityAdapter(userData);
@@ -1436,6 +1572,7 @@ export class CloudflareIdentityGateway
       accountHome: this.accountHomePort,
       userData: this.userDataPort,
       newUserId: () => UserIdValue.create(crypto.randomUUID()),
+      newResetSecret: () => crypto.randomUUID(),
     });
   }
 
@@ -1609,6 +1746,16 @@ export class CloudflareIdentityGateway
         totals.moved += moved;
         totals.conflicts += conflicts;
         const blocked = conflicts > 0;
+        const accountHomeActive = (
+          await Promise.all(
+            [...new Set(page.rows.map((row) => row.userId))].map((userId) =>
+              this.accountHomePort.countActiveGeneration(
+                userId,
+                previous.generation,
+              ),
+            ),
+          )
+        ).reduce((sum, count) => sum + count, 0);
         await this.directoryPort.saveRotationCheckpoint({
           generation: previous.generation,
           bucket,
@@ -1616,6 +1763,7 @@ export class CloudflareIdentityGateway
           scanned: page.rows.length,
           moved,
           conflicts,
+          accountHomeActive,
           completedAt: !blocked && page.nextCursor === null ? input.now : null,
         });
         cursor = blocked ? undefined : (page.nextCursor ?? undefined);
@@ -1662,6 +1810,7 @@ export class CloudflareIdentityGateway
     scanned: number;
     moved: number;
     conflicts: number;
+    accountHomeActive: number;
     nextCursor: string | null;
     completed: boolean;
   }> {
@@ -1692,6 +1841,7 @@ export class CloudflareIdentityGateway
         scanned: 0,
         moved: 0,
         conflicts: 0,
+        accountHomeActive: checkpoint.accountHomeActive,
         nextCursor: null,
         completed: true,
       };
@@ -1704,6 +1854,7 @@ export class CloudflareIdentityGateway
     });
     let moved = 0;
     let conflicts = 0;
+    let accountHomeActive = 0;
     for (const row of page.rows) {
       try {
         await this.rotateRow(row, input.now);
@@ -1712,6 +1863,10 @@ export class CloudflareIdentityGateway
         if (!(error instanceof ConflictError)) throw error;
         conflicts += 1;
       }
+      accountHomeActive += await this.accountHomePort.countActiveGeneration(
+        row.userId,
+        input.generation,
+      );
     }
     const blocked = conflicts > 0;
     const nextCursor = blocked ? (checkpoint?.cursor ?? null) : page.nextCursor;
@@ -1722,12 +1877,14 @@ export class CloudflareIdentityGateway
       scanned: page.rows.length,
       moved,
       conflicts,
+      accountHomeActive,
       completedAt: !blocked && page.nextCursor === null ? input.now : null,
     });
     return {
       scanned: page.rows.length,
       moved,
       conflicts,
+      accountHomeActive,
       nextCursor,
       completed: !blocked && page.nextCursor === null,
     };
@@ -1935,13 +2092,7 @@ export class CloudflareIdentityGateway
   async getDirectoryShardAuthorityStatus(input: {
     generation: string;
     bucket: number;
-  }): Promise<
-    Awaited<
-      ReturnType<DirectoryStub["operatorGetShardAuthorityStatus"]>
-    > extends RpcResult<infer T>
-      ? T
-      : never
-  > {
+  }) {
     return this.directoryPort.shardAuthorityStatus(
       input.generation,
       input.bucket,

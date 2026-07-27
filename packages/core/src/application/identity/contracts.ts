@@ -244,6 +244,19 @@ export interface CredentialDirectoryPort {
     email: Email;
     now: number;
   }): Promise<{ userId: UserId; replayed: boolean }>;
+  preparePasswordResetRequest(input: {
+    operationId: OperationId;
+    userId: UserId;
+    email: Email;
+    proposedResetSecret: string;
+    expiresAt: number;
+    now: number;
+  }): Promise<{
+    resetSecret: string;
+    tokenHash: string;
+    expiresAt: number;
+    replayed: boolean;
+  }>;
   reserve(input: {
     operationId: OperationId;
     userId: UserId;
@@ -372,6 +385,7 @@ export interface AccountHomePort {
     kind: CredentialKind;
     now: number;
   }): Promise<void>;
+  countActiveGeneration(userId: UserId, generation: string): Promise<number>;
   beginDeletion(input: {
     operationId: OperationId;
     userId: UserId;

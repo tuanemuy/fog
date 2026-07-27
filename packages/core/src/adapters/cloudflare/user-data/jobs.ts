@@ -10,6 +10,7 @@ import { canonicalJson, payloadDigest } from "./canonical";
 
 const MAX_JOB_PAYLOAD_BYTES = 64 * 1024;
 const MAX_CLAIM_BATCH = 25;
+const MAX_MAINTENANCE_BATCH = 25;
 const COMPLETED_RETENTION_MS = 7 * 86_400_000;
 const POISON_RETENTION_MS = 30 * 86_400_000;
 
@@ -32,6 +33,7 @@ export class DurableJobStore {
     nextRunAt: number;
     providerIdempotencyKey: string;
     now: number;
+    subject?: Readonly<{ kind: "memo" | "document" | "topic"; id: string }>;
   }): number | null {
     return this.withErrors(() =>
       this.storage.transactionSync(() => {
@@ -49,6 +51,7 @@ export class DurableJobStore {
     nextRunAt: number;
     providerIdempotencyKey: string;
     now: number;
+    subject?: Readonly<{ kind: "memo" | "document" | "topic"; id: string }>;
   }): void {
     const payloadJson = canonicalJson(input.payload);
     if (
@@ -78,8 +81,11 @@ export class DurableJobStore {
         kind: string;
         payload_digest: string;
         provider_idempotency_key: string;
+        subject_kind: string | null;
+        subject_id: string | null;
       }>(
-        `SELECT id, kind, payload_digest, provider_idempotency_key
+        `SELECT id, kind, payload_digest, provider_idempotency_key,
+                subject_kind, subject_id
          FROM jobs
          WHERE id = ? OR provider_idempotency_key = ?
          ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
@@ -93,7 +99,9 @@ export class DurableJobStore {
       if (
         existing.kind !== input.kind ||
         existing.payload_digest !== digest ||
-        existing.provider_idempotency_key !== input.providerIdempotencyKey
+        existing.provider_idempotency_key !== input.providerIdempotencyKey ||
+        existing.subject_kind !== (input.subject?.kind ?? null) ||
+        existing.subject_id !== (input.subject?.id ?? null)
       ) {
         throw new ConflictError(
           SearchErrorCode.JobIdempotencyConflict,
@@ -105,14 +113,17 @@ export class DurableJobStore {
     this.storage.sql.exec(
       `INSERT INTO jobs(
          id, kind, payload_json, payload_digest, status, attempt,
-         next_run_at, provider_idempotency_key, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
+         next_run_at, provider_idempotency_key, subject_kind, subject_id,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.kind,
       payloadJson,
       digest,
       input.nextRunAt,
       input.providerIdempotencyKey,
+      input.subject?.kind ?? null,
+      input.subject?.id ?? null,
       input.now,
       input.now,
     );
@@ -145,9 +156,15 @@ export class DurableJobStore {
           `UPDATE jobs
            SET status = 'pending', lease_until = NULL, owner_token = NULL,
                updated_at = ?
-           WHERE status = 'leased' AND lease_until <= ?`,
+           WHERE id IN (
+             SELECT id FROM jobs
+             WHERE status = 'leased' AND lease_until <= ?
+             ORDER BY lease_until, id
+             LIMIT ?
+           )`,
           input.now,
           input.now,
+          MAX_MAINTENANCE_BATCH,
         );
         const due = this.storage.sql
           .exec<{
@@ -336,10 +353,16 @@ export class DurableJobStore {
   private pruneTerminalUnchecked(now: number): number {
     return this.storage.sql.exec(
       `DELETE FROM jobs
-       WHERE (status = 'completed' AND terminal_at <= ?)
-          OR (status = 'poison' AND terminal_at <= ?)`,
+       WHERE id IN (
+         SELECT id FROM jobs
+         WHERE (status = 'completed' AND terminal_at <= ?)
+            OR (status = 'poison' AND terminal_at <= ?)
+         ORDER BY terminal_at, id
+         LIMIT ?
+       )`,
       now - COMPLETED_RETENTION_MS,
       now - POISON_RETENTION_MS,
+      MAX_MAINTENANCE_BATCH,
     ).rowsWritten;
   }
 

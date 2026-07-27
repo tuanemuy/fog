@@ -1,19 +1,19 @@
 {
-  "recordedAt": "2026-07-27T20:00:14Z",
+  "recordedAt": "2026-07-27T20:27:17Z",
   "source": "working-tree",
-  "baseCommit": "e2ec1ace9c15b281a120ee577a56c23ec4d0936e",
+  "baseCommit": "43ecf369de219aecbe5c2a6be33dcbe3d9cd4209",
   "workingTree": true,
   "branch": "issue/19/cloudflare-do-fts",
   "automated": [
     {
       "command": "pnpm test:unit",
       "result": "passed",
-      "evidence": "35 files, 421 tests; machine-readable reporter artifact bound to the working-tree fingerprint"
+      "evidence": "35 files, 426 tests; machine-readable reporter artifact bound to the working-tree fingerprint"
     },
     {
       "command": "pnpm test:integration",
       "result": "passed",
-      "evidence": "request boundary 2 files/6 tests; production defaultEntry 1 file/1 test; state 6 files/77 tests; machine-readable reporter artifacts bound to the working-tree fingerprint"
+      "evidence": "request boundary 2 files/6 tests; production-mode built defaultEntry/server-fn 1 file/1 test; state 6 files/84 tests; machine-readable reporter artifacts are bound to the working-tree fingerprint"
     },
     {
       "command": "pnpm test:lifecycle:cli",
@@ -45,7 +45,7 @@
     {
       "command": "pnpm audit:legacy",
       "result": "passed",
-      "evidence": "276 active files; production artifact inputs clean"
+      "evidence": "281 active files; production artifact inputs clean"
     },
     {
       "command": "pnpm audit:test-traceability",
@@ -55,9 +55,9 @@
   ],
   "committedCi": {
     "result": "passed",
-    "commitSha": "e2ec1ace9c15b281a120ee577a56c23ec4d0936e",
-    "runUrl": "https://github.com/tuanemuy/fog/actions/runs/30297557438",
-    "scope": "base commit only; the current working-tree fixes require fresh reporter evidence"
+    "commitSha": "43ecf369de219aecbe5c2a6be33dcbe3d9cd4209",
+    "runUrl": "https://github.com/tuanemuy/fog/actions/runs/30300833748",
+    "scope": "base commit only; current review fixes are a tested working tree and require CI after commit"
   },
   "releaseGates": [
     {
@@ -78,7 +78,7 @@
           "result": "pending"
         }
       ],
-      "reason": "Cloudflare credentials and a disposable remote namespace are not available in the local environment"
+      "reason": "The protected staging-pitr environment and main-only approval policy are configured; environment secrets, disposable targets, and the exact-HEAD remote workflow run remain pending"
     },
     {
       "name": "staging secret inventory",

@@ -32,6 +32,7 @@ type Ports = Readonly<{
   accountHome: AccountHomePort;
   userData: UserDataIdentityPort;
   newUserId: () => UserId;
+  newResetSecret: () => string;
 }>;
 
 async function fingerprint(parts: readonly string[]): Promise<string> {
@@ -123,6 +124,20 @@ export class IdentityCoordinator
         "Password credential has no active locator",
       );
     }
+    AccountIdentity.create({
+      id: input.userId,
+      status: "active",
+      primaryEmail: input.email,
+      credentials: [
+        {
+          credentialId,
+          kind: "password",
+          email: input.email,
+          passwordHash: input.passwordHash,
+        },
+      ],
+      sessionEpoch: 0,
+    });
     const payloadDigest = await fingerprint([
       "signup",
       input.userId,
@@ -279,15 +294,6 @@ export class IdentityCoordinator
         "Signup completed without an active Account Home authority",
       );
     }
-    AccountIdentity.create({
-      id: authority.userId,
-      status: "active",
-      primaryEmail: authority.primaryEmail,
-      credentials: authority.credentials.map(
-        ({ directoryReferences: _, ...credential }) => credential,
-      ),
-      sessionEpoch: authority.sessionEpoch,
-    });
     return { sessionEpoch: authority.sessionEpoch };
   }
 
@@ -455,6 +461,13 @@ export class IdentityCoordinator
         "SSO credential has no active locator",
       );
     }
+    AccountIdentity.create({
+      id: sagaAccountId,
+      status: "active",
+      primaryEmail: input.email,
+      credentials: [logicalCredential],
+      sessionEpoch: 0,
+    });
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
       userId: sagaAccountId,
@@ -583,15 +596,6 @@ export class IdentityCoordinator
         "SSO operation completed without active authority",
       );
     }
-    AccountIdentity.create({
-      id: authority.userId,
-      status: "active",
-      primaryEmail: authority.primaryEmail,
-      credentials: authority.credentials.map(
-        ({ directoryReferences: _, ...credential }) => credential,
-      ),
-      sessionEpoch: authority.sessionEpoch,
-    });
     return {
       userId: sagaAccountId,
       sessionEpoch: authority.sessionEpoch,
@@ -636,8 +640,6 @@ export class IdentityCoordinator
   async requestPasswordReset(
     input: Parameters<IdentityPrimitivePort["requestPasswordReset"]>[0],
   ): Promise<{ accepted: true }> {
-    const resetSecret = crypto.randomUUID();
-    const tokenHash = await fingerprint(["password-reset-token", resetSecret]);
     const mappings = (
       await this.ports.directory.lookupPassword(input.email)
     ).filter((item): item is PasswordCredential => item !== null);
@@ -661,14 +663,22 @@ export class IdentityCoordinator
       first.userId,
     );
     if (!authority) return { accepted: true };
+    const prepared = await this.ports.directory.preparePasswordResetRequest({
+      operationId: input.operationId,
+      userId: first.userId,
+      email: input.email,
+      proposedResetSecret: this.ports.newResetSecret(),
+      expiresAt: input.expiresAt,
+      now: input.now,
+    });
     await Promise.all(
       mappings.map((mapping) =>
         this.ports.directory.storePasswordReset({
           operationId: input.operationId,
           directoryReference: mapping.directoryReference,
           userId: first.userId,
-          tokenHash,
-          expiresAt: input.expiresAt,
+          tokenHash: prepared.tokenHash,
+          expiresAt: prepared.expiresAt,
         }),
       ),
     );
@@ -677,8 +687,8 @@ export class IdentityCoordinator
       directoryReference: first.directoryReference,
       userId: first.userId,
       email: input.email,
-      resetSecret,
-      expiresAt: input.expiresAt,
+      resetSecret: prepared.resetSecret,
+      expiresAt: prepared.expiresAt,
       providerIdempotencyKey: `password-reset:${input.operationId}`,
       now: input.now,
     });
@@ -717,16 +727,48 @@ export class IdentityCoordinator
         "Password credential is unavailable",
       );
     }
+    const payloadDigest = await fingerprint([
+      "password-change",
+      input.userId,
+      input.email,
+      input.passwordHash,
+    ]);
+    const priorOperation = await this.ports.accountHome.getOperation(
+      input.userId,
+      input.operationId,
+    );
+    if (priorOperation) {
+      if (
+        priorOperation.kind !== "password-change" ||
+        priorOperation.payloadDigest !== payloadDigest
+      ) {
+        throw new ConflictError(
+          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+          "Identity operation does not match its original payload",
+        );
+      }
+      if (priorOperation.state === "completed") {
+        return { sessionEpoch: authority.sessionEpoch };
+      }
+    }
+    const changedIdentity = AccountIdentity.replacePassword(
+      AccountIdentity.create({
+        id: authority.userId,
+        status: "active",
+        primaryEmail: authority.primaryEmail,
+        credentials: authority.credentials.map(
+          ({ directoryReferences: _, ...item }) => item,
+        ),
+        sessionEpoch: authority.sessionEpoch,
+      }),
+      credential.credentialId,
+      input.passwordHash,
+    );
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
       userId: input.userId,
       kind: "password-change",
-      payloadDigest: await fingerprint([
-        "password-change",
-        input.userId,
-        input.email,
-        input.passwordHash,
-      ]),
+      payloadDigest,
       now: input.now,
     });
     if (!reached(operation, "credential-reserved")) {
@@ -781,19 +823,20 @@ export class IdentityCoordinator
         "Password change completed without active authority",
       );
     }
-    AccountIdentity.replacePassword(
-      AccountIdentity.create({
-        id: authority.userId,
-        status: "active",
-        primaryEmail: authority.primaryEmail,
-        credentials: authority.credentials.map(
-          ({ directoryReferences: _, ...item }) => item,
-        ),
-        sessionEpoch: authority.sessionEpoch,
-      }),
-      credential.credentialId,
-      input.passwordHash,
-    );
+    if (
+      updated.sessionEpoch !== changedIdentity.sessionEpoch ||
+      !updated.credentials.some(
+        (item) =>
+          item.credentialId === credential.credentialId &&
+          item.kind === "password" &&
+          item.passwordHash === input.passwordHash,
+      )
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Password change diverged from domain authority",
+      );
+    }
     return { sessionEpoch: updated.sessionEpoch };
   }
 
@@ -853,16 +896,48 @@ export class IdentityCoordinator
         "Reset target is not one logical password credential",
       );
     }
+    const payloadDigest = await fingerprint([
+      "password-reset",
+      input.tokenHash,
+      input.email,
+      input.passwordHash,
+    ]);
+    const priorOperation = await this.ports.accountHome.getOperation(
+      first.userId,
+      input.operationId,
+    );
+    if (priorOperation) {
+      if (
+        priorOperation.kind !== "password-reset" ||
+        priorOperation.payloadDigest !== payloadDigest
+      ) {
+        throw new ConflictError(
+          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+          "Identity operation does not match its original payload",
+        );
+      }
+      if (priorOperation.state === "completed") {
+        return { userId: first.userId, sessionEpoch: authority.sessionEpoch };
+      }
+    }
+    const resetIdentity = AccountIdentity.replacePassword(
+      AccountIdentity.create({
+        id: authority.userId,
+        status: "active",
+        primaryEmail: authority.primaryEmail,
+        credentials: authority.credentials.map(
+          ({ directoryReferences: _, ...item }) => item,
+        ),
+        sessionEpoch: authority.sessionEpoch,
+      }),
+      credential.credentialId,
+      input.passwordHash,
+    );
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
       userId: first.userId,
       kind: "password-reset",
-      payloadDigest: await fingerprint([
-        "password-reset",
-        input.tokenHash,
-        input.email,
-        input.passwordHash,
-      ]),
+      payloadDigest,
       now: input.now,
     });
     if (!reached(operation, "credential-reserved")) {
@@ -926,19 +1001,20 @@ export class IdentityCoordinator
         "Password reset completed without active authority",
       );
     }
-    AccountIdentity.replacePassword(
-      AccountIdentity.create({
-        id: authority.userId,
-        status: "active",
-        primaryEmail: authority.primaryEmail,
-        credentials: authority.credentials.map(
-          ({ directoryReferences: _, ...item }) => item,
-        ),
-        sessionEpoch: authority.sessionEpoch,
-      }),
-      credential.credentialId,
-      input.passwordHash,
-    );
+    if (
+      updated.sessionEpoch !== resetIdentity.sessionEpoch ||
+      !updated.credentials.some(
+        (item) =>
+          item.credentialId === credential.credentialId &&
+          item.kind === "password" &&
+          item.passwordHash === input.passwordHash,
+      )
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Password reset diverged from domain authority",
+      );
+    }
     return { userId: first.userId, sessionEpoch: updated.sessionEpoch };
   }
 
@@ -987,6 +1063,18 @@ export class IdentityCoordinator
         "Credential is already registered",
       );
     }
+    const linkedIdentity = AccountIdentity.addCredential(
+      AccountIdentity.create({
+        id: authority.userId,
+        status: "active",
+        primaryEmail: authority.primaryEmail,
+        credentials: authority.credentials.map(
+          ({ directoryReferences: _, ...credential }) => credential,
+        ),
+        sessionEpoch: authority.sessionEpoch,
+      }),
+      logicalCredential,
+    );
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
       userId: input.userId,
@@ -1001,18 +1089,6 @@ export class IdentityCoordinator
       now: input.now,
     });
     if (!reached(operation, "credential-reserved")) {
-      AccountIdentity.addCredential(
-        AccountIdentity.create({
-          id: authority.userId,
-          status: "active",
-          primaryEmail: authority.primaryEmail,
-          credentials: authority.credentials.map(
-            ({ directoryReferences: _, ...credential }) => credential,
-          ),
-          sessionEpoch: authority.sessionEpoch,
-        }),
-        logicalCredential,
-      );
       for (const directoryReference of directoryReferences) {
         await this.ports.directory.reserve({
           operationId: input.operationId,
@@ -1095,23 +1171,49 @@ export class IdentityCoordinator
         now: input.now,
       });
     }
+    const updated = activeAuthority(
+      await this.ports.accountHome.getAuthSummary(input.userId),
+      input.userId,
+    );
+    if (
+      !updated ||
+      updated.sessionEpoch !== linkedIdentity.sessionEpoch ||
+      !updated.credentials.some(
+        (credential) =>
+          credential.credentialId === logicalCredential.credentialId,
+      )
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "SSO link diverged from domain authority",
+      );
+    }
   }
 
   async unlinkCredential(
     input: Parameters<IdentityPrimitivePort["unlinkCredential"]>[0],
   ): Promise<void> {
-    let operation = await this.ports.accountHome.beginOperation({
-      operationId: input.operationId,
-      userId: input.userId,
-      kind: "sso-unlink",
-      payloadDigest: await fingerprint([
-        "sso-unlink",
-        input.userId,
-        input.credentialId,
-      ]),
-      now: input.now,
-    });
-    if (operation.state === "completed") return;
+    const payloadDigest = await fingerprint([
+      "sso-unlink",
+      input.userId,
+      input.credentialId,
+    ]);
+    const priorOperation = await this.ports.accountHome.getOperation(
+      input.userId,
+      input.operationId,
+    );
+    if (priorOperation) {
+      if (
+        priorOperation.kind !== "sso-unlink" ||
+        priorOperation.payloadDigest !== payloadDigest
+      ) {
+        throw new ConflictError(
+          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+          "Identity operation does not match its original payload",
+        );
+      }
+      if (priorOperation.state === "completed") return;
+    }
     const authority = activeAuthority(
       await this.ports.accountHome.getAuthSummary(input.userId),
       input.userId,
@@ -1149,6 +1251,18 @@ export class IdentityCoordinator
         "The last login credential cannot be removed",
       );
     }
+    const unlinkedIdentity = AccountIdentity.unlink(
+      accountIdentity,
+      target.credentialId,
+    );
+    let operation = await this.ports.accountHome.beginOperation({
+      operationId: input.operationId,
+      userId: input.userId,
+      kind: "sso-unlink",
+      payloadDigest,
+      now: input.now,
+    });
+    if (operation.state === "completed") return;
     if (!reached(operation, "credential-reserved")) {
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -1159,7 +1273,6 @@ export class IdentityCoordinator
       });
     }
     if (!reached(operation, "directory-active")) {
-      AccountIdentity.unlink(accountIdentity, target.credentialId);
       for (const directoryReference of target.directoryReferences) {
         await this.ports.directory.tombstone({
           operationId: input.operationId,
@@ -1177,18 +1290,43 @@ export class IdentityCoordinator
         now: input.now,
       });
     }
-    await this.ports.accountHome.removeCredentialLocator({
+    const updated = await this.ports.accountHome.removeCredentialLocator({
       operationId: input.operationId,
       userId: input.userId,
       credentialId: target.credentialId,
       bumpSessionEpoch: true,
       now: input.now,
     });
+    if (
+      updated.sessionEpoch !== unlinkedIdentity.sessionEpoch ||
+      updated.credentials.some(
+        (credential) => credential.credentialId === target.credentialId,
+      )
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Credential unlink diverged from domain authority",
+      );
+    }
   }
 
   async deleteAccount(
     input: Parameters<IdentityPrimitivePort["deleteAccount"]>[0],
   ): Promise<void> {
+    const authority = await this.ports.accountHome.getAuthSummary(input.userId);
+    if (!authority) return;
+    const account = AccountIdentity.create({
+      id: authority.userId,
+      status: authority.status,
+      primaryEmail: authority.primaryEmail,
+      credentials: authority.credentials.map(
+        ({ directoryReferences: _, ...credential }) => credential,
+      ),
+      sessionEpoch: authority.sessionEpoch,
+    });
+    const deletedIdentity = AccountIdentity.markDeleted(
+      AccountIdentity.markDeleting(account),
+    );
     const deletion = await this.ports.accountHome.beginDeletion(input);
     if (deletion.state === "completed") return;
     for (const directoryReference of deletion.directoryReferences) {
@@ -1213,5 +1351,18 @@ export class IdentityCoordinator
       ...input,
       epoch: deletion.epoch,
     });
+    const deleted = await this.ports.accountHome.getAuthSummary(input.userId);
+    if (
+      !deleted ||
+      deleted.status !== deletedIdentity.status ||
+      deleted.primaryEmail !== deletedIdentity.primaryEmail ||
+      deleted.credentials.length !== deletedIdentity.credentials.length ||
+      deleted.sessionEpoch !== deletedIdentity.sessionEpoch
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Account deletion diverged from domain authority",
+      );
+    }
   }
 }

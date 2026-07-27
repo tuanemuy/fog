@@ -52,7 +52,6 @@ export type MemoSearchProjection = Readonly<{
   id: string;
   body: string;
   timestamp: number;
-  sourceOfDocumentIds: readonly string[];
 }>;
 
 export type DocumentSearchProjection = Readonly<{
@@ -62,7 +61,6 @@ export type DocumentSearchProjection = Readonly<{
   body: string;
   timestamp: number;
   topicId: string;
-  sourceMemoIds: readonly string[];
 }>;
 
 export type SearchProjectionEntry =
@@ -170,7 +168,11 @@ export type SemanticRpcCommand =
         expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
-      Readonly<{ type: "create-document"; document: DocumentWriteDto }>)
+      Readonly<{
+        type: "create-document";
+        document: DocumentWriteDto;
+        topicExpectedVersion: number;
+      }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "update-document";
@@ -191,6 +193,7 @@ export type SemanticRpcCommand =
         documentId: string;
         restoredAt: number;
         expectedVersion: number;
+        topicExpectedVersion: number;
         destinationTopicId?: string;
       }>)
   | (SemanticRpcCommandBase &
@@ -232,13 +235,20 @@ export type SemanticRpcCommand =
         expectedVersion: number;
       }>);
 
-type PreparedCommand<T> = T extends unknown
+type PreparedCommand<T> = T extends { type: "create-document" }
   ? Omit<T, "version" | "actor"> &
       Readonly<{
         actor: SemanticActor;
         completedAt: number;
+        changeReason: "created";
       }>
-  : never;
+  : T extends unknown
+    ? Omit<T, "version" | "actor"> &
+        Readonly<{
+          actor: SemanticActor;
+          completedAt: number;
+        }>
+    : never;
 
 /** Domain-validated application command after the RPC boundary has prepared it. */
 export type PreparedSemanticCommand = PreparedCommand<SemanticRpcCommand>;
@@ -250,19 +260,83 @@ export type SemanticCommitResult = Readonly<{
   replayed: boolean;
 }>;
 
-export interface SemanticTransactionRepositories {
-  apply(
-    command: PreparedSemanticCommand,
-    projection: SearchProjectionPort,
-  ): void;
+export type SearchProjectionMutation =
+  | Readonly<{ type: "upsert"; entry: SearchProjectionEntry }>
+  | Readonly<{
+      type: "remove";
+      entityType: SearchContentKind;
+      id: string;
+    }>;
+
+type CommandOf<TType extends PreparedSemanticCommand["type"]> = Extract<
+  PreparedSemanticCommand,
+  { type: TType }
+>;
+
+export interface SemanticContentRepository {
+  createMemo(
+    command: CommandOf<"create-memo">,
+  ): readonly SearchProjectionMutation[];
+  updateMemo(
+    command: CommandOf<"update-memo">,
+  ): readonly SearchProjectionMutation[];
+  trashMemo(
+    command: CommandOf<"trash-memo">,
+  ): readonly SearchProjectionMutation[];
+  restoreMemo(
+    command: CommandOf<"restore-memo">,
+  ): readonly SearchProjectionMutation[];
+  removeMemo(
+    command: CommandOf<"remove-memo">,
+  ): readonly SearchProjectionMutation[];
+  createDocument(
+    command: CommandOf<"create-document">,
+  ): readonly SearchProjectionMutation[];
+  updateDocument(
+    command: CommandOf<"update-document">,
+  ): readonly SearchProjectionMutation[];
+  trashDocument(
+    command: CommandOf<"trash-document">,
+  ): readonly SearchProjectionMutation[];
+  restoreDocument(
+    command: CommandOf<"restore-document">,
+  ): readonly SearchProjectionMutation[];
+  removeDocument(
+    command: CommandOf<"remove-document">,
+  ): readonly SearchProjectionMutation[];
 }
+
+export interface SemanticTopicRepository {
+  createTopic(
+    command: CommandOf<"create-topic">,
+  ): readonly SearchProjectionMutation[];
+  setArchived(
+    command: CommandOf<"set-topic-archived">,
+  ): readonly SearchProjectionMutation[];
+  trashTopic(
+    command: CommandOf<"trash-topic">,
+  ): readonly SearchProjectionMutation[];
+  restoreTopic(
+    command: CommandOf<"restore-topic">,
+  ): readonly SearchProjectionMutation[];
+  removeTopic(
+    command: CommandOf<"remove-topic">,
+  ): readonly SearchProjectionMutation[];
+}
+
+export interface SemanticTransactionRepositories {
+  readonly content: SemanticContentRepository;
+  readonly topics: SemanticTopicRepository;
+}
+
+export type SemanticTransactionCallback = (
+  repositories: SemanticTransactionRepositories,
+  projection: SearchProjectionPort,
+) => undefined;
 
 export interface SemanticCommitPort {
   transactionSync(
     command: PreparedSemanticCommand,
-    callback: (
-      repositories: SemanticTransactionRepositories,
-      projection: SearchProjectionPort,
-    ) => void,
+    callback: SemanticTransactionCallback,
   ): SemanticCommitResult;
 }

@@ -249,10 +249,39 @@ const canonicalProvenanceSchema = [
    END`,
 ] as const;
 
+const canonicalSettingsAndJobSubjectsSchema = [
+  `UPDATE settings
+   SET version = (
+     SELECT COUNT(*) FROM idempotency WHERE namespace = 'settings'
+   )
+   WHERE singleton = 1`,
+  "ALTER TABLE jobs ADD COLUMN subject_kind TEXT CHECK (subject_kind IN ('memo', 'document', 'topic'))",
+  "ALTER TABLE jobs ADD COLUMN subject_id TEXT",
+  `UPDATE jobs
+   SET subject_kind = CASE
+         WHEN json_valid(payload_json) THEN CASE
+           WHEN json_type(payload_json, '$.kind') = 'text'
+             AND json_extract(payload_json, '$.kind')
+                 IN ('memo', 'document', 'topic')
+           THEN json_extract(payload_json, '$.kind')
+         END
+       END,
+       subject_id = CASE
+         WHEN json_valid(payload_json) THEN CASE
+           WHEN json_type(payload_json, '$.id') = 'text'
+           THEN json_extract(payload_json, '$.id')
+         END
+       END
+   WHERE kind IN ('purge-trash', 'purge-topic')`,
+  `CREATE INDEX jobs_subject_idx
+   ON jobs(subject_kind, subject_id, status)`,
+] as const;
+
 export const userDataMigrations: readonly OrderedMigration[] = [
   { version: 1, up: initialSchema },
   { version: 2, up: historyAndOwnershipSchema },
   { version: 3, up: canonicalProvenanceSchema },
+  { version: 4, up: canonicalSettingsAndJobSubjectsSchema },
 ];
 
 export function migrateUserData(storage: DurableSqlStorage, now: number): void {

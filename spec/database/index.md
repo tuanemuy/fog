@@ -160,7 +160,7 @@ UNIQUE `(entity_type, entity_id)`。
 
 `search_entries_fts` は contentless FTS5 virtual table とし、`title`, `body` を `tokenize='trigram'` で索引化する。アプリケーション trigger は使わず、transaction-scoped `SearchProjectionPort` が本体変更と同じ `transactionSync` で両表を更新する。
 
-`search_entry_sources(entity_type, entity_id, source_entity_type, source_entity_id)` は result DTO の source links と topic scope の join 用。ゴミ箱項目への link は射影しない。
+result DTO の source links と topic scope は正本の `source_links` を検索時に join して構築する。FTS射影は検索対象のtitle/body/topicだけを所有し、source linkを複製しない。
 
 1〜2 byte の短語は専用のエスケープ済み fallback query を使い、入力文字列をSQLへ連結しない。
 

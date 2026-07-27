@@ -8,7 +8,7 @@ import { env } from "cloudflare:workers";
 import { DurableJobStore } from "@repo/core/adapters/cloudflare/user-data/jobs";
 import type { ConflictError } from "@repo/core/application/errors";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalUserDataDurableObject as UserDataDurableObject } from "../../testing/LocalUserDataDurableObject";
 import { shouldMoveAlarm } from "../UserDataDurableObject";
 
@@ -18,7 +18,10 @@ type TestEnv = {
 
 const bindings = env as unknown as TestEnv;
 
-afterEach(() => reset());
+afterEach(() => {
+  vi.useRealTimers();
+  reset();
+});
 
 function value<T>(result: RpcResult<T>): T {
   if (!result.ok) throw new Error(result.error.code);
@@ -221,6 +224,60 @@ describe("User Data persistent jobs", () => {
     });
   });
 
+  it("bounds lease reclaim and terminal pruning to maintenance chunks", async () => {
+    const stub = await initialized("maintenance-bounds");
+    await runInDurableObject(stub, (_instance, state) => {
+      const store = new DurableJobStore(state.storage);
+      const now = 40 * 86_400_000;
+      for (let index = 0; index < 60; index += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO jobs(
+             id, kind, payload_json, payload_digest, status, attempt,
+             next_run_at, lease_until, owner_token,
+             provider_idempotency_key, terminal_at, created_at, updated_at
+           ) VALUES (?, 'x', '{}', 'digest', ?, 1, ?, ?, ?, ?, ?, 1, 1)`,
+          `bounded-${index}`,
+          index < 30 ? "leased" : "completed",
+          now + 1,
+          index < 30 ? now - 1 : null,
+          index < 30 ? "owner" : null,
+          `provider-${index}`,
+          index < 30 ? null : now - 8 * 86_400_000,
+        );
+      }
+      expect(
+        store.claim({
+          now,
+          leaseMs: 1_000,
+          ownerToken: "new-owner",
+          limit: 1,
+        }),
+      ).toHaveLength(0);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM jobs WHERE status = 'leased'",
+          )
+          .one().count,
+      ).toBe(5);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM jobs WHERE status = 'completed'",
+          )
+          .one().count,
+      ).toBe(5);
+      expect(store.pruneTerminal(now)).toBe(5);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM jobs WHERE status = 'completed'",
+          )
+          .one().count,
+      ).toBe(0);
+    });
+  });
+
   it("automatically schedules final terminal cleanup", async () => {
     const stub = await initialized("terminal-alarm");
     const now = Date.now();
@@ -269,6 +326,8 @@ describe("User Data persistent jobs", () => {
   });
 
   it("retries the real alarm handler and poisons after the attempt limit", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2035-01-01T00:00:00.000Z"));
     const stub = await initialized("alarm-retry");
     await runInDurableObject(stub, async (_instance, state) => {
       const now = Date.now();
@@ -285,22 +344,34 @@ describe("User Data persistent jobs", () => {
     await evictDurableObject(stub);
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       expect(await runDurableObjectAlarm(stub)).toBe(true);
+      let retryAt: number | null = null;
       await runInDurableObject(stub, async (_instance, state) => {
         const row = state.storage.sql
-          .exec<{ status: string; attempt: number }>(
-            "SELECT status, attempt FROM jobs WHERE id = 'unsupported'",
+          .exec<{
+            status: string;
+            attempt: number;
+            next_run_at: number;
+            terminal_at: number | null;
+          }>(
+            `SELECT status, attempt, next_run_at, terminal_at FROM jobs
+             WHERE id = 'unsupported'`,
           )
           .one();
         expect(row.attempt).toBe(attempt);
         expect(row.status).toBe(attempt === 5 ? "poison" : "pending");
         if (attempt < 5) {
-          const due = Date.now() - 1;
-          state.storage.sql.exec(
-            "UPDATE jobs SET next_run_at = ? WHERE id = 'unsupported'",
-            due,
+          retryAt = row.next_run_at;
+          expect(await state.storage.getAlarm()).toBe(retryAt);
+        } else {
+          expect(await state.storage.getAlarm()).toBe(
+            (row.terminal_at ?? 0) + 30 * 86_400_000,
           );
         }
       });
+      if (retryAt !== null) {
+        vi.setSystemTime(retryAt);
+        await evictDurableObject(stub);
+      }
     }
   });
 
@@ -408,6 +479,57 @@ describe("User Data persistent jobs", () => {
     });
   });
 
+  it("recomputes retention from canonical subjects despite malformed payload JSON", async () => {
+    const stub = await initialized("corrupt-retention");
+    const trashedAt = Date.now();
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "create",
+        type: "create-memo",
+        memo: { id: "memo", body: "memo", timestamp: trashedAt - 1 },
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "trash",
+        type: "trash-memo",
+        memoId: "memo",
+        trashedAt,
+        expectedVersion: 0,
+      }),
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE jobs SET payload_json = '{' WHERE kind = 'purge-trash'",
+      );
+    });
+    expect(
+      value(
+        await stub.updateTrashRetention({
+          version: 1,
+          operationId: "shorten",
+          retentionDays: 1,
+          updatedAt: trashedAt + 1,
+        }),
+      ).trashRetentionDays,
+    ).toBe(1);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ next_run_at: number; status: string }>(
+            `SELECT next_run_at, status FROM jobs
+             WHERE kind = 'purge-trash'`,
+          )
+          .one(),
+      ).toEqual({
+        next_run_at: trashedAt + 86_400_000,
+        status: "pending",
+      });
+    });
+  });
+
   it("updates leased retention jobs and defers them without poisoning", async () => {
     const stub = await initialized("leased-retention");
     const trashedAt = Date.now() - 31 * 86_400_000;
@@ -498,6 +620,7 @@ describe("User Data persistent jobs", () => {
           version: 1,
           operationId: `document-${index}`,
           type: "create-document",
+          topicExpectedVersion: index,
           document: {
             id: `document-${index.toString().padStart(3, "0")}`,
             title: "Chunk",
@@ -514,6 +637,7 @@ describe("User Data persistent jobs", () => {
         version: 1,
         operationId: "independent-document",
         type: "create-document",
+        topicExpectedVersion: 100,
         document: {
           id: "independent-document",
           title: "Independent",
@@ -541,7 +665,7 @@ describe("User Data persistent jobs", () => {
         type: "trash-topic",
         topicId: "topic",
         trashedAt: expiredAt,
-        expectedVersion: 0,
+        expectedVersion: 101,
       }),
     );
     expect(await runDurableObjectAlarm(stub)).toBe(true);
@@ -586,6 +710,7 @@ describe("User Data persistent jobs", () => {
         destinationTopicId: "destination-topic",
         restoredAt: Date.now(),
         expectedVersion: 1,
+        topicExpectedVersion: 0,
       }),
     );
     await runInDurableObject(stub, (_instance, state) => {

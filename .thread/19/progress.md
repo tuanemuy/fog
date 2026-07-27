@@ -19,14 +19,25 @@
   production entry/config/bundleへの非包含audit
 - offline Pulumi fixtureによるstate→request staging dry-run
 - machine-readable TEST ID evidenceの実ファイル・test名・suite include監査
+- production Wrangler/Vite modeでbuildしたrequest artifactに対する
+  `defaultEntry` / server-fn acceptance
+- Actions APIのrun/workflow/environment/artifact metadataとGitHub SHA-256
+  digestへ結び付けたPITR release preflight
+- `staging-pitr` environmentのrequired reviewerと`main`限定deployment policy
 
-このworking tree自体のcommitted CI runは未作成であり、
-`test-results.json`ではpendingとしている。
+基準HEAD `43ecf369de219aecbe5c2a6be33dcbe3d9cd4209` のcommitted CI
+run `30300833748` は全3 job成功済み。第5回review修正はそのHEAD上の
+working treeで検証し、結果と適用範囲を`test-results.json`に記録する。
 
 未検証のままリリースゲートに残る範囲:
 
 - staging の実bookmark取得・restore・verify・undo restore
 - staging secret inventory gate（Cloudflare認証情報が必要）
+
+GitHubの`staging-pitr` environmentとapproval/branch policyは設定済みだが、
+`PITR_OPERATOR_URL` / `PITR_OPERATOR_TOKEN` のenvironment secretと
+disposable staging対象はrelease operatorが用意する。実PITR artifactがない
+状態ではcanonical deployはfail closedで停止する。
 
 基準commit、実行コマンド、件数は
 [`test-results.json`](./test-results.json) に記録する。

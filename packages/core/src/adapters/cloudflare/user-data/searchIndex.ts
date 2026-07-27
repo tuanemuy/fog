@@ -164,7 +164,10 @@ function decodeCursor(value: string): SnapshotCursor {
 export class Fts5SearchAdapter
   implements SearchIndexPort, SearchProjectionPort
 {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly fault?: (point: SearchProjectionFaultPoint) => void,
+  ) {}
 
   upsert(entry: SearchProjectionEntry): void {
     this.replace(entry.type, entry.id, entry);
@@ -196,10 +199,12 @@ export class Fts5SearchAdapter
           existing.title,
           existing.body,
         );
+        this.fault?.("after-fts-delete");
         this.sql.exec(
           "DELETE FROM search_entries WHERE rowid = ?",
           existing.rowid,
         );
+        this.fault?.("after-entry-delete");
       }
       if (entry === undefined) return;
       const title = normalizeText(entry.type === "document" ? entry.title : "");
@@ -217,12 +222,14 @@ export class Fts5SearchAdapter
           entry.type === "document" ? entry.topicId : null,
         )
         .one();
+      this.fault?.("after-entry-insert");
       this.sql.exec(
         "INSERT INTO search_fts(rowid, title, body) VALUES (?, ?, ?)",
         row.rowid,
         title,
         body,
       );
+      this.fault?.("after-fts-insert");
     } catch (error) {
       translateSqlError(error);
     }
@@ -672,3 +679,9 @@ export class Fts5SearchAdapter
     }
   }
 }
+
+export type SearchProjectionFaultPoint =
+  | "after-fts-delete"
+  | "after-entry-delete"
+  | "after-entry-insert"
+  | "after-fts-insert";

@@ -314,12 +314,32 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
         );
         this.ctx.storage.sql.exec(
           `UPDATE jobs
-           SET next_run_at =
-             CAST(json_extract(payload_json, '$.trashedAt') AS INTEGER) + ?,
+           SET next_run_at = CASE
+             WHEN subject_kind = 'topic' THEN (
+               SELECT purge_after FROM topics WHERE id = jobs.subject_id
+             )
+             ELSE (
+               SELECT purge_after FROM trash WHERE content_id = jobs.subject_id
+             )
+           END,
              updated_at = ?
            WHERE status IN ('pending', 'leased')
-             AND kind IN ('purge-trash', 'purge-topic')`,
-          retentionMs,
+             AND kind IN ('purge-trash', 'purge-topic')
+             AND subject_id IS NOT NULL
+             AND (
+               (
+                 subject_kind = 'topic'
+                 AND EXISTS (
+                   SELECT 1 FROM topics WHERE id = jobs.subject_id
+                 )
+               )
+               OR (
+                 subject_kind IN ('memo', 'document')
+                 AND EXISTS (
+                   SELECT 1 FROM trash WHERE content_id = jobs.subject_id
+                 )
+               )
+             )`,
           input.updatedAt,
         );
         this.ctx.storage.sql.exec(
@@ -523,7 +543,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
         }
       }
     } finally {
-      await this.ensureAlarm();
+      await this.ensureAlarm(true);
     }
   }
 
@@ -624,12 +644,12 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  protected async ensureAlarm(): Promise<void> {
+  protected async ensureAlarm(reschedule = false): Promise<void> {
     const next = new DurableJobStore(this.ctx.storage).nextRunAt();
     if (next === null) return;
     const target = Math.max(next, Date.now() + 1_000);
     const current = await this.ctx.storage.getAlarm();
-    if (shouldMoveAlarm(current, target)) {
+    if (reschedule || shouldMoveAlarm(current, target)) {
       await this.ctx.storage.setAlarm(target);
     }
   }

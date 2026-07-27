@@ -210,6 +210,17 @@ export class AccountHomeStore {
         input.expectedState,
       );
       if (input.nextState === "completed") {
+        if (input.credential) {
+          this.storage.sql.exec(
+            `UPDATE credential_locators
+             SET kind = ?, credential_json = ?, updated_at = ?
+             WHERE logical_credential_id = ?`,
+            input.credential.kind,
+            JSON.stringify(input.credential),
+            input.now,
+            input.credential.credentialId,
+          );
+        }
         this.storage.sql.exec(
           `UPDATE account SET status = 'active',
              primary_email = COALESCE(?, primary_email),
@@ -484,6 +495,16 @@ export class AccountHomeStore {
         input.now,
       );
     });
+  }
+
+  countActiveGeneration(generation: string): number {
+    return this.storage.sql
+      .exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM credential_locators
+         WHERE state = 'active' AND generation = ?`,
+        generation,
+      )
+      .one().count;
   }
 
   beginDeletion(input: {

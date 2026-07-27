@@ -64,7 +64,7 @@ describe("production Cloudflare request entry", () => {
       operationId: crypto.randomUUID(),
       ...credentials,
     });
-    expect(signup.status).toBe(200);
+    expect(signup.status, await signup.clone().text()).toBe(200);
     expect(signup.headers.get("set-cookie")).toContain("fog_session=");
     expect(signup.headers.get("set-cookie")).toContain("HttpOnly");
 
@@ -72,7 +72,7 @@ describe("production Cloudflare request entry", () => {
       bindings.PRODUCTION_LOGIN_FN_ID,
       credentials,
     );
-    expect(login.status).toBe(200);
+    expect(login.status, await login.clone().text()).toBe(200);
     const cookie = login.headers.get("set-cookie") ?? "";
     expect(cookie).toContain("fog_session=");
 

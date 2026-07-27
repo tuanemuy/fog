@@ -77,7 +77,6 @@ export type MemoSearchProjection = Readonly<{
   id: MemoId;
   body: string;
   timestamp: Date;
-  sourceOfDocumentIds: readonly DocumentId[];
 }>;
 
 export type DocumentSearchProjection = Readonly<{
@@ -87,13 +86,14 @@ export type DocumentSearchProjection = Readonly<{
   body: string;
   timestamp: Date;
   topicId: TopicId;
-  sourceMemoIds: readonly MemoId[];
 }>;
 
 export type SearchProjectionEntry =
   | MemoSearchProjection
   | DocumentSearchProjection;
 ```
+
+source link は検索射影へ複製せず、結果DTO構築時に正本の `source_links` を参照する。
 
 ## 検索規則
 
@@ -148,17 +148,20 @@ export type SemanticCommand =
   | RestoreDocumentCommand;
 
 export interface SemanticCommitPort {
-  transactionSync<TResult>(
+  transactionSync(
     command: SemanticCommand,
     commit: (
-      repositories: TransactionScopedRepositories,
+      repositories: {
+        content: SemanticContentRepository;
+        topics: SemanticTopicRepository;
+      },
       projection: SearchProjectionPort,
-    ) => TResult,
-  ): TResult;
+    ) => undefined,
+  ): SemanticCommitResult;
 }
 ```
 
-`commit` callback は同期処理だけを許可し、Promise、RPC、暗号、メール、外部 API を含めない。本体更新または射影更新のどちらかが失敗した場合は全変更を rollback する。
+`commit` callback は戻り型を `undefined` に固定し、Promise、RPC、暗号、メール、外部 API を含めない。実行時にもthenableを拒否する。application callbackがcommand別repositoryを呼び、その返却した射影差分を`SearchProjectionPort`へ適用する。本体更新または射影更新のどちらかが失敗した場合は全変更を rollback する。
 
 ## 射影更新規則
 

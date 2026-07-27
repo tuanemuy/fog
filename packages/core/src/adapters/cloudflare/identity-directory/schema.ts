@@ -168,6 +168,30 @@ const V11 = [
    ON directory_reconcile_failures(poison_reason, next_run_at)`,
 ] as const;
 
+const V12 = [
+  "ALTER TABLE signup_operations ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE sso_create_operations ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT ''",
+  `CREATE TABLE IF NOT EXISTS reset_request_operations (
+    operation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    payload_fingerprint TEXT NOT NULL,
+    reset_secret_encrypted TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    registry_expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS reset_request_operations_expiry_idx
+   ON reset_request_operations(registry_expires_at)`,
+  "ALTER TABLE identity_mail_jobs ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN terminal_at INTEGER",
+] as const;
+
+const V13 = [
+  "ALTER TABLE rotation_checkpoints ADD COLUMN account_home_active_count INTEGER NOT NULL DEFAULT 0",
+] as const;
+
 export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
@@ -180,6 +204,8 @@ export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 9, up: V9 },
   { version: 10, up: V10 },
   { version: 11, up: V11 },
+  { version: 12, up: V12 },
+  { version: 13, up: V13 },
 ];
 
 export function migrateIdentityDirectory(

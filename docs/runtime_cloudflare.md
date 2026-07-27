@@ -95,14 +95,22 @@ be installed.
 The canonical `pnpm deploy:<stage>` command validates that the resources and
 routes stacks use the same account, zone, and hostname before deploying either
 Worker. After state and request deploy in that order, it applies the routes
-stack. Download the protected staging PITR workflow artifact for the exact
-release commit and point the preflight at it:
+stack. Pass the successful protected staging PITR workflow run ID for the exact
+release commit:
 
 ```bash
-PITR_EVIDENCE_PATH=.artifacts/pitr/staging.json pnpm deploy:staging
+PITR_EVIDENCE_RUN_ID=123456789 pnpm deploy:staging
 ```
 
-Repeat with `production` for production.
+Repeat with `production` for production. The preflight uses the authenticated
+GitHub API to verify the repository, main-branch HEAD SHA, workflow file,
+manual-dispatch event, successful conclusion, protected environment and branch
+policy, required-reviewer approval history, and the exact unexpired
+`staging-pitr-<SHA>` artifact. It downloads the artifact archive itself and
+compares its bytes with GitHub's SHA-256 digest before reading `staging.json`.
+A local evidence path, copied JSON, another repository's run, or a run from
+another workflow is never accepted. Authenticate the `gh` CLI with Actions
+read access before release.
 
 ## Secrets
 
@@ -290,12 +298,30 @@ exist here without that UI.
 Cloudflare PITR is remote-only and object-scoped. Run this smoke only against
 authenticated disposable staging objects:
 
-Use the `Staging PITR smoke` workflow with the protected `staging-pitr`
-environment. Store `PITR_OPERATOR_URL` and `PITR_OPERATOR_TOKEN` as environment
-secrets, require the configured environment approval, and provide the
-disposable targets and pre-change bookmarks as workflow inputs. The workflow
-uploads `staging-pitr-<commit SHA>` with seven-day retention only after both
-classes complete restore and undo verification.
+Use the `Staging PITR smoke` workflow from `main` with the protected
+`staging-pitr` environment. The repository environment has a required reviewer
+and a custom deployment policy that permits only `main`. Verify those rules
+before release:
+
+```bash
+gh api repos/tuanemuy/fog/environments/staging-pitr
+gh api \
+  repos/tuanemuy/fog/environments/staging-pitr/deployment-branch-policies
+```
+
+Store `PITR_OPERATOR_URL` and `PITR_OPERATOR_TOKEN` as environment secrets,
+require the configured environment approval, and provide the disposable
+targets and pre-change bookmarks as workflow inputs. User Data and Identity
+Directory jobs use independent target-keyed concurrency locks, so the same
+object or shard cannot participate in overlapping restore/undo runs. The
+workflow uploads `staging-pitr-<commit SHA>` with seven-day retention only
+after both classes complete restore and undo verification.
+
+```bash
+gh secret set PITR_OPERATOR_URL --env staging-pitr
+gh secret set PITR_OPERATOR_TOKEN --env staging-pitr
+gh secret list --env staging-pitr
+```
 
 | Class | Restore allowed | Required check |
 | --- | --- | --- |
@@ -361,8 +387,10 @@ For User Data or Identity Directory:
    record a completed full scan with a null cursor and zero conflicts; for User
    Data, record completed restore and undo verification.
    `release:preflight:*` accepts only one result for each class, from the
-   release commit and same workflow run, whose verification
-   timestamps are not in the future and whose fixed TTL is still valid.
+   release commit and same verified workflow run, whose verification
+   timestamps are not in the future and whose fixed TTL is still valid. It
+   retrieves the artifact through the Actions API and verifies GitHub's archive
+   digest; never extract, edit, and pass a local JSON file as evidence.
 
 PITR is not supported by local workerd. Never substitute another storage product's restore commands
 for Durable Object PITR.

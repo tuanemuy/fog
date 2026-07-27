@@ -60,6 +60,7 @@ export type RotationCheckpoint = Readonly<{
   scanned: number;
   moved: number;
   conflicts: number;
+  accountHomeActive: number;
   completedAt: number | null;
 }>;
 
@@ -90,6 +91,7 @@ export type IdentityMailJob = Readonly<{
 
 export class IdentityDirectoryStore {
   private static readonly OPERATION_REPLAY_TTL_MS = 24 * 60 * 60_000;
+  private static readonly TERMINAL_MAIL_RETENTION_MS = 24 * 60 * 60_000;
 
   constructor(private readonly storage: DurableSqlStorage) {}
 
@@ -234,20 +236,32 @@ export class IdentityDirectoryStore {
     });
   }
 
-  lookupPasswordSignup(opaqueOperationKey: string): {
+  lookupPasswordSignup(
+    opaqueOperationKey: string,
+    now: number,
+  ): {
     userId: UserId;
     emailEncrypted: string;
     passwordHash: PasswordHash;
+    payloadFingerprint: string;
     preparedAt: number;
   } | null {
+    this.storage.sql.exec(
+      `DELETE FROM signup_operations
+       WHERE opaque_operation_key = ? AND expires_at > 0 AND expires_at <= ?`,
+      opaqueOperationKey,
+      now,
+    );
     const row = this.storage.sql
       .exec<{
         user_id: string;
         email: string;
         password_hash: string;
+        payload_fingerprint: string;
         prepared_at: number;
       }>(
-        `SELECT user_id, email, password_hash, prepared_at FROM signup_operations
+        `SELECT user_id, email, password_hash, payload_fingerprint, prepared_at
+         FROM signup_operations
          WHERE opaque_operation_key = ?`,
         opaqueOperationKey,
       )
@@ -257,6 +271,7 @@ export class IdentityDirectoryStore {
           userId: UserId.create(row.user_id),
           emailEncrypted: row.email,
           passwordHash: PasswordHash.create(row.password_hash),
+          payloadFingerprint: row.payload_fingerprint,
           preparedAt: row.prepared_at,
         }
       : null;
@@ -266,6 +281,7 @@ export class IdentityDirectoryStore {
     opaqueOperationKey: string;
     proposedUserId: UserId;
     emailEncrypted: string;
+    payloadFingerprint: string;
     passwordHash: PasswordHash;
     now: number;
   }): {
@@ -275,9 +291,12 @@ export class IdentityDirectoryStore {
     replayed: boolean;
   } {
     return this.storage.transactionSync(() => {
-      const existing = this.lookupPasswordSignup(input.opaqueOperationKey);
+      const existing = this.lookupPasswordSignup(
+        input.opaqueOperationKey,
+        input.now,
+      );
       if (existing) {
-        if (existing.emailEncrypted !== input.emailEncrypted) {
+        if (existing.payloadFingerprint !== input.payloadFingerprint) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
         }
         return {
@@ -290,12 +309,13 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `INSERT INTO signup_operations(
            opaque_operation_key, user_id, email, password_hash,
-           prepared_at, created_at, updated_at, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           payload_fingerprint, prepared_at, created_at, updated_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.opaqueOperationKey,
         input.proposedUserId,
         input.emailEncrypted,
         input.passwordHash,
+        input.payloadFingerprint,
         input.now,
         input.now,
         input.now,
@@ -316,17 +336,25 @@ export class IdentityDirectoryStore {
     provider: string;
     subjectEncrypted: string;
     emailEncrypted: string;
+    payloadFingerprint: string;
     now: number;
   }): { userId: UserId; replayed: boolean } {
     return this.storage.transactionSync(() => {
+      this.storage.sql.exec(
+        `DELETE FROM sso_create_operations
+         WHERE opaque_operation_key = ? AND expires_at > 0 AND expires_at <= ?`,
+        input.opaqueOperationKey,
+        input.now,
+      );
       const existing = this.storage.sql
         .exec<{
           user_id: string;
           provider: string;
           subject: string;
           email: string;
+          payload_fingerprint: string;
         }>(
-          `SELECT user_id, provider, subject, email
+          `SELECT user_id, provider, subject, email, payload_fingerprint
            FROM sso_create_operations WHERE opaque_operation_key = ?`,
           input.opaqueOperationKey,
         )
@@ -334,8 +362,7 @@ export class IdentityDirectoryStore {
       if (existing) {
         if (
           existing.provider !== input.provider ||
-          existing.subject !== input.subjectEncrypted ||
-          existing.email !== input.emailEncrypted
+          existing.payload_fingerprint !== input.payloadFingerprint
         ) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
         }
@@ -344,13 +371,14 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `INSERT INTO sso_create_operations(
            opaque_operation_key, user_id, provider, subject, email,
-           created_at, updated_at, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           payload_fingerprint, created_at, updated_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.opaqueOperationKey,
         input.proposedUserId,
         input.provider,
         input.subjectEncrypted,
         input.emailEncrypted,
+        input.payloadFingerprint,
         input.now,
         input.now,
         input.now + IdentityDirectoryStore.OPERATION_REPLAY_TTL_MS,
@@ -369,6 +397,87 @@ export class IdentityDirectoryStore {
         "DELETE FROM sso_create_operations WHERE expires_at > 0 AND expires_at <= ?",
         now,
       );
+      this.storage.sql.exec(
+        `DELETE FROM reset_request_operations
+         WHERE registry_expires_at <= ?`,
+        now,
+      );
+    });
+  }
+
+  preparePasswordResetRequest(input: {
+    operationId: OperationId;
+    userId: UserId;
+    payloadFingerprint: string;
+    resetSecretEncrypted: string;
+    tokenHash: string;
+    expiresAt: number;
+    now: number;
+  }): {
+    resetSecretEncrypted: string;
+    tokenHash: string;
+    expiresAt: number;
+    replayed: boolean;
+  } {
+    return this.storage.transactionSync(() => {
+      this.storage.sql.exec(
+        `DELETE FROM reset_request_operations
+         WHERE operation_id = ? AND registry_expires_at <= ?`,
+        input.operationId,
+        input.now,
+      );
+      const existing = this.storage.sql
+        .exec<{
+          user_id: string;
+          payload_fingerprint: string;
+          reset_secret_encrypted: string;
+          token_hash: string;
+          expires_at: number;
+        }>(
+          `SELECT user_id, payload_fingerprint, reset_secret_encrypted,
+                  token_hash, expires_at
+           FROM reset_request_operations WHERE operation_id = ?`,
+          input.operationId,
+        )
+        .toArray()[0];
+      if (existing) {
+        if (
+          existing.user_id !== input.userId ||
+          existing.payload_fingerprint !== input.payloadFingerprint
+        ) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return {
+          resetSecretEncrypted: existing.reset_secret_encrypted,
+          tokenHash: existing.token_hash,
+          expiresAt: existing.expires_at,
+          replayed: true,
+        };
+      }
+      this.storage.sql.exec(
+        `INSERT INTO reset_request_operations(
+           operation_id, user_id, payload_fingerprint, reset_secret_encrypted,
+           token_hash, expires_at, registry_expires_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        input.operationId,
+        input.userId,
+        input.payloadFingerprint,
+        input.resetSecretEncrypted,
+        input.tokenHash,
+        input.expiresAt,
+        Math.max(
+          input.expiresAt,
+          input.now + IdentityDirectoryStore.OPERATION_REPLAY_TTL_MS,
+        ),
+        input.now,
+        input.now,
+      );
+      return {
+        resetSecretEncrypted: input.resetSecretEncrypted,
+        tokenHash: input.tokenHash,
+        expiresAt: input.expiresAt,
+        replayed: false,
+      };
     });
   }
 
@@ -573,6 +682,7 @@ export class IdentityDirectoryStore {
     emailEncrypted: string;
     deliveryPayloadEncrypted: string;
     providerIdempotencyKey: string;
+    expiresAt: number;
     now: number;
   }): void {
     this.storage.transactionSync(() => {
@@ -602,14 +712,15 @@ export class IdentityDirectoryStore {
         `INSERT INTO identity_mail_jobs(
            operation_id, user_id, email, token_hash,
            provider_idempotency_key, state, next_run_at,
-           delivery_payload_encrypted, created_at, updated_at
-         ) VALUES (?, ?, ?, '', ?, 'pending', ?, ?, ?, ?)`,
+           delivery_payload_encrypted, expires_at, created_at, updated_at
+         ) VALUES (?, ?, ?, '', ?, 'pending', ?, ?, ?, ?, ?)`,
         input.operationId,
         input.userId,
         input.emailEncrypted,
         input.providerIdempotencyKey,
         input.now,
         input.deliveryPayloadEncrypted,
+        input.expiresAt,
         input.now,
         input.now,
       );
@@ -621,6 +732,8 @@ export class IdentityDirectoryStore {
     ownerToken: string,
     leaseMs = 30_000,
   ): IdentityMailJob | null {
+    this.expireIdentityMail(now);
+    this.purgeTerminalIdentityMail(now);
     return this.storage.transactionSync(() => {
       const row = this.storage.sql
         .exec<{
@@ -677,9 +790,11 @@ export class IdentityDirectoryStore {
     return (
       this.storage.sql.exec(
         `UPDATE identity_mail_jobs
-         SET state = 'completed', owner_token = NULL, lease_until = NULL,
+         SET state = 'completed', email = '', delivery_payload_encrypted = NULL,
+             owner_token = NULL, lease_until = NULL, terminal_at = ?,
              updated_at = ?
          WHERE operation_id = ? AND state = 'leased' AND owner_token = ?`,
+        now,
         now,
         operation,
         ownerToken,
@@ -711,12 +826,19 @@ export class IdentityDirectoryStore {
         `UPDATE identity_mail_jobs
          SET state = ?, next_run_at = ?, owner_token = NULL,
              lease_until = NULL, last_error_code = ?, poison_reason = ?,
-             updated_at = ?
+             email = CASE WHEN ? THEN '' ELSE email END,
+             delivery_payload_encrypted =
+               CASE WHEN ? THEN NULL ELSE delivery_payload_encrypted END,
+             terminal_at = CASE WHEN ? THEN ? ELSE NULL END, updated_at = ?
          WHERE operation_id = ? AND owner_token = ?`,
         poison ? "poison" : "pending",
         nextRunAt,
         input.errorCode.slice(0, 128),
         poison ? input.errorCode.slice(0, 128) : null,
+        poison ? 1 : 0,
+        poison ? 1 : 0,
+        poison ? 1 : 0,
+        input.now,
         input.now,
         input.operationId,
         input.ownerToken,
@@ -728,13 +850,44 @@ export class IdentityDirectoryStore {
   nextIdentityMailRun(): number | null {
     const row = this.storage.sql
       .exec<{ next_run_at: number | null }>(
-        `SELECT MIN(
-           CASE WHEN state = 'leased' THEN lease_until ELSE next_run_at END
-         ) AS next_run_at
-         FROM identity_mail_jobs WHERE state IN ('pending', 'leased')`,
+        `SELECT MIN(next_run_at) AS next_run_at FROM (
+           SELECT CASE WHEN state = 'leased' THEN lease_until ELSE next_run_at END
+             AS next_run_at
+           FROM identity_mail_jobs WHERE state IN ('pending', 'leased')
+           UNION ALL
+           SELECT terminal_at + ? AS next_run_at
+           FROM identity_mail_jobs
+           WHERE state IN ('completed', 'poison') AND terminal_at IS NOT NULL
+         )`,
+        IdentityDirectoryStore.TERMINAL_MAIL_RETENTION_MS,
       )
       .one();
     return row.next_run_at;
+  }
+
+  expireIdentityMail(now: number): void {
+    this.storage.sql.exec(
+      `UPDATE identity_mail_jobs
+       SET state = 'poison', email = '', delivery_payload_encrypted = NULL,
+           owner_token = NULL, lease_until = NULL,
+           last_error_code = 'IDENTITY_MAIL_EXPIRED',
+           poison_reason = 'IDENTITY_MAIL_EXPIRED', terminal_at = ?,
+           updated_at = ?
+       WHERE state IN ('pending', 'leased') AND expires_at <= ?`,
+      now,
+      now,
+      now,
+    );
+  }
+
+  purgeTerminalIdentityMail(now: number): void {
+    this.storage.sql.exec(
+      `DELETE FROM identity_mail_jobs
+       WHERE state IN ('completed', 'poison') AND terminal_at IS NOT NULL
+         AND terminal_at + ? <= ?`,
+      IdentityDirectoryStore.TERMINAL_MAIL_RETENTION_MS,
+      now,
+    );
   }
 
   lookupPasswordReset(input: {
@@ -879,6 +1032,7 @@ export class IdentityDirectoryStore {
     scanned: number;
     moved: number;
     conflicts: number;
+    accountHomeActive: number;
     completedAt: number | null;
   }): void {
     this.storage.transactionSync(() => {
@@ -889,6 +1043,7 @@ export class IdentityDirectoryStore {
         scanned: input.scanned,
         moved: input.moved,
         conflicts: input.conflicts,
+        accountHomeActive: input.accountHomeActive,
         completedAt: input.completedAt,
       });
       const existing = this.storage.sql
@@ -917,12 +1072,16 @@ export class IdentityDirectoryStore {
         `INSERT INTO rotation_checkpoints(
            generation, bucket, cursor_key, scanned_count, moved_count,
            conflict_count, completed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+           , account_home_active_count
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(generation, bucket) DO UPDATE SET
            cursor_key = excluded.cursor_key,
            scanned_count = rotation_checkpoints.scanned_count + excluded.scanned_count,
            moved_count = rotation_checkpoints.moved_count + excluded.moved_count,
            conflict_count = rotation_checkpoints.conflict_count + excluded.conflict_count,
+           account_home_active_count =
+             rotation_checkpoints.account_home_active_count +
+             excluded.account_home_active_count,
            completed_at = excluded.completed_at`,
         input.generation,
         input.bucket,
@@ -931,6 +1090,7 @@ export class IdentityDirectoryStore {
         input.moved,
         input.conflicts,
         input.completedAt,
+        input.accountHomeActive,
       );
     });
   }
@@ -947,10 +1107,11 @@ export class IdentityDirectoryStore {
         scanned_count: number;
         moved_count: number;
         conflict_count: number;
+        account_home_active_count: number;
         completed_at: number | null;
       }>(
         `SELECT generation, bucket, cursor_key, scanned_count, moved_count,
-                conflict_count, completed_at
+                conflict_count, account_home_active_count, completed_at
          FROM rotation_checkpoints
          WHERE generation = ? AND bucket = ?`,
         generation,
@@ -965,6 +1126,7 @@ export class IdentityDirectoryStore {
           scanned: row.scanned_count,
           moved: row.moved_count,
           conflicts: row.conflict_count,
+          accountHomeActive: row.account_home_active_count,
           completedAt: row.completed_at,
         }
       : null;

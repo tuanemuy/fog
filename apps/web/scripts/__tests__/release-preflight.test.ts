@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_PITR_EVIDENCE_TTL_MS,
+  requiredPitrEvidenceRunId,
+  validatePitrGithubProvenance,
   validatePitrReleaseEvidence,
   validateSharedStageConfig,
+  verifyGithubArtifactDigest,
 } from "../release-preflight";
 
 const resources = `config:
@@ -90,7 +93,11 @@ describe("release preflight", () => {
             ],
           },
         ],
-        { now, headSha },
+        {
+          now,
+          headSha,
+          runUrl: "https://github.com/tuanemuy/fog/actions/runs/123456789",
+        },
       ),
     ).toEqual([]);
     expect(
@@ -102,13 +109,17 @@ describe("release preflight", () => {
             stage: "staging",
           },
         ],
-        { now, headSha },
+        {
+          now,
+          headSha,
+          runUrl: "https://github.com/tuanemuy/fog/actions/runs/123456789",
+        },
       ),
     ).toEqual([
       "staging PITR release evidence is pending",
       "staging PITR evidence must identify the disposable namespace",
       "staging PITR evidence does not match the release commit",
-      "staging PITR evidence has no valid workflow run URL",
+      "staging PITR evidence does not match the verified workflow run URL",
       "staging PITR evidence is expired or has no valid expiresAt",
       "staging PITR evidence must contain per-class results",
     ]);
@@ -161,14 +172,18 @@ describe("release preflight", () => {
           ],
         },
       ],
-      { now, headSha },
+      {
+        now,
+        headSha,
+        runUrl: "https://github.com/tuanemuy/fog/actions/runs/123456789",
+      },
     );
 
     expect(failures).toContain(
       "staging PITR evidence does not match the release commit",
     );
     expect(failures).toContain(
-      "staging PITR evidence has no valid workflow run URL",
+      "staging PITR evidence does not match the verified workflow run URL",
     );
     expect(failures).toContain(
       "staging PITR user-data undo does not restore the pre-restore bookmark",
@@ -179,5 +194,134 @@ describe("release preflight", () => {
     expect(failures).toContain(
       "staging PITR evidence must contain exactly one identity-directory result",
     );
+  });
+
+  it("rejects local evidence paths and requires a numeric protected run ID", () => {
+    expect(() =>
+      requiredPitrEvidenceRunId({
+        PITR_EVIDENCE_PATH: ".artifacts/pitr/staging.json",
+        PITR_EVIDENCE_RUN_ID: "123",
+      }),
+    ).toThrow("PITR_EVIDENCE_PATH is not trusted");
+    expect(() =>
+      requiredPitrEvidenceRunId({ PITR_EVIDENCE_RUN_ID: "../123" }),
+    ).toThrow("PITR_EVIDENCE_RUN_ID must identify");
+    expect(
+      requiredPitrEvidenceRunId({ PITR_EVIDENCE_RUN_ID: "123456789" }),
+    ).toBe(123456789);
+  });
+
+  it("requires an approved main workflow run and its exact GitHub artifact", () => {
+    const headSha = "a".repeat(40);
+    const runId = 123456789;
+    const run = {
+      id: runId,
+      event: "workflow_dispatch",
+      status: "completed",
+      conclusion: "success",
+      head_branch: "main",
+      head_sha: headSha,
+      path: ".github/workflows/staging-pitr-smoke.yml@refs/heads/main",
+      html_url: `https://github.com/tuanemuy/fog/actions/runs/${runId}`,
+      repository: { full_name: "tuanemuy/fog" },
+    };
+    const artifact = {
+      id: 987654321,
+      name: `staging-pitr-${headSha}`,
+      expired: false,
+      digest: `sha256:${"b".repeat(64)}`,
+      workflow_run: { id: runId, head_sha: headSha },
+    };
+    const environment = {
+      id: 42,
+      name: "staging-pitr",
+      protection_rules: [
+        {
+          type: "required_reviewers",
+          reviewers: [
+            {
+              type: "User",
+              reviewer: { id: 7, login: "release-owner" },
+            },
+          ],
+        },
+        { type: "branch_policy" },
+      ],
+      deployment_branch_policy: {
+        protected_branches: false,
+        custom_branch_policies: true,
+      },
+    };
+    const branchPolicies = {
+      branch_policies: [{ name: "main", type: "branch" }],
+    };
+    const approvals = [
+      {
+        state: "approved",
+        environments: [{ id: 42, name: "staging-pitr" }],
+        user: { id: 7, login: "release-owner" },
+      },
+    ];
+    const context = { repository: "tuanemuy/fog", runId, headSha };
+
+    expect(
+      validatePitrGithubProvenance(
+        {
+          run,
+          artifactList: { artifacts: [artifact] },
+          environment,
+          branchPolicies,
+          approvals,
+        },
+        context,
+      ),
+    ).toEqual([]);
+
+    expect(
+      validatePitrGithubProvenance(
+        {
+          run: {
+            ...run,
+            event: "push",
+            conclusion: "failure",
+            repository: { full_name: "attacker/fog" },
+          },
+          artifactList: {
+            artifacts: [{ ...artifact, digest: null, expired: true }],
+          },
+          environment: {
+            ...environment,
+            protection_rules: [],
+          },
+          branchPolicies: { branch_policies: [] },
+          approvals: [],
+        },
+        context,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "PITR workflow run belongs to another repository",
+        "PITR workflow run was not manually dispatched",
+        "PITR workflow run did not complete successfully",
+        "staging-pitr environment has no required reviewer",
+        "PITR workflow run has no staging-pitr approval from a required reviewer",
+        "staging-pitr environment does not allow only main releases",
+        "PITR workflow artifact is expired",
+        "PITR workflow artifact has no valid SHA-256 digest",
+      ]),
+    );
+  });
+
+  it("verifies the downloaded artifact archive against GitHub's digest", () => {
+    const archive = new TextEncoder().encode("immutable artifact bytes");
+    expect(
+      verifyGithubArtifactDigest(
+        archive,
+        "sha256:4e5dd5cddfe6ca669736dac91231b75e7b7e7949f5152e9aaeb810cd2ede2076",
+      ),
+    ).toBe(true);
+    expect(
+      verifyGithubArtifactDigest(archive, `sha256:${"0".repeat(64)}`),
+    ).toBe(false);
   });
 });

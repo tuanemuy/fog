@@ -91,6 +91,7 @@ function create(input: AccountIdentity): AccountIdentity {
     );
   }
   if (
+    input.status === "active" &&
     input.primaryEmail !== null &&
     !input.credentials.some(
       (credential) => emailOf(credential) === input.primaryEmail,
@@ -112,6 +113,16 @@ function addCredential(
     fail(
       "IDENTITY_ACCOUNT_NOT_ACTIVE",
       "Credentials require an active account",
+    );
+  }
+  const existing = account.credentials.find(
+    (candidate) => candidate.credentialId === credential.credentialId,
+  );
+  if (existing) {
+    if (JSON.stringify(existing) === JSON.stringify(credential)) return account;
+    fail(
+      "IDENTITY_CREDENTIAL_DUPLICATED",
+      "Logical credential identifier already has another value",
     );
   }
   return create({
@@ -176,6 +187,12 @@ function replacePassword(
   credentialId: string,
   passwordHash: PasswordHash,
 ): AccountIdentity {
+  if (account.status !== "active") {
+    fail(
+      "IDENTITY_ACCOUNT_NOT_ACTIVE",
+      "Password changes require an active account",
+    );
+  }
   const target = account.credentials.find(
     (credential) =>
       credential.credentialId === credentialId &&
@@ -200,6 +217,13 @@ function replacePassword(
 
 function markDeleting(account: AccountIdentity): AccountIdentity {
   if (account.status === "deleted") return account;
+  if (account.status === "deleting") return account;
+  if (account.status !== "active") {
+    fail(
+      "IDENTITY_ACCOUNT_NOT_ACTIVE",
+      "Only an active account can begin deletion",
+    );
+  }
   return create({
     ...account,
     status: "deleting",
@@ -208,6 +232,13 @@ function markDeleting(account: AccountIdentity): AccountIdentity {
 }
 
 function markDeleted(account: AccountIdentity): AccountIdentity {
+  if (account.status === "deleted") return account;
+  if (account.status !== "deleting") {
+    fail(
+      "IDENTITY_ACCOUNT_NOT_DELETING",
+      "Account deletion must be in progress",
+    );
+  }
   return create({
     ...account,
     status: "deleted",
