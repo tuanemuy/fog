@@ -124,7 +124,7 @@ export class IdentityCoordinator
         "Password credential has no active locator",
       );
     }
-    AccountIdentity.create({
+    const intendedIdentity = AccountIdentity.create({
       id: input.userId,
       status: "active",
       primaryEmail: input.email,
@@ -138,6 +138,16 @@ export class IdentityCoordinator
       ],
       sessionEpoch: 0,
     });
+    const intendedCredential = intendedIdentity.credentials[0];
+    if (
+      intendedIdentity.status !== "active" ||
+      intendedCredential?.kind !== "password"
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Signup domain credential is not a password",
+      );
+    }
     const payloadDigest = await fingerprint([
       "signup",
       input.userId,
@@ -170,11 +180,11 @@ export class IdentityCoordinator
             operationId: input.operationId,
             userId: input.userId,
             directoryReference,
-            credentialId,
+            credentialId: intendedCredential.credentialId,
             credential: {
               kind: "password",
               canonicalValue: canonical,
-              passwordHash: input.passwordHash,
+              passwordHash: intendedCredential.passwordHash,
             },
             accountEpoch: operation.epoch,
             now: input.now,
@@ -198,13 +208,8 @@ export class IdentityCoordinator
         expectedState: "pending",
         nextState: "credential-reserved",
         directoryReference: directoryReferences[0],
-        credential: {
-          credentialId,
-          kind: "password",
-          email: input.email,
-          passwordHash: input.passwordHash,
-        },
-        primaryEmail: input.email,
+        credential: intendedCredential,
+        primaryEmail: intendedIdentity.primaryEmail,
         now: input.now,
       });
       for (const directoryReference of directoryReferences.slice(1)) {
@@ -212,13 +217,8 @@ export class IdentityCoordinator
           operationId: input.operationId,
           userId: input.userId,
           directoryReference,
-          credential: {
-            credentialId,
-            kind: "password",
-            email: input.email,
-            passwordHash: input.passwordHash,
-          },
-          primaryEmail: input.email,
+          credential: intendedCredential,
+          primaryEmail: intendedIdentity.primaryEmail,
           bumpSessionEpoch: false,
           now: input.now,
         });
@@ -273,13 +273,8 @@ export class IdentityCoordinator
         userId: input.userId,
         expectedState: "directory-active",
         nextState: "completed",
-        credential: {
-          credentialId,
-          kind: "password",
-          email: input.email,
-          passwordHash: input.passwordHash,
-        },
-        primaryEmail: input.email,
+        credential: intendedCredential,
+        primaryEmail: intendedIdentity.primaryEmail,
         now: input.now,
       });
     }
@@ -288,7 +283,19 @@ export class IdentityCoordinator
       await this.ports.accountHome.getAuthSummary(input.userId),
       input.userId,
     );
-    if (!authority || operation.state !== "completed") {
+    if (
+      !authority ||
+      operation.state !== "completed" ||
+      authority.primaryEmail !== intendedIdentity.primaryEmail ||
+      authority.sessionEpoch !== intendedIdentity.sessionEpoch ||
+      !authority.credentials.some(
+        (credential) =>
+          credential.kind === "password" &&
+          credential.credentialId === intendedCredential.credentialId &&
+          credential.email === intendedCredential.email &&
+          credential.passwordHash === intendedCredential.passwordHash,
+      )
+    ) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "Signup completed without an active Account Home authority",
@@ -461,13 +468,23 @@ export class IdentityCoordinator
         "SSO credential has no active locator",
       );
     }
-    AccountIdentity.create({
+    const intendedIdentity = AccountIdentity.create({
       id: sagaAccountId,
       status: "active",
       primaryEmail: input.email,
       credentials: [logicalCredential],
       sessionEpoch: 0,
     });
+    const intendedCredential = intendedIdentity.credentials[0];
+    if (
+      intendedIdentity.status !== "active" ||
+      intendedCredential?.kind !== "sso"
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "SSO create domain credential is not SSO",
+      );
+    }
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
       userId: sagaAccountId,
@@ -488,14 +505,14 @@ export class IdentityCoordinator
             operationId: input.operationId,
             userId: sagaAccountId,
             directoryReference,
-            credentialId,
+            credentialId: intendedCredential.credentialId,
             credential: {
               kind: "sso",
               canonicalValue: providerReferences.includes(directoryReference)
                 ? providerCredential
                 : emailCredential,
-              provider: input.provider,
-              verifiedEmail: input.email,
+              provider: intendedCredential.provider,
+              verifiedEmail: intendedCredential.verifiedEmail,
             },
             accountEpoch: operation.epoch,
             now: input.now,
@@ -519,8 +536,8 @@ export class IdentityCoordinator
         expectedState: "pending",
         nextState: "credential-reserved",
         directoryReference: directoryReferences[0],
-        credential: logicalCredential,
-        primaryEmail: input.email,
+        credential: intendedCredential,
+        primaryEmail: intendedIdentity.primaryEmail,
         now: input.now,
       });
       for (const directoryReference of directoryReferences.slice(1)) {
@@ -528,8 +545,8 @@ export class IdentityCoordinator
           operationId: input.operationId,
           userId: sagaAccountId,
           directoryReference,
-          credential: logicalCredential,
-          primaryEmail: input.email,
+          credential: intendedCredential,
+          primaryEmail: intendedIdentity.primaryEmail,
           bumpSessionEpoch: false,
           now: input.now,
         });
@@ -581,8 +598,8 @@ export class IdentityCoordinator
         userId: sagaAccountId,
         expectedState: "directory-active",
         nextState: "completed",
-        credential: logicalCredential,
-        primaryEmail: input.email,
+        credential: intendedCredential,
+        primaryEmail: intendedIdentity.primaryEmail,
         now: input.now,
       });
     }
@@ -590,7 +607,19 @@ export class IdentityCoordinator
       await this.ports.accountHome.getAuthSummary(sagaAccountId),
       sagaAccountId,
     );
-    if (!authority) {
+    if (
+      !authority ||
+      authority.primaryEmail !== intendedIdentity.primaryEmail ||
+      authority.sessionEpoch !== intendedIdentity.sessionEpoch ||
+      !authority.credentials.some(
+        (credential) =>
+          credential.kind === "sso" &&
+          credential.credentialId === intendedCredential.credentialId &&
+          credential.provider === intendedCredential.provider &&
+          credential.subject === intendedCredential.subject &&
+          credential.verifiedEmail === intendedCredential.verifiedEmail,
+      )
+    ) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "SSO operation completed without active authority",

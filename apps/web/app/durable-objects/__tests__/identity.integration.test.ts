@@ -1,6 +1,7 @@
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { CloudflareIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
+import { IdentityDirectoryStore } from "@repo/core/adapters/cloudflare/identity-directory/store";
 import type { DirectoryKeyring } from "@repo/core/adapters/cloudflare/identityRouting";
 import {
   canonicalPasswordCredential,
@@ -928,6 +929,150 @@ describe("identity Durable Object contract", () => {
     );
   });
 
+  it("proves Account Home zero exactly across paged operator rotation", async () => {
+    const identity = gateway(keyring);
+    const userId = UserId.create("operator-rotation-user");
+    const email = Email.create("operator-rotation@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("operator-rotation-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("operator-rotation-password-hash"),
+      now: 1,
+    });
+    const passwordPrevious = (
+      await credentialLocators(canonicalPasswordCredential(email), keyring)
+    ).find((locator) => locator.generation === keyring.previous.generation);
+    if (!passwordPrevious) throw new Error("previous password locator missing");
+
+    let subject = "";
+    for (let candidate = 0; candidate < 10_000; candidate += 1) {
+      const current = `operator-rotation-subject-${candidate}`;
+      const previous = (
+        await credentialLocators(`sso:google\u0000${current}`, keyring)
+      ).find((locator) => locator.generation === keyring.previous.generation);
+      if (previous?.bucket === passwordPrevious.bucket) {
+        subject = current;
+        break;
+      }
+    }
+    if (!subject) throw new Error("same-bucket SSO subject missing");
+    await identity.linkSso({
+      operationId: operationId("operator-rotation-link"),
+      userId,
+      provider: SsoProvider.create("google"),
+      subject,
+      email,
+      now: 2,
+    });
+
+    await expect(
+      identity.operatorRotatePage({
+        generation: keyring.previous.generation,
+        bucket: passwordPrevious.bucket,
+        limit: 1,
+        now: 3,
+      }),
+    ).resolves.toMatchObject({
+      scanned: 1,
+      accountHomeActive: 1,
+      completed: false,
+    });
+    await expect(
+      identity.operatorRotatePage({
+        generation: keyring.previous.generation,
+        bucket: passwordPrevious.bucket,
+        limit: 1,
+        now: 4,
+      }),
+    ).resolves.toMatchObject({
+      scanned: 1,
+      accountHomeActive: 0,
+      completed: true,
+    });
+    await expect(
+      identity.getDirectoryShardAuthorityStatus(passwordPrevious),
+    ).resolves.toMatchObject({
+      active: 0,
+      accountHomeActive: 0,
+      retirementReady: true,
+    });
+    const shard = bindings.IDENTITY_DIRECTORY.getByName(
+      directoryObjectName(passwordPrevious),
+    );
+    await runInDurableObject(shard, async (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count
+             FROM rotation_account_home_targets
+             WHERE generation = ? AND bucket = ?`,
+            passwordPrevious.generation,
+            passwordPrevious.bucket,
+          )
+          .one().count,
+      ).toBe(2);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count
+             FROM rotation_account_home_snapshots
+             WHERE generation = ? AND bucket = ?`,
+            passwordPrevious.generation,
+            passwordPrevious.bucket,
+          )
+          .one().count,
+      ).toBe(1);
+    });
+  });
+
+  it("blocks retirement for an Account Home locator absent from Directory mappings", async () => {
+    const identity = gateway(keyring);
+    const userId = UserId.create("operator-orphan-user");
+    const email = Email.create("operator-orphan@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("operator-orphan-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("operator-orphan-password-hash"),
+      now: 1,
+    });
+    const previous = (
+      await credentialLocators(canonicalPasswordCredential(email), keyring)
+    ).find((locator) => locator.generation === keyring.previous.generation);
+    if (!previous) throw new Error("previous password locator missing");
+    const shard = bindings.IDENTITY_DIRECTORY.getByName(
+      directoryObjectName(previous),
+    );
+    await runInDurableObject(shard, async (_instance, state) => {
+      state.storage.sql.exec(
+        "DELETE FROM credential_mappings WHERE opaque_key = ?",
+        previous.opaqueKey,
+      );
+    });
+
+    await expect(
+      identity.operatorRotatePage({
+        generation: previous.generation,
+        bucket: previous.bucket,
+        limit: 1,
+        now: 2,
+      }),
+    ).resolves.toMatchObject({
+      scanned: 1,
+      moved: 0,
+      accountHomeActive: 1,
+      completed: false,
+    });
+    await expect(
+      identity.getDirectoryShardAuthorityStatus(previous),
+    ).resolves.toMatchObject({
+      active: 0,
+      accountHomeActive: 1,
+      retirementReady: false,
+    });
+  });
+
   it("keeps signup replay identity stable across routing-key removal", async () => {
     const first = gateway({
       active: {
@@ -1084,6 +1229,65 @@ describe("identity Durable Object contract", () => {
             `SELECT state, email, delivery_payload_encrypted
              FROM identity_mail_jobs WHERE operation_id = ?`,
             "mail-expired-operation",
+          )
+          .one(),
+      ).toEqual({
+        state: "poison",
+        email: "",
+        delivery_payload_encrypted: null,
+      });
+    });
+  });
+
+  it("rechecks reset expiry after claim and before provider delivery", async () => {
+    const stub = bindings.IDENTITY_DIRECTORY.getByName(
+      "mail-expires-after-claim",
+    );
+    await runInDurableObject(stub, async (instance, state) => {
+      let providerCalls = 0;
+      overrideIdentityEnv(instance, {
+        IDENTITY_MAIL_PROVIDER: {
+          fetch: async () => {
+            providerCalls += 1;
+            return new Response(null, { status: 204 });
+          },
+        } as unknown as Fetcher,
+      });
+      value(
+        await (
+          instance as IdentityDirectoryDurableObject
+        ).enqueuePasswordResetMail({
+          version: 1,
+          operationId: "mail-expires-after-claim-operation",
+          payload: {
+            userId: "mail-expires-after-claim-user",
+            email: "mail-expires-after-claim@example.com",
+            resetSecret: "mail-expires-after-claim-secret",
+            expiresAt: 2_000,
+            providerIdempotencyKey: "mail-expires-after-claim-idempotency",
+            now: 1_000,
+          },
+        }),
+      );
+      await (
+        instance as unknown as {
+          runIdentityMail(
+            now: number,
+            store: IdentityDirectoryStore,
+          ): Promise<number | null>;
+        }
+      ).runIdentityMail(1_500, new IdentityDirectoryStore(state.storage));
+      expect(providerCalls).toBe(0);
+      expect(
+        state.storage.sql
+          .exec<{
+            state: string;
+            email: string;
+            delivery_payload_encrypted: string | null;
+          }>(
+            `SELECT state, email, delivery_payload_encrypted
+             FROM identity_mail_jobs WHERE operation_id = ?`,
+            "mail-expires-after-claim-operation",
           )
           .one(),
       ).toEqual({
@@ -1255,6 +1459,45 @@ describe("identity Durable Object contract", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { kind: "validation", code: "IDENTITY_RPC_LOCATOR_INVALID" },
+    });
+  });
+
+  it("enforces Identity RPC string limits in UTF-8 bytes", async () => {
+    const account = bindings.ACCOUNT_HOME.getByName("byte-bound-user");
+    await expect(
+      (
+        account as unknown as {
+          countActiveGeneration(input: unknown): Promise<RpcResult<number>>;
+        }
+      ).countActiveGeneration({
+        version: 1,
+        payload: {
+          generation: "界".repeat(30),
+          bucket: 0,
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "validation", code: "IDENTITY_RPC_PAYLOAD_INVALID" },
+    });
+
+    const directory = bindings.IDENTITY_DIRECTORY.getByName("byte-bound-mail");
+    await expect(
+      directory.enqueuePasswordResetMail({
+        version: 1,
+        operationId: "byte-bound-mail-operation",
+        payload: {
+          userId: "byte-bound-user",
+          email: "byte-bound@example.com",
+          resetSecret: "界".repeat(100),
+          expiresAt: Date.now() + 60_000,
+          providerIdempotencyKey: "byte-bound-mail-idempotency",
+          now: Date.now(),
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "validation", code: "IDENTITY_RPC_PAYLOAD_INVALID" },
     });
   });
 

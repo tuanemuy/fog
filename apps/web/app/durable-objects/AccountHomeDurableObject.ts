@@ -78,6 +78,17 @@ const operationStates = new Set<IdentityOperationState>([
   "completed",
   "failed",
 ]);
+const encoder = new TextEncoder();
+
+function boundedString(
+  value: unknown,
+  minimumBytes: number,
+  maximumBytes: number,
+): value is string {
+  if (typeof value !== "string") return false;
+  const bytes = encoder.encode(value).byteLength;
+  return bytes >= minimumBytes && bytes <= maximumBytes;
+}
 
 const conflictCodes = new Set([
   "ACCOUNT_OWNER_MISMATCH",
@@ -118,14 +129,12 @@ function locator(input: PhysicalCredentialLocator): PhysicalCredentialLocator {
   if (
     typeof input !== "object" ||
     input === null ||
-    typeof input.generation !== "string" ||
-    typeof input.opaqueKey !== "string" ||
+    !boundedString(input.generation, 1, 64) ||
+    !boundedString(input.opaqueKey, 1, 256) ||
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
     input.bucket > 1023 ||
-    input.generation.trim().length === 0 ||
-    input.generation.length > 64 ||
-    input.opaqueKey.length > 256
+    input.generation.trim().length === 0
   ) {
     throw new Error("IDENTITY_RPC_LOCATOR_INVALID");
   }
@@ -140,9 +149,7 @@ function logicalCredential(input: LogicalCredential): LogicalCredential {
   if (
     typeof input !== "object" ||
     input === null ||
-    typeof input.credentialId !== "string" ||
-    input.credentialId.length === 0 ||
-    input.credentialId.length > 256
+    !boundedString(input.credentialId, 1, 256)
   ) {
     throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
   }
@@ -190,9 +197,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       typeof payload.userId !== "string" ||
       typeof payload.kind !== "string" ||
       !operationKinds.has(payload.kind as IdentityOperationKind) ||
-      typeof payload.payloadDigest !== "string" ||
-      payload.payloadDigest.length === 0 ||
-      payload.payloadDigest.length > 128 ||
+      !boundedString(payload.payloadDigest, 1, 128) ||
       !isSafeNonNegativeInteger(payload.now)
     ) {
       return Promise.resolve(
@@ -388,9 +393,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
     ]);
     if (
       !shape.ok ||
-      typeof request.payload.credentialId !== "string" ||
-      request.payload.credentialId.length === 0 ||
-      request.payload.credentialId.length > 256 ||
+      !boundedString(request.payload.credentialId, 1, 256) ||
       typeof request.payload.bumpSessionEpoch !== "boolean" ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
@@ -466,16 +469,19 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   }
 
   countActiveGeneration(
-    request: IdentityRpcQuery<{ generation: string }>,
+    request: IdentityRpcQuery<{ generation: string; bucket: number }>,
   ): Promise<RpcResult<number>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
-    const shape = validatePayloadKeys(request.payload, ["generation"]);
+    const shape = validatePayloadKeys(request.payload, [
+      "generation",
+      "bucket",
+    ]);
     if (
       !shape.ok ||
-      typeof request.payload.generation !== "string" ||
-      request.payload.generation.length === 0 ||
-      request.payload.generation.length > 64
+      !boundedString(request.payload.generation, 1, 64) ||
+      !isSafeNonNegativeInteger(request.payload.bucket) ||
+      request.payload.bucket > 1023
     ) {
       return Promise.resolve(
         shape.ok
@@ -491,6 +497,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       execute(() =>
         new AccountHomeStore(this.ctx.storage).countActiveGeneration(
           request.payload.generation,
+          request.payload.bucket,
         ),
       ),
     );

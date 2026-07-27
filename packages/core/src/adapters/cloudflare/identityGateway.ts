@@ -234,11 +234,19 @@ type DirectoryStub = {
   scanForRotation(
     input: IdentityRpcQuery<{
       generation: string;
+      bucket: number;
       cursor?: string;
       limit: number;
     }>,
   ): Promise<
-    RpcResult<{ rows: readonly RotationRow[]; nextCursor: string | null }>
+    RpcResult<{
+      rows: readonly RotationRow[];
+      targets: readonly {
+        locator: PhysicalCredentialLocator;
+        userId: UserId;
+      }[];
+      nextCursor: string | null;
+    }>
   >;
   saveRotationCheckpoint(
     input: IdentityRpcMutation<{
@@ -248,10 +256,15 @@ type DirectoryStub = {
       scanned: number;
       moved: number;
       conflicts: number;
-      accountHomeActive: number;
+      accountHomeTargets: readonly {
+        locator: PhysicalCredentialLocator;
+        userId: string;
+        activeLocatorCount: number;
+      }[];
       completedAt: number | null;
+      now: number;
     }>,
-  ): Promise<RpcResult<null>>;
+  ): Promise<RpcResult<{ accountHomeActive: number }>>;
   getRotationCheckpoint(
     input: IdentityRpcQuery<{ generation: string; bucket: number }>,
   ): Promise<
@@ -356,7 +369,7 @@ type AccountHomeStub = {
     }>,
   ): Promise<RpcResult<null>>;
   countActiveGeneration(
-    input: IdentityRpcQuery<{ generation: string }>,
+    input: IdentityRpcQuery<{ generation: string; bucket: number }>,
   ): Promise<RpcResult<number>>;
   beginDeletionV1(
     input: IdentityRpcMutation<{ userId: string; now: number }>,
@@ -947,12 +960,17 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     limit: number;
   }): Promise<{
     rows: readonly RotationRow[];
+    targets: readonly {
+      locator: PhysicalCredentialLocator;
+      userId: UserId;
+    }[];
     nextCursor: string | null;
   }> {
     return retryRpc(() =>
       this.forBucket(input.generation, input.bucket).scanForRotation(
         rpcQuery({
           generation: input.generation,
+          bucket: input.bucket,
           ...(input.cursor ? { cursor: input.cursor } : {}),
           limit: input.limit,
         }),
@@ -967,27 +985,29 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     scanned: number;
     moved: number;
     conflicts: number;
-    accountHomeActive: number;
+    accountHomeTargets: readonly {
+      locator: PhysicalCredentialLocator;
+      userId: UserId;
+      activeLocatorCount: number;
+    }[];
     completedAt: number | null;
-  }): Promise<void> {
-    const checkpointId = operationId(
-      [
-        "rotation-checkpoint",
-        input.generation,
-        input.bucket,
-        input.cursor ?? "done",
-        input.scanned,
-        input.moved,
-        input.conflicts,
-        input.accountHomeActive,
-        input.completedAt ?? "pending",
-      ].join(":"),
+    now: number;
+  }): Promise<number> {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify(input)),
     );
-    await retryRpc(() =>
+    const checkpointId = operationId(
+      `rotation-checkpoint:${[...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")}`,
+    );
+    const saved = await retryRpc(() =>
       this.forBucket(input.generation, input.bucket).saveRotationCheckpoint(
         rpcMutation(checkpointId, input),
       ),
     );
+    return saved.accountHomeActive;
   }
 
   expiredReservations(input: {
@@ -1415,9 +1435,15 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     );
   }
 
-  countActiveGeneration(userId: UserId, generation: string): Promise<number> {
+  countActiveGeneration(
+    userId: UserId,
+    generation: string,
+    bucket: number,
+  ): Promise<number> {
     return retryRpc(() =>
-      this.forUser(userId).countActiveGeneration(rpcQuery({ generation })),
+      this.forUser(userId).countActiveGeneration(
+        rpcQuery({ generation, bucket }),
+      ),
     );
   }
 
@@ -1742,29 +1768,39 @@ export class CloudflareIdentityGateway
             conflicts += 1;
           }
         }
-        totals.scanned += page.rows.length;
+        totals.scanned += page.targets.length;
         totals.moved += moved;
         totals.conflicts += conflicts;
         const blocked = conflicts > 0;
-        const accountHomeActive = (
+        const accountHomeCounts = new Map(
           await Promise.all(
-            [...new Set(page.rows.map((row) => row.userId))].map((userId) =>
-              this.accountHomePort.countActiveGeneration(
-                userId,
-                previous.generation,
-              ),
+            [...new Set(page.targets.map((target) => target.userId))].map(
+              async (userId) =>
+                [
+                  userId,
+                  await this.accountHomePort.countActiveGeneration(
+                    userId,
+                    previous.generation,
+                    bucket,
+                  ),
+                ] as const,
             ),
-          )
-        ).reduce((sum, count) => sum + count, 0);
+          ),
+        );
+        const accountHomeTargets = page.targets.map((target) => ({
+          ...target,
+          activeLocatorCount: accountHomeCounts.get(target.userId) ?? 0,
+        }));
         await this.directoryPort.saveRotationCheckpoint({
           generation: previous.generation,
           bucket,
           cursor: blocked ? (cursor ?? null) : page.nextCursor,
-          scanned: page.rows.length,
+          scanned: page.targets.length,
           moved,
           conflicts,
-          accountHomeActive,
+          accountHomeTargets,
           completedAt: !blocked && page.nextCursor === null ? input.now : null,
+          now: input.now,
         });
         cursor = blocked ? undefined : (page.nextCursor ?? undefined);
       } while (cursor);
@@ -1854,7 +1890,6 @@ export class CloudflareIdentityGateway
     });
     let moved = 0;
     let conflicts = 0;
-    let accountHomeActive = 0;
     for (const row of page.rows) {
       try {
         await this.rotateRow(row, input.now);
@@ -1863,30 +1898,48 @@ export class CloudflareIdentityGateway
         if (!(error instanceof ConflictError)) throw error;
         conflicts += 1;
       }
-      accountHomeActive += await this.accountHomePort.countActiveGeneration(
-        row.userId,
-        input.generation,
-      );
     }
+    const accountHomeCounts = new Map(
+      await Promise.all(
+        [...new Set(page.targets.map((target) => target.userId))].map(
+          async (userId) =>
+            [
+              userId,
+              await this.accountHomePort.countActiveGeneration(
+                userId,
+                input.generation,
+                input.bucket,
+              ),
+            ] as const,
+        ),
+      ),
+    );
+    const accountHomeTargets = page.targets.map((target) => ({
+      ...target,
+      activeLocatorCount: accountHomeCounts.get(target.userId) ?? 0,
+    }));
     const blocked = conflicts > 0;
     const nextCursor = blocked ? (checkpoint?.cursor ?? null) : page.nextCursor;
-    await this.directoryPort.saveRotationCheckpoint({
+    const accountHomeActive = await this.directoryPort.saveRotationCheckpoint({
       generation: input.generation,
       bucket: input.bucket,
       cursor: nextCursor,
-      scanned: page.rows.length,
+      scanned: page.targets.length,
       moved,
       conflicts,
-      accountHomeActive,
+      accountHomeTargets,
       completedAt: !blocked && page.nextCursor === null ? input.now : null,
+      now: input.now,
     });
+    const completed =
+      !blocked && page.nextCursor === null && accountHomeActive === 0;
     return {
-      scanned: page.rows.length,
+      scanned: page.targets.length,
       moved,
       conflicts,
       accountHomeActive,
       nextCursor,
-      completed: !blocked && page.nextCursor === null,
+      completed,
     };
   }
 

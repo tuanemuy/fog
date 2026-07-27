@@ -1104,6 +1104,112 @@ describe("User Data semantic search contract", () => {
     });
   });
 
+  it("rejects a destination for restoreAlone and increments its version once", async () => {
+    const stub = object("document-restore-alone");
+    value(
+      await stub.initialize({
+        operationId: "init",
+        userId: "document-restore-alone",
+        now: 1,
+      }),
+    );
+    await commit(stub, {
+      version: 1,
+      operationId: "topic",
+      type: "create-topic",
+      topic: { id: "topic", name: "Topic", timestamp: 2 },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "document",
+      type: "create-document",
+      topicExpectedVersion: 0,
+      document: {
+        id: "document",
+        title: "Document",
+        body: "restore alone",
+        timestamp: 3,
+        topicId: "topic",
+        sourceMemoIds: [],
+      },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "trash-document",
+      type: "trash-document",
+      documentId: "document",
+      trashedAt: 4,
+      expectedVersion: 0,
+    });
+
+    expect(
+      await stub.commit({
+        version: 1,
+        operationId: "invalid-same-destination",
+        type: "restore-document",
+        documentId: "document",
+        destinationTopicId: "topic",
+        restoredAt: 5,
+        expectedVersion: 1,
+        topicExpectedVersion: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "DOCUMENT_TOPIC_REQUIRED", kind: "conflict" },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ trashed_at: number | null; version: number }>(
+            "SELECT trashed_at, version FROM content WHERE id = 'document'",
+          )
+          .one(),
+      ).toEqual({ trashed_at: 4, version: 1 });
+      expect(
+        state.storage.sql
+          .exec<{ version: number }>(
+            "SELECT version FROM topics WHERE id = 'topic'",
+          )
+          .one().version,
+      ).toBe(1);
+    });
+
+    await commit(stub, {
+      version: 1,
+      operationId: "restore-alone",
+      type: "restore-document",
+      documentId: "document",
+      restoredAt: 6,
+      expectedVersion: 1,
+      topicExpectedVersion: 1,
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{
+            topic_id: string;
+            trashed_at: number | null;
+            version: number;
+          }>(
+            `SELECT topic_id, trashed_at, version FROM content
+             WHERE id = 'document'`,
+          )
+          .one(),
+      ).toEqual({
+        topic_id: "topic",
+        trashed_at: null,
+        version: 2,
+      });
+      expect(
+        state.storage.sql
+          .exec<{ version: number }>(
+            "SELECT version FROM topics WHERE id = 'topic'",
+          )
+          .one().version,
+      ).toBe(2);
+    });
+  });
+
   it("covers document update, trash, restore, and trash-only hard delete", async () => {
     const stub = object("document-lifecycle");
     value(

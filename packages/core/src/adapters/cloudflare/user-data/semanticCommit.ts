@@ -622,6 +622,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     projection: SearchProjectionPort,
   ): void {
     this.assertTrashed(id, kind);
+    let movedToDestination = false;
     if (kind === "document") {
       const current = this.storage.sql
         .exec<{ topic_id: string | null }>(
@@ -635,11 +636,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           "A destination topic is required after the original topic was removed",
         );
       }
-      if (
-        current.topic_id !== null &&
-        destinationTopicId !== undefined &&
-        destinationTopicId !== current.topic_id
-      ) {
+      if (current.topic_id !== null && destinationTopicId !== undefined) {
         throw new ConflictError(
           SearchErrorCode.TopicRequired,
           "A destination topic can only replace a removed original topic",
@@ -654,14 +651,14 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         );
       }
       this.touchTopic(topicId, topicExpectedVersion, restoredAt);
+      movedToDestination = current.topic_id === null;
     } else if (destinationTopicId !== undefined) {
       throw new ConflictError(
         SearchErrorCode.TopicRequired,
         "Only a document can select a destination topic",
       );
     }
-    const versionIncrement =
-      kind === "document" && destinationTopicId !== undefined ? 2 : 1;
+    const versionIncrement = movedToDestination ? 2 : 1;
     const cursor = this.storage.sql.exec(
       `UPDATE content
        SET trashed_at = NULL, topic_id = COALESCE(?, topic_id),

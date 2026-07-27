@@ -97,6 +97,7 @@ export class IdentityDirectoryStore {
 
   reserve(input: ReserveCredential): UserId {
     return this.storage.transactionSync(() => {
+      this.recordAccountHomeTarget(input.locator, input.userId, input.now);
       const existing = this.find(input.locator.opaqueKey);
       if (existing) {
         if (
@@ -993,34 +994,56 @@ export class IdentityDirectoryStore {
 
   scanForRotation(input: {
     generation: string;
+    bucket: number;
     cursor?: string;
     limit: number;
-  }): { rows: readonly RotationRow[]; nextCursor: string | null } {
-    const rows = this.storage.sql
-      .exec<MappingRow>(
-        `SELECT opaque_key, generation, bucket, logical_credential_id,
-                canonical_value, kind, provider, verified_email,
-                subject_encrypted, user_id, operation_id, state, password_hash,
-                account_epoch, reservation_expires_at
-         FROM credential_mappings
-         WHERE generation = ? AND opaque_key > ? AND state = 'active'
+  }): {
+    rows: readonly RotationRow[];
+    targets: readonly Readonly<{
+      locator: PhysicalCredentialLocator;
+      userId: UserId;
+    }>[];
+    nextCursor: string | null;
+  } {
+    const targets = this.storage.sql
+      .exec<{
+        opaque_key: string;
+        generation: string;
+        bucket: number;
+        user_id: string;
+      }>(
+        `SELECT opaque_key, generation, bucket, user_id
+         FROM rotation_account_home_targets
+         WHERE generation = ? AND bucket = ? AND opaque_key > ?
          ORDER BY opaque_key LIMIT ?`,
         input.generation,
+        input.bucket,
         input.cursor ?? "",
         input.limit + 1,
       )
       .toArray();
-    const page = rows.slice(0, input.limit);
+    const page = targets.slice(0, input.limit);
+    const rows = page
+      .map((target) => this.find(target.opaque_key))
+      .filter((row): row is MappingRow => row?.state === "active");
     return {
-      rows: page.map((row) => ({
+      rows: rows.map((row) => ({
         locator: this.toLocator(row),
         credential: this.toCredential(row).credential,
         userId: UserId.create(row.user_id),
         operationId: operationId(row.operation_id),
         accountEpoch: row.account_epoch,
       })),
+      targets: page.map((target) => ({
+        locator: {
+          generation: target.generation,
+          bucket: target.bucket,
+          opaqueKey: opaqueCredentialKey(target.opaque_key),
+        },
+        userId: UserId.create(target.user_id),
+      })),
       nextCursor:
-        rows.length > input.limit ? (page.at(-1)?.opaque_key ?? null) : null,
+        targets.length > input.limit ? (page.at(-1)?.opaque_key ?? null) : null,
     };
   }
 
@@ -1032,10 +1055,15 @@ export class IdentityDirectoryStore {
     scanned: number;
     moved: number;
     conflicts: number;
-    accountHomeActive: number;
+    accountHomeTargets: readonly Readonly<{
+      locator: PhysicalCredentialLocator;
+      userId: UserId;
+      activeLocatorCount: number;
+    }>[];
     completedAt: number | null;
-  }): void {
-    this.storage.transactionSync(() => {
+    now: number;
+  }): number {
+    return this.storage.transactionSync(() => {
       const payload = JSON.stringify({
         generation: input.generation,
         bucket: input.bucket,
@@ -1043,8 +1071,9 @@ export class IdentityDirectoryStore {
         scanned: input.scanned,
         moved: input.moved,
         conflicts: input.conflicts,
-        accountHomeActive: input.accountHomeActive,
+        accountHomeTargets: input.accountHomeTargets,
         completedAt: input.completedAt,
+        now: input.now,
       });
       const existing = this.storage.sql
         .exec<{ payload_json: string }>(
@@ -1057,7 +1086,10 @@ export class IdentityDirectoryStore {
         if (existing.payload_json !== payload) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
         }
-        return;
+        return (
+          this.rotationCheckpoint(input.generation, input.bucket)
+            ?.accountHomeActive ?? 0
+        );
       }
       this.storage.sql.exec(
         `INSERT INTO rotation_checkpoint_mutations(
@@ -1068,6 +1100,43 @@ export class IdentityDirectoryStore {
         input.bucket,
         payload,
       );
+      for (const target of input.accountHomeTargets) {
+        this.storage.sql.exec(
+          `INSERT INTO rotation_account_home_targets(
+             generation, bucket, opaque_key, user_id, verified_at
+           ) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(generation, bucket, opaque_key) DO UPDATE SET
+             user_id = excluded.user_id,
+             verified_at = excluded.verified_at`,
+          input.generation,
+          input.bucket,
+          target.locator.opaqueKey,
+          target.userId,
+          input.now,
+        );
+        this.storage.sql.exec(
+          `INSERT INTO rotation_account_home_snapshots(
+             generation, bucket, user_id, active_locator_count, verified_at
+           ) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(generation, bucket, user_id) DO UPDATE SET
+             active_locator_count = excluded.active_locator_count,
+             verified_at = excluded.verified_at`,
+          input.generation,
+          input.bucket,
+          target.userId,
+          target.activeLocatorCount,
+          input.now,
+        );
+      }
+      const accountHomeActive = this.storage.sql
+        .exec<{ count: number }>(
+          `SELECT COALESCE(SUM(active_locator_count), 0) AS count
+           FROM rotation_account_home_snapshots
+           WHERE generation = ? AND bucket = ?`,
+          input.generation,
+          input.bucket,
+        )
+        .one().count;
       this.storage.sql.exec(
         `INSERT INTO rotation_checkpoints(
            generation, bucket, cursor_key, scanned_count, moved_count,
@@ -1079,9 +1148,7 @@ export class IdentityDirectoryStore {
            scanned_count = rotation_checkpoints.scanned_count + excluded.scanned_count,
            moved_count = rotation_checkpoints.moved_count + excluded.moved_count,
            conflict_count = rotation_checkpoints.conflict_count + excluded.conflict_count,
-           account_home_active_count =
-             rotation_checkpoints.account_home_active_count +
-             excluded.account_home_active_count,
+           account_home_active_count = excluded.account_home_active_count,
            completed_at = excluded.completed_at`,
         input.generation,
         input.bucket,
@@ -1089,9 +1156,10 @@ export class IdentityDirectoryStore {
         input.scanned,
         input.moved,
         input.conflicts,
-        input.completedAt,
-        input.accountHomeActive,
+        accountHomeActive === 0 ? input.completedAt : null,
+        accountHomeActive,
       );
+      return accountHomeActive;
     });
   }
 
@@ -1392,6 +1460,26 @@ export class IdentityDirectoryStore {
           opaqueKey,
         )
         .toArray()[0] ?? null
+    );
+  }
+
+  private recordAccountHomeTarget(
+    locator: PhysicalCredentialLocator,
+    userId: UserId,
+    now: number,
+  ): void {
+    this.storage.sql.exec(
+      `INSERT INTO rotation_account_home_targets(
+         generation, bucket, opaque_key, user_id, verified_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(generation, bucket, opaque_key) DO UPDATE SET
+         user_id = excluded.user_id,
+         verified_at = excluded.verified_at`,
+      locator.generation,
+      locator.bucket,
+      locator.opaqueKey,
+      userId,
+      now,
     );
   }
 

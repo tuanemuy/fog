@@ -1,13 +1,13 @@
+import type { SearchProjectionFaultPoint } from "@repo/core/adapters/cloudflare/user-data/searchIndex";
 import { UserDataSemanticCommit } from "@repo/core/adapters/cloudflare/user-data/semanticCommit";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
+import { applySemanticCommand } from "@repo/core/application/search/applySemanticCommand";
 import type {
   SemanticCommitResult,
   SemanticRpcCommand,
   SemanticTransactionCallback,
 } from "@repo/core/application/search/contracts";
-import { applySemanticCommand } from "@repo/core/application/search/applySemanticCommand";
 import { prepareSemanticCommand } from "@repo/core/application/search/prepareSemanticCommand";
-import type { SearchProjectionFaultPoint } from "@repo/core/adapters/cloudflare/user-data/searchIndex";
 import { UserDataDurableObject } from "../durable-objects/UserDataDurableObject";
 
 /**

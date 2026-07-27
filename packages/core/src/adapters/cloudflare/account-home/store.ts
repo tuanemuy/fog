@@ -497,12 +497,13 @@ export class AccountHomeStore {
     });
   }
 
-  countActiveGeneration(generation: string): number {
+  countActiveGeneration(generation: string, bucket: number): number {
     return this.storage.sql
       .exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM credential_locators
-         WHERE state = 'active' AND generation = ?`,
+         WHERE state = 'active' AND generation = ? AND bucket = ?`,
         generation,
+        bucket,
       )
       .one().count;
   }

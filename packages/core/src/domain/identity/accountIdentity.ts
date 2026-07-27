@@ -24,13 +24,37 @@ export type SsoCredential = Readonly<{
 
 export type LoginCredential = PasswordCredential | SsoCredential;
 
-export type AccountIdentity = Readonly<{
+type AccountIdentityBase = Readonly<{
   id: UserId;
-  status: "pending" | "active" | "deleting" | "deleted";
-  primaryEmail: Email | null;
-  credentials: readonly LoginCredential[];
   sessionEpoch: number;
 }>;
+
+export type AccountIdentity =
+  | (AccountIdentityBase &
+      Readonly<{
+        status: "pending" | "deleting";
+        primaryEmail: Email | null;
+        credentials: readonly LoginCredential[];
+      }>)
+  | (AccountIdentityBase &
+      Readonly<{
+        status: "active";
+        primaryEmail: Email;
+        credentials: readonly [LoginCredential, ...LoginCredential[]];
+      }>)
+  | (AccountIdentityBase &
+      Readonly<{
+        status: "deleted";
+        primaryEmail: null;
+        credentials: readonly [];
+      }>);
+
+type AccountIdentityInput = AccountIdentityBase &
+  Readonly<{
+    status: AccountIdentity["status"];
+    primaryEmail: Email | null;
+    credentials: readonly LoginCredential[];
+  }>;
 
 function fail(code: string, message: string): never {
   throw new BusinessRuleError(code, message);
@@ -42,7 +66,7 @@ function emailOf(credential: LoginCredential): Email {
     : credential.verifiedEmail;
 }
 
-function create(input: AccountIdentity): AccountIdentity {
+function create(input: AccountIdentityInput): AccountIdentity {
   if (!Number.isSafeInteger(input.sessionEpoch) || input.sessionEpoch < 0) {
     fail(
       "IDENTITY_SESSION_EPOCH_INVALID",
@@ -68,7 +92,7 @@ function create(input: AccountIdentity): AccountIdentity {
         "A deleted account cannot retain credentials or primary email",
       );
     }
-    return input;
+    return input as AccountIdentity;
   }
   if (
     new Set(input.credentials.map((credential) => credential.credentialId))
@@ -102,7 +126,7 @@ function create(input: AccountIdentity): AccountIdentity {
       "Primary email must belong to an active credential",
     );
   }
-  return input;
+  return input as AccountIdentity;
 }
 
 function addCredential(

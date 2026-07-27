@@ -192,6 +192,36 @@ const V13 = [
   "ALTER TABLE rotation_checkpoints ADD COLUMN account_home_active_count INTEGER NOT NULL DEFAULT 0",
 ] as const;
 
+const V14 = [
+  `CREATE TABLE IF NOT EXISTS rotation_account_home_targets (
+    generation TEXT NOT NULL,
+    bucket INTEGER NOT NULL,
+    opaque_key TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    verified_at INTEGER NOT NULL,
+    PRIMARY KEY (generation, bucket, opaque_key)
+  )`,
+  `CREATE INDEX IF NOT EXISTS rotation_account_home_targets_user_idx
+   ON rotation_account_home_targets(generation, bucket, user_id)`,
+  `CREATE TABLE IF NOT EXISTS rotation_account_home_snapshots (
+    generation TEXT NOT NULL,
+    bucket INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    active_locator_count INTEGER NOT NULL,
+    verified_at INTEGER NOT NULL,
+    PRIMARY KEY (generation, bucket, user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS rotation_account_home_snapshots_count_idx
+   ON rotation_account_home_snapshots(
+     generation, bucket, active_locator_count
+   )`,
+  `INSERT OR IGNORE INTO rotation_account_home_targets(
+     generation, bucket, opaque_key, user_id, verified_at
+   )
+   SELECT generation, bucket, opaque_key, user_id, updated_at
+   FROM credential_mappings`,
+] as const;
+
 export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
@@ -206,6 +236,7 @@ export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 11, up: V11 },
   { version: 12, up: V12 },
   { version: 13, up: V13 },
+  { version: 14, up: V14 },
 ];
 
 export function migrateIdentityDirectory(

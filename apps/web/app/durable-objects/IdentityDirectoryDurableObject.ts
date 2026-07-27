@@ -102,13 +102,11 @@ function parseLocator(
   if (
     typeof input !== "object" ||
     input === null ||
-    typeof input.generation !== "string" ||
+    !boundedString(input.generation, 1, 64) ||
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
     input.bucket > 1023 ||
-    typeof input.opaqueKey !== "string" ||
-    input.generation.length > 64 ||
-    input.opaqueKey.length > 256
+    !boundedString(input.opaqueKey, 1, 256)
   ) {
     throw new Error("IDENTITY_RPC_LOCATOR_INVALID");
   }
@@ -451,6 +449,16 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         now,
       });
     }
+    const sendAt = Date.now();
+    if (deliveryPayload.expiresAt <= sendAt) {
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode: "IDENTITY_MAIL_EXPIRED",
+        retryable: false,
+        now: sendAt,
+      });
+    }
     try {
       const response = await provider.fetch(
         "https://identity-mail.invalid/password-reset",
@@ -689,7 +697,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       !boundedString(request.payload.userId, 1, 128) ||
       !digestHex(request.payload.payloadFingerprint) ||
       !boundedString(request.payload.resetSecretEncrypted, 1, 4096) ||
-      !digestHex(request.payload.tokenHash) ||
+      !boundedString(request.payload.tokenHash, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.expiresAt) ||
       request.payload.expiresAt <= request.payload.now ||
       !isSafeNonNegativeInteger(request.payload.now)
@@ -981,9 +989,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     ]);
     if (
       invalid ||
-      typeof request.payload.tokenHash !== "string" ||
-      request.payload.tokenHash.length === 0 ||
-      request.payload.tokenHash.length > 256 ||
+      !boundedString(request.payload.tokenHash, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.expiresAt)
     ) {
       return Promise.resolve(
@@ -1040,14 +1046,10 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           return true;
         }
       })() ||
-      typeof request.payload.resetSecret !== "string" ||
-      request.payload.resetSecret.length < 16 ||
-      request.payload.resetSecret.length > 256 ||
+      !boundedString(request.payload.resetSecret, 16, 256) ||
       !isSafeNonNegativeInteger(request.payload.expiresAt) ||
       request.payload.expiresAt <= request.payload.now ||
-      typeof request.payload.providerIdempotencyKey !== "string" ||
-      request.payload.providerIdempotencyKey.length === 0 ||
-      request.payload.providerIdempotencyKey.length > 256 ||
+      !boundedString(request.payload.providerIdempotencyKey, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -1119,9 +1121,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     ]);
     if (
       invalid ||
-      typeof request.payload.tokenHash !== "string" ||
-      request.payload.tokenHash.length === 0 ||
-      request.payload.tokenHash.length > 256 ||
+      !boundedString(request.payload.tokenHash, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -1152,9 +1152,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     const invalid = invalidPayload(request.payload, ["tokenHash", "now"]);
     if (
       invalid ||
-      typeof request.payload.tokenHash !== "string" ||
-      request.payload.tokenHash.length === 0 ||
-      request.payload.tokenHash.length > 256 ||
+      !boundedString(request.payload.tokenHash, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -1180,6 +1178,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   scanForRotation(
     request: IdentityRpcQuery<{
       generation: string;
+      bucket: number;
       cursor?: string;
       limit: number;
     }>,
@@ -1188,20 +1187,19 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     if (!validated.ok) return Promise.resolve(validated);
     const invalid = invalidPayload(
       request.payload,
-      ["generation", "limit"],
+      ["generation", "bucket", "limit"],
       ["cursor"],
     );
     if (
       invalid ||
-      typeof request.payload.generation !== "string" ||
-      request.payload.generation.length === 0 ||
-      request.payload.generation.length > 64 ||
+      !boundedString(request.payload.generation, 1, 64) ||
+      !isSafeNonNegativeInteger(request.payload.bucket) ||
+      request.payload.bucket > 1023 ||
       !isSafeNonNegativeInteger(request.payload.limit) ||
       request.payload.limit < 1 ||
       request.payload.limit > 100 ||
       (request.payload.cursor !== undefined &&
-        (typeof request.payload.cursor !== "string" ||
-          request.payload.cursor.length > 256))
+        !boundedString(request.payload.cursor, 0, 256))
     ) {
       return Promise.resolve(
         invalid ??
@@ -1240,17 +1238,14 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     );
     if (
       invalid ||
-      typeof request.payload.generation !== "string" ||
-      request.payload.generation.length === 0 ||
-      request.payload.generation.length > 64 ||
+      !boundedString(request.payload.generation, 1, 64) ||
       !isSafeNonNegativeInteger(request.payload.bucket) ||
       request.payload.bucket > 1023 ||
       !isSafeNonNegativeInteger(request.payload.limit) ||
       request.payload.limit < 1 ||
       request.payload.limit > 100 ||
       (request.payload.cursor !== undefined &&
-        (typeof request.payload.cursor !== "string" ||
-          request.payload.cursor.length > 256))
+        !boundedString(request.payload.cursor, 0, 256))
     ) {
       return Promise.resolve(
         invalid ??
@@ -1278,10 +1273,15 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       scanned: number;
       moved: number;
       conflicts: number;
-      accountHomeActive: number;
+      accountHomeTargets: readonly {
+        locator: PhysicalCredentialLocator;
+        userId: string;
+        activeLocatorCount: number;
+      }[];
       completedAt: number | null;
+      now: number;
     }>,
-  ): Promise<RpcResult<null>> {
+  ): Promise<RpcResult<{ accountHomeActive: number }>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     const invalid = invalidPayload(request.payload, [
@@ -1291,23 +1291,48 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       "scanned",
       "moved",
       "conflicts",
-      "accountHomeActive",
+      "accountHomeTargets",
       "completedAt",
+      "now",
     ]);
     if (
       invalid ||
-      typeof request.payload.generation !== "string" ||
-      request.payload.generation.length === 0 ||
-      request.payload.generation.length > 64 ||
+      !boundedString(request.payload.generation, 1, 64) ||
       !isSafeNonNegativeInteger(request.payload.bucket) ||
       request.payload.bucket > 1023 ||
       !isSafeNonNegativeInteger(request.payload.scanned) ||
       !isSafeNonNegativeInteger(request.payload.moved) ||
       !isSafeNonNegativeInteger(request.payload.conflicts) ||
-      !isSafeNonNegativeInteger(request.payload.accountHomeActive) ||
+      !Array.isArray(request.payload.accountHomeTargets) ||
+      request.payload.accountHomeTargets.length > 100 ||
+      new Set(
+        request.payload.accountHomeTargets.map((target) =>
+          typeof target === "object" && target !== null
+            ? target.locator?.opaqueKey
+            : undefined,
+        ),
+      ).size !== request.payload.accountHomeTargets.length ||
+      request.payload.accountHomeTargets.some(
+        (target) =>
+          typeof target !== "object" ||
+          target === null ||
+          !boundedString(target.userId, 1, 128) ||
+          !isSafeNonNegativeInteger(target.activeLocatorCount) ||
+          (() => {
+            try {
+              const targetLocator = parseLocator(target.locator);
+              return (
+                targetLocator.generation !== request.payload.generation ||
+                targetLocator.bucket !== request.payload.bucket
+              );
+            } catch {
+              return true;
+            }
+          })(),
+      ) ||
+      !isSafeNonNegativeInteger(request.payload.now) ||
       (request.payload.cursor !== null &&
-        (typeof request.payload.cursor !== "string" ||
-          request.payload.cursor.length > 256)) ||
+        !boundedString(request.payload.cursor, 0, 256)) ||
       (request.payload.completedAt !== null &&
         !isSafeNonNegativeInteger(request.payload.completedAt))
     ) {
@@ -1322,11 +1347,27 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     }
     return Promise.resolve(
       execute(() => {
-        new IdentityDirectoryStore(this.ctx.storage).saveRotationCheckpoint({
+        const accountHomeActive = new IdentityDirectoryStore(
+          this.ctx.storage,
+        ).saveRotationCheckpoint({
           operationId: operationId(request.operationId),
-          ...request.payload,
+          generation: request.payload.generation,
+          bucket: request.payload.bucket,
+          cursor: request.payload.cursor,
+          scanned: request.payload.scanned,
+          moved: request.payload.moved,
+          conflicts: request.payload.conflicts,
+          accountHomeTargets: request.payload.accountHomeTargets.map(
+            (target) => ({
+              locator: parseLocator(target.locator),
+              userId: UserId.create(target.userId),
+              activeLocatorCount: target.activeLocatorCount,
+            }),
+          ),
+          completedAt: request.payload.completedAt,
+          now: request.payload.now,
         });
-        return null;
+        return { accountHomeActive };
       }),
     );
   }
@@ -1341,9 +1382,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     const invalid = invalidPayload(request.payload, ["generation", "bucket"]);
     if (
       invalid ||
-      typeof request.payload.generation !== "string" ||
-      request.payload.generation.length === 0 ||
-      request.payload.generation.length > 64 ||
+      !boundedString(request.payload.generation, 1, 64) ||
       !isSafeNonNegativeInteger(request.payload.bucket) ||
       request.payload.bucket > 1023
     ) {
@@ -1388,9 +1427,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     const invalid = invalidPayload(request.payload, ["marker", "now"]);
     if (
       invalid ||
-      typeof request.payload.marker !== "string" ||
-      request.payload.marker.length === 0 ||
-      request.payload.marker.length > 256 ||
+      !boundedString(request.payload.marker, 1, 256) ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -1513,8 +1550,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   }> {
     const limit = Math.min(Math.max(input.limit ?? 100, 1), 100);
     if (
+      !boundedString(input.generation, 1, 64) ||
       input.generation.trim().length === 0 ||
-      input.generation.length > 64 ||
       !Number.isInteger(input.bucket) ||
       input.bucket < 0 ||
       input.bucket > 1023 ||

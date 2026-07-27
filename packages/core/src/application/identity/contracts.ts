@@ -385,7 +385,11 @@ export interface AccountHomePort {
     kind: CredentialKind;
     now: number;
   }): Promise<void>;
-  countActiveGeneration(userId: UserId, generation: string): Promise<number>;
+  countActiveGeneration(
+    userId: UserId,
+    generation: string,
+    bucket: number,
+  ): Promise<number>;
   beginDeletion(input: {
     operationId: OperationId;
     userId: UserId;
