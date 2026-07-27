@@ -1,7 +1,7 @@
 {
-  "recordedAt": "2026-07-27T20:27:17Z",
+  "recordedAt": "2026-07-27T21:38:21Z",
   "source": "working-tree",
-  "baseCommit": "43ecf369de219aecbe5c2a6be33dcbe3d9cd4209",
+  "baseCommit": "23845db39ee73757b7380f04be3f602c6af57f1d",
   "workingTree": true,
   "branch": "issue/19/cloudflare-do-fts",
   "automated": [
@@ -13,7 +13,7 @@
     {
       "command": "pnpm test:integration",
       "result": "passed",
-      "evidence": "request boundary 2 files/6 tests; production-mode built defaultEntry/server-fn 1 file/1 test; state 6 files/84 tests; machine-readable reporter artifacts are bound to the working-tree fingerprint"
+      "evidence": "request boundary 2 files/6 tests; production-mode built defaultEntry/server-fn 1 file/1 test; state 6 files/89 tests; machine-readable reporter artifacts are bound to the working-tree fingerprint"
     },
     {
       "command": "pnpm test:lifecycle:cli",
@@ -55,9 +55,17 @@
   ],
   "committedCi": {
     "result": "passed",
-    "commitSha": "43ecf369de219aecbe5c2a6be33dcbe3d9cd4209",
-    "runUrl": "https://github.com/tuanemuy/fog/actions/runs/30300833748",
-    "scope": "base commit only; current review fixes are a tested working tree and require CI after commit"
+    "commitSha": "23845db39ee73757b7380f04be3f602c6af57f1d",
+    "runUrl": "https://github.com/tuanemuy/fog/actions/runs/30304740633",
+    "scope": "base commit only; browser-found settings fix and documentation cleanup are a tested working tree and require CI after commit"
+  },
+  "manualBrowser": {
+    "result": "passed",
+    "source": ".thread/19/.manual-test/report.md",
+    "cases": 2,
+    "passed": 2,
+    "failed": 0,
+    "evidence": "signup/settings/logout/login/full reload and unknown-vs-wrong-password public error equivalence passed; SSO-only and malformed input remain covered by automated contracts"
   },
   "releaseGates": [
     {

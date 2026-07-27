@@ -31,10 +31,10 @@ export const getCurrentUserId = cache(async (): Promise<string | null> => {
 export async function requireUserId(): Promise<string> {
   const userId = await getCurrentUserId();
   if (userId !== null) {
-    // Belt to `noStoreMiddleware`'s braces. This alone does NOT cover a
-    // per-fragment streaming route: there the guard runs inside the RSC
-    // render, after the response headers were settled. Anything that returns
-    // protected data must also carry `noStoreMiddleware`.
+    // Belt to `noStoreMiddleware`'s braces. This alone does NOT cover an RSC
+    // leaf that finishes rendering after the response headers were settled.
+    // Anything that returns protected data must also carry
+    // `noStoreMiddleware`.
     setResponseHeader("cache-control", "no-store, private");
     return userId;
   }

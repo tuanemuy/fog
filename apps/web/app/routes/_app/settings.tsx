@@ -1,40 +1,44 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { renderServerComponent } from "@tanstack/react-start/rsc";
-import { Suspense } from "react";
 import { navTitle } from "@/components/layout/AppShell/navItems";
+import { CurrentUserPanel } from "@/components/settings/CurrentUserPanel";
 import { SettingsSkeleton } from "@/components/settings/SettingsSkeleton";
-import { Deferred } from "@/components/ui/Deferred";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 
-const renderSettings = createServerFn({ method: "GET" })
+const loadSettings = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware, noStoreMiddleware])
   .handler(async () => {
-    const { CurrentUserPanel } = await import(
-      "@/components/settings/CurrentUserPanel"
+    const [{ requireUserId }, { loadServerDeps }] = await Promise.all([
+      import("@/presentation/currentUser"),
+      import("@/presentation/serverAction"),
+    ]);
+    const userId = await requireUserId();
+    const { container, module } = await loadServerDeps(
+      () => import("@/presentation/identityActionHandlers"),
     );
-    // Returned UNRESOLVED so the loader can forward it without awaiting;
-    // awaiting here collapses back to a blocking render — no skeleton.
-    return { Panel: renderServerComponent(<CurrentUserPanel />) };
+    const user = await module.currentUserAction(container, userId);
+    return {
+      user: {
+        email: user.email,
+        authMethods: user.authMethods,
+      },
+    };
   });
 
 export const Route = createFileRoute("/_app/settings")({
   loader: async () => {
-    const { Panel } = await renderSettings();
-    return { Panel };
+    const { user } = await loadSettings();
+    return { user };
   },
   head: ({ match }) =>
     routeHead(match, { title: navTitle("/settings"), path: "/settings" }),
+  pendingComponent: SettingsSkeleton,
   component: SettingsPage,
 });
 
 function SettingsPage() {
-  const { Panel } = Route.useLoaderData();
-  return (
-    <Suspense fallback={<SettingsSkeleton />}>
-      <Deferred promise={Panel} />
-    </Suspense>
-  );
+  const { user } = Route.useLoaderData();
+  return <CurrentUserPanel user={user} />;
 }

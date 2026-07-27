@@ -2,7 +2,7 @@
 
 > **Superseded pointer（Issue #19、2026-07-28）**
 >
-> このファイルの本文はIssue #1実装時の判断履歴として保持する。ADR-004を含むNode/libSQL主経路、複数runtime、共有DB transaction、非同期イベント配送に関する判断はIssue #19で置換された。現行設計はCloudflare request Worker + state/DO Worker、User Data / Identity Directory / Account Homeの3 SQLite-backed Durable Object class、同期FTS5 projection、Alarm永続job、identity saga primitivesである。参照先: [`spec/database/index.md`](../../spec/database/index.md)、[`spec/domains/identity.md`](../../spec/domains/identity.md)、[`spec/domains/search.md`](../../spec/domains/search.md)、[`.thread/19/adr.md`](../../.thread/19/adr.md)。
+> このファイルの本文はIssue #1実装時の判断履歴として保持する。ADR-004を含むNode/libSQL主経路、複数runtime、共有DB transaction、非同期イベント配送に関する判断はIssue #19で置換された。現行設計はCloudflare request Worker + state/DO Worker、User Data / Identity Directory / Account Homeの3 SQLite-backed Durable Object class、同期FTS5 projection、Alarm永続job、identity saga primitivesである。参照先: [ADR-001](../../.adr/001-cloudflare-workers-and-user-data-durable-objects.md)、[ADR-003](../../.adr/003-semantic-commit-and-alarm-jobs.md)、[ADR-004](../../.adr/004-sharded-identity-directory-and-sagas.md)、[`spec/database/index.md`](../../spec/database/index.md)、[`spec/domains/identity.md`](../../spec/domains/identity.md)、[`spec/domains/search.md`](../../spec/domains/search.md)。
 
 ## ADR-001: サンプル todo ドメインの削除と初期マイグレーションのリセット
 

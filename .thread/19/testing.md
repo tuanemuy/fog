@@ -16,6 +16,10 @@ restartの期待abort判別、session/sentinel proof、conflict-zero、undoの
 fail-closed contractを自動検証した。実際のisolate abort、bookmark適用、
 新sessionでのverifyはstagingでのみ検証できる。
 
+ブラウザ検証は`.thread/19/.manual-test/report.md`に記録した。登録、設定表示、
+logout、再login、session維持、未登録／誤passwordの公開error同一性は最終PASS。
+検出した`/settings` full reloadの白画面はDTO loaderへ修正し、再検証で解消した。
+
 ## 確認環境
 
 この Issue の変更確認に必要な手順だけを記載する。実装中に既定 script を Cloudflare + DO の単一構成へ更新するため、完了時点で package scripts と再照合する。
@@ -27,7 +31,7 @@ fail-closed contractを自動検証した。実際のisolate abort、bookmark適
 pnpm dev:cf
 ```
 
-実装後は `dev:cf` と同じ2 Worker構成を既定の `pnpm dev` から起動できることも確認する。起動後 `http://localhost:3000` を開く。
+実装後は `dev:cf` と同じ2 Worker構成を既定の `pnpm dev` から起動できることも確認する。起動後 `http://localhost:8787` を開く。
 
 ### 自動・契約検証
 

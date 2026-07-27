@@ -80,7 +80,13 @@ describe("production Cloudflare request entry", () => {
       headers: { cookie },
     });
     expect(settings.status).toBe(200);
-    expect(await settings.text()).toContain("設定");
+    const settingsHtml = await settings.text();
+    expect(settingsHtml).toContain("<title>設定</title>");
+    expect(settingsHtml).toContain(credentials.email);
+    expect(settingsHtml).toContain("メールアドレスとパスワード");
+    expect(settingsHtml).not.toContain(">読み込み中</span>");
+    expect(settingsHtml).not.toContain('$_TSR.t.get("$RSC")');
+    expect(settingsHtml).not.toContain("__name(");
 
     const logout = await serverFunction(
       bindings.PRODUCTION_LOGOUT_FN_ID,

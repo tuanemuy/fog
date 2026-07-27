@@ -36,10 +36,10 @@ export const errorResponseMiddleware = createMiddleware({
 /**
  * The same boundary, for renders that stream past the middleware.
  *
- * A streaming route forwards `renderServerComponent(...)` without awaiting
- * it, so the RSC leaf renders after the handler returned and its throws
- * never reach the middleware's `catch`. Leaves that read protected data
- * wrap their loading in this so redaction and logging still happen.
+ * Even when a handler awaits `renderServerComponent(...)`, the returned
+ * handle can outlive the handler while the RSC leaf finishes rendering.
+ * Its throws never reach the middleware's `catch`, so leaves that read
+ * protected data wrap their loading in this for redaction and logging.
  *
  * It cannot restore the HTTP status (the response is already committed) or
  * the serialized `kind` (the RSC boundary does not run

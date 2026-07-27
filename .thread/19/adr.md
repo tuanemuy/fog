@@ -3,7 +3,7 @@
 ## ADR-001: Cloudflare Workers とユーザー単位 SQLite-backed Durable Objects に集約する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/001`
 
 ### Context
 既存実装は Node/libSQL、Cloudflare/D1、AWS/Turso、GCP/Turso の4実行経路を保守し、利用者データを共有 DB の `user_id` で論理分離している。一方 fog のデータは共有・共同編集・テナント横断検索を行わず、利用者単位で完結する。
@@ -20,7 +20,7 @@ Proposed
 ## ADR-002: 検索は SQLite FTS5 全文検索だけを採用する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/002`
 
 ### Context
 spec はキーワードとベクトル検索の統合、Vectorize、embedding、RRF を要求しているが、ベクトル検索を必須とする利用上の根拠や評価データはない。User Data DO の SQLite は FTS5 をサポートし、本体データと索引を同じ transaction で更新できる。
@@ -37,7 +37,7 @@ spec はキーワードとベクトル検索の統合、Vectorize、embedding、
 ## ADR-003: ローカル更新は同期 transaction、外部 I/O と retention は Durable Object Alarm で処理する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/003`
 
 ### Context
 既存構成は D1 Outbox、relay、consumer、DLQ を各ランタイム向けに持つ。User Data DO 内の本体と FTS index は同じ SQLite にあり、分散 delivery を挟む理由がない。一方、外部 I/O と期限付き trash retention は request transaction から分離し、失敗後も回復する必要がある。
@@ -54,7 +54,7 @@ Proposed
 ## ADR-004: Identity Directory は秘密鍵付き決定的キーで分割し、DO間操作は冪等 saga とする
 
 ### Status
-Proposed
+Approved; promoted to `.adr/004`
 
 ### Context
 login 前は `userId` が分からないため、正規化メールまたは SSO provider/subject から利用者を解決する directory が必要である。単一 global DO はボトルネックになり、生メールや subject を DO name に使うと identifier やログから個人情報が漏れる。Directory shard と User Data DO を跨ぐ atomic transaction は利用できない。
@@ -77,7 +77,7 @@ credential key は request Worker だけが持つ active/previous version付き 
 ## ADR-005: 新規 Durable Object namespace は宣言的 class exports で管理する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/005`
 
 ### Context
 Cloudflare は2026年7月に Durable Object class lifecycle の宣言的 `exports` を公開し、従来の順序付き `migrations` 配列を置換できるようにした。fog はまだ本番 DO namespace を持たず、既存データを移行する必要がない。
@@ -94,7 +94,7 @@ lockfileで解決した Wrangler 4.114.0 の `exports` で `UserDataDurableObjec
 ## ADR-006: application usecase と Unit of Work は DO 内で実行し、RPC は値の envelope に限定する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/006`
 
 ### Context
 現行 `UnitOfWorkProvider.run(fn)` の callback と repository は RPC 越しに運べず、Workers RPC の custom error伝搬も既存 `CodedError` の構造的serialize契約を保証しない。request Workerでusecaseを実行してremote repositoryを注入すると、DO SQLite transactionの範囲とapplication transactionが一致しない。
@@ -111,7 +111,7 @@ User Data/Identity Directory/Account Home の application usecase は各 DO 内�
 ## ADR-007: #19 の memo/document 受け入れ確認は最小 DO command harness で行う
 
 ### Status
-Proposed
+Approved; retained as Issue-specific verification history
 
 ### Context
 Issue #19 はmemo/documentのcreate/update/remove/restoreとFTS整合を要求するが、本番UIと完成版usecaseは後続Issueの範囲で、現時点では操作画面がない。adapter fixtureだけではtransaction contractを検証できず、受け入れ条件を後続へ移すとIssueの意図を下げる。
@@ -128,7 +128,7 @@ Issue #19 はmemo/documentのcreate/update/remove/restoreとFTS整合を要求�
 ## ADR-008: PITR は staging 手動 smoke、local は wrapper contract で検証する
 
 ### Status
-Proposed
+Approved; promoted to `.adr/007`
 
 ### Context
 SQLite-backed Durable ObjectsのPITRはlocal developmentで利用できず、workerd integration testでrestoreを確認できない。またDirectoryとUser Dataは別DOのため、単一DOのPITRだけではidentity saga全体の整合性は戻らない。
@@ -145,7 +145,7 @@ local/workerdの自動品質ゲートはPITR wrapperの入力、error変換、mi
 ## ADR-009: #19 は既存 identity 移行と将来 primitive の確立までに限定する
 
 ### Status
-Proposed
+Approved; retained as Issue-specific scope history
 
 ### Context
 #19 の目的はCloudflare DOへの保存・所有境界の移行であり、既存#1のsignup/login/current-user/logoutは維持する必要がある。一方、password change、password reset/SSO、user exportの完成usecase/UIは#11/#12/#15の縦スライスである。
@@ -162,7 +162,7 @@ Proposed
 ## ADR-010: Account Home を identity saga と session のオンライン権威にする
 
 ### Status
-Proposed
+Approved; promoted to `.adr/008`
 
 ### Context
 Directory mapping だけで login を成立させると、signup の部分失敗、退会処理中、Directory PITR、credential mutation 後の旧 session を区別できない。複数 DO の一時状態を stateless session token だけで失効させることもできない。

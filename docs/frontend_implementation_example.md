@@ -5,7 +5,7 @@ Implementation example assuming TanStack Start (with React Server Components ena
 The `todo` domain used throughout is the template's own sample and has been deleted from this repository — read the `apps/web/app/{components,routes}/todo/…` paths below as illustrations of a pattern, not as files to open. What this repository actually ships:
 
 - three-layer mutation (server component → `"use client"` island → React 19 primitive): `apps/web/app/components/auth/{LoginForm,SignupForm}` (`useActionState`) and `apps/web/app/components/settings/LogoutButton` (`useTransition`)
-- per-fragment streaming with a shape-matched skeleton: `apps/web/app/routes/_app/settings.tsx` + `apps/web/app/components/settings/SettingsSkeleton`
+- a serializable DTO loader with a route-pending, shape-matched skeleton: `apps/web/app/routes/_app/settings.tsx` + `apps/web/app/components/settings/SettingsSkeleton`
 - shared shell in the parent route's `component`: `apps/web/app/routes/_app.tsx` + `apps/web/app/components/layout/AppShell`
 
 No screen owns a list yet, so **there is currently no `useOptimistic` reference implementation**. The optimistic sections below (list ownership, in-item toggles) describe the intended pattern with no code behind it until a list screen lands.
@@ -13,7 +13,7 @@ No screen owns a list yet, so **there is currently no `useOptimistic` reference 
 Basic design principles:
 
 - **Choose RSC with an awareness of its "owner".** An RSC is nothing more than a React Flight payload returned from `createServerFn`. Decide first where you call it from = who holds that payload.
-- **Keep data fetching, authorization, and usecase invocation entirely inside server components.** Treat the loader as "a thin proxy for pulling a server component in as an RSC payload".
+- **Keep data fetching, authorization, and usecase invocation on the server.** Treat the loader as a thin bridge to either a serializable DTO or an awaited RSC payload.
 - **`throw` errors.** There is no need to convert them to status codes and return them via `data()`. Throwing `redirect({ to })` / `notFound()` lets the router pick them up, and any other exception falls back to the route's `errorComponent`.
 - **Carve out only the parts that need client state with `"use client"`.** Make only the parts that hold forms or interactions into client components.
 - **When calling a server function from the client, wrap it with `useServerFn(fn)`.** This way, even when the usecase does `throw redirect({ to })`, the router navigates automatically.
@@ -67,55 +67,39 @@ Since the route file also enters the client graph, do not statically import serv
 
 **When to choose**: fragments uniquely determined by URL parameters, such as list and detail pages.
 
-#### Streaming variant: defer the payload and show a skeleton
+#### Route-pending variant: block the loader and show a skeleton
 
-The example above `await`s the RSC payload in the loader, so navigation blocks until the data is fully resolved (no fallback is ever shown). To make the shell appear instantly and stream the fragment in, have the bridge **return the unresolved promise** and let a client-side `<Suspense>` boundary render a skeleton until the React Flight payload arrives. This is the recommended default for list/detail fragments.
+The example above `await`s the RSC payload in the server-function handler. Keep that resolved value boundary: an unresolved transformed promise or function must not be forwarded through loader serialization. For navigation feedback while the loader blocks, give the route a shape-matched `pendingComponent`.
 
 ```tsx
-// bridge — return the UNRESOLVED promise (do not await renderServerComponent)
+// bridge — resolve the RSC inside the server-function handler
 export const renderTodoList = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])
   .inputValidator(validateInput(paginationSchema))
   .handler(async ({ data }) => {
     const { TodoList } = await import("@/components/todo/TodoList");
-    return { TodoList: renderServerComponent(<TodoList pagination={data} />) };
+    return {
+      TodoList: await renderServerComponent(<TodoList pagination={data} />),
+    };
   });
 
-// route — forward the inner promise, resolve it under <Suspense>
+// route — keep the loader data resolved and use route pending UI
 export const Route = createFileRoute("/todo/")({
-  // MANDATORY for the streaming variant. The loaderData holds an unresolved
-  // promise; under `staleTime: 0` a revisit re-runs the loader, produces a fresh
-  // promise, and the Suspense boundary re-suspends — so the cached list flashes
-  // back to the skeleton on every back-navigation / in-app link. Caching the
-  // settled promise (Infinity in prod) keeps the resolved list on screen; mutation
-  // freshness comes from the explicit `router.invalidate()`, not from re-fetching.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
-  loader: async ({ deps }) => {
-    const { TodoList } = await renderTodoList({ data: deps });
-    return { TodoList }; // TodoList is still a Promise<ReactNode>
-  },
+  loader: ({ deps }) => renderTodoList({ data: deps }),
+  pendingComponent: TodoListSkeleton,
   component: TodoPage,
 });
 
 function TodoPage() {
   const { TodoList } = Route.useLoaderData();
-  return (
-    <Suspense fallback={<TodoListSkeleton />}>
-      <Deferred promise={TodoList} />
-    </Suspense>
-  );
-}
-
-// apps/web/app/components/ui/Deferred — generic, reusable client resolver
-("use client");
-export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
-  return use(promise);
+  return <>{TodoList}</>;
 }
 ```
 
 The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/settings/SettingsSkeleton` shaped to `CurrentUserPanel`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
 
-This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/settings` settles its loader immediately and never triggers it.
+This is route-level loading. Use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` for a shared fallback, or a route's `pendingComponent` when the skeleton must match that route's content. `/settings` uses the latter with a plain DTO loader rather than RSC because its panel already contains a client island.
 
 ### 2. Held by TanStack Query
 

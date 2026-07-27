@@ -1,16 +1,9 @@
-import { cache } from "react";
+import type { CurrentUserView } from "@repo/core/application/identity/view";
 import { LogoutButton } from "@/components/settings/LogoutButton";
-import { requireUserId } from "@/presentation/currentUser";
-import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
-import { serverData } from "@/presentation/serverAction";
 
-const loadCurrentUser = cache(
-  serverData(
-    () => import("@/presentation/identityActionHandlers"),
-    async ({ container }, { currentUserAction }, userId: string) =>
-      currentUserAction(container, userId),
-  ),
-);
+type CurrentUserPanelProps = {
+  user: Pick<CurrentUserView, "email" | "authMethods">;
+};
 
 const AUTH_METHOD_LABEL = {
   password: "メールアドレスとパスワード",
@@ -19,12 +12,7 @@ const AUTH_METHOD_LABEL = {
 
 const ROW = "flex items-center justify-between gap-md py-row";
 
-export async function CurrentUserPanel() {
-  // This leaf is streamed, so it renders outside `errorResponseMiddleware`.
-  const user = await guardStreamedRender(async () =>
-    loadCurrentUser(await requireUserId()),
-  );
-
+export function CurrentUserPanel({ user }: CurrentUserPanelProps) {
   return (
     <section>
       <h2 className="text-xs font-semibold uppercase tracking-label text-neutral-600">
