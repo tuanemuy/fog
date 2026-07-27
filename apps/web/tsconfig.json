@@ -3,7 +3,7 @@
   "exclude": ["node_modules", "**/*.stories.*", "dist/**"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "types": ["node", "vite/client"],
+    "types": ["node", "vite/client", "@cloudflare/vitest-pool-workers/types"],
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",

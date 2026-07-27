@@ -1,6 +1,5 @@
-import { User } from "@repo/core/domain/identity/entity";
 import { Email, PlainPassword } from "@repo/core/domain/identity/valueObject";
-import { ConflictError, isConflictError } from "../errors";
+import { ConflictError } from "../errors";
 import type { ServiceArgs } from "../types";
 
 export type RegisterWithPasswordInput = {
@@ -43,36 +42,21 @@ export async function registerWithPassword({
   const passwordHash = await container.passwordHasher.hash(plainPassword);
 
   try {
-    const { entity: user, eventDrafts } = User.registerWithPassword(
-      { id, email, passwordHash },
-      now,
-    );
-
-    await container.unitOfWorkProvider.run(
-      async ({ userRepository, collectEvents }) => {
-        const existing = await userRepository.findByEmail(email);
-        if (existing) throw emailAlreadyRegistered();
-        await userRepository.insert(user);
-        collectEvents(eventDrafts);
-      },
-    );
-
-    return { userId: user.id };
+    if (!container.identity)
+      throw new Error("Identity gateway is not configured");
+    await container.identity.registerWithPassword({
+      operationId: container.idGenerator.next(),
+      userId: id,
+      email,
+      passwordHash,
+      now: now.getTime(),
+    });
+    return { userId: id };
   } catch (error) {
-    // The `findByEmail` check above loses to a concurrent registration of
-    // the same address; the loser only finds out when the unit of work
-    // flushes and `users_email_uq` fires. Reading that as
-    // EMAIL_ALREADY_REGISTERED gives the racing caller the same answer as
-    // the pre-check would have.
-    //
-    // Safe only because of what this unit of work writes: one `users`
-    // insert plus its outbox row. The inserted user is a `PasswordUser`,
-    // so both SSO columns are NULL and the partial index
-    // `users_sso_identity_uq` cannot match; `users.id` and the outbox id
-    // are UUIDv7, so their primary keys do not realistically collide.
-    // Add a write with another unique constraint to this unit of work and
-    // this translation has to go.
-    if (isConflictError(error) && error.code === "UNIQUE_VIOLATION") {
+    if (
+      error instanceof ConflictError &&
+      error.code === "CREDENTIAL_ALREADY_REGISTERED"
+    ) {
       throw emailAlreadyRegistered(error);
     }
     throw error;

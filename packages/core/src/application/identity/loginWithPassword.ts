@@ -1,4 +1,3 @@
-import { User } from "@repo/core/domain/identity/entity";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   Email,
@@ -115,23 +114,18 @@ export async function loginWithPassword({
     email = Email.create(input.email);
     plainPassword = PlainPassword.create(input.password);
   } catch {
-    throw invalidCredentials();
-  }
-
-  const found = await container.unitOfWorkProvider.run(({ userRepository }) =>
-    userRepository.findByEmail(email),
-  );
-  if (!found) {
     await burnVerificationTime(
       container.passwordHasher,
-      plainPassword,
+      input.password as PlainPassword,
       container.logger,
     );
     throw invalidCredentials();
   }
 
-  const user = found.entity;
-  if (!User.isPasswordUser(user)) {
+  if (!container.identity)
+    throw new Error("Identity gateway is not configured");
+  const found = await container.identity.findPasswordCredential(email);
+  if (!found) {
     await burnVerificationTime(
       container.passwordHasher,
       plainPassword,
@@ -142,9 +136,9 @@ export async function loginWithPassword({
 
   const matches = await container.passwordHasher.verify(
     plainPassword,
-    user.passwordHash,
+    found.passwordHash,
   );
   if (!matches) throw invalidCredentials();
 
-  return { userId: user.id };
+  return { userId: found.userId };
 }

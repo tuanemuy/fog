@@ -1,86 +1,79 @@
 #!/usr/bin/env tsx
-/**
- * Render `wrangler.<stage>.toml` from a `.tpl` template by substituting
- * placeholders with outputs from the Cloudflare resources Pulumi stack.
- *
- * Usage:
- *   pnpm cf:render:<stage>
- *
- * Placeholders recognised in the template (any `${NAME}` occurrence is
- * substituted; unknown names abort the run so we never ship a half-rendered
- * config):
- *   ${APP_URL}            — public URL of the deployment
- *   ${D1_DATABASE_ID}     — D1 database id
- *   ${D1_DATABASE_NAME}   — D1 database name
- *   ${EVENTS_QUEUE_NAME}  — primary events queue name
- *   ${DLQ_QUEUE_NAME}     — dead-letter queue name
- *   ${RESOURCE_PREFIX}    — worker / resource name prefix (e.g. `…-staging`)
- *
- * Pulumi outputs are read via `pulumi -C <dir> -s <stage> stack output --json`
- * — the CLI must already be authenticated and the resources stack already
- * `pulumi up`-ed for the target stage.
- */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SUPPORTED_STAGES = ["staging", "production"] as const;
-type Stage = (typeof SUPPORTED_STAGES)[number];
+const supportedStages = ["staging", "production"] as const;
+type Stage = (typeof supportedStages)[number];
 
 function isStage(value: string): value is Stage {
-  return (SUPPORTED_STAGES as readonly string[]).includes(value);
+  return (supportedStages as readonly string[]).includes(value);
 }
 
 const stageArg = process.argv[2];
 if (stageArg === undefined || !isStage(stageArg)) {
-  console.error(`usage: pnpm cf:render:<${SUPPORTED_STAGES.join("|")}>`);
+  console.error(`usage: pnpm cf:render:<${supportedStages.join("|")}>`);
   process.exit(1);
 }
-const stage: Stage = stageArg;
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(webRoot, "../..");
 const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
-const templatePath = resolve(webRoot, `wrangler.${stage}.toml.tpl`);
-const outPath = resolve(webRoot, `wrangler.${stage}.toml`);
+function stackOutputs(): Record<string, string> {
+  try {
+    const raw = execFileSync(
+      "pulumi",
+      ["-C", resourcesDir, "-s", stageArg, "stack", "output", "--json"],
+      { encoding: "utf8" },
+    );
+    return JSON.parse(raw) as Record<string, string>;
+  } catch (error) {
+    const unavailable =
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT";
+    if (!unavailable) throw error;
+    const yaml = readFileSync(
+      resolve(resourcesDir, `Pulumi.${stageArg}.yaml`),
+      "utf8",
+    );
+    const read = (key: string): string => {
+      const match = new RegExp(`^[^\\n]*:${key}:\\s*(.+)$`, "mu").exec(yaml);
+      if (!match?.[1]) throw new Error(`Missing ${key} in stage config`);
+      return match[1].trim();
+    };
+    return {
+      exportedAppUrl: read("appUrl"),
+      exportedPrefix: read("resourcePrefix"),
+    };
+  }
+}
 
-const raw = execFileSync(
-  "pulumi",
-  [
-    "-C",
-    resourcesDir,
-    "-s",
-    stage,
-    "stack",
-    "output",
-    "--json",
-    "--show-secrets",
-  ],
-  { encoding: "utf8" },
-);
-const outputs = JSON.parse(raw) as Record<string, string>;
-
+const outputs = stackOutputs();
 const substitutions: Record<string, string | undefined> = {
   APP_URL: outputs.exportedAppUrl,
-  D1_DATABASE_ID: outputs.databaseId,
-  D1_DATABASE_NAME: outputs.databaseName,
-  EVENTS_QUEUE_NAME: outputs.eventsQueueName,
-  DLQ_QUEUE_NAME: outputs.dlqQueueName,
   RESOURCE_PREFIX: outputs.exportedPrefix,
 };
 
-const template = readFileSync(templatePath, "utf8");
-const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
-  const value = substitutions[name];
-  if (value === undefined) {
-    throw new Error(
-      `Unknown placeholder \${${name}} in ${templatePath}. ` +
-        `Known: ${Object.keys(substitutions).join(", ")}`,
-    );
-  }
-  return value;
-});
+for (const worker of ["request", "state"] as const) {
+  const templatePath = resolve(
+    webRoot,
+    `wrangler.${worker}.${stageArg}.toml.tpl`,
+  );
+  const outputPath = resolve(webRoot, `wrangler.${worker}.${stageArg}.toml`);
+  const template = readFileSync(templatePath, "utf8");
+  const rendered = template.replace(
+    /\$\{([A-Z0-9_]+)\}/g,
+    (_match, name: string) => {
+      const value = substitutions[name];
+      if (value === undefined) {
+        throw new Error(`Unknown placeholder \${${name}} in ${templatePath}`);
+      }
+      return value;
+    },
+  );
 
-writeFileSync(outPath, rendered);
-console.log(`wrote ${outPath}`);
+  writeFileSync(outputPath, rendered);
+  console.log(`wrote ${outputPath}`);
+}

@@ -17,9 +17,7 @@ const UUID_V7_PATTERN =
  * when the implementation is swapped.
  *
  * Replacements (e.g. ULID, KSUID) need to be unique. They do not need to
- * be monotonic: `(createdAt, id)` only acts as a deterministic poll-order
- * tiebreaker for the outbox — consumers must NOT rely on observing events
- * in any particular order.
+ * be monotonic.
  */
 export interface IdGenerator {
   next(): string;

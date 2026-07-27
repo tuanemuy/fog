@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 認証済みユーザー（人間UI） | `body: "今日の気づき"` で投稿する | `MemoView`（`id` / `body` / `postedAt` / `updatedAt` / `latestRevisionNumber: 1` / `version: 0`）が返る。`postedAt` は `clock.now()` の値（S-TL-01） | |
 | 認証済みユーザー | 投稿する | 初版リビジョン（`revisionNumber: 1`、`actor` = 人間ユーザー、`body` = メモ本文、`createdAt = now`）が同一 UoW で必ず記録される（メモは初版リビジョンを伴って生まれる） | |
-| 認証済みユーザー | 投稿する | `memo.created` イベント（ペイロードは `memoId` のみ）が同一 UoW で Outbox に記録される | |
+| 認証済みユーザー | 投稿する | memo本体・初版revision・FTS5射影・idempotency結果が同じtransactionで確定し、成功直後に検索できる | |
 | 認証済みユーザー | `body: "  前後空白あり  "` で投稿する | trim 後非空のため正常に作成される。保存される本文は trim されず入力そのまま（trim は空判定のみに使う） | |
 | 認証済みユーザー | `body` に改行・Markdown 記法を含めて投稿する | 非構造プレーンテキストとしてそのまま保存される（構造の解釈はしない） | |
 | 認証済みユーザー | `body` を 1 文字で投稿する | 正常に作成される（境界値: 最小長） | |

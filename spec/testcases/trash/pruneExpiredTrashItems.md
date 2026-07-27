@@ -5,7 +5,7 @@
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | 期限切れ（`trashedAt + retentionDays < now`）のメモ・ドキュメント・トピックが混在する | pruner を実行する | 各項目が `expandTargets` で展開され、項目ごとの UnitOfWork で影響先確定 → OCC 再取得 → ハードデリート → （メモは）`deleteSourceLinksByMemo` → イベント発行が実行される。`processedCount` に処理数が返る | |
-| 期限切れのメモがドキュメントの出典である | pruner を実行する | 消去前に `listSourceLinksByMemo` で影響先が確定され、同一 UoW でリンクが消去される（ADR-003）。`memo.hardDeleted` + `document.sourceLinksChanged` が収集され、インデックス除去・再構築は outbox 経由の consumer に委ねられる | |
+| 期限切れのメモがドキュメントの出典である | Alarm jobを実行する | 消去前に影響先を確定し、本体/revision/link消去、memo射影remove、active document射影upsertを同じtransactionで確定する | |
 | 期限切れのセット削除トピック（`setDocumentIds` に配下 2 件）がある | pruner を実行する | 追加のポート照会なしで `setDocumentIds` から展開され、配下ドキュメントごと消去される | |
 | セット削除された配下ドキュメントがトピックより先に単独で期限切れ扱いになる（時計・保持日数のずれ） | pruner を実行する | 単品ハードデリートとして消去される（規則上問題ない） | |
 | `expiresAt` がちょうど `now` と一致する項目がある（境界値: `<` は厳密判定） | pruner を実行する | `trashedAt + retentionDays < now` を満たさないため対象外。消去されない | |

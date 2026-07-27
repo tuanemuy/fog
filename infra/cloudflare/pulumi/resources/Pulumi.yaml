@@ -1,12 +1,11 @@
-name: tanstack-start-template-cf-resources
+name: fog-cf-resources
 runtime:
   name: nodejs
   options:
     packagemanager: pnpm
 description: |
-  Cloudflare persistent resources (Zone, DNS, D1, Queues) for the
-  tanstack-start-template runtime. Deploy this stack BEFORE running
-  `wrangler deploy` — its outputs feed `pnpm cf:render:<stage>`.
+  Cloudflare DNS resources and stage metadata for fog. Durable Object
+  namespaces are managed declaratively by the state Worker configuration.
 main: index.ts
 config:
   pulumi:tags:

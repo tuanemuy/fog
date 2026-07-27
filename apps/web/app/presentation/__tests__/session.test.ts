@@ -78,11 +78,6 @@ describe("startSession", () => {
     issued = [];
     const container = {
       config: { ...content, appUrl: "http://localhost:3000" },
-      unitOfWorkProvider: {
-        run: async () => {
-          throw new Error("startSession must not open a unit of work");
-        },
-      },
       passwordHasher: {
         hash: async () => {
           throw new Error("startSession must not hash");

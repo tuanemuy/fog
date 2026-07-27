@@ -7,7 +7,7 @@ trash ドメインのユースケース定義。上流: [domains/trash.md](../do
 - **すべて人間 UI 専用（★）**。AI クライアント向けインターフェース（MCP / REST）には存在しない。本ドメインのユースケースは `actor` を入力に持たないため型による強制は主張せず、AI 側 presentation（MCP / REST）に配線しないこと（application 層の公開範囲 = 配線分離）で構造的に排除する。加えて AI トークンの認可ミドルウェアは、AiScope の許可ユースケース列挙（許可リスト方式）に本ドメインのユースケースを含めない（domains/identity.md「TokenScope」の二層防壁、domains/index.md「権限の非対称性」、domains/trash.md「AI非公開」）。唯一の例外は pruneExpiredTrashItems で、これはユーザー操作を伴わないワーカー実行であり、いかなる外部インターフェースにも公開しない
 - `userId` はセッション由来の信頼済み値として入力 DTO に含める（外部入力ではない）。対象 ID の所有権はリポジトリ / ポートの userId スコープにより構造的に保証され、他ユーザー所有の ID は NotFound となる（domains/index.md「テナント分離」）。ユースケースごとの所有権チェックは記載しない
 - `now` / 新規 ID はユースケース冒頭で `container.clock.now()` / `container.idGenerator.next()` により解決する。外部入力の ID は冒頭で VO（`MemoId.create` 等）を構築し、形式違反は `BusinessRuleError`（presentation 境界で `ValidationError` に変換）
-- 保持日数は identity の `UserId` スコープで取得する: `UserRepository.findById(userId)` → `user.trashRetentionDays`（`TrashRetentionDays`）。`TrashQueryPort.listTrashItems` / `findTrashItem` に渡し、`expiresAt` はポート実装が `RetentionPolicy.expiresAt` で算出する
+- 保持日数はrouting済みUser Data DOのSettingsから取得する。`TrashQueryPort.listTrashItems` / `findTrashItem` に渡し、`expiresAt` は`RetentionPolicy.expiresAt`で算出する
 - trash は書き込みポートを持たない。書き込みはすべて memo / knowledge の Repository（UnitOfWork 経由）で行い、ビジネスロジックはドメインサービス（`RestorePolicy` / `HardDeletePolicy` / `RetentionPolicy` / `TopicTrashService`）とエンティティの振る舞い（`Memo.restore` / `Document.restore` / `Document.moveToTopic` / `Topic.create`）に置く。ユースケースはそれらのオーケストレーションのみを担う
 - 「見つからない」（不在 / ゴミ箱にない / 他ユーザー所有）は各ポートが null / 空で返し、`NotFoundError` への変換はユースケースの責務
 
@@ -51,7 +51,7 @@ TrashItemView（`kind` による直和）:
 ### 処理フロー
 
 1. `UserId.create(input.userId)` で VO を構築する
-2. `UserRepository.findById(userId)` でユーザーを取得し、`trashRetentionDays` を得る（不在は `NotFoundError`）
+2. 同じUser Data DOのSettingsから`trashRetentionDays`を得る
 3. `TrashQueryPort.listTrashItems(userId, retentionDays, pagination)` で `TrashItem` のページを取得する（削除日時の降順。`expiresAt` はポート実装が付与）
 4. `PaginationResult` を view に射影して返す。0 件は空配列（S-TR-01 エッジケース「ゴミ箱が空」の表示は UI の責務）
 
@@ -89,7 +89,7 @@ TrashItemView（`kind` による直和）:
    1. `MemoRepository.findByIdIncludingTrashed(userId, memoId)` で OCC トークン付きの対象を取得する。null、または `status` が `"trashed"` でない場合は `NotFoundError`（ゴミ箱にない）
    2. `Memo.restore(trashedMemo, now)` で `ActiveMemo` とイベントドラフト（`memo.restored`）を得る
    3. `MemoRepository.save(restored, expectedVersion)` で永続化する
-   4. `collectEvents(eventDrafts)`（search consumer がインデックスへ再登録し、出典先ドキュメントのエントリも再 upsert する）
+   4. 同じsemantic commitでmemo射影を再登録し、出典先active document射影も再upsertする
 
 ### エラーケース
 
@@ -145,7 +145,7 @@ destination（直和）:
 ### 処理フロー
 
 1. `UserId.create` / `DocumentId.create` で VO を構築する（destination があれば `TopicId.create` も）
-2. `UserRepository.findById(userId)` で `trashRetentionDays` を得る
+2. 同じUser Data DOのSettingsから`trashRetentionDays`を得る
 3. `TrashQueryPort.findTrashItem(userId, { kind: "document", id }, retentionDays)` で対象の `TrashedDocumentItem` を取得する。null は `NotFoundError`
 4. `TopicRepository.findByIdIncludingTrashed(userId, item.topicId)` で所属トピックの現況を調べ、`TopicStatusForRestore` に写像する（`LiveTopic` → `active`、`TrashedTopic` → `trashed`、null → `hardDeleted`）
 5. `plan = RestorePolicy.decideDocumentRestore(item, topicStatus)` で分岐を判定する
@@ -242,7 +242,7 @@ destination（直和）:
 ### 処理フロー
 
 1. VO を構築し、`TrashItemRef` を組み立てる
-2. `UserRepository.findById(userId)` で `trashRetentionDays` を得る
+2. 同じUser Data DOのSettingsから`trashRetentionDays`を得る
 3. `TrashQueryPort.findTrashItem(userId, ref, retentionDays)` で対象の `TrashItem` を取得する。null は `NotFoundError`（ゴミ箱外の項目を直接ハードデリートする経路は存在しない）。topic 項目の `setDocumentIds` はポートが射影時に埋めるため追加照会は不要
 4. `plan = HardDeletePolicy.expandTargets(item)` で消去対象の `HardDeletePlan`（`memoIds` / `documentIds` / `topicIds`）に展開する
 5. UnitOfWork 内で plan を実行する（並行実行で既に消えている対象は no-op として続行する）:
@@ -261,7 +261,7 @@ destination（直和）:
      1. `TopicRepository.findByIdIncludingTrashed(userId, topicId)` で OCC トークン付きの対象を再取得する（不在なら no-op）
      2. `TopicRepository.delete(topicId, expectedVersion)` を実行する
      3. `topic.hardDeleted` を発行する
-6. 検索インデックスからの除去・影響先の再構築は、発行したイベントを outbox 経由で受けた search consumer が行う（ADR-005）
+6. 検索射影の除去・影響先の再構築は、本体/link消去と同じsemantic commitで行う
 
 ### エラーケース
 
@@ -292,7 +292,7 @@ destination（直和）:
 
 ### 処理フロー
 
-1. `UserId.create` で VO を構築し、`UserRepository.findById(userId)` で `trashRetentionDays` を得る
+1. routing済みUser Data DOのSettingsから`trashRetentionDays`を得る
 2. `TrashQueryPort.listTrashItems(userId, retentionDays, pagination)` をページ送りで繰り返し、ゴミ箱の全 `TrashItem` を取得する
 3. 全項目に `HardDeletePolicy.expandTargets(item)` を適用し、結果を種別（memo / document / topic）ごとの ID 集合に**和集合（重複除去）**してまとめる
 4. 集合内の各 ID について、hardDeleteTrashItem の手順 5 と同一の消去手順（影響先確定 → OCC トークン付き再取得 → ハードデリート → リンク消去 → `*.hardDeleted` / `*.sourceLinksChanged` の発行）を項目ごとの UnitOfWork で実行する。既にハードデリート済みの対象（再取得で不在）は **no-op として続行する**（pruner と同じ規約。重複除去後もなお並行実行と重なり得るため）
@@ -337,7 +337,7 @@ destination（直和）:
 4. 項目ごとに UnitOfWork 内で実行する（userId は `ExpiredTrashItem.userId` を各リポジトリメソッドの第一引数に渡す）:
    1. 消去前に影響先を確定する: メモは `DocumentRepository.listSourceLinksByMemo`、ドキュメントは `DocumentRepository.listSourceLinksByDocument`
    2. `findByIdIncludingTrashed`（memo / knowledge の各リポジトリ）で対象を OCC トークン付きで個別再取得し、`MemoRepository.hardDelete` / `DocumentRepository.delete` / `TopicRepository.delete` を実行する。メモの場合は同一 UoW で `DocumentRepository.deleteSourceLinksByMemo` も呼ぶ（ADR-003 の同期方式）
-   3. `memo.hardDeleted` / `document.hardDeleted` / `topic.hardDeleted`、および影響先への `document.sourceLinksChanged` / `memo.sourceLinksChanged` を `collectEvents` で発行する。検索インデックスの除去・再構築は outbox 経由の consumer が行う
+   3. hard deleteとsource link消去、対象/影響先FTS5射影のremove/upsertを同じsemantic commitで行う。domain eventは監査用途に限定する
 5. 1 件の失敗は記録（logger）して次の項目へ進む。バッチを使い切ったら残りは次回実行に委ねる（1 実行で全件を消化しようとしない）
 
 冪等性: 既にハードデリート済みの項目は `listExpiredItems` に現れず、二重実行しても安全。同一項目への並行実行（emptyTrash / hardDeleteTrashItem との競合を含む）は OCC / 行不在の検出で片方が no-op になる。

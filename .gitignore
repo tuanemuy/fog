@@ -1,5 +1,6 @@
 .DS_Store
 node_modules/
+infra/aws/
 
 # TanStack Start / Vite
 .tanstack/
@@ -10,14 +11,15 @@ dist/
 # Cloudflare Wrangler
 .wrangler/
 worker-configuration.d.ts
-.dev.vars
-# Rendered from `wrangler.<stage>.toml.tpl` by scripts/render-wrangler.ts.
+.dev.vars*
+!.dev.vars.example
+# Rendered from `wrangler.{request,state}.<stage>.toml.tpl`.
 # Edit the `.tpl` instead — these are regenerated on every deploy.
-wrangler.staging.toml
-wrangler.production.toml
+wrangler.request.staging.toml
+wrangler.state.staging.toml
+wrangler.request.production.toml
+wrangler.state.production.toml
 
-# Node runtime
-data/
 .env
 .env.*
 !.env.example

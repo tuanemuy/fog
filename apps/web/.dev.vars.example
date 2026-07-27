@@ -1,30 +1,27 @@
-# Wrangler `.dev.vars` template — copy to `.dev.vars` for local development.
+# Copy to `.dev.vars` for local Wrangler development. The request and state
+# configs share this directory, but `wrangler.state.toml` declares an empty
+# required-secret set so Wrangler does not expose these request-only values to
+# the state Worker.
 #
-# `wrangler dev` (including the workerd-backed `pnpm dev` via
-# `@cloudflare/vite-plugin`) auto-loads this file from the project root
-# and exposes each entry as a Worker binding, mirroring `wrangler secret
-# put` for production. Never commit the real `.dev.vars` — it is listed
-# in `.gitignore`.
-#
-# Non-secret config (e.g. `APP_URL`) belongs in the matching
-# `wrangler*.toml` `[vars]`, not here — `wrangler.toml` for local dev,
-# `wrangler.staging.toml` / `wrangler.production.toml` for remote
-# deploys. Reserve this file for credentials and tokens that must not
-# be checked in.
-#
-# HMAC key that signs session cookies. Left empty on purpose: a value
-# published in this file would be a valid key for anyone who reads the
-# repository, and copying it into a deployment hands out every account.
-# Generate your own — the Worker refuses every request until you do:
+# Generate each active secret independently:
 #
 #   openssl rand -base64 48
 #
-# At least 32 characters. Deliberately a secret rather than a `[vars]`
-# entry — `wrangler.toml` does not inherit `[vars]` across `[env.*]`
-# blocks, so a var would have to be duplicated per environment in
-# plaintext. For deployed environments use `wrangler secret put
-# SESSION_SECRET`. Only the request-path Worker needs it.
+# Never commit `.dev.vars`.
+
+# Signs session cookies. Rotating it immediately invalidates every session.
 SESSION_SECRET=""
 
-# Example (uncomment and replace when you add a secret-backed feature):
-# SOME_THIRD_PARTY_API_KEY="replace-me"
+# HMAC key used by the request Worker to derive opaque Identity Directory
+# locators. It must not be available to the state Worker.
+DIRECTORY_ROUTING_SECRET_ACTIVE=""
+
+# Set only during a routing-key rotation window. Temporarily add this name to
+# `wrangler.request.toml` `[secrets].required` so Wrangler admits it, then
+# remove both declarations after the checkpoint scan confirms no
+# previous-generation mappings/reverse locators.
+#DIRECTORY_ROUTING_SECRET_PREVIOUS=""
+#DIRECTORY_ROUTING_GENERATION_PREVIOUS="local-v0"
+
+# State-worker-only external adapter secrets may be added later, but must also
+# be explicitly listed in `wrangler.state.toml` `[secrets].required`.

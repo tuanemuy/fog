@@ -5,7 +5,7 @@
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | ユーザーが active な接続を保有 | その `connectionId` で失効を実行する | `RevokedAiClientConnection`（`status: "revoked"`, `revokedAt: now`）に遷移し `version` が +1 される。`identity.aiClientRevoked` イベントが記録される。正常終了（`void`） | |
-| 失効実行後 | アダプター（イベント consumer）の挙動を確認する | `identity.aiClientRevoked` を契機にトークンストアの実トークンが削除され、以後そのクライアントの API 呼び出しは認可エラーになる | |
+| 失効実行後 | 外部token削除jobを確認する | connection stateとprovider idempotency key付きAlarm jobが同じtransactionで保存され、job完了後はAPIが認可エラーになる | |
 | 該当 `connectionId` の接続が存在しない | 失効を実行する | `NotFoundError("CONNECTION_NOT_FOUND")` | |
 | 接続はユーザー B の所有（エッジケース: 他ユーザーの接続 ID を指定） | ユーザー A の `userId` でその `connectionId` の失効を実行する | `findById(userId, connectionId)` が null を返し `NotFoundError("CONNECTION_NOT_FOUND")`（不在と区別せず、存在の有無も漏らさない）。ユーザー B の接続は変化しない | |
 | — | `connectionId` に空文字・空白のみを指定して失効を実行する | `BusinessRuleError`（`AiClientConnectionId` 生成時バリデーション） | |

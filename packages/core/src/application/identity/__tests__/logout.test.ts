@@ -24,8 +24,10 @@ function trippingContainer(): {
     touched,
     container: {
       config: { ...content, appUrl: "http://localhost:3000" },
-      unitOfWorkProvider: {
-        run: async () => trip("unitOfWorkProvider"),
+      identity: {
+        registerWithPassword: async () => trip("identity.register"),
+        findPasswordCredential: async () => trip("identity.findCredential"),
+        getCurrentAccount: async () => trip("identity.getCurrent"),
       },
       passwordHasher: {
         hash: async () => trip("passwordHasher.hash"),

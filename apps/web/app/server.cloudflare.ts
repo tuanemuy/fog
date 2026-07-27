@@ -38,9 +38,9 @@ export default {
   async fetch(
     request: Request,
     env: AppEnv,
-    ctx: ExecutionContext,
+    _ctx: ExecutionContext,
   ): Promise<Response> {
-    const container = createRequestContainer(readRequestServerConfig(env, ctx));
+    const container = createRequestContainer(readRequestServerConfig(env));
     return storage.run(container, async () => defaultEntry.fetch(request));
   },
 };

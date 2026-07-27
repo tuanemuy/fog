@@ -16,10 +16,8 @@ Guidance for Claude Code working in this repository.
 pnpm monorepo. One lockfile at the root; packages resolve each other via package `exports` pointing straight at `.ts` sources (no build step for internal packages). `@repo/core` exposes a single flat rule — `"./*": "./src/*.ts"` — so every subpath maps 1:1 to a file and there is no barrel to import from.
 
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
-- `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, per-runtime server entries and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle / Dockerfile).
-- `infra/aws` (`@repo/infra-aws`) — CDK stack.
-- `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering.
-- `infra/gcp` — Terraform only; it is not an npm package and lives outside the workspace.
+- `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, presentation, request/state Worker entries, Durable Object classes, scripts, and Wrangler/Vite configuration.
+- `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Cloudflare DNS/custom-domain resources and stage-config rendering.
 - Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
 A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@repo/core": "workspace:*"` and owns its DI wiring or reuses one from `packages/core/src/application/di/`. No tsconfig `paths` mirror is needed.
@@ -28,7 +26,7 @@ A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@r
 
 Run from the repo root — root scripts delegate to `@repo/web` where relevant:
 
-- `pnpm dev` / `pnpm build` / `pnpm start`
+- `pnpm dev` / `pnpm build` / `pnpm start` (Cloudflare request + state Workers)
 - `pnpm lint` / `pnpm lint:fix` / `pnpm format` / `pnpm format:check` (Biome, whole repo)
 - `pnpm typecheck` (root `tsgo` for the vitest configs + `pnpm -r typecheck` across packages)
 - `pnpm test` / `pnpm test:unit` / `pnpm test:integration` (vitest runs at the root, spanning `apps/web` and `packages/core`)
@@ -67,8 +65,9 @@ Loading fallbacks come in two kinds, by scope. **Per-fragment streaming** is for
 
 Each of these is enforced in code and documented in library-level JSDoc at the relevant module — read there for the details.
 
-- **Unit of Work** — every transactional usecase runs inside `UnitOfWorkProvider.run(fn)`; the context exposes the repositories the callback may touch and the only path to enqueue domain events.
-- **Outbox / domain events** — events collected during a UoW are persisted transactionally and dispatched out-of-band by a relay worker. Delivery is at-least-once with no ordering guarantee; consumers must be idempotent. The relay worker claims rows under a lease so multiple workers cannot dispatch the same row, and a crashed worker's claim is reclaimable once the lease lapses.
+- **Semantic commit** — Durable Object mutations prepare a typed command asynchronously, then commit aggregate state and the FTS projection together inside one synchronous SQLite transaction. Never pass a transaction closure over RPC.
+- **Domain events vs. jobs** — domain events are inward business/audit facts, not a transport. Local projections update synchronously. Retention and external I/O use persistent User Data DO jobs driven by one Alarm with at-least-once, lease, owner-CAS, and poison semantics.
+- **Durable Object partitioning** — a canonical authenticated `userId` selects exactly one User Data DO. Identity Directory sharding uses request-side secret HMAC routing; public input never supplies a DO ID or partition key.
 - **Retry strategy** — driver-level transient errors are retried inside the adapter; application code never sees them. There is intentionally no application-level OCC retry decorator.
 - **Input validation** — validated at exactly two points: the transport boundary (shape / DoS) and value-object construction (business invariants). Usecases trust the static type in between. On the frontend the transport boundary is the route's `validateSearch` (URL params) or `serverAction`'s `inputValidator` (client-posted payloads); `serverData` is **internal-only** and intentionally schemaless — never feed unvalidated external input through it.
 
@@ -83,22 +82,20 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 - **adapter → application**: adapters catch driver-specific errors and translate them into the shared error contracts. Application code never sees provider-native errors.
 - **domain → application**: domain errors flow through usecases unchanged. Do not re-translate at the usecase boundary — invariant violations and transport-shape violations are intentionally distinct kinds.
 - **application → presentation**: the server-function boundary catches and serializes any thrown error structurally via its `kind`-tagged form. Usecases themselves do not serialize.
-- **worker → root**: workers wrap per-row processing in `try / catch` for partial-failure tolerance. This is the only place a broad `catch` is expected in application-layer code.
+- **Alarm job → root**: the persistent job runner may catch per-job failures for retry/poison handling. This is the only place a broad `catch` is expected in application-layer code.
 
-## Reference runtimes
+## Runtime
 
-The template ships four reference runtime wirings — Node.js + libSQL (single process), Cloudflare Workers + D1 + Queues, AWS Lambda + Turso + SQS, and GCP Cloud Run + Turso + Pub/Sub — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the others**, or keep multiple if you genuinely need multiple targets; the template does not assume you maintain a multi-runtime deployment.
+Fog targets Cloudflare Workers and SQLite-backed Durable Objects only:
 
-Entry points by runtime:
+- `apps/web/app/server.cloudflare.ts` is the public request Worker.
+- `apps/web/app/server.state.ts` exports `UserDataDurableObject`, `IdentityDirectoryDurableObject`, and `AccountHomeDurableObject`.
+- `apps/web/wrangler.request.toml` is the primary local Worker config; `apps/web/wrangler.state.toml` is the secondary config. `pnpm dev` launches both in one multi-config Wrangler process.
+- The request Worker alone receives `SESSION_SECRET` and directory-routing secrets. The state Worker config explicitly filters them out.
+- Each DO performs forward-only, idempotent lazy schema migration on activation. Class lifecycle uses declarative Wrangler `exports` with `storage = "sqlite"`.
+- `infra/cloudflare/pulumi` manages DNS/custom-domain resources only. Durable Object namespaces are managed by the state Worker config.
 
-- **Cloudflare**: `apps/web/app/server.cloudflare.ts` (fetch), `apps/web/app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`.
-- **Node**: `apps/web/app/server.node.ts` (fetch handler + boot), `apps/web/app/worker/node/runner.ts` (single-process orchestrator of all four roles), `apps/web/scripts/listen.node.ts` (production launcher), `apps/web/scripts/migrate.node.ts` (libSQL migrator). Wired by `packages/core/src/application/di/serverNode.ts`.
-- **AWS**: `apps/web/app/server.aws.ts` (API Gateway → fetch), `apps/web/app/worker/aws/{relay,consumer,pruner,dlq}.ts` (thin role-typed wrappers over shared `handlers.ts`), `apps/web/scripts/migrate.aws.ts` (Turso migrator), `infra/aws/` (CDK stack). Wired by `packages/core/src/application/di/serverAws.ts`.
-- **GCP**: `apps/web/app/server.gcp.ts` (Cloud Run role dispatcher), `apps/web/app/worker/gcp/{relay,consumer,dlq}.ts`, `apps/web/scripts/migrate.gcp.ts` (Turso migrator), `infra/gcp/` (Terraform examples). Wired by `packages/core/src/application/di/serverGcp.ts`.
-
-Per-runtime operational guidance lives in `docs/runtime_node.md`, `docs/runtime_cloudflare.md`, `docs/runtime_aws.md`, and `docs/runtime_gcp.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the other runtimes use the `:cf`, `:aws`, and `:gcp` suffixes.
-
-To target a different runtime (Cloud Run, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
+Operational guidance lives in `docs/runtime_cloudflare.md`.
 
 ## Examples
 

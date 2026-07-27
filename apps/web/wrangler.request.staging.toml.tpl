@@ -1,0 +1,34 @@
+name = "${RESOURCE_PREFIX}-request"
+main = "dist/server/index.js"
+compatibility_date = "2026-07-04"
+compatibility_flags = ["nodejs_compat"]
+
+[secrets]
+required = ["SESSION_SECRET", "DIRECTORY_ROUTING_SECRET_ACTIVE"]
+
+[build]
+command = "pnpm vite build --config apps/web/vite.config.cloudflare.ts --mode production"
+cwd = "../.."
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+
+[vars]
+APP_URL = "${APP_URL}"
+DIRECTORY_ROUTING_GENERATION_ACTIVE = "v1"
+
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+script_name = "${RESOURCE_PREFIX}-state"
+
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"
+script_name = "${RESOURCE_PREFIX}-state"
+
+[[durable_objects.bindings]]
+name = "ACCOUNT_HOME"
+class_name = "AccountHomeDurableObject"
+script_name = "${RESOURCE_PREFIX}-state"

@@ -1,7 +1,7 @@
 import { UserId } from "@repo/core/domain/identity/valueObject";
 import { NotFoundError } from "../errors";
 import type { ServiceArgs } from "../types";
-import { type CurrentUserView, toCurrentUserView } from "./view";
+import type { CurrentUserView } from "./view";
 
 export type GetCurrentUserInput = {
   userId: string;
@@ -22,12 +22,12 @@ export async function getCurrentUser({
 }: ServiceArgs<GetCurrentUserInput>): Promise<GetCurrentUserOutput> {
   const userId = UserId.create(input.userId);
 
-  const found = await container.unitOfWorkProvider.run(({ userRepository }) =>
-    userRepository.findById(userId),
-  );
-  if (!found) {
+  if (!container.identity)
+    throw new Error("Identity gateway is not configured");
+  const account = await container.identity.getCurrentAccount(userId);
+  if (!account) {
     throw new NotFoundError("USER_NOT_FOUND", `User not found: ${userId}`);
   }
 
-  return toCurrentUserView(found.entity);
+  return account;
 }

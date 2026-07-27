@@ -13,7 +13,7 @@
 - **NotFound 変換**: `findById` 系の `null` を `NotFoundError` に変換するのはユースケースの責務。AI 向けユースケースは `findById` / `listActiveByIds` 系（active / Live のみ返す）だけを使い、ゴミ箱内は構造的に「存在しない」扱いになる（S-AI-04）。`findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使えるのは人間 UI・trash 系ユースケースのみ
 - **OCC**: 書き込みは UoW 内で `findById` 系が返した `ExpectedVersion` トークンを添えて `save` する。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。汎用リトライは設けない
 - **時刻・ID**: `now` は `container.clock.now()`、新規 ID は `container.idGenerator.next()` をユースケース冒頭で解決してドメインへ渡す
-- **イベント**: ドメインの振る舞いが返す `EventDraft` を同一 UoW 内で `collectEvents` に渡す（Outbox 経由。ADR-005）
+- **イベントと検索**: domain eventは監査/同一transaction反応に限定する。本体・revision・source link・FTS5射影は`SemanticCommitPort.transactionSync`でatomicに確定する
 - **Actor**: リビジョンの「誰が」。人間 UI では認証済みユーザー、AI API ではトークン識別から presentation 層が解決し、入力 DTO の `actor` として渡す。人間 UI 専用（★）のユースケースは `actor` を `Actor` の `UserActor` バリアント（`{ kind: "user" }`）に狭めて受け、`AiClientActor` を渡すことは型エラーとする（AI 側の編集は別ユースケース editDocumentByAi）。両方公開のユースケース（createDocument 等）は `Actor` のまま受ける
 - **DTO**: フィールドはプリミティブ型で表現する（ブランド VO を露出しない）。出力は `view.ts` のヘルパで射影する。**出力DTOの日時は `Date` で表現する**（memo / identity / search / trash と同一規約）。ISO 8601 文字列へのシリアライズは presentation 層の責務
 - **AI 動詞 `get` / `delete` の種別ディスパッチ**: MCP / REST のツール入力スキーマに必須の種別フィールドを定める。`get` は `{ type: "memo" | "document"; id }`、`delete` は `{ type: "memo" | "document" | "topic"; id }`（`type` の語彙は search 結果の `type` と同じ）。presentation 層（MCP ツール / REST ハンドラ）が `type` で対応ユースケースへディスパッチする: `get` → memo の `get`（`type: "memo"`）/ `getDocument`（`type: "document"`）、`delete` → memo の `delete`（`type: "memo"`）/ `trashDocument`（`type: "document"`）/ `trashTopic`（`type: "topic"`）。ID は不透明文字列であり、`type` なしでのディスパッチは行わない

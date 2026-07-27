@@ -4,7 +4,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| 認証済みユーザー | `name: "読書メモ"`, `description: "本の要約置き場"` で作成する | `status: "active"`, `version: 0` のトピックが作成され、`id` / `name` / `description` / `createdAt` / `updatedAt` を含むビューが返る。`topic.created` イベントが同一 UoW で Outbox に記録される | |
+| 認証済みユーザー | `name: "読書メモ"`, `description: "本の要約置き場"` で作成する | `status: "active"`, `version: 0` のトピックがUser Data DOの同期transactionで作成され、`id` / `name` / `description` / `createdAt` / `updatedAt` を含むビューが返る | |
 | 認証済みユーザー | `description` を省略（`null`）して作成する | `description: null` のトピックが正常に作成される（説明文は任意。S-DT-01） | |
 | 認証済みユーザー | `name: "  読書メモ  "`（前後空白付き）で作成する | trim 後非空のため正常に作成される | |
 | 認証済みユーザー | `name` を空文字で作成する | `BusinessRuleError(EmptyTopicName)`。トピックは作成されない | |

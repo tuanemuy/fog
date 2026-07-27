@@ -1,19 +1,15 @@
-# テストケース: changePassword
+# テストケース: password change primitive
 
-[usecases/identity.md](../../usecases/identity.md) の changePassword に対するテストケース。
+ユーザー向けUI/完成usecaseは#11。
 
-| 前提条件 | 操作 | 期待結果 | 実装ステータス |
-|---|---|---|---|
-| ログイン済みの `PasswordUser` | 正しい現在パスワードと有効な新パスワード（8〜128文字）で変更する | `passwordHash` が新パスワードのハッシュに置換され、`version` が +1 される。`identity.passwordChanged` イベントが記録される。正常終了（`void`） | |
-| ログイン済みの `PasswordUser` | 新パスワードちょうど8文字で変更する | 正常終了する（境界値: 最低長ちょうどは許容） | |
-| ログイン済みの `PasswordUser` | 新パスワードちょうど128文字で変更する | 正常終了する（境界値: 最大長ちょうどは許容） | |
-| ログイン済みの `PasswordUser` | 新パスワード7文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)`。パスワードは変更されない | |
-| ログイン済みの `PasswordUser` | 新パスワード129文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)` | |
-| ログイン済みの `PasswordUser` | 誤った現在パスワードで変更する | `ValidationError("CURRENT_PASSWORD_MISMATCH")`。パスワードは変更されない | |
-| ログイン済みの `PasswordUser` | 現在パスワードと同じ値を新パスワードとして変更する | 正常終了する（同一値の禁止規則は存在しない） | |
-| セッションの `userId` に対応するユーザーが不在 | パスワード変更を実行する | `NotFoundError("USER_NOT_FOUND")` | |
-| ログイン済みの `SsoUser`（エッジケース: UI 上は項目非表示だが防衛的に検証） | パスワード変更を実行する | `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)` | |
-| `PasswordUser`。照合成功後、save までの間に同一ユーザーが別セッションで更新され version が進んでいる（二重変更の競合） | パスワード変更を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` | |
-| `PasswordHasher.verify` の照合計算が失敗する | パスワード変更を実行する | `SystemError` | |
-| `PasswordHasher.hash` が失敗する | パスワード変更を実行する | `SystemError` | |
-| `UserRepository.save` で DB 例外が発生する | パスワード変更を実行する | `SystemError`。トランザクションはロールバックされ、イベントも記録されない | |
+| 前提 | 操作 | 期待結果 |
+|---|---|---|
+| password credential | 正しいcurrent/new passwordでstable operationId実行 | new hash、credential mapping、session epochをsagaで更新 |
+| 8文字/128文字new password | 実行 | 成功 |
+| 7文字/129文字 | 実行 | business error、状態不変 |
+| current password誤り | 実行 | `CURRENT_PASSWORD_MISMATCH`、状態不変 |
+| SSO-only account | 実行 | PasswordNotSupported |
+| 同じoperationId/payload | 再送 | 同じ結果、epoch二重増加なし |
+| 各phase後 | fault後再送/reconciler | 保存済みphaseから再開 |
+| 成功後の旧session | current user/API | epoch不一致でunauthorized |
+| Account Home deleting/deleted | 実行 | 拒否 |

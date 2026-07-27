@@ -28,10 +28,7 @@ export function getInstalledStore(): ContainerStore | undefined {
 
 /**
  * Resolve the request-scoped container. The store is installed at module
- * load by whichever runtime entry is booted — `apps/web/app/server.node.ts`,
- * `apps/web/app/server.cloudflare.ts`, `apps/web/app/server.aws.ts` and
- * `apps/web/app/server.gcp.ts` all call `installContainerStore`; this reader
- * is shared by all of them.
+ * load by `apps/web/app/server.cloudflare.ts`.
  *
  * Returns `Promise<RequestContainer>` so call sites can `await` it
  * symmetrically with other async setup. Throws if the store is not
@@ -43,9 +40,7 @@ export function getContainer(): Promise<RequestContainer> {
   if (!store) {
     throw new Error(
       "getContainer() called before the container store was installed. " +
-        "The runtime entry (one of " +
-        "apps/web/app/server.{node,cloudflare,aws,gcp}.ts) " +
-        "installs the store at module load.",
+        "apps/web/app/server.cloudflare.ts installs the store at module load.",
     );
   }
   const container = store.getStore();

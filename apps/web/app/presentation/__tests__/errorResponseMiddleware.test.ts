@@ -35,7 +35,7 @@ vi.mock("@tanstack/react-start/server", () => ({
 }));
 
 const INTERNAL_DETAIL =
-  "D1_ERROR: no such table: users (/var/task/packages/core/adapters/d1/userRepository.js:120)";
+  "SQLITE_ERROR: no such table: users (/worker/state/userData.js:120)";
 
 const LOGIN_FAILURE_MESSAGE = "Invalid email or password";
 
@@ -55,7 +55,6 @@ function installContainer(): void {
   logger = new FakeLogger();
   const container = {
     config: { ...content, appUrl: "https://app.example" },
-    unitOfWorkProvider: { run: async () => trip("open a unit of work") },
     passwordHasher: {
       hash: async () => trip("hash a password"),
       verify: async () => trip("verify a password"),

@@ -37,11 +37,6 @@ function installContainer(verified: Verified): void {
   verifyCalls = [];
   const container = {
     config: { ...content, appUrl: "https://app.example" },
-    unitOfWorkProvider: {
-      run: async () => {
-        throw new Error("reading the session must not open a unit of work");
-      },
-    },
     passwordHasher: {
       hash: async () => {
         throw new Error("reading the session must not hash");

@@ -37,13 +37,15 @@
 | 項目 | 決定 |
 |---|---|
 | UI形態 | レスポンシブWeb（PC・スマホ両対応の単一画面設計） |
-| 検索UI | 人間用のグローバル検索画面を設ける（メモ・ドキュメント横断のハイブリッド検索） |
+| 検索UI | 人間用のグローバル検索画面を設ける（メモ・ドキュメント横断のFTS5全文検索） |
 | AI接続管理UI | スコープに含める（設定に接続済みAIクライアント一覧と失効操作） |
 | 技術スタック | tanstack-start-template（TanStack Start + React 19 / pnpm monorepo / ヘキサゴナル + DDD） |
 
-## 技術的前提（テンプレート由来）
+## 技術的前提
 
 - `packages/core` — domain / application / adapters（フレームワーク非依存）
 - `apps/web` — TanStack Start（ルート・コンポーネント・presentation 層）
-- Unit of Work + Outbox / ドメインイベント、ポート & アダプター構成
+- 本番は Cloudflare request Worker + state/DO Worker の2 script、User Data / Identity Directory / Account Home の3 SQLite-backed Durable Object class
+- User Data DO 内は同期transactionで本体とFTS5射影を確定し、外部I/O/retentionは永続job + Alarmで処理する
+- 認証済み`userId`だけからUser Data DOへroutingし、利用者間を物理分離する
 - MCPサーバーは将来 `apps/*` の新パッケージとして `@repo/core` を再利用する想定

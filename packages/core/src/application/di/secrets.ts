@@ -40,18 +40,8 @@ export type SessionSecret = string & {
 /**
  * Asserts a usable `SESSION_SECRET` while the request config is built.
  *
- * The env schemas keep `SESSION_SECRET` optional on purpose: the AWS and
- * GCP env readers are shared with the relay / consumer / pruner / DLQ
- * entry points, which never touch a session, and a required key there
- * would stop those workers from booting. Requiring it in the
- * request-config readers instead means only the request path — the sole
- * consumer — demands the secret.
- *
- * Node, AWS and GCP build that config once at boot / cold start, so a
- * missing or too-short secret fails the process rather than every request.
- * Cloudflare has no boot phase in which `env` exists, so its config is
- * necessarily per-request; there the check still runs before the isolate
- * does any work, and the message names only the variable, never a value.
+ * Only the request Worker receives and validates this secret. The state
+ * Worker never receives it.
  */
 export function requireSessionSecret(
   secret: string | undefined,

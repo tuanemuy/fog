@@ -189,7 +189,7 @@ export const RetentionPolicy = {
 ### TrashQueryPort
 
 - 目的: ユーザーのゴミ箱一覧（memo / knowledge を横断した `TrashItem` の射影）をページング付きで取得する。読み取り専用
-- 実装: memo / knowledge のテーブルからソフトデリート済み行を横断的に射影するアダプター（例: D1 上の UNION クエリ）。`expiresAt` はアダプターが `RetentionPolicy.expiresAt` を用いて付与する。topic 項目の `setDocumentIds` は、アダプターが `trashedWith = topicId` のゴミ箱内ドキュメントを射影して埋める（`listTrashItems` / `findTrashItem` / `listExpiredItems` のすべてで付与する。`HardDeletePolicy.expandTargets` が追加照会なしにセット展開できることの前提）
+- 実装: User Data DO内のmemo / knowledgeテーブルからソフトデリート済み行を横断射影する。`expiresAt` は`RetentionPolicy.expiresAt`で付与し、topic項目の`setDocumentIds`は`trashedWith = topicId`のゴミ箱内documentから埋める
 
 ```ts
 export interface TrashQueryPort {
@@ -236,7 +236,7 @@ trash 独自の書き込みポートは持たない。
 
 ## 自動削除（pruner ワーカー）
 
-期限切れ項目を自動でハードデリートする定期実行ワーカー（S-TR-05）。`WorkerContainer` ベースで実装し、Cloudflare の Cron Trigger 等から起動する。ただし本ワーカーの依存（UnitOfWork・`TrashQueryPort`・memo / knowledge の各リポジトリ）はテンプレート既定の `WorkerContainer`（`outboxRepository` + `idempotencyStore`）では賄えないため、これらを追加した pruner 専用の拡張ワーカーコンテナを DI で組んで動かす（テンプレートの「スコープごとに独立したコンテナ型」の方針に従う）。
+期限切れ項目の自動hard delete（S-TR-05）は各User Data DOの永続job + Alarmで実行する。jobはlease/owner token/attempt/nextRunAt/provider idempotency/poison reasonを持ち、bounded batchで処理する。
 
 フロー:
 
@@ -246,7 +246,7 @@ trash 独自の書き込みポートは持たない。
 4. 項目ごとに UnitOfWork 内で実行する:
    - 消去前に影響先を確定する: メモの消去では `DocumentRepository.listSourceLinksByMemo` で当該メモを出典とするドキュメント ID 群、ドキュメントの消去では `DocumentRepository.listSourceLinksByDocument` で出典メモ ID 群を取得する（各リポジトリメソッドは userId スコープ付きのため、`ExpiredTrashItem.userId` を第一引数に渡す）
    - `findByIdIncludingTrashed`（memo / knowledge の各リポジトリ。`ExpiredTrashItem.userId` でスコープ）で対象を OCC トークン付きで個別再取得し、該当 Repository のハードデリート（`MemoRepository.hardDelete` / `DocumentRepository.delete` / `TopicRepository.delete`）を実行する。メモの場合は同一 UoW で `DocumentRepository.deleteSourceLinksByMemo` も呼ぶ（ADR-003 の同期方式。userId スコープ付きのため `ExpiredTrashItem.userId` を第一引数に渡す）
-   - ドメインイベント（`memo.hardDeleted` / `document.hardDeleted` / `topic.hardDeleted`、および影響先への `document.sourceLinksChanged` / `memo.sourceLinksChanged`）を `collectEvents` で発行し、検索インデックスの除去・再構築は outbox 経由の consumer が行う
+   - 本体・revision・source linkの消去と検索射影の除去/再構築を同じsemantic commitで確定する。domain eventは監査用途に限定する
 5. 1件の失敗は記録（logger）して次の項目へ進む。バッチを使い切ったら次回実行に委ねる（1実行で全件を消化しようとしない）
 
 補足:

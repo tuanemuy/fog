@@ -5,7 +5,7 @@
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | active なメモ（`latestRevisionNumber: 1`）が存在する | 新しい全文 `body` で更新する | `result: "saved"`。`memo` は新本文・`latestRevisionNumber: 2`。全文置換であり部分パッチは受け付けない（S-AI-04, ADR-006） | |
-| 上記の更新が成功した | リビジョン・イベントを確認する | 新リビジョン（`actor: { kind: "aiClient", clientName }`、全文スナップショット）が同一 UoW で自動記録され、`memo.edited` イベントが Outbox に記録される（履歴による復元可能性が「原則パッチ」の趣旨を代替。ADR-006） | |
+| 上記の更新が成功した | リビジョン・検索を確認する | 新リビジョン（`actor: { kind: "aiClient", clientName }`、全文スナップショット）とFTS5射影が同じtransactionで記録される（履歴による復元可能性が「原則パッチ」の趣旨を代替。ADR-006） | |
 | メモを更新した | `postedAt` を確認する | `postedAt` は変わらない（タイムライン上の位置は不変） | |
 | active なメモが存在する | 現在と同一の本文で更新する（no-op） | `result: "unchanged"`。新リビジョンは積まれず、`version` も上がらず、イベントも発行されない | |
 | 人間が編集画面を開いている間に AI が更新する | 更新する | `expectedVersion` を受けないため UoW 内で読み直した最新状態に適用され `result: "saved"`。編集内容は新リビジョンとして積まれ、履歴で追跡・ロールバック可能（S-AI-04 手順 3。人間側は保存時に editMemo の conflict 警告で検出） | |

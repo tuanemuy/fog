@@ -5,7 +5,7 @@
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | active なメモ（`version: 0`, `latestRevisionNumber: 1`）が存在する | 編集開始時の `expectedVersion: 0` と新本文で保存する | `result: "saved"`。`MemoView` は新本文・`version: 1`・`latestRevisionNumber: 2`。`conflict: null`（S-TL-04） | |
-| 上記の保存が成功した | リビジョンを確認する | `revisionNumber: 2` の新リビジョン（全文スナップショット・`actor` = 人間ユーザー・`createdAt = now`）が同一 UoW で記録され、`memo.edited` イベントが Outbox に記録される | |
+| 上記の保存が成功した | リビジョンと検索を確認する | `revisionNumber: 2` の新リビジョンとFTS5射影が同じtransactionで記録され、旧語は消え新語が直後にヒットする | |
 | メモを編集した | `postedAt` を確認する | `postedAt` は変わらない（タイムライン上の位置は不変）。`updatedAt` は `now` に更新される | |
 | active なメモが存在する | 現在と同一の本文で保存する（no-op） | `result: "unchanged"`。新リビジョンは積まれず、`version` も上がらず、イベントも発行されない（S-TL-04「変更せずに保存」。同一本文の連続リビジョンは存在しない） | |
 | active なメモが存在する | 本文の等価判定を確認する（例: 末尾空白 1 文字だけ異なる本文で保存） | 文字列の完全一致で判定されるため `result: "saved"`（`MemoBody.equals` は完全一致） | |

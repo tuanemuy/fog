@@ -48,7 +48,7 @@ memo ドメインのユースケース定義。
 3. UnitOfWork 内で:
    1. `MemoRepository.insert(memo)`
    2. `MemoRepository.insertRevision(initialRevision)`
-   3. `collectEvents(eventDrafts)`（Outbox へ。search consumer がインデックスに upsert する）
+   3. 本体・revision・FTS5射影・idempotency結果を`SemanticCommitPort.transactionSync`で同時に確定する
 4. `memo` を MemoView に射影して返す
 
 #### エラーケース
@@ -229,7 +229,7 @@ ConflictView（警告表示用）:
    2. 取得したメモの `version` が入力 `expectedVersion` と異なる場合、**何も書かずに** `result: "conflict"` を組み立てて返す。`conflict.latestRevision` は `MemoRepository.findRevision(userId, memoId, memo.latestRevisionNumber)` で取得する
    3. 一致する場合、`Memo.edit(memo, { body, actor }, now)` を呼ぶ
       - `newRevision: null`（同一本文）なら何も書かず `result: "unchanged"`（version も上がらない）
-      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)`、`MemoRepository.insertRevision(newRevision)`、`collectEvents(eventDrafts)`（`memo.edited`。search consumer が最新本文を読み直して upsert）を行い `result: "saved"`
+      - 新リビジョンありなら `MemoRepository.save`、`insertRevision`、FTS5 upsertを同じsemantic commitで行い `result: "saved"`
 3. 現在のメモを MemoView に射影して返す
 
 #### エラーケース
@@ -393,7 +393,7 @@ RevisionView:
    1. `MemoRepository.findById(userId, memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（既に trashed のものも NotFound 扱い）
    2. `Memo.softDelete(memo, now)` で `TrashedMemo` と `eventDrafts`（`memo.trashed`）を得る
    3. `MemoRepository.save(trashedMemo, expectedVersionトークン)`
-   4. `collectEvents(eventDrafts)`（search consumer がインデックスから除去し、あわせて出典先ドキュメントのエントリを再 upsert する）
+   4. 同じsemantic commitでmemo射影を除去し、影響するactive document射影を再upsertする
 
 #### エラーケース
 

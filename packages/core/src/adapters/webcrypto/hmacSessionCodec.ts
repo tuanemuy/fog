@@ -45,14 +45,12 @@ function parsePayload(raw: string): Payload | null {
  * `SessionCodec` backed by an HMAC-SHA256 signature over a `{ uid, exp }`
  * payload, encoded as `<payloadBase64url>.<signatureBase64url>`.
  *
- * Stateless by design: no session table, no read
- * on the request path, one implementation across all four runtimes. The
+ * Stateless by design: no session table and no read on the request path. The
  * cost is that a token cannot be revoked server-side before `exp` —
  * acceptable while the product has no "sign out everywhere" requirement,
  * and the reason `ttlMs` defaults to a week rather than months. Swapping in
  * a table-backed codec later stays inside the composition root: this file,
- * the four DI factories that call {@link createHmacSessionCodec}
- * (`application/di/server{Node,Cloudflare,Aws,Gcp}.ts`), the
+ * the Cloudflare DI factory that calls {@link createHmacSessionCodec}, the
  * `application/di/secrets.ts` check that reads
  * {@link MIN_SESSION_SECRET_LENGTH}, and the test harnesses that build a
  * codec directly — callers of the port see nothing.

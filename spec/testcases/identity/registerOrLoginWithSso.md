@@ -1,16 +1,18 @@
-# テストケース: registerOrLoginWithSso
+# テストケース: SSO lookup/create primitive
 
-[usecases/identity.md](../../usecases/identity.md) の registerOrLoginWithSso に対するテストケース。
+OAuth UIは#12。本書はIssue #19で提供する非公開primitive contractを検証する。
 
-| 前提条件 | 操作 | 期待結果 | 実装ステータス |
-|---|---|---|---|
-| `(provider: "google", providerSubject)` に一致するユーザーが未登録、メールも未登録 | 初回 SSO サインインを実行する | `SsoUser` が `version: 0` で作成され `userId` と `isNewUser: true` が返る。`identity.userRegistered`（`authMethod: "sso"`）イベントが記録される | |
-| `provider: "apple"` の主体が未登録、メールも未登録 | 初回 SSO サインインを実行する | Apple プロバイダでも同様に登録され `isNewUser: true` が返る | |
-| 同一 `(provider, providerSubject)` の `SsoUser` が登録済み | 2回目の SSO サインインを実行する | 既存の `userId` と `isNewUser: false` が返る。書き込み・イベント発行は発生しない | |
-| 同一 `(provider, providerSubject)` の `SsoUser` が登録済みで、IdP 側のメールが登録時と異なる | SSO サインインを実行する | SSO 主体一致が優先され、既存 `userId` と `isNewUser: false` が返る（ログイン扱い） | |
-| 未対応プロバイダ | `provider: "github"` 等でサインインを実行する | `BusinessRuleError(IdentityErrorCode.UnsupportedSsoProvider)` | |
-| — | メール形式不正（IdP 由来だが不正な値）でサインインを実行する | `BusinessRuleError(IdentityErrorCode.InvalidEmail)` | |
-| SSO 主体は未登録だが、IdP のメールと同一メールの `PasswordUser` が登録済み（エッジケース: SSO×既存メール衝突） | 初回 SSO サインインを実行する | `ConflictError("EMAIL_ALREADY_REGISTERED")`。自動リンクは行われず、SsoUser も作成されない（UI はパスワードログインへの導線を示す） | |
-| SSO 主体は未登録だが、同一メールの別 `SsoUser`（別プロバイダ）が登録済み | 初回 SSO サインインを実行する | メール一意性は認証方式をまたいで適用され `ConflictError("EMAIL_ALREADY_REGISTERED")` | |
-| 事前検証時点では未登録だが、insert までの間に同一 `(provider, providerSubject)` で別リクエストが登録完了（同時初回サインインのレース） | サインインを実行する | DB の (provider, providerSubject) 一意制約違反が捕捉され `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` | |
-| `UserRepository` で DB 例外が発生する | サインインを実行する | `SystemError`。トランザクションはロールバックされる | |
+| 前提 | 操作 | 期待結果 |
+|---|---|---|
+| credential未登録、email未登録 | Google credentialをstable operationIdでcreate | Directory/Account Home/User Dataが確定し、新しいuserId |
+| credential未登録、email未登録 | Apple credentialをcreate | provider境界を保って作成 |
+| 同一provider/subject登録済み | lookup | 既存userId |
+| 完了済みoperationId | 同一payloadで再送 | 同じuserId/結果、二重作成なし |
+| credential未登録 | 同時初回create | 1つのmapping/userIdへ収束 |
+| credential未登録、同一emailのpassword accountあり | create | `EMAIL_ALREADY_REGISTERED`、自動linkなし |
+| credential未登録、同一emailの別provider accountあり | create | `EMAIL_ALREADY_REGISTERED` |
+| `google/sub-1`登録済み | `apple/sub-1`をlookup/create | 別credentialとして扱う |
+| previous generationだけにmappingあり | active/previous lookup | 既存userIdを返しactiveへの移送を冪等再開 |
+| rotation途中でactive/previousが競合 | lookup/create | Account Home reverse locatorとoperationを照合して1つへ収束 |
+| 各saga phase後 | fault後に同operationIdで再送 | 保存済みphaseから再開しorphan/二重userなし |
+| unsupported provider/不正email/空subject | create | business/validation error、永続化なし |

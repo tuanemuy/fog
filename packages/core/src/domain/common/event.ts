@@ -19,7 +19,7 @@ export const EventId = {
 // `DomainEventDraftBase` is the identity-less shape produced by the domain.
 // `EventId` is an application-level concern (it requires `IdGenerator`), so
 // the domain emits drafts and the application attaches `id` before they are
-// persisted to the outbox.
+// handed to the application for a same-transaction reaction or audit.
 export type DomainEventDraftBase<
   TType extends string = string,
   TPayload extends Record<string, unknown> = Record<string, unknown>,
@@ -53,9 +53,7 @@ export type EventDraft<TEvent extends DomainEvent = DomainEvent> =
 // be redundant. The `type` literal lives inside `TEvent["type"]` and is
 // re-attached by the decoder body.
 //
-// `payload` is `unknown`: it comes from the at-rest outbox row and has not
-// been shape-checked yet. The decoder body is the one that runs zod
-// validation and throws on mismatch.
+// `payload` is `unknown` until the decoder validates its shape.
 export type EventDecoder<TEvent extends DomainEvent = DomainEvent> = (
   payload: unknown,
   meta: Readonly<{ id: EventId; occurredAt: Date; aggregateId: string }>,

@@ -1,7 +1,6 @@
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
-import type { UserRepository } from "@repo/core/domain/identity/ports/userRepository";
 import { describe, expect, it, vi } from "vitest";
 import { content } from "../../../config";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -31,31 +30,20 @@ async function freshLogin(): Promise<LoginWithPassword> {
   return (await import("../loginWithPassword")).loginWithPassword;
 }
 
-const absentUser: UserRepository = {
-  insert: async () => {
-    throw new Error("an unknown address must not insert");
-  },
-  save: async () => {
-    throw new Error("an unknown address must not save");
-  },
-  findById: async () => null,
-  findByEmail: async () => null,
-};
-
 function container(
   logger: FakeLogger,
   burnFailure: () => Promise<never>,
 ): RequestContainer {
   return {
     config: { ...content, appUrl: "http://localhost:3000" },
-    unitOfWorkProvider: {
-      run: (fn) =>
-        fn({
-          userRepository: absentUser,
-          collectEvents: () => {
-            throw new Error("login must not enqueue events");
-          },
-        }),
+    identity: {
+      registerWithPassword: async () => {
+        throw new Error("login must not register");
+      },
+      findPasswordCredential: async () => null,
+      getCurrentAccount: async () => {
+        throw new Error("login must not load current account");
+      },
     },
     passwordHasher: {
       hash: async () => {

@@ -2,7 +2,9 @@
 
 ## ステータス
 
-承認済み
+Superseded（Issue #19、2026-07-28）
+
+このADRは判断履歴として本文を保持する。現行の規則は [Search domain](../domains/search.md)、[search usecase](../usecases/search.md)、[DB設計](../database/index.md)、および [.thread/19/adr.md](../../.thread/19/adr.md) を参照する。検索はUser Data Durable Object内のSQLite FTS5単独とし、本体変更とtransaction-scoped projectionを同期commitする。非同期配送基盤は使わず、Alarmは外部I/Oとretentionの永続jobだけに使う。
 
 ## コンテキスト
 

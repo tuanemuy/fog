@@ -3,7 +3,7 @@
 タイムラインに積まれるメモとそのリビジョン履歴を管理する。
 
 - 上流: [requirements.md](../requirements.md) 2章・4.1・4.3、[シナリオ: タイムライン](../scenario/timeline.md)、[シナリオ: AI連携](../scenario/ai.md)、[シナリオ: ゴミ箱](../scenario/trash.md)
-- 関連 ADR: [ADR-003](../adr/003-source-link-after-hard-delete.md)、[ADR-004](../adr/004-domain-boundaries.md)、[ADR-005](../adr/005-search-index-via-outbox.md)
+- 関連 ADR: [ADR-003](../adr/003-source-link-after-hard-delete.md)、[ADR-004](../adr/004-domain-boundaries.md)。検索同期規則は [search.md](./search.md) を参照
 
 ## ドメイン境界に関する前提
 
@@ -11,7 +11,7 @@
 - `UserId` も identity ドメインの型を参照する（ID参照のみ）
 - **出典リンクは knowledge ドメインが保持する**（ADR-004）。memo は自分がどのドキュメントの出典になっているかを知らない。タイムライン上の「→ ドキュメントX」導線は、表示時に knowledge 側へ `MemoId` で照会（メモ群を出典とする出典リンクの逆引き）して実現する。同様に、メモのハードデリート時の出典リンク消去（ADR-003）は**同期方式**で行う: trash ドメインのユースケースが同一 UnitOfWork 内で `MemoRepository.hardDelete`（メモ本体とリビジョンの消去）と knowledge の `DocumentRepository.deleteSourceLinksByMemo`（出典リンクの消去）を呼ぶオーケストレーション責務を負う。memo ドメイン自身は出典リンクに関知しない
 - **差分は保存しない**。リビジョンは毎回全文スナップショットであり、任意二点間の差分は表示時（presentation 層）に計算する
-- 検索インデックスの更新は本ドメインが発行するドメインイベントを Outbox 経由で search の consumer が受けて行う（ADR-005）。イベントペイロードは対象IDのみを運ぶ
+- 検索射影の更新はUser Data DO内で本体・revision・source linkと同じ`SemanticCommitPort.transactionSync`に入れる。domain eventを検索transportには使わない
 
 ## ユビキタス言語
 
@@ -151,14 +151,14 @@ export const Memo = {
 - 引数: `memo: ActiveMemo`, `now: Date`
 - 戻り値: `WithEventDrafts<TrashedMemo, MemoEvent>`
 - 処理: `status: "trashed"`、`trashedAt: now`、`version + 1`、`updatedAt = now` の `TrashedMemo` を返す。本文・リビジョン・`postedAt` は保持される
-- 発行イベント: `memo.trashed`（search consumer がインデックスから除去する。ゴミ箱内は検索にヒットしない）
+- 発行イベント: `memo.trashed`。同じsemantic commitでFTS entryを除去する
 
 ##### restore
 
 - 引数: `memo: TrashedMemo`, `now: Date`
 - 戻り値: `WithEventDrafts<ActiveMemo, MemoEvent>`
 - 処理: `status: "active"` に戻し `trashedAt` を落とす。`version + 1`、`updatedAt = now`。`postedAt` は不変のため、タイムラインの元の位置に戻る（S-TR-02）
-- 発行イベント: `memo.restored`（search consumer がインデックスへ再登録する）
+- 発行イベント: `memo.restored`。同じsemantic commitでFTS entryを再登録する
 
 ##### hardDelete について
 
@@ -246,7 +246,7 @@ export type MemoRevision = Readonly<{
 
 ## ドメインイベント
 
-すべて `EventDraft`（identity なし）としてエンティティの振る舞いから返す。`EventId` の採番は UoW の責務。**ペイロードは対象IDのみ**（ADR-005: consumer は最新状態を読み直すため、本文をイベントに載せない。古いペイロードによる巻き戻りを防ぐ）。
+すべて `EventDraft`（identity なし）としてエンティティの振る舞いから返す。イベントは監査または同じtransaction内の業務反応に限定し、検索射影の配送契約にはしない。
 
 ```ts
 export type MemoEvent =
@@ -262,12 +262,12 @@ export type MemoEvent =
 |---|---|---|
 | memo.created | Memo.create | search: インデックスに upsert |
 | memo.edited | Memo.edit / Memo.rollback | search: インデックスを upsert（最新本文を読み直す） |
-| memo.trashed | Memo.softDelete | search: インデックスから除去（ゴミ箱は検索にヒットしない）。あわせて consumer がこのメモを出典とするドキュメントのエントリを再 upsert する（ファンアウト。ゴミ箱内メモの ID を `sourceMemoIds` に露出させない。詳細は search.md） |
-| memo.restored | Memo.restore | search: インデックスへ再登録。あわせて consumer がこのメモを出典とするドキュメントのエントリを再 upsert する（ファンアウト。詳細は search.md） |
+| memo.trashed | Memo.softDelete | 同じsemantic commitでmemo射影を除去し、このメモを出典とするactive document射影を再upsertする |
+| memo.restored | Memo.restore | 同じsemantic commitでmemo射影を再登録し、出典先active document射影を再upsertする |
 | memo.hardDeleted | ユースケース（trash）が直接発行 | search: インデックスから除去（出典リンクの消去は同一 UoW の同期処理であり、このイベントの購読者には含めない。ADR-003） |
 | memo.sourceLinksChanged | ユースケース（trash）が直接発行（参照先ドキュメントのハードデリートでこのメモの出典リンクが消えたとき。ペイロードは対象IDのみ、ADR-005 準拠） | search: 当該メモを読み直して upsert（`sourceOfDocumentIds` の反映） |
 
-配信は at-least-once・順序保証なし。consumer は対象IDの最新状態を読み直して冪等に upsert / delete する（`memo.hardDeleted` 処理時に本体が既に存在しないのは正常系）。
+検索の整合性は配信順序に依存しない。本体状態とtransaction-scoped projectionは同時にcommitし、どちらかの失敗では全変更をrollbackする。
 
 ## ドメインサービス
 

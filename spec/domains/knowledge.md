@@ -3,7 +3,7 @@
 トピック・ドキュメント・出典リンクと、ドキュメントのリビジョン履歴を管理する。
 
 - 上流: [requirements.md](../requirements.md) 2章 / 4.2 / 4.3、[scenario/document.md](../scenario/document.md)、[scenario/ai.md](../scenario/ai.md)、[scenario/trash.md](../scenario/trash.md)
-- 関連 ADR: [ADR-001](../adr/001-restore-document-without-topic.md)（所属トピック消失時の復元）、[ADR-003](../adr/003-source-link-after-hard-delete.md)（ハードデリート後の出典リンク）、[ADR-004](../adr/004-domain-boundaries.md)（topic と document を同一ドメインに置く理由）、[ADR-005](../adr/005-search-index-via-outbox.md)（イベント経由のインデックス更新）
+- 関連 ADR: [ADR-001](../adr/001-restore-document-without-topic.md)（所属トピック消失時の復元）、[ADR-003](../adr/003-source-link-after-hard-delete.md)（ハードデリート後の出典リンク）、[ADR-004](../adr/004-domain-boundaries.md)（topic と document を同一ドメインに置く理由）。検索同期規則は [search.md](./search.md) を参照
 - コード規約: [docs/backend_implementation_example.md](../../docs/backend_implementation_example.md) に従う（値オブジェクトは unique symbol ブランド型 + `create` ファクトリで `BusinessRuleError` を throw、エンティティは判別可能ユニオン + 純関数ファクトリ、`now: Date` と id は引数で受ける、状態遷移は `WithEventDrafts` を返す）
 
 ## ユビキタス言語
@@ -279,7 +279,7 @@ export type DocumentEditOutcome =
 
 ## ドメインイベント
 
-実装規約に従い、ファクトリは identity-less な `EventDraft` を返す。**ペイロードは対象 ID のみ**（ADR-005: consumer は ID から最新状態を読み直して冪等に upsert / delete するため、本文等は運ばない）。
+実装規約に従い、ファクトリは identity-less な `EventDraft` を返す。イベントは監査または同じtransaction内の業務反応に限定し、検索射影の配送契約にはしない。
 
 | イベント型 | ペイロード | 発行契機 |
 |---|---|---|
@@ -295,12 +295,12 @@ export type DocumentEditOutcome =
 | `document.trashed` | `{ documentId: DocumentId }` | `Document.softDelete`（個別・セット共通） |
 | `document.restored` | `{ documentId: DocumentId }` | `Document.restore`（個別・セット共通） |
 | `document.hardDeleted` | `{ documentId: DocumentId }` | trash ドメインのユースケースが直接発行 |
-| `document.sourceLinksChanged` | `{ documentId: DocumentId }` | trash ドメインのユースケースが直接発行（出典メモのハードデリートで当該ドキュメントの出典リンクが消えたとき。消去前に `listSourceLinksByMemo` で確定した影響ドキュメントごとに、リンク消去と同一 UoW で発行）。search consumer が当該ドキュメントを読み直して upsert（`sourceMemoIds` の反映） |
+| `document.sourceLinksChanged` | `{ documentId: DocumentId }` | 出典メモのhard deleteでlinkが消えたことを表す監査イベント。検索射影はlink消去と同じsemantic commitで更新する |
 
 - `aggregateId` は各ペイロードの ID と同値
-- アーカイブ済みトピックの内容は検索にヒットするため、`topic.archived` でインデックスから除去してはならない（consumer 側の注意点。除去するのは trashed / hardDeleted のみ）
-- `document.trashed` / `document.restored` を受けた search consumer は、対象ドキュメント自身の remove / upsert に加え、`listSourceLinksByDocument` で逆引きした出典メモのエントリも再 upsert する（ファンアウト。検索結果の `sourceOfDocumentIds` にゴミ箱内ドキュメントの ID を露出させない。詳細は search.md のインデックス更新フロー）。ソフトデリート・復元のための追加イベントは設けない
-- イベントデコーダ（outbox 行の再水和）は application 層 `application/knowledge/eventDecoders.ts` に置く
+- アーカイブ済みトピックの内容は検索対象のため、archive/unarchiveでは射影を除去しない
+- document trash/restoreは同じsemantic commitでdocument射影をremove/upsertし、影響するactive memo射影も再upsertする
+- transport用イベントデコーダは持たない
 
 ## ドメインサービス
 
