@@ -78,11 +78,16 @@ const V4 = [
    END`,
 ] as const;
 
+const V5 = [
+  "ALTER TABLE credential_locators ADD COLUMN credential_json TEXT",
+] as const;
+
 export const accountHomeMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
   { version: 3, up: V3 },
   { version: 4, up: V4 },
+  { version: 5, up: V5 },
 ];
 
 export function migrateAccountHome(

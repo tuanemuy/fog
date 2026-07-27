@@ -1,18 +1,20 @@
 import { UserDataSemanticCommit } from "@repo/core/adapters/cloudflare/user-data/semanticCommit";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import type {
-  SemanticCommand,
+  SearchProjectionPort,
   SemanticCommitResult,
   SemanticRpcCommand,
 } from "@repo/core/application/search/contracts";
+import { prepareSemanticCommand } from "@repo/core/application/search/prepareSemanticCommand";
 import { UserDataDurableObject } from "../durable-objects/UserDataDurableObject";
-import { assertLocalSemanticCommand } from "./localSemanticValidation";
 
 /**
  * Local integration capability. This class is never exported by server.state.ts
  * or bound by a production/staging Wrangler configuration.
  */
 export class LocalUserDataDurableObject extends UserDataDurableObject {
+  private alarmScheduleFailures = 0;
+
   async initialize(input: {
     operationId: string;
     userId: string;
@@ -38,14 +40,58 @@ export class LocalUserDataDurableObject extends UserDataDurableObject {
     command: SemanticRpcCommand,
   ): Promise<RpcResult<SemanticCommitResult>> {
     return this.rpc(async () => {
-      assertLocalSemanticCommand(command);
-      const { version: _version, ...prepared } = command;
-      const result = new UserDataSemanticCommit(
+      const prepared = prepareSemanticCommand(command, Date.now());
+      const semanticCommit = new UserDataSemanticCommit(
         this.ctx.storage,
         () => this.profile().trashRetentionDays,
-      ).transactionSync(prepared as SemanticCommand);
+      );
+      const result = semanticCommit.transactionSync(
+        prepared,
+        (repositories, projection) => {
+          repositories.apply(prepared, projection);
+        },
+      );
       await this.ensureAlarm();
       return result;
     });
+  }
+
+  async commitWithProjectionFailure(
+    command: SemanticRpcCommand,
+  ): Promise<RpcResult<SemanticCommitResult>> {
+    return this.rpc(() => {
+      const prepared = prepareSemanticCommand(command, Date.now());
+      return new UserDataSemanticCommit(
+        this.ctx.storage,
+        () => this.profile().trashRetentionDays,
+      ).transactionSync(prepared, (repositories, projection) => {
+        const failingProjection: SearchProjectionPort = {
+          upsert(entry) {
+            projection.upsert(entry);
+            throw new Error("TEST_PROJECTION_FAILURE_AFTER_UPSERT");
+          },
+          remove(entityType, id) {
+            projection.remove(entityType, id);
+            throw new Error("TEST_PROJECTION_FAILURE_AFTER_REMOVE");
+          },
+        };
+        repositories.apply(prepared, failingProjection);
+      });
+    });
+  }
+
+  async failNextAlarmSchedules(count = 1): Promise<void> {
+    if (!Number.isSafeInteger(count) || count < 1 || count > 10) {
+      throw new TypeError("TEST_ALARM_FAILURE_COUNT_INVALID");
+    }
+    this.alarmScheduleFailures = count;
+  }
+
+  protected override async ensureAlarm(): Promise<void> {
+    if (this.alarmScheduleFailures > 0) {
+      this.alarmScheduleFailures -= 1;
+      throw new Error("TEST_SET_ALARM_FAILURE");
+    }
+    await super.ensureAlarm();
   }
 }

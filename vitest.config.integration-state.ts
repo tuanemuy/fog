@@ -11,6 +11,10 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2026-07-02",
         compatibilityFlags: ["nodejs_compat"],
+        bindings: {
+          IDENTITY_MAIL_ENCRYPTION_KEY:
+            "integration-mail-encryption-key-32-bytes-minimum",
+        },
         durableObjects: {
           USER_DATA: {
             className: "UserDataDurableObject",

@@ -1,8 +1,11 @@
 #!/usr/bin/env tsx
+import { fileURLToPath } from "node:url";
 import type {
   PitrReceipt,
   PitrTarget,
 } from "@repo/core/adapters/cloudflare/pitrOperator";
+
+type OperatorCall = (body: unknown) => Promise<unknown>;
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`${name} is required`);
@@ -31,7 +34,7 @@ function target(
   throw new Error("target kind must be user-data or identity-directory");
 }
 
-function receipt(value: string | undefined): PitrReceipt {
+export function parseReceipt(value: string | undefined): PitrReceipt {
   const parsed: unknown = JSON.parse(required(value, "receipt-json"));
   if (
     typeof parsed !== "object" ||
@@ -67,32 +70,39 @@ async function call(body: unknown): Promise<unknown> {
   return result;
 }
 
-async function restore(
+export async function restore(
   pitrTarget: PitrTarget,
   bookmark: string,
-): Promise<unknown> {
-  const scheduled = (await call({
+  operatorCall: OperatorCall = call,
+): Promise<PitrReceipt> {
+  const scheduled = (await operatorCall({
     action: "schedule",
     target: pitrTarget,
     bookmark,
   })) as PitrReceipt;
-  await call({ action: "restart", receipt: scheduled });
-  return verifyUntilComplete(scheduled);
+  await operatorCall({ action: "restart", receipt: scheduled });
+  return verifyUntilComplete(scheduled, operatorCall);
 }
 
-async function undo(pitrReceipt: PitrReceipt): Promise<unknown> {
-  const scheduled = (await call({
+export async function undo(
+  pitrReceipt: PitrReceipt,
+  operatorCall: OperatorCall = call,
+): Promise<PitrReceipt> {
+  const scheduled = (await operatorCall({
     action: "undo",
     receipt: pitrReceipt,
   })) as PitrReceipt;
-  await call({ action: "restart", receipt: scheduled });
-  return verifyUntilComplete(scheduled);
+  await operatorCall({ action: "restart", receipt: scheduled });
+  return verifyUntilComplete(scheduled, operatorCall);
 }
 
-async function verifyUntilComplete(initial: PitrReceipt): Promise<unknown> {
+async function verifyUntilComplete(
+  initial: PitrReceipt,
+  operatorCall: OperatorCall,
+): Promise<PitrReceipt> {
   let current = initial;
   for (let page = 0; page < 10_000; page += 1) {
-    const verification = (await call({
+    const verification = (await operatorCall({
       action: "verify",
       receipt: current,
     })) as {
@@ -112,7 +122,7 @@ async function verifyUntilComplete(initial: PitrReceipt): Promise<unknown> {
       verification.reconciliation === undefined ||
       verification.reconciliation.complete
     ) {
-      return { receipt: current, verification };
+      return current;
     }
   }
   throw new Error("Directory reconciliation exceeded 10000 pages");
@@ -138,13 +148,15 @@ async function main(): Promise<void> {
       required(bookmark, "bookmark"),
     );
   } else if (action === "undo") {
-    result = await undo(receipt(kindOrReceipt));
+    result = await undo(parseReceipt(kindOrReceipt));
   } else if (action === "verify") {
-    result = await call({ action, receipt: receipt(kindOrReceipt) });
+    result = await call({ action, receipt: parseReceipt(kindOrReceipt) });
   } else {
     throw new Error(usage);
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-await main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await main();
+}

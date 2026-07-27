@@ -12,9 +12,9 @@ import type {
   AuthenticatedUserDataRouter,
   CredentialDirectoryPort,
   CredentialKind,
-  CredentialLocator,
   CredentialRef,
   CurrentAccount,
+  DirectoryReference,
   DirectoryCredential,
   DirectoryAuthorityRow,
   IdentityApplicationPort,
@@ -33,39 +33,39 @@ import type {
 } from "@repo/core/application/identity/contracts";
 import { operationId } from "@repo/core/application/identity/contracts";
 import { IdentityCoordinator } from "@repo/core/application/identity/coordinator";
-import type { IdentitySagaFaultHook } from "@repo/core/application/identity/coordinator";
 import { CanonicalAuthenticatedUserDataRouter } from "@repo/core/application/identity/authenticatedUserDataRouter";
 import { rpcMutation, rpcQuery } from "@repo/core/application/identity/rpc";
 import type { Email, UserId } from "@repo/core/domain/identity/valueObject";
 import {
   Email as EmailValue,
+  SsoProvider as SsoProviderValue,
+  SsoSubject as SsoSubjectValue,
   UserId as UserIdValue,
 } from "@repo/core/domain/identity/valueObject";
 import {
   canonicalPasswordCredential,
   credentialLocators,
+  decodeDirectoryReference,
   type DirectoryKeyring,
+  encodeDirectoryReference,
   validateDirectoryKeyring,
 } from "./identityRouting";
+import { decryptIdentityValue, encryptIdentityValue } from "./identityEnvelope";
+import type {
+  PhysicalCredentialLocator,
+  StoredCredentialRef,
+  StoredDirectoryCredential,
+} from "./identityPhysical";
+import type { PhysicalDirectoryAuthorityRow } from "./identity-directory/store";
+import type { PhysicalAccountAuthSummary } from "./account-home/store";
 
 type RotationRow = Readonly<{
-  locator: CredentialLocator;
-  credential: CredentialRef;
+  locator: PhysicalCredentialLocator;
+  credential: StoredCredentialRef;
   userId: UserId;
   operationId: OperationId;
   accountEpoch: number;
 }>;
-
-function sameCredentialLocator(
-  left: CredentialLocator,
-  right: CredentialLocator,
-): boolean {
-  return (
-    left.generation === right.generation &&
-    left.bucket === right.bucket &&
-    left.opaqueKey === right.opaqueKey
-  );
-}
 
 function errorChainIncludes(error: unknown, fragment: string): boolean {
   let current = error;
@@ -84,7 +84,7 @@ type DirectoryStub = {
   ): Promise<
     RpcResult<{
       userId: string;
-      email: string;
+      emailEncrypted: string;
       passwordHash: string;
       preparedAt: number;
     } | null>
@@ -93,7 +93,7 @@ type DirectoryStub = {
     input: IdentityRpcMutation<{
       opaqueOperationKey: string;
       proposedUserId: string;
-      email: string;
+      emailEncrypted: string;
       passwordHash: string;
       now: number;
     }>,
@@ -110,15 +110,15 @@ type DirectoryStub = {
       opaqueOperationKey: string;
       proposedUserId: string;
       provider: string;
-      subject: string;
-      email: string;
+      subjectEncrypted: string;
+      emailEncrypted: string;
       now: number;
     }>,
   ): Promise<RpcResult<{ userId: string; replayed: boolean }>>;
   reserve(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
-      credential: CredentialRef;
+      locator: PhysicalCredentialLocator;
+      credential: StoredCredentialRef;
       userId: string;
       accountEpoch: number;
       now: number;
@@ -127,28 +127,28 @@ type DirectoryStub = {
   ): Promise<RpcResult<{ userId: string }>>;
   markInitialized(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       now: number;
     }>,
   ): Promise<RpcResult<null>>;
   activate(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
       now: number;
     }>,
   ): Promise<RpcResult<{ userId: string }>>;
   lookupPassword(
-    input: IdentityRpcQuery<{ locator: CredentialLocator }>,
-  ): Promise<RpcResult<PasswordCredential | null>>;
+    input: IdentityRpcQuery<{ locator: PhysicalCredentialLocator }>,
+  ): Promise<RpcResult<StoredDirectoryCredential | null>>;
   lookup(
-    input: IdentityRpcQuery<{ locator: CredentialLocator }>,
-  ): Promise<RpcResult<DirectoryCredential | null>>;
+    input: IdentityRpcQuery<{ locator: PhysicalCredentialLocator }>,
+  ): Promise<RpcResult<StoredDirectoryCredential | null>>;
   replacePassword(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       passwordHash: string;
       accountEpoch: number;
@@ -157,7 +157,7 @@ type DirectoryStub = {
   ): Promise<RpcResult<null>>;
   tombstone(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
       now: number;
@@ -165,14 +165,14 @@ type DirectoryStub = {
   ): Promise<RpcResult<null>>;
   purge(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
     }>,
   ): Promise<RpcResult<null>>;
   storePasswordReset(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       tokenHash: string;
       expiresAt: number;
@@ -182,14 +182,15 @@ type DirectoryStub = {
     input: IdentityRpcMutation<{
       userId: string;
       email: string;
-      tokenHash: string;
+      resetSecret: string;
+      expiresAt: number;
       providerIdempotencyKey: string;
       now: number;
     }>,
   ): Promise<RpcResult<null>>;
   lookupPasswordReset(
     input: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       tokenHash: string;
       now: number;
     }>,
@@ -206,7 +207,7 @@ type DirectoryStub = {
     }>,
   ): Promise<
     RpcResult<{
-      rows: readonly DirectoryAuthorityRow[];
+      rows: readonly PhysicalDirectoryAuthorityRow[];
       nextCursor: string | null;
     }>
   >;
@@ -285,9 +286,10 @@ type AccountHomeStub = {
       nextState: Parameters<
         AccountHomePort["advanceOperation"]
       >[0]["nextState"];
-      locator?: CredentialLocator;
-      credentialId?: string;
-      credentialKind?: CredentialKind;
+      locator?: PhysicalCredentialLocator;
+      credential?: Parameters<
+        AccountHomePort["advanceOperation"]
+      >[0]["credential"];
       primaryEmail?: string;
       bumpSessionEpoch?: boolean;
       now: number;
@@ -298,21 +300,22 @@ type AccountHomeStub = {
   ): Promise<RpcResult<IdentityOperation | null>>;
   getAuthSummary(
     input: IdentityRpcQuery<Record<string, never>>,
-  ): Promise<RpcResult<AccountAuthSummary | null>>;
+  ): Promise<RpcResult<PhysicalAccountAuthSummary | null>>;
   compensateCreate(
     input: IdentityRpcMutation<{ userId: string; now: number }>,
   ): Promise<RpcResult<null>>;
   addCredentialLocator(
     input: IdentityRpcMutation<{
       userId: string;
-      locator: CredentialLocator;
-      credentialId: string;
-      kind: CredentialKind;
+      locator: PhysicalCredentialLocator;
+      credential: Parameters<
+        AccountHomePort["addCredentialLocator"]
+      >[0]["credential"];
       primaryEmail?: string;
       bumpSessionEpoch: boolean;
       now: number;
     }>,
-  ): Promise<RpcResult<AccountAuthSummary>>;
+  ): Promise<RpcResult<PhysicalAccountAuthSummary>>;
   removeCredentialLocator(
     input: IdentityRpcMutation<{
       userId: string;
@@ -320,12 +323,12 @@ type AccountHomeStub = {
       bumpSessionEpoch: boolean;
       now: number;
     }>,
-  ): Promise<RpcResult<AccountAuthSummary>>;
+  ): Promise<RpcResult<PhysicalAccountAuthSummary>>;
   replaceCredentialLocator(
     input: IdentityRpcMutation<{
       userId: string;
-      previous: CredentialLocator;
-      active: CredentialLocator;
+      previous: PhysicalCredentialLocator;
+      active: PhysicalCredentialLocator;
       kind: CredentialKind;
       now: number;
     }>,
@@ -336,7 +339,7 @@ type AccountHomeStub = {
     RpcResult<{
       epoch: number;
       state: Parameters<AccountHomePort["advanceOperation"]>[0]["nextState"];
-      locators: readonly CredentialLocator[];
+      locators: readonly PhysicalCredentialLocator[];
     }>
   >;
   finishDeletionV1(
@@ -449,31 +452,59 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     private readonly keyring: DirectoryKeyring,
   ) {}
 
-  locators(canonicalCredential: string): Promise<readonly CredentialLocator[]> {
-    return credentialLocators(canonicalCredential, this.keyring);
+  async references(
+    canonicalCredential: string,
+  ): Promise<readonly DirectoryReference[]> {
+    return (await credentialLocators(canonicalCredential, this.keyring)).map(
+      encodeDirectoryReference,
+    );
   }
 
   async lookupPassword(
     email: Email,
   ): Promise<readonly (PasswordCredential | null)[]> {
-    const locators = await this.locators(canonicalPasswordCredential(email));
+    const references = await this.references(
+      canonicalPasswordCredential(email),
+    );
     return Promise.all(
-      locators.map((locator) =>
-        retryRpc(() =>
+      references.map(async (directoryReference) => {
+        const locator = decodeDirectoryReference(directoryReference);
+        const stored = await retryRpc(() =>
           this.forLocator(locator).lookupPassword(rpcQuery({ locator })),
-        ),
-      ),
+        );
+        if (stored?.credential.kind !== "password") return null;
+        return {
+          userId: stored.userId,
+          credentialId: stored.credential.credentialId,
+          email: EmailValue.create(
+            await decryptIdentityValue(
+              stored.credential.emailEncrypted,
+              this.keyring,
+              `credential:${stored.credential.credentialId}:email`,
+            ),
+          ),
+          passwordHash: stored.credential.passwordHash,
+          directoryReference,
+          accountEpoch: stored.accountEpoch,
+        };
+      }),
     );
   }
 
   async lookupCredential(
     canonicalCredential: string,
   ): Promise<readonly (DirectoryCredential | null)[]> {
-    const locators = await this.locators(canonicalCredential);
+    const references = await this.references(canonicalCredential);
     return Promise.all(
-      locators.map((locator) =>
-        retryRpc(() => this.forLocator(locator).lookup(rpcQuery({ locator }))),
-      ),
+      references.map(async (directoryReference) => {
+        const locator = decodeDirectoryReference(directoryReference);
+        const stored = await retryRpc(() =>
+          this.forLocator(locator).lookup(rpcQuery({ locator })),
+        );
+        return stored
+          ? this.toDirectoryCredential(stored, directoryReference)
+          : null;
+      }),
     );
   }
 
@@ -500,11 +531,27 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
       ),
     );
     if (existing) {
-      if (EmailValue.create(existing.email) !== input.email) {
-        throw new ConflictError(
-          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
-          "Signup operation does not match its original email",
+      try {
+        const existingEmail = EmailValue.create(
+          await decryptIdentityValue(
+            existing.emailEncrypted,
+            this.keyring,
+            `signup-operation:${operationDigest}:email`,
+          ),
         );
+        if (existingEmail !== input.email) {
+          throw new ConflictError(
+            "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+            "Signup operation does not match its original email",
+          );
+        }
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== "IDENTITY_ENVELOPE_KEY_UNAVAILABLE"
+        ) {
+          throw error;
+        }
       }
       return {
         userId: UserIdValue.create(existing.userId),
@@ -514,12 +561,17 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         replayed: true,
       };
     }
+    const emailEncrypted = await encryptIdentityValue(
+      input.email,
+      this.keyring,
+      `signup-operation:${operationDigest}:email`,
+    );
     const prepared = await retryRpc(() =>
       operationRegistry.preparePasswordSignup(
         rpcMutation(input.operationId, {
           opaqueOperationKey: operationDigest,
           proposedUserId: input.proposedUserId,
-          email: input.email,
+          emailEncrypted,
           passwordHash: input.passwordHash,
           now: input.now,
         }),
@@ -550,14 +602,26 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
       this.namespace,
       `sso-operation:${operationDigest}`,
     );
+    const [subjectEncrypted, emailEncrypted] = await Promise.all([
+      encryptIdentityValue(
+        input.subject,
+        this.keyring,
+        `sso-operation:${operationDigest}:subject`,
+      ),
+      encryptIdentityValue(
+        input.email,
+        this.keyring,
+        `sso-operation:${operationDigest}:email`,
+      ),
+    ]);
     const prepared = await retryRpc(() =>
       registry.prepareSsoCreate(
         rpcMutation(input.operationId, {
           opaqueOperationKey: operationDigest,
           proposedUserId: input.proposedUserId,
           provider: input.provider,
-          subject: input.subject,
-          email: input.email,
+          subjectEncrypted,
+          emailEncrypted,
           now: input.now,
         }),
       ),
@@ -571,11 +635,16 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async reserve(
     input: Parameters<CredentialDirectoryPort["reserve"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
+    const credential = await this.toStoredCredential(
+      input.credentialId,
+      input.credential,
+    );
     await retryRpc(() =>
-      this.forLocator(input.locator).reserve(
+      this.forLocator(locator).reserve(
         rpcMutation(input.operationId, {
-          locator: input.locator,
-          credential: input.credential,
+          locator,
+          credential,
           userId: input.userId,
           accountEpoch: input.accountEpoch,
           now: input.now,
@@ -588,10 +657,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async markInitialized(
     input: Parameters<CredentialDirectoryPort["markInitialized"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).markInitialized(
+      this.forLocator(locator).markInitialized(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           now: input.now,
         }),
@@ -602,10 +672,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async activate(
     input: Parameters<CredentialDirectoryPort["activate"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).activate(
+      this.forLocator(locator).activate(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           accountEpoch: input.accountEpoch,
           now: input.now,
@@ -617,10 +688,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async replacePassword(
     input: Parameters<CredentialDirectoryPort["replacePassword"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).replacePassword(
+      this.forLocator(locator).replacePassword(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           passwordHash: input.passwordHash,
           accountEpoch: input.accountEpoch,
@@ -633,10 +705,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async tombstone(
     input: Parameters<CredentialDirectoryPort["tombstone"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).tombstone(
+      this.forLocator(locator).tombstone(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           accountEpoch: input.accountEpoch,
           now: input.now,
@@ -648,10 +721,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async purge(
     input: Parameters<CredentialDirectoryPort["purge"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).purge(
+      this.forLocator(locator).purge(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           accountEpoch: input.accountEpoch,
         }),
@@ -662,10 +736,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async storePasswordReset(
     input: Parameters<CredentialDirectoryPort["storePasswordReset"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).storePasswordReset(
+      this.forLocator(locator).storePasswordReset(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           userId: input.userId,
           tokenHash: input.tokenHash,
           expiresAt: input.expiresAt,
@@ -677,12 +752,14 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   async enqueuePasswordResetMail(
     input: Parameters<CredentialDirectoryPort["enqueuePasswordResetMail"]>[0],
   ): Promise<void> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     await retryRpc(() =>
-      this.forLocator(input.locator).enqueuePasswordResetMail(
+      this.forLocator(locator).enqueuePasswordResetMail(
         rpcMutation(input.operationId, {
           userId: input.userId,
           email: input.email,
-          tokenHash: input.tokenHash,
+          resetSecret: input.resetSecret,
+          expiresAt: input.expiresAt,
           providerIdempotencyKey: input.providerIdempotencyKey,
           now: input.now,
         }),
@@ -693,10 +770,11 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   lookupPasswordReset(
     input: Parameters<CredentialDirectoryPort["lookupPasswordReset"]>[0],
   ): Promise<{ userId: UserId } | null> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     return retryRpc(() =>
-      this.forLocator(input.locator).lookupPasswordReset(
+      this.forLocator(locator).lookupPasswordReset(
         rpcMutation(input.operationId, {
-          locator: input.locator,
+          locator,
           tokenHash: input.tokenHash,
           now: input.now,
         }),
@@ -707,8 +785,9 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
   consumePasswordReset(
     input: Parameters<CredentialDirectoryPort["consumePasswordReset"]>[0],
   ): Promise<{ userId: UserId } | null> {
+    const locator = decodeDirectoryReference(input.directoryReference);
     return retryRpc(() =>
-      this.forLocator(input.locator).consumePasswordReset(
+      this.forLocator(locator).consumePasswordReset(
         rpcMutation(input.operationId, {
           tokenHash: input.tokenHash,
           now: input.now,
@@ -717,7 +796,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  scanForAuthorityReconcile(input: {
+  async scanForAuthorityReconcile(input: {
     generation: string;
     bucket: number;
     cursor?: string;
@@ -726,7 +805,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     rows: readonly DirectoryAuthorityRow[];
     nextCursor: string | null;
   }> {
-    return retryRpc(() =>
+    const page = await retryRpc(() =>
       this.forBucket(input.generation, input.bucket).scanForAuthorityReconcile(
         rpcQuery({
           generation: input.generation,
@@ -736,6 +815,16 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         }),
       ),
     );
+    return {
+      rows: page.rows.map((row) => ({
+        directoryReference: encodeDirectoryReference(row.locator),
+        userId: row.userId,
+        operationId: row.operationId,
+        state: row.state,
+        accountEpoch: row.accountEpoch,
+      })),
+      nextCursor: page.nextCursor,
+    };
   }
 
   scanForRotation(input: {
@@ -831,7 +920,242 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  private forLocator(locator: CredentialLocator): DirectoryStub {
+  private async toStoredCredential(
+    credentialId: string,
+    credential: CredentialRef,
+  ): Promise<StoredCredentialRef> {
+    const canonicalValueEncrypted = await encryptIdentityValue(
+      credential.canonicalValue,
+      this.keyring,
+      `credential:${credentialId}:canonical`,
+    );
+    if (credential.kind === "password") {
+      return {
+        credentialId,
+        kind: "password",
+        canonicalValueEncrypted,
+        emailEncrypted: await encryptIdentityValue(
+          credential.canonicalValue.replace(/^email:/u, ""),
+          this.keyring,
+          `credential:${credentialId}:email`,
+        ),
+        passwordHash: credential.passwordHash,
+      };
+    }
+    const subject = credential.canonicalValue.split("\u0000").at(-1) ?? "";
+    return {
+      credentialId,
+      kind: "sso",
+      canonicalValueEncrypted,
+      provider: credential.provider,
+      subjectEncrypted: await encryptIdentityValue(
+        subject,
+        this.keyring,
+        `credential:${credentialId}:subject`,
+      ),
+      verifiedEmailEncrypted: await encryptIdentityValue(
+        credential.verifiedEmail,
+        this.keyring,
+        `credential:${credentialId}:verified-email`,
+      ),
+    };
+  }
+
+  physicalLocators(
+    canonicalCredential: string,
+  ): Promise<readonly PhysicalCredentialLocator[]> {
+    return credentialLocators(canonicalCredential, this.keyring);
+  }
+
+  decryptCanonicalCredential(credential: StoredCredentialRef): Promise<string> {
+    return decryptIdentityValue(
+      credential.canonicalValueEncrypted,
+      this.keyring,
+      `credential:${credential.credentialId}:canonical`,
+    );
+  }
+
+  async reencryptCredential(
+    credential: StoredCredentialRef,
+  ): Promise<StoredCredentialRef> {
+    const canonicalValueEncrypted = await encryptIdentityValue(
+      await this.decryptCanonicalCredential(credential),
+      this.keyring,
+      `credential:${credential.credentialId}:canonical`,
+    );
+    if (credential.kind === "password") {
+      return {
+        ...credential,
+        canonicalValueEncrypted,
+        emailEncrypted: await encryptIdentityValue(
+          await decryptIdentityValue(
+            credential.emailEncrypted,
+            this.keyring,
+            `credential:${credential.credentialId}:email`,
+          ),
+          this.keyring,
+          `credential:${credential.credentialId}:email`,
+        ),
+      };
+    }
+    return {
+      ...credential,
+      canonicalValueEncrypted,
+      subjectEncrypted: await encryptIdentityValue(
+        await decryptIdentityValue(
+          credential.subjectEncrypted,
+          this.keyring,
+          `credential:${credential.credentialId}:subject`,
+        ),
+        this.keyring,
+        `credential:${credential.credentialId}:subject`,
+      ),
+      verifiedEmailEncrypted: await encryptIdentityValue(
+        await decryptIdentityValue(
+          credential.verifiedEmailEncrypted,
+          this.keyring,
+          `credential:${credential.credentialId}:verified-email`,
+        ),
+        this.keyring,
+        `credential:${credential.credentialId}:verified-email`,
+      ),
+    };
+  }
+
+  logicalDirectoryCredential(
+    row: StoredDirectoryCredential,
+  ): Promise<DirectoryCredential> {
+    return this.toDirectoryCredential(
+      row,
+      encodeDirectoryReference(row.locator),
+    );
+  }
+
+  async reservePhysical(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: PhysicalCredentialLocator;
+    credential: StoredCredentialRef;
+    accountEpoch: number;
+    now: number;
+  }): Promise<void> {
+    await retryRpc(() =>
+      this.forLocator(input.locator).reserve(
+        rpcMutation(input.operationId, {
+          locator: input.locator,
+          credential: input.credential,
+          userId: input.userId,
+          accountEpoch: input.accountEpoch,
+          now: input.now,
+          reservationExpiresAt: input.now + 15 * 60_000,
+        }),
+      ),
+    );
+  }
+
+  async markInitializedPhysical(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: PhysicalCredentialLocator;
+    now: number;
+  }): Promise<void> {
+    await retryRpc(() =>
+      this.forLocator(input.locator).markInitialized(
+        rpcMutation(input.operationId, {
+          locator: input.locator,
+          userId: input.userId,
+          now: input.now,
+        }),
+      ),
+    );
+  }
+
+  async activatePhysical(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: PhysicalCredentialLocator;
+    accountEpoch: number;
+    now: number;
+  }): Promise<void> {
+    await retryRpc(() =>
+      this.forLocator(input.locator).activate(
+        rpcMutation(input.operationId, {
+          locator: input.locator,
+          userId: input.userId,
+          accountEpoch: input.accountEpoch,
+          now: input.now,
+        }),
+      ),
+    );
+  }
+
+  async tombstonePhysical(input: {
+    operationId: OperationId;
+    userId: UserId;
+    locator: PhysicalCredentialLocator;
+    accountEpoch: number;
+    now: number;
+  }): Promise<void> {
+    await retryRpc(() =>
+      this.forLocator(input.locator).tombstone(
+        rpcMutation(input.operationId, {
+          locator: input.locator,
+          userId: input.userId,
+          accountEpoch: input.accountEpoch,
+          now: input.now,
+        }),
+      ),
+    );
+  }
+
+  private async toDirectoryCredential(
+    stored: StoredDirectoryCredential,
+    directoryReference: DirectoryReference,
+  ): Promise<DirectoryCredential> {
+    const credential =
+      stored.credential.kind === "password"
+        ? {
+            credentialId: stored.credential.credentialId,
+            kind: "password" as const,
+            email: EmailValue.create(
+              await decryptIdentityValue(
+                stored.credential.emailEncrypted,
+                this.keyring,
+                `credential:${stored.credential.credentialId}:email`,
+              ),
+            ),
+            passwordHash: stored.credential.passwordHash,
+          }
+        : {
+            credentialId: stored.credential.credentialId,
+            kind: "sso" as const,
+            provider: SsoProviderValue.create(stored.credential.provider),
+            subject: SsoSubjectValue.create(
+              await decryptIdentityValue(
+                stored.credential.subjectEncrypted,
+                this.keyring,
+                `credential:${stored.credential.credentialId}:subject`,
+              ),
+            ),
+            verifiedEmail: EmailValue.create(
+              await decryptIdentityValue(
+                stored.credential.verifiedEmailEncrypted,
+                this.keyring,
+                `credential:${stored.credential.credentialId}:verified-email`,
+              ),
+            ),
+          };
+    return {
+      userId: stored.userId,
+      operationId: stored.operationId,
+      directoryReference,
+      state: stored.state,
+      accountEpoch: stored.accountEpoch,
+      credential,
+    };
+  }
+
+  private forLocator(locator: PhysicalCredentialLocator): DirectoryStub {
     return this.forBucket(locator.generation, locator.bucket);
   }
 
@@ -868,11 +1192,12 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
           userId: input.userId,
           expectedState: input.expectedState,
           nextState: input.nextState,
-          ...(input.locator ? { locator: input.locator } : {}),
-          ...(input.credentialId ? { credentialId: input.credentialId } : {}),
-          ...(input.credentialKind
-            ? { credentialKind: input.credentialKind }
+          ...(input.directoryReference
+            ? {
+                locator: decodeDirectoryReference(input.directoryReference),
+              }
             : {}),
+          ...(input.credential ? { credential: input.credential } : {}),
           ...(input.primaryEmail ? { primaryEmail: input.primaryEmail } : {}),
           ...(input.bumpSessionEpoch !== undefined
             ? { bumpSessionEpoch: input.bumpSessionEpoch }
@@ -892,8 +1217,11 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     );
   }
 
-  getAuthSummary(userId: UserId): Promise<AccountAuthSummary | null> {
-    return retryRpc(() => this.forUser(userId).getAuthSummary(rpcQuery({})));
+  async getAuthSummary(userId: UserId): Promise<AccountAuthSummary | null> {
+    const summary = await retryRpc(() =>
+      this.forUser(userId).getAuthSummary(rpcQuery({})),
+    );
+    return summary ? this.toAccountAuthSummary(summary) : null;
   }
 
   async compensateCreate(
@@ -909,28 +1237,28 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     );
   }
 
-  addCredentialLocator(
+  async addCredentialLocator(
     input: Parameters<AccountHomePort["addCredentialLocator"]>[0],
   ): Promise<AccountAuthSummary> {
-    return retryRpc(() =>
+    const summary = await retryRpc(() =>
       this.forUser(input.userId).addCredentialLocator(
         rpcMutation(input.operationId, {
           userId: input.userId,
-          locator: input.locator,
-          credentialId: input.credentialId,
-          kind: input.kind,
+          locator: decodeDirectoryReference(input.directoryReference),
+          credential: input.credential,
           ...(input.primaryEmail ? { primaryEmail: input.primaryEmail } : {}),
           bumpSessionEpoch: input.bumpSessionEpoch,
           now: input.now,
         }),
       ),
     );
+    return this.toAccountAuthSummary(summary);
   }
 
-  removeCredentialLocator(
+  async removeCredentialLocator(
     input: Parameters<AccountHomePort["removeCredentialLocator"]>[0],
   ): Promise<AccountAuthSummary> {
-    return retryRpc(() =>
+    const summary = await retryRpc(() =>
       this.forUser(input.userId).removeCredentialLocator(
         rpcMutation(input.operationId, {
           userId: input.userId,
@@ -940,6 +1268,7 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
         }),
       ),
     );
+    return this.toAccountAuthSummary(summary);
   }
 
   async replaceCredentialLocator(
@@ -949,8 +1278,8 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
       this.forUser(input.userId).replaceCredentialLocator(
         rpcMutation(input.operationId, {
           userId: input.userId,
-          previous: input.previous,
-          active: input.active,
+          previous: decodeDirectoryReference(input.previous),
+          active: decodeDirectoryReference(input.active),
           kind: input.kind,
           now: input.now,
         }),
@@ -958,10 +1287,10 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     );
   }
 
-  beginDeletion(
+  async beginDeletion(
     input: Parameters<AccountHomePort["beginDeletion"]>[0],
   ): ReturnType<AccountHomePort["beginDeletion"]> {
-    return retryRpc(() =>
+    const deletion = await retryRpc(() =>
       this.forUser(input.userId).beginDeletionV1(
         rpcMutation(input.operationId, {
           userId: input.userId,
@@ -969,6 +1298,11 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
         }),
       ),
     );
+    return {
+      epoch: deletion.epoch,
+      state: deletion.state,
+      directoryReferences: deletion.locators.map(encodeDirectoryReference),
+    };
   }
 
   async finishDeletion(
@@ -989,6 +1323,18 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
 
   private forUser(userId: UserId): AccountHomeStub {
     return stub<AccountHomeStub>(this.namespace, userId);
+  }
+
+  private toAccountAuthSummary(
+    summary: PhysicalAccountAuthSummary,
+  ): AccountAuthSummary {
+    return {
+      ...summary,
+      credentials: summary.credentials.map(({ locators, ...credential }) => ({
+        ...credential,
+        directoryReferences: locators.map(encodeDirectoryReference),
+      })),
+    };
   }
 }
 
@@ -1069,7 +1415,7 @@ export class CloudflareIdentityGateway
   private readonly directoryPort: CloudflareCredentialDirectoryAdapter;
   private readonly accountHomePort: CloudflareAccountHomeAdapter;
   private readonly userDataPort: CloudflareUserDataIdentityAdapter;
-  private coordinator: IdentityCoordinator;
+  private readonly coordinator: IdentityCoordinator;
   readonly keyring: DirectoryKeyring;
 
   constructor(
@@ -1091,31 +1437,6 @@ export class CloudflareIdentityGateway
       userData: this.userDataPort,
       newUserId: () => UserIdValue.create(crypto.randomUUID()),
     });
-  }
-
-  static withFaultInjectionForTest(
-    directory: DurableObjectNamespace,
-    accountHomes: DurableObjectNamespace,
-    userData: DurableObjectNamespace,
-    keyring: DirectoryKeyring,
-    faultHook: IdentitySagaFaultHook,
-  ): CloudflareIdentityGateway {
-    const gateway = new CloudflareIdentityGateway(
-      directory,
-      accountHomes,
-      userData,
-      keyring,
-    );
-    gateway.coordinator = IdentityCoordinator.withFaultInjectionForTest(
-      {
-        directory: gateway.directoryPort,
-        accountHome: gateway.accountHomePort,
-        userData: gateway.userDataPort,
-        newUserId: () => UserIdValue.create(crypto.randomUUID()),
-      },
-      faultHook,
-    );
-    return gateway;
   }
 
   registerWithPassword(
@@ -1226,8 +1547,12 @@ export class CloudflareIdentityGateway
         let conflicts = 0;
         for (const row of page.rows) {
           try {
+            const canonical =
+              await this.directoryPort.decryptCanonicalCredential(
+                row.credential,
+              );
             const active = (
-              await this.directoryPort.locators(row.credential.canonicalValue)
+              await this.directoryPort.physicalLocators(canonical)
             ).find(
               (candidate) =>
                 candidate.generation === this.keyring.active.generation,
@@ -1236,21 +1561,23 @@ export class CloudflareIdentityGateway
             const rotationOperation = operationId(
               `rotate:${active.generation}:${row.locator.opaqueKey}`,
             );
-            await this.directoryPort.reserve({
+            const rotatedCredential =
+              await this.directoryPort.reencryptCredential(row.credential);
+            await this.directoryPort.reservePhysical({
               operationId: rotationOperation,
               userId: row.userId,
               locator: active,
-              credential: row.credential,
+              credential: rotatedCredential,
               accountEpoch: row.accountEpoch,
               now: input.now,
             });
-            await this.directoryPort.markInitialized({
+            await this.directoryPort.markInitializedPhysical({
               operationId: rotationOperation,
               userId: row.userId,
               locator: active,
               now: input.now,
             });
-            await this.directoryPort.activate({
+            await this.directoryPort.activatePhysical({
               operationId: rotationOperation,
               userId: row.userId,
               locator: active,
@@ -1260,12 +1587,12 @@ export class CloudflareIdentityGateway
             await this.accountHomePort.replaceCredentialLocator({
               operationId: rotationOperation,
               userId: row.userId,
-              previous: row.locator,
-              active,
+              previous: encodeDirectoryReference(row.locator),
+              active: encodeDirectoryReference(active),
               kind: row.credential.kind,
               now: input.now,
             });
-            await this.directoryPort.tombstone({
+            await this.directoryPort.tombstonePhysical({
               operationId: rotationOperation,
               locator: row.locator,
               userId: row.userId,
@@ -1469,7 +1796,7 @@ export class CloudflareIdentityGateway
           operation.state,
         )
       ) {
-        await this.directoryPort.activate({
+        await this.directoryPort.activatePhysical({
           operationId: row.operationId,
           userId: row.userId,
           locator: row.locator,
@@ -1486,18 +1813,20 @@ export class CloudflareIdentityGateway
           });
         }
         if (operation.state === "directory-active") {
+          const logical = (
+            await this.directoryPort.logicalDirectoryCredential({
+              ...row,
+              state: "initialized",
+            })
+          ).credential;
           const primaryEmail =
-            row.credential.kind === "sso"
-              ? row.credential.verifiedEmail
-              : EmailValue.create(
-                  row.credential.canonicalValue.replace(/^email:/, ""),
-                );
+            logical.kind === "sso" ? logical.verifiedEmail : logical.email;
           await this.accountHomePort.advanceOperation({
             operationId: row.operationId,
             userId: row.userId,
             expectedState: "directory-active",
             nextState: "completed",
-            credentialKind: row.credential.kind,
+            credential: logical,
             primaryEmail,
             now,
           });
@@ -1511,7 +1840,7 @@ export class CloudflareIdentityGateway
       authority?.status === "deleting" ||
       authority?.status === "deleted"
     ) {
-      await this.directoryPort.tombstone({
+      await this.directoryPort.tombstonePhysical({
         operationId: row.operationId,
         locator: row.locator,
         userId: row.userId,
@@ -1578,14 +1907,12 @@ export class CloudflareIdentityGateway
           authority?.status === "active" &&
           authority.operationEpoch === row.accountEpoch &&
           authority.credentials.some((credential) =>
-            credential.locators.some((locator) =>
-              sameCredentialLocator(locator, row.locator),
-            ),
+            credential.directoryReferences.includes(row.directoryReference),
           );
         if (authoritative) continue;
         await this.directoryPort.tombstone({
           operationId: row.operationId,
-          locator: row.locator,
+          directoryReference: row.directoryReference,
           userId: row.userId,
           accountEpoch: row.accountEpoch,
           now: input.now,
@@ -1636,30 +1963,34 @@ export class CloudflareIdentityGateway
   }
 
   private async rotateRow(row: RotationRow, now: number): Promise<void> {
-    const active = (
-      await this.directoryPort.locators(row.credential.canonicalValue)
-    ).find(
+    const canonical = await this.directoryPort.decryptCanonicalCredential(
+      row.credential,
+    );
+    const active = (await this.directoryPort.physicalLocators(canonical)).find(
       (candidate) => candidate.generation === this.keyring.active.generation,
     );
     if (!active) throw new Error("ACTIVE_LOCATOR_MISSING");
     const rotationOperation = operationId(
       `rotate:${active.generation}:${row.locator.opaqueKey}`,
     );
-    await this.directoryPort.reserve({
+    const rotatedCredential = await this.directoryPort.reencryptCredential(
+      row.credential,
+    );
+    await this.directoryPort.reservePhysical({
       operationId: rotationOperation,
       userId: row.userId,
       locator: active,
-      credential: row.credential,
+      credential: rotatedCredential,
       accountEpoch: row.accountEpoch,
       now,
     });
-    await this.directoryPort.markInitialized({
+    await this.directoryPort.markInitializedPhysical({
       operationId: rotationOperation,
       userId: row.userId,
       locator: active,
       now,
     });
-    await this.directoryPort.activate({
+    await this.directoryPort.activatePhysical({
       operationId: rotationOperation,
       userId: row.userId,
       locator: active,
@@ -1669,12 +2000,12 @@ export class CloudflareIdentityGateway
     await this.accountHomePort.replaceCredentialLocator({
       operationId: rotationOperation,
       userId: row.userId,
-      previous: row.locator,
-      active,
+      previous: encodeDirectoryReference(row.locator),
+      active: encodeDirectoryReference(active),
       kind: row.credential.kind,
       now,
     });
-    await this.directoryPort.tombstone({
+    await this.directoryPort.tombstonePhysical({
       operationId: rotationOperation,
       locator: row.locator,
       userId: row.userId,

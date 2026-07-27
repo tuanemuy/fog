@@ -9,9 +9,12 @@ import type {
   MemoWriteDto,
   SearchContentKind,
   SearchProjectionEntry,
+  SearchProjectionPort,
+  SemanticActor,
   SemanticCommand,
   SemanticCommitPort,
   SemanticCommitResult,
+  SemanticTransactionRepositories,
   TopicWriteDto,
 } from "@repo/core/application/search/contracts";
 import { SearchErrorCode } from "@repo/core/application/search/contracts";
@@ -22,7 +25,7 @@ import { DurableJobStore } from "./jobs";
 import { Fts5SearchAdapter } from "./searchIndex";
 
 const MAX_TITLE_BYTES = 1_024;
-const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_MEMO_BODY_CODE_POINTS = 10_000;
 const MAX_DOCUMENT_TITLE_CODE_POINTS = 200;
 const MAX_SOURCES = 100;
@@ -36,36 +39,12 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function commandTimestamp(command: SemanticCommand): number {
-  switch (command.type) {
-    case "create-memo":
-    case "update-memo":
-      return command.memo.timestamp;
-    case "restore-memo":
-    case "restore-document":
-      return command.restoredAt;
-    case "create-document":
-    case "update-document":
-      return command.document.timestamp;
-    case "create-topic":
-      return command.topic.timestamp;
-    case "trash-memo":
-    case "trash-document":
-    case "trash-topic":
-      return command.trashedAt;
-    case "remove-memo":
-    case "remove-document":
-    case "remove-topic":
-      return command.removedAt;
-    case "restore-topic":
-      return command.restoredAt;
-    case "set-topic-archived":
-      return command.updatedAt;
-  }
-}
-
 function commandPayload(command: SemanticCommand): unknown {
-  const { operationId: _operationId, ...payload } = command;
+  const {
+    operationId: _operationId,
+    completedAt: _completedAt,
+    ...payload
+  } = command;
   if (
     payload.type === "create-document" ||
     payload.type === "update-document"
@@ -89,7 +68,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
 
   transactionSync(
     command: SemanticCommand,
-    callback?: Parameters<SemanticCommitPort["transactionSync"]>[1],
+    callback: Parameters<SemanticCommitPort["transactionSync"]>[1],
   ): SemanticCommitResult {
     try {
       return this.storage.transactionSync(() => {
@@ -121,8 +100,31 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
             replayed: true,
           };
         }
-        this.execute(command);
-        callback?.({ storage: "user-data" }, this.projection());
+        const projection = new Fts5SearchAdapter(this.storage.sql);
+        let applied = false;
+        const repositories: SemanticTransactionRepositories = {
+          apply: (candidate, candidateProjection) => {
+            if (
+              applied ||
+              candidate !== command ||
+              candidateProjection !== projection
+            ) {
+              throw new SystemError(
+                SystemErrorCode.DataIntegrityError,
+                "Semantic transaction capability was used outside its scope",
+              );
+            }
+            applied = true;
+            this.execute(command, projection);
+          },
+        };
+        callback(repositories, projection);
+        if (!applied) {
+          throw new SystemError(
+            SystemErrorCode.DataIntegrityError,
+            "Semantic transaction callback did not apply its prepared command",
+          );
+        }
         const result: SemanticCommitResult = {
           operationId: command.operationId,
           replayed: false,
@@ -136,9 +138,9 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.type,
           digest,
           JSON.stringify(result),
-          commandTimestamp(command),
+          command.completedAt,
         );
-        this.pruneIdempotency(commandTimestamp(command));
+        this.pruneIdempotency(command.completedAt);
         return result;
       });
     } catch (error) {
@@ -184,15 +186,19 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     );
   }
 
-  private execute(command: SemanticCommand): void {
+  private execute(
+    command: SemanticCommand,
+    projection: SearchProjectionPort,
+  ): void {
     switch (command.type) {
       case "create-memo":
         this.writeMemo(
           command.memo,
           "create",
           undefined,
-          command.actorId,
+          command.actor,
           undefined,
+          projection,
         );
         return;
       case "update-memo":
@@ -200,13 +206,20 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.memo,
           "update",
           command.expectedVersion,
-          command.actorId,
+          command.actor,
           command.changeReason,
+          projection,
         );
         return;
       case "trash-memo":
         this.assertExpectedVersion(command.memoId, command.expectedVersion);
-        this.trashContent(command.memoId, "memo", command.trashedAt);
+        this.trashContent(
+          command.memoId,
+          "memo",
+          command.trashedAt,
+          command.expectedVersion,
+          projection,
+        );
         this.enqueueRetention("memo", command.memoId, command.trashedAt);
         return;
       case "restore-memo":
@@ -215,20 +228,29 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.memoId,
           "memo",
           command.restoredAt,
-          command.actorId,
+          command.actor,
+          command.expectedVersion,
+          undefined,
+          projection,
         );
         return;
       case "remove-memo":
         this.assertExpectedVersion(command.memoId, command.expectedVersion);
-        this.hardDelete(command.memoId, "memo");
+        this.hardDelete(
+          command.memoId,
+          "memo",
+          command.expectedVersion,
+          projection,
+        );
         return;
       case "create-document":
         this.writeDocument(
           command.document,
           "create",
           undefined,
-          command.actorId,
+          command.actor,
           "created",
+          projection,
         );
         return;
       case "update-document":
@@ -236,13 +258,20 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.document,
           "update",
           command.expectedVersion,
-          command.actorId,
+          command.actor,
           command.changeReason,
+          projection,
         );
         return;
       case "trash-document":
         this.assertExpectedVersion(command.documentId, command.expectedVersion);
-        this.trashContent(command.documentId, "document", command.trashedAt);
+        this.trashContent(
+          command.documentId,
+          "document",
+          command.trashedAt,
+          command.expectedVersion,
+          projection,
+        );
         this.enqueueRetention(
           "document",
           command.documentId,
@@ -255,12 +284,20 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.documentId,
           "document",
           command.restoredAt,
-          command.actorId,
+          command.actor,
+          command.expectedVersion,
+          command.destinationTopicId,
+          projection,
         );
         return;
       case "remove-document":
         this.assertExpectedVersion(command.documentId, command.expectedVersion);
-        this.hardDelete(command.documentId, "document");
+        this.hardDelete(
+          command.documentId,
+          "document",
+          command.expectedVersion,
+          projection,
+        );
         return;
       case "create-topic":
         this.createTopic(command.topic);
@@ -274,6 +311,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.topicId,
           command.archivedAt,
           command.updatedAt,
+          command.expectedVersion,
         );
         return;
       case "trash-topic":
@@ -281,7 +319,13 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.topicId,
           command.expectedVersion,
         );
-        this.setTopicTrash(command.topicId, command.trashedAt, true);
+        this.setTopicTrash(
+          command.topicId,
+          command.trashedAt,
+          true,
+          command.expectedVersion,
+          projection,
+        );
         this.enqueueRetention("topic", command.topicId, command.trashedAt);
         return;
       case "restore-topic":
@@ -289,14 +333,20 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           command.topicId,
           command.expectedVersion,
         );
-        this.setTopicTrash(command.topicId, command.restoredAt, false);
+        this.setTopicTrash(
+          command.topicId,
+          command.restoredAt,
+          false,
+          command.expectedVersion,
+          projection,
+        );
         return;
       case "remove-topic":
         this.assertTopicExpectedVersion(
           command.topicId,
           command.expectedVersion,
         );
-        this.removeTopic(command.topicId);
+        this.removeTopic(command.topicId, command.expectedVersion, projection);
         return;
     }
   }
@@ -305,8 +355,9 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     memo: MemoWriteDto,
     mode: "create" | "update",
     expectedVersion: number | undefined,
-    actorId: string | undefined,
+    actor: SemanticActor,
     changeReason: string | undefined,
+    projection: SearchProjectionPort,
   ): void {
     this.validateMemo(memo.body);
     this.assertWriteMode(memo.id, "memo", mode);
@@ -324,41 +375,45 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       this.storage.sql.exec(
         `INSERT INTO content(
            id, kind, title, body, version, updated_by, created_at, updated_at
-         ) VALUES (?, 'memo', '', ?, 1, ?, ?, ?)`,
+         ) VALUES (?, 'memo', '', ?, 0, ?, ?, ?)`,
         memo.id,
         memo.body,
-        actorId ?? "local-user",
+        actor.id,
         memo.timestamp,
         memo.timestamp,
       );
     } else {
-      this.storage.sql.exec(
+      const cursor = this.storage.sql.exec(
         `UPDATE content
          SET body = ?, version = version + 1, updated_by = ?, updated_at = ?
-         WHERE id = ? AND kind = 'memo' AND trashed_at IS NULL`,
+         WHERE id = ? AND kind = 'memo' AND trashed_at IS NULL
+           AND version = ?`,
         memo.body,
-        actorId ?? "local-user",
+        actor.id,
         memo.timestamp,
         memo.id,
+        expectedVersion,
       );
+      this.assertCas(cursor.rowsWritten, "Content");
     }
     this.addRevision(
       memo.id,
       "",
       memo.body,
       memo.timestamp,
-      actorId,
+      actor,
       changeReason,
     );
-    this.projection().upsert(this.readProjection(memo.id));
+    projection.upsert(this.readProjection(memo.id));
   }
 
   private writeDocument(
     document: DocumentWriteDto,
     mode: "create" | "update",
     expectedVersion: number | undefined,
-    actorId: string | undefined,
+    actor: SemanticActor,
     changeReason: string | undefined,
+    projection: SearchProjectionPort,
   ): void {
     this.validateDocument(document);
     this.assertWriteMode(document.id, "document", mode);
@@ -379,28 +434,31 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         `INSERT INTO content(
            id, kind, title, body, topic_id, version, updated_by,
            created_at, updated_at
-         ) VALUES (?, 'document', ?, ?, ?, 1, ?, ?, ?)`,
+         ) VALUES (?, 'document', ?, ?, ?, 0, ?, ?, ?)`,
         document.id,
         document.title,
         document.body,
         document.topicId,
-        actorId ?? "local-user",
+        actor.id,
         document.timestamp,
         document.timestamp,
       );
     } else {
-      this.storage.sql.exec(
+      const cursor = this.storage.sql.exec(
         `UPDATE content
          SET title = ?, body = ?, topic_id = ?, version = version + 1,
              updated_by = ?, updated_at = ?
-         WHERE id = ? AND kind = 'document' AND trashed_at IS NULL`,
+         WHERE id = ? AND kind = 'document' AND trashed_at IS NULL
+           AND version = ?`,
         document.title,
         document.body,
         document.topicId,
-        actorId ?? "local-user",
+        actor.id,
         document.timestamp,
         document.id,
+        expectedVersion,
       );
+      this.assertCas(cursor.rowsWritten, "Content");
     }
     this.replaceSources(document.id, sourceMemoIds, document.timestamp);
     this.addRevision(
@@ -408,25 +466,30 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       document.title,
       document.body,
       document.timestamp,
-      actorId,
+      actor,
       changeReason,
     );
-    this.projection().upsert(this.readProjection(document.id));
+    projection.upsert(this.readProjection(document.id));
   }
 
   private trashContent(
     id: string,
     expectedKind: SearchContentKind,
     trashedAt: number,
+    expectedVersion: number,
+    projection: SearchProjectionPort,
   ): void {
     this.assertActive(id, expectedKind);
-    this.storage.sql.exec(
+    const cursor = this.storage.sql.exec(
       `UPDATE content
-       SET trashed_at = ?, version = version + 1, updated_at = ? WHERE id = ?`,
+       SET trashed_at = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND version = ?`,
       trashedAt,
       trashedAt,
       id,
+      expectedVersion,
     );
+    this.assertCas(cursor.rowsWritten, "Content");
     this.storage.sql.exec(
       `INSERT INTO trash(content_id, content_kind, trashed_at, purge_after)
        VALUES (?, ?, ?, ?)
@@ -439,34 +502,82 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       trashedAt,
       trashedAt + this.retentionDays() * DAY_MS,
     );
-    this.projection().remove(expectedKind, id);
+    projection.remove(expectedKind, id);
   }
 
   private restoreContent(
     id: string,
     kind: SearchContentKind,
     restoredAt: number,
-    actorId?: string,
+    actor: SemanticActor,
+    expectedVersion: number,
+    destinationTopicId: string | undefined,
+    projection: SearchProjectionPort,
   ): void {
     this.assertTrashed(id, kind);
-    this.storage.sql.exec(
+    if (kind === "document") {
+      const current = this.storage.sql
+        .exec<{ topic_id: string | null }>(
+          "SELECT topic_id FROM content WHERE id = ? AND kind = 'document'",
+          id,
+        )
+        .one();
+      if (current.topic_id === null && destinationTopicId === undefined) {
+        throw new ConflictError(
+          SearchErrorCode.TopicRequired,
+          "A destination topic is required after the original topic was removed",
+        );
+      }
+      if (
+        current.topic_id !== null &&
+        destinationTopicId !== undefined &&
+        destinationTopicId !== current.topic_id
+      ) {
+        throw new ConflictError(
+          SearchErrorCode.TopicRequired,
+          "A destination topic can only replace a removed original topic",
+        );
+      }
+      this.assertTopic(destinationTopicId ?? current.topic_id ?? "");
+    } else if (destinationTopicId !== undefined) {
+      throw new ConflictError(
+        SearchErrorCode.TopicRequired,
+        "Only a document can select a destination topic",
+      );
+    }
+    const cursor = this.storage.sql.exec(
       `UPDATE content
-       SET trashed_at = NULL, version = version + 1, updated_by = ?,
+       SET trashed_at = NULL, topic_id = COALESCE(?, topic_id),
+           version = version + 1, updated_by = ?,
            updated_at = ?
-       WHERE id = ? AND kind = ?`,
-      actorId ?? "local-user",
+       WHERE id = ? AND kind = ? AND version = ?`,
+      destinationTopicId ?? null,
+      actor.id,
       restoredAt,
       id,
       kind,
+      expectedVersion,
     );
+    this.assertCas(cursor.rowsWritten, "Content");
     this.storage.sql.exec("DELETE FROM trash WHERE content_id = ?", id);
-    this.projection().upsert(this.readProjection(id));
+    projection.upsert(this.readProjection(id));
   }
 
-  private hardDelete(id: string, expectedKind: SearchContentKind): void {
+  private hardDelete(
+    id: string,
+    expectedKind: SearchContentKind,
+    expectedVersion: number,
+    projection: SearchProjectionPort,
+  ): void {
     this.assertTrashed(id, expectedKind);
-    this.projection().remove(expectedKind, id);
-    this.storage.sql.exec("DELETE FROM content WHERE id = ?", id);
+    projection.remove(expectedKind, id);
+    const cursor = this.storage.sql.exec(
+      "DELETE FROM content WHERE id = ? AND kind = ? AND version = ?",
+      id,
+      expectedKind,
+      expectedVersion,
+    );
+    this.assertCas(cursor.rowsWritten, "Content");
   }
 
   private createTopic(topic: TopicWriteDto): void {
@@ -485,7 +596,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     this.storage.sql.exec(
       `INSERT INTO topics(
          id, name, source_memo_id, version, created_at, updated_at
-       ) VALUES (?, ?, ?, 1, ?, ?)`,
+       ) VALUES (?, ?, ?, 0, ?, ?)`,
       topic.id,
       topic.name,
       topic.sourceMemoId ?? null,
@@ -498,21 +609,27 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     topicId: string,
     archivedAt: number | null,
     updatedAt: number,
+    expectedVersion: number,
   ): void {
     this.assertTopic(topicId);
-    this.storage.sql.exec(
+    const cursor = this.storage.sql.exec(
       `UPDATE topics
-       SET archived_at = ?, version = version + 1, updated_at = ? WHERE id = ?`,
+       SET archived_at = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND version = ?`,
       archivedAt,
       updatedAt,
       topicId,
+      expectedVersion,
     );
+    this.assertCas(cursor.rowsWritten, "Topic");
   }
 
   private setTopicTrash(
     topicId: string,
     timestamp: number,
     trashed: boolean,
+    expectedVersion: number,
+    projection: SearchProjectionPort,
   ): void {
     const state = this.storage.sql
       .exec<{ trashed_at: number | null }>(
@@ -541,26 +658,38 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         )
         .toArray();
       this.assertTopicDocumentLimit(documents.length);
-      this.storage.sql.exec(
+      const topicCursor = this.storage.sql.exec(
         `UPDATE topics
          SET trashed_at = ?, purge_after = ?, version = version + 1,
-             updated_at = ? WHERE id = ?`,
+             updated_at = ? WHERE id = ? AND version = ?`,
         timestamp,
         timestamp + this.retentionDays() * DAY_MS,
         timestamp,
         topicId,
+        expectedVersion,
       );
-      this.storage.sql.exec(
-        `UPDATE content
-         SET trashed_with_topic_id = ?, updated_at = ?
-         WHERE kind = 'document' AND topic_id = ?
-           AND trashed_at IS NULL AND trashed_with_topic_id IS NULL`,
-        topicId,
-        timestamp,
-        topicId,
-      );
+      this.assertCas(topicCursor.rowsWritten, "Topic");
       for (const document of documents) {
-        this.projection().remove("document", document.id);
+        const documentState = this.storage.sql
+          .exec<{ version: number }>(
+            "SELECT version FROM content WHERE id = ?",
+            document.id,
+          )
+          .one();
+        const cursor = this.storage.sql.exec(
+          `UPDATE content
+           SET trashed_with_topic_id = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND kind = 'document' AND version = ?
+             AND topic_id = ? AND trashed_at IS NULL
+             AND trashed_with_topic_id IS NULL`,
+          topicId,
+          timestamp,
+          document.id,
+          documentState.version,
+          topicId,
+        );
+        this.assertCas(cursor.rowsWritten, "Document");
+        projection.remove("document", document.id);
       }
       return;
     }
@@ -574,26 +703,43 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       )
       .toArray();
     this.assertTopicDocumentLimit(documents.length);
-    this.storage.sql.exec(
+    const topicCursor = this.storage.sql.exec(
       `UPDATE topics
        SET trashed_at = NULL, purge_after = NULL, version = version + 1,
-           updated_at = ? WHERE id = ?`,
+           updated_at = ? WHERE id = ? AND version = ?`,
       timestamp,
       topicId,
+      expectedVersion,
     );
-    this.storage.sql.exec(
-      `UPDATE content
-       SET trashed_with_topic_id = NULL, updated_at = ?
-       WHERE kind = 'document' AND trashed_with_topic_id = ?`,
-      timestamp,
-      topicId,
-    );
+    this.assertCas(topicCursor.rowsWritten, "Topic");
     for (const document of documents) {
-      this.projection().upsert(this.readProjection(document.id));
+      const documentState = this.storage.sql
+        .exec<{ version: number }>(
+          "SELECT version FROM content WHERE id = ?",
+          document.id,
+        )
+        .one();
+      const cursor = this.storage.sql.exec(
+        `UPDATE content
+         SET trashed_with_topic_id = NULL, version = version + 1,
+             updated_at = ?
+         WHERE id = ? AND kind = 'document' AND version = ?
+           AND trashed_with_topic_id = ?`,
+        timestamp,
+        document.id,
+        documentState.version,
+        topicId,
+      );
+      this.assertCas(cursor.rowsWritten, "Document");
+      projection.upsert(this.readProjection(document.id));
     }
   }
 
-  private removeTopic(topicId: string): void {
+  private removeTopic(
+    topicId: string,
+    expectedVersion: number,
+    projection: SearchProjectionPort,
+  ): void {
     const topic = this.storage.sql
       .exec<{ id: string }>(
         "SELECT id FROM topics WHERE id = ? AND trashed_at IS NOT NULL",
@@ -617,7 +763,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       .toArray();
     this.assertTopicDocumentLimit(setDocuments.length);
     for (const document of setDocuments) {
-      this.projection().remove("document", document.id);
+      projection.remove("document", document.id);
     }
     this.storage.sql.exec(
       "DELETE FROM content WHERE kind = 'document' AND trashed_with_topic_id = ?",
@@ -628,11 +774,12 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
        WHERE kind = 'document' AND topic_id = ?`,
       topicId,
     );
-    this.storage.sql.exec("DELETE FROM topics WHERE id = ?", topicId);
-  }
-
-  private projection(): Fts5SearchAdapter {
-    return new Fts5SearchAdapter(this.storage.sql);
+    const cursor = this.storage.sql.exec(
+      "DELETE FROM topics WHERE id = ? AND version = ?",
+      topicId,
+      expectedVersion,
+    );
+    this.assertCas(cursor.rowsWritten, "Topic");
   }
 
   private readProjection(id: string): SearchProjectionEntry {
@@ -726,7 +873,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     title: string,
     body: string,
     timestamp: number,
-    actorId?: string,
+    actor: SemanticActor,
     changeReason?: string,
   ): void {
     const version = this.storage.sql
@@ -738,13 +885,16 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       .one().version;
     this.storage.sql.exec(
       `INSERT INTO content_revisions(
-         content_id, version, title, body, actor_id, change_reason, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         content_id, version, title, body, actor_kind, actor_id,
+         actor_client_name, change_reason, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       contentId,
       version,
       title,
       body,
-      actorId ?? "local-user",
+      actor.kind,
+      actor.id,
+      actor.kind === "aiClient" ? actor.clientName : null,
       changeReason ?? null,
       timestamp,
     );
@@ -755,12 +905,26 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     );
   }
 
-  private assertExpectedVersion(id: string, expected?: number): void {
-    if (expected === undefined) return;
+  private assertExpectedVersion(
+    id: string,
+    expected: number | undefined,
+  ): void {
+    if (expected === undefined) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Prepared content command has no expected version",
+      );
+    }
     const row = this.storage.sql
       .exec<{ version: number }>("SELECT version FROM content WHERE id = ?", id)
       .toArray()[0];
-    if (!row || row.version !== expected) {
+    if (!row) {
+      throw new NotFoundError(
+        SearchErrorCode.ContentNotFound,
+        "Content was not found",
+      );
+    }
+    if (row.version !== expected) {
       throw new ConflictError(
         "CONTENT_VERSION_CONFLICT",
         "Content version did not match",
@@ -768,20 +932,38 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     }
   }
 
-  private assertTopicExpectedVersion(topicId: string, expected?: number): void {
-    if (expected === undefined) return;
+  private assertTopicExpectedVersion(topicId: string, expected: number): void {
     const row = this.storage.sql
       .exec<{ version: number }>(
         "SELECT version FROM topics WHERE id = ?",
         topicId,
       )
       .toArray()[0];
-    if (!row || row.version !== expected) {
+    if (!row) {
+      throw new NotFoundError(
+        SearchErrorCode.TopicNotFound,
+        "Topic was not found",
+      );
+    }
+    if (row.version !== expected) {
       throw new ConflictError(
         "TOPIC_VERSION_CONFLICT",
         "Topic version did not match",
       );
     }
+  }
+
+  private assertCas(
+    rowsWritten: number,
+    entity: "Content" | "Document" | "Topic",
+  ): void {
+    if (rowsWritten > 0) return;
+    throw new ConflictError(
+      entity === "Topic"
+        ? "TOPIC_VERSION_CONFLICT"
+        : "CONTENT_VERSION_CONFLICT",
+      `${entity} version did not match`,
+    );
   }
 
   private normalizeSources(

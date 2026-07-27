@@ -6,6 +6,7 @@ node_modules/
 .output/
 .nitro/
 dist/
+.artifacts/
 
 # Cloudflare Wrangler
 .wrangler/

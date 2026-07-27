@@ -1,26 +1,17 @@
+import type { OperationId } from "@repo/core/application/identity/contracts";
+import { operationId } from "@repo/core/application/identity/contracts";
 import type {
-  CredentialLocator,
-  CredentialRef,
-  DirectoryAuthorityRow,
-  DirectoryCredential,
-  OperationId,
-  PasswordCredential,
-} from "@repo/core/application/identity/contracts";
-import {
-  opaqueCredentialKey,
-  operationId,
-} from "@repo/core/application/identity/contracts";
-import {
-  Email,
-  PasswordHash,
-  SsoProvider,
-  UserId,
-} from "@repo/core/domain/identity/valueObject";
+  PhysicalCredentialLocator,
+  StoredCredentialRef,
+  StoredDirectoryCredential,
+} from "../identityPhysical";
+import { opaqueCredentialKey } from "../identityPhysical";
+import { PasswordHash, UserId } from "@repo/core/domain/identity/valueObject";
 import type { DurableSqlStorage } from "../sql";
 
 export type ReserveCredential = Readonly<{
-  locator: CredentialLocator;
-  credential: CredentialRef;
+  locator: PhysicalCredentialLocator;
+  credential: StoredCredentialRef;
   userId: UserId;
   operationId: OperationId;
   accountEpoch: number;
@@ -32,10 +23,12 @@ type MappingRow = {
   opaque_key: string;
   generation: string;
   bucket: number;
+  logical_credential_id: string;
   canonical_value: string;
   kind: "password" | "sso";
   provider: string | null;
   verified_email: string | null;
+  subject_encrypted: string | null;
   user_id: string;
   operation_id: string;
   state: "reserved" | "initialized" | "active" | "tombstoned";
@@ -45,10 +38,18 @@ type MappingRow = {
 };
 
 export type RotationRow = Readonly<{
-  locator: CredentialLocator;
-  credential: CredentialRef;
+  locator: PhysicalCredentialLocator;
+  credential: StoredCredentialRef;
   userId: UserId;
   operationId: OperationId;
+  accountEpoch: number;
+}>;
+
+export type PhysicalDirectoryAuthorityRow = Readonly<{
+  locator: PhysicalCredentialLocator;
+  userId: UserId;
+  operationId: OperationId;
+  state: MappingRow["state"];
   accountEpoch: number;
 }>;
 
@@ -79,7 +80,17 @@ export type DirectoryReconcileJob = Readonly<{
   nextRunAt: number;
 }>;
 
+export type IdentityMailJob = Readonly<{
+  operationId: OperationId;
+  deliveryPayloadEncrypted: string;
+  providerIdempotencyKey: string;
+  ownerToken: string;
+  attempt: number;
+}>;
+
 export class IdentityDirectoryStore {
+  private static readonly OPERATION_REPLAY_TTL_MS = 24 * 60 * 60_000;
+
   constructor(private readonly storage: DurableSqlStorage) {}
 
   reserve(input: ReserveCredential): UserId {
@@ -94,9 +105,18 @@ export class IdentityDirectoryStore {
           this.sameCredential(existing, input.credential)
         ) {
           this.storage.sql.exec(
-            `UPDATE credential_mappings SET operation_id = ?, updated_at = ?
+            `UPDATE credential_mappings SET operation_id = ?,
+               canonical_value = ?, verified_email = ?, subject_encrypted = ?,
+               updated_at = ?
              WHERE opaque_key = ?`,
             input.operationId,
+            input.credential.canonicalValueEncrypted,
+            input.credential.kind === "sso"
+              ? input.credential.verifiedEmailEncrypted
+              : input.credential.emailEncrypted,
+            input.credential.kind === "sso"
+              ? input.credential.subjectEncrypted
+              : null,
             input.now,
             input.locator.opaqueKey,
           );
@@ -109,15 +129,20 @@ export class IdentityDirectoryStore {
         ) {
           this.validateCredential(input.credential);
           this.storage.sql.exec(
-            `UPDATE credential_mappings SET canonical_value = ?, kind = ?,
-               provider = ?, verified_email = ?, state = 'reserved',
+            `UPDATE credential_mappings SET logical_credential_id = ?,
+               canonical_value = ?, kind = ?, provider = ?,
+               verified_email = ?, subject_encrypted = ?, state = 'reserved',
                password_hash = ?, reservation_expires_at = ?,
                account_epoch = ?, updated_at = ? WHERE opaque_key = ?`,
-            input.credential.canonicalValue,
+            input.credential.credentialId,
+            input.credential.canonicalValueEncrypted,
             input.credential.kind,
             input.credential.kind === "sso" ? input.credential.provider : null,
             input.credential.kind === "sso"
-              ? input.credential.verifiedEmail
+              ? input.credential.verifiedEmailEncrypted
+              : input.credential.emailEncrypted,
+            input.credential.kind === "sso"
+              ? input.credential.subjectEncrypted
               : null,
             input.credential.kind === "password"
               ? input.credential.passwordHash
@@ -132,27 +157,69 @@ export class IdentityDirectoryStore {
         if (
           existing.operation_id === input.operationId &&
           existing.user_id === input.userId &&
-          existing.canonical_value === input.credential.canonicalValue &&
-          existing.kind === input.credential.kind
+          this.sameCredential(existing, input.credential)
         ) {
           return UserId.create(existing.user_id);
+        }
+        if (
+          (existing.state === "reserved" || existing.state === "initialized") &&
+          input.operationId.localeCompare(existing.operation_id) < 0
+        ) {
+          this.validateCredential(input.credential);
+          this.storage.sql.exec(
+            `UPDATE credential_mappings SET generation = ?, bucket = ?,
+               logical_credential_id = ?, canonical_value = ?, kind = ?,
+               provider = ?, verified_email = ?, subject_encrypted = ?,
+               user_id = ?, operation_id = ?, state = 'reserved',
+               password_hash = ?, reservation_expires_at = ?,
+               account_epoch = ?, updated_at = ? WHERE opaque_key = ?`,
+            input.locator.generation,
+            input.locator.bucket,
+            input.credential.credentialId,
+            input.credential.canonicalValueEncrypted,
+            input.credential.kind,
+            input.credential.kind === "sso" ? input.credential.provider : null,
+            input.credential.kind === "sso"
+              ? input.credential.verifiedEmailEncrypted
+              : input.credential.emailEncrypted,
+            input.credential.kind === "sso"
+              ? input.credential.subjectEncrypted
+              : null,
+            input.userId,
+            input.operationId,
+            input.credential.kind === "password"
+              ? input.credential.passwordHash
+              : null,
+            input.reservationExpiresAt,
+            input.accountEpoch,
+            input.now,
+            input.locator.opaqueKey,
+          );
+          return input.userId;
         }
         throw new Error("CREDENTIAL_ALREADY_REGISTERED");
       }
       this.validateCredential(input.credential);
       this.storage.sql.exec(
         `INSERT INTO credential_mappings(
-           opaque_key, generation, bucket, canonical_value, kind, provider,
-           verified_email, user_id, operation_id, state, password_hash,
+           opaque_key, generation, bucket, logical_credential_id,
+           canonical_value, kind, provider, verified_email, subject_encrypted,
+           user_id, operation_id, state, password_hash,
            reservation_expires_at, account_epoch, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?)`,
         input.locator.opaqueKey,
         input.locator.generation,
         input.locator.bucket,
-        input.credential.canonicalValue,
+        input.credential.credentialId,
+        input.credential.canonicalValueEncrypted,
         input.credential.kind,
         input.credential.kind === "sso" ? input.credential.provider : null,
-        input.credential.kind === "sso" ? input.credential.verifiedEmail : null,
+        input.credential.kind === "sso"
+          ? input.credential.verifiedEmailEncrypted
+          : input.credential.emailEncrypted,
+        input.credential.kind === "sso"
+          ? input.credential.subjectEncrypted
+          : null,
         input.userId,
         input.operationId,
         input.credential.kind === "password"
@@ -169,7 +236,7 @@ export class IdentityDirectoryStore {
 
   lookupPasswordSignup(opaqueOperationKey: string): {
     userId: UserId;
-    email: Email;
+    emailEncrypted: string;
     passwordHash: PasswordHash;
     preparedAt: number;
   } | null {
@@ -188,7 +255,7 @@ export class IdentityDirectoryStore {
     return row
       ? {
           userId: UserId.create(row.user_id),
-          email: Email.create(row.email),
+          emailEncrypted: row.email,
           passwordHash: PasswordHash.create(row.password_hash),
           preparedAt: row.prepared_at,
         }
@@ -198,7 +265,7 @@ export class IdentityDirectoryStore {
   preparePasswordSignup(input: {
     opaqueOperationKey: string;
     proposedUserId: UserId;
-    email: Email;
+    emailEncrypted: string;
     passwordHash: PasswordHash;
     now: number;
   }): {
@@ -210,7 +277,7 @@ export class IdentityDirectoryStore {
     return this.storage.transactionSync(() => {
       const existing = this.lookupPasswordSignup(input.opaqueOperationKey);
       if (existing) {
-        if (existing.email !== input.email) {
+        if (existing.emailEncrypted !== input.emailEncrypted) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
         }
         return {
@@ -223,15 +290,16 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `INSERT INTO signup_operations(
            opaque_operation_key, user_id, email, password_hash,
-           prepared_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           prepared_at, created_at, updated_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         input.opaqueOperationKey,
         input.proposedUserId,
-        input.email,
+        input.emailEncrypted,
         input.passwordHash,
         input.now,
         input.now,
         input.now,
+        input.now + IdentityDirectoryStore.OPERATION_REPLAY_TTL_MS,
       );
       return {
         userId: input.proposedUserId,
@@ -245,9 +313,9 @@ export class IdentityDirectoryStore {
   prepareSsoCreate(input: {
     opaqueOperationKey: string;
     proposedUserId: UserId;
-    provider: SsoProvider;
-    subject: string;
-    email: Email;
+    provider: string;
+    subjectEncrypted: string;
+    emailEncrypted: string;
     now: number;
   }): { userId: UserId; replayed: boolean } {
     return this.storage.transactionSync(() => {
@@ -266,8 +334,8 @@ export class IdentityDirectoryStore {
       if (existing) {
         if (
           existing.provider !== input.provider ||
-          existing.subject !== input.subject ||
-          existing.email !== input.email
+          existing.subject !== input.subjectEncrypted ||
+          existing.email !== input.emailEncrypted
         ) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
         }
@@ -276,22 +344,36 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `INSERT INTO sso_create_operations(
            opaque_operation_key, user_id, provider, subject, email,
-           created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           created_at, updated_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         input.opaqueOperationKey,
         input.proposedUserId,
         input.provider,
-        input.subject,
-        input.email,
+        input.subjectEncrypted,
+        input.emailEncrypted,
         input.now,
         input.now,
+        input.now + IdentityDirectoryStore.OPERATION_REPLAY_TTL_MS,
       );
       return { userId: input.proposedUserId, replayed: false };
     });
   }
 
+  purgeExpiredOperationRegistries(now: number): void {
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec(
+        "DELETE FROM signup_operations WHERE expires_at > 0 AND expires_at <= ?",
+        now,
+      );
+      this.storage.sql.exec(
+        "DELETE FROM sso_create_operations WHERE expires_at > 0 AND expires_at <= ?",
+        now,
+      );
+    });
+  }
+
   markInitialized(input: {
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     operationId: OperationId;
     userId: UserId;
     now: number;
@@ -311,7 +393,7 @@ export class IdentityDirectoryStore {
   }
 
   activate(input: {
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     operationId: OperationId;
     userId: UserId;
     accountEpoch: number;
@@ -338,7 +420,9 @@ export class IdentityDirectoryStore {
     });
   }
 
-  lookupPassword(locator: CredentialLocator): PasswordCredential | null {
+  lookupPassword(
+    locator: PhysicalCredentialLocator,
+  ): StoredDirectoryCredential | null {
     const row = this.find(locator.opaqueKey);
     if (
       row?.state !== "active" ||
@@ -349,20 +433,22 @@ export class IdentityDirectoryStore {
     }
     return {
       userId: UserId.create(row.user_id),
-      passwordHash: PasswordHash.create(row.password_hash),
       locator: this.toLocator(row),
+      operationId: operationId(row.operation_id),
+      state: row.state,
       accountEpoch: row.account_epoch,
+      credential: this.toStoredCredential(row),
     };
   }
 
-  lookup(locator: CredentialLocator): DirectoryCredential | null {
+  lookup(locator: PhysicalCredentialLocator): StoredDirectoryCredential | null {
     const row = this.find(locator.opaqueKey);
     return row && row.state !== "tombstoned" ? this.toCredential(row) : null;
   }
 
   replacePassword(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     userId: UserId;
     passwordHash: PasswordHash;
     accountEpoch: number;
@@ -391,7 +477,7 @@ export class IdentityDirectoryStore {
   }
 
   tombstone(input: {
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     userId: UserId;
     accountEpoch: number;
     now: number;
@@ -400,6 +486,7 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `UPDATE credential_mappings SET state = 'tombstoned',
            password_hash = NULL, canonical_value = '', verified_email = NULL,
+           subject_encrypted = NULL,
            account_epoch = ?, updated_at = ?
          WHERE opaque_key = ? AND user_id = ? AND account_epoch <= ?`,
         input.accountEpoch,
@@ -412,7 +499,7 @@ export class IdentityDirectoryStore {
   }
 
   purge(
-    locator: CredentialLocator,
+    locator: PhysicalCredentialLocator,
     userId: UserId,
     accountEpoch: number,
   ): void {
@@ -436,7 +523,7 @@ export class IdentityDirectoryStore {
   }
 
   storePasswordReset(input: {
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     tokenHash: string;
     userId: UserId;
     operationId: OperationId;
@@ -483,8 +570,8 @@ export class IdentityDirectoryStore {
   enqueuePasswordResetMail(input: {
     operationId: OperationId;
     userId: UserId;
-    email: Email;
-    tokenHash: string;
+    emailEncrypted: string;
+    deliveryPayloadEncrypted: string;
     providerIdempotencyKey: string;
     now: number;
   }): void {
@@ -493,10 +580,11 @@ export class IdentityDirectoryStore {
         .exec<{
           user_id: string;
           email: string;
-          token_hash: string;
+          delivery_payload_encrypted: string | null;
           provider_idempotency_key: string;
         }>(
-          `SELECT user_id, email, token_hash, provider_idempotency_key
+          `SELECT user_id, email, delivery_payload_encrypted,
+                  provider_idempotency_key
            FROM identity_mail_jobs WHERE operation_id = ?`,
           input.operationId,
         )
@@ -504,8 +592,6 @@ export class IdentityDirectoryStore {
       if (existing) {
         if (
           existing.user_id !== input.userId ||
-          existing.email !== input.email ||
-          existing.token_hash !== input.tokenHash ||
           existing.provider_idempotency_key !== input.providerIdempotencyKey
         ) {
           throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
@@ -515,18 +601,140 @@ export class IdentityDirectoryStore {
       this.storage.sql.exec(
         `INSERT INTO identity_mail_jobs(
            operation_id, user_id, email, token_hash,
-           provider_idempotency_key, state, next_run_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+           provider_idempotency_key, state, next_run_at,
+           delivery_payload_encrypted, created_at, updated_at
+         ) VALUES (?, ?, ?, '', ?, 'pending', ?, ?, ?, ?)`,
         input.operationId,
         input.userId,
-        input.email,
-        input.tokenHash,
+        input.emailEncrypted,
         input.providerIdempotencyKey,
         input.now,
+        input.deliveryPayloadEncrypted,
         input.now,
         input.now,
       );
     });
+  }
+
+  claimIdentityMail(
+    now: number,
+    ownerToken: string,
+    leaseMs = 30_000,
+  ): IdentityMailJob | null {
+    return this.storage.transactionSync(() => {
+      const row = this.storage.sql
+        .exec<{
+          operation_id: string;
+          delivery_payload_encrypted: string | null;
+          provider_idempotency_key: string;
+          attempt: number;
+        }>(
+          `SELECT operation_id, delivery_payload_encrypted,
+                  provider_idempotency_key, attempt
+           FROM identity_mail_jobs
+           WHERE (
+             (state = 'pending' AND next_run_at <= ?)
+             OR (state = 'leased' AND lease_until <= ?)
+           )
+           ORDER BY next_run_at, operation_id LIMIT 1`,
+          now,
+          now,
+        )
+        .toArray()[0];
+      if (!row?.delivery_payload_encrypted) return null;
+      const cursor = this.storage.sql.exec(
+        `UPDATE identity_mail_jobs
+         SET state = 'leased', owner_token = ?, lease_until = ?,
+             attempt = attempt + 1, updated_at = ?
+         WHERE operation_id = ?
+           AND (
+             (state = 'pending' AND next_run_at <= ?)
+             OR (state = 'leased' AND lease_until <= ?)
+           )`,
+        ownerToken,
+        now + leaseMs,
+        now,
+        row.operation_id,
+        now,
+        now,
+      );
+      if (cursor.rowsWritten === 0) return null;
+      return {
+        operationId: operationId(row.operation_id),
+        deliveryPayloadEncrypted: row.delivery_payload_encrypted,
+        providerIdempotencyKey: row.provider_idempotency_key,
+        ownerToken,
+        attempt: row.attempt + 1,
+      };
+    });
+  }
+
+  completeIdentityMail(
+    operation: OperationId,
+    ownerToken: string,
+    now: number,
+  ): boolean {
+    return (
+      this.storage.sql.exec(
+        `UPDATE identity_mail_jobs
+         SET state = 'completed', owner_token = NULL, lease_until = NULL,
+             updated_at = ?
+         WHERE operation_id = ? AND state = 'leased' AND owner_token = ?`,
+        now,
+        operation,
+        ownerToken,
+      ).rowsWritten > 0
+    );
+  }
+
+  failIdentityMail(input: {
+    operationId: OperationId;
+    ownerToken: string;
+    errorCode: string;
+    retryable: boolean;
+    now: number;
+  }): number | null {
+    return this.storage.transactionSync(() => {
+      const row = this.storage.sql
+        .exec<{ attempt: number }>(
+          `SELECT attempt FROM identity_mail_jobs
+           WHERE operation_id = ? AND state = 'leased' AND owner_token = ?`,
+          input.operationId,
+          input.ownerToken,
+        )
+        .toArray()[0];
+      if (!row) return this.nextIdentityMailRun();
+      const poison = !input.retryable || row.attempt >= 5;
+      const nextRunAt =
+        input.now + Math.min(15 * 60_000, 1_000 * 2 ** row.attempt);
+      this.storage.sql.exec(
+        `UPDATE identity_mail_jobs
+         SET state = ?, next_run_at = ?, owner_token = NULL,
+             lease_until = NULL, last_error_code = ?, poison_reason = ?,
+             updated_at = ?
+         WHERE operation_id = ? AND owner_token = ?`,
+        poison ? "poison" : "pending",
+        nextRunAt,
+        input.errorCode.slice(0, 128),
+        poison ? input.errorCode.slice(0, 128) : null,
+        input.now,
+        input.operationId,
+        input.ownerToken,
+      );
+      return this.nextIdentityMailRun();
+    });
+  }
+
+  nextIdentityMailRun(): number | null {
+    const row = this.storage.sql
+      .exec<{ next_run_at: number | null }>(
+        `SELECT MIN(
+           CASE WHEN state = 'leased' THEN lease_until ELSE next_run_at END
+         ) AS next_run_at
+         FROM identity_mail_jobs WHERE state IN ('pending', 'leased')`,
+      )
+      .one();
+    return row.next_run_at;
   }
 
   lookupPasswordReset(input: {
@@ -598,13 +806,14 @@ export class IdentityDirectoryStore {
     cursor?: string;
     limit: number;
   }): {
-    rows: readonly DirectoryAuthorityRow[];
+    rows: readonly PhysicalDirectoryAuthorityRow[];
     nextCursor: string | null;
   } {
     const rows = this.storage.sql
       .exec<MappingRow>(
-        `SELECT opaque_key, generation, bucket, canonical_value, kind, provider,
-                verified_email, user_id, operation_id, state, password_hash,
+        `SELECT opaque_key, generation, bucket, logical_credential_id,
+                canonical_value, kind, provider, verified_email,
+                subject_encrypted, user_id, operation_id, state, password_hash,
                 account_epoch, reservation_expires_at
          FROM credential_mappings
          WHERE generation = ? AND bucket = ? AND opaque_key > ?
@@ -636,8 +845,9 @@ export class IdentityDirectoryStore {
   }): { rows: readonly RotationRow[]; nextCursor: string | null } {
     const rows = this.storage.sql
       .exec<MappingRow>(
-        `SELECT opaque_key, generation, bucket, canonical_value, kind, provider,
-                verified_email, user_id, operation_id, state, password_hash,
+        `SELECT opaque_key, generation, bucket, logical_credential_id,
+                canonical_value, kind, provider, verified_email,
+                subject_encrypted, user_id, operation_id, state, password_hash,
                 account_epoch, reservation_expires_at
          FROM credential_mappings
          WHERE generation = ? AND opaque_key > ? AND state = 'active'
@@ -824,13 +1034,24 @@ export class IdentityDirectoryStore {
   expiredReservations(now: number, limit: number): readonly RotationRow[] {
     return this.storage.sql
       .exec<MappingRow>(
-        `SELECT opaque_key, generation, bucket, canonical_value, kind, provider,
-                verified_email, user_id, operation_id, state, password_hash,
-                account_epoch, reservation_expires_at
-         FROM credential_mappings
-         WHERE state IN ('reserved', 'initialized')
-           AND reservation_expires_at <= ?
-         ORDER BY reservation_expires_at, opaque_key LIMIT ?`,
+        `SELECT cm.opaque_key, cm.generation, cm.bucket,
+                cm.logical_credential_id, cm.canonical_value, cm.kind,
+                cm.provider, cm.verified_email, cm.subject_encrypted,
+                cm.user_id, cm.operation_id, cm.state, cm.password_hash,
+                cm.account_epoch, cm.reservation_expires_at
+         FROM credential_mappings cm
+         LEFT JOIN directory_reconcile_failures
+           ON directory_reconcile_failures.operation_id =
+              cm.operation_id
+         WHERE cm.state IN ('reserved', 'initialized')
+           AND cm.reservation_expires_at <= ?
+           AND directory_reconcile_failures.poison_reason IS NULL
+           AND (
+             directory_reconcile_failures.operation_id IS NULL
+             OR directory_reconcile_failures.next_run_at <= ?
+           )
+         ORDER BY cm.reservation_expires_at, cm.opaque_key LIMIT ?`,
+        now,
         now,
         limit,
       )
@@ -881,10 +1102,23 @@ export class IdentityDirectoryStore {
     return this.storage.transactionSync(() => {
       const next = this.storage.sql
         .exec<{ next_run_at: number | null }>(
-          `SELECT MIN(reservation_expires_at) AS next_run_at
+          `SELECT MIN(
+             CASE
+               WHEN directory_reconcile_failures.next_run_at IS NULL
+                 THEN credential_mappings.reservation_expires_at
+               WHEN directory_reconcile_failures.next_run_at >
+                    credential_mappings.reservation_expires_at
+                 THEN directory_reconcile_failures.next_run_at
+               ELSE credential_mappings.reservation_expires_at
+             END
+           ) AS next_run_at
            FROM credential_mappings
-           WHERE state IN ('reserved', 'initialized')
-             AND reservation_expires_at IS NOT NULL`,
+           LEFT JOIN directory_reconcile_failures
+             ON directory_reconcile_failures.operation_id =
+                credential_mappings.operation_id
+           WHERE credential_mappings.state IN ('reserved', 'initialized')
+             AND credential_mappings.reservation_expires_at IS NOT NULL
+             AND directory_reconcile_failures.poison_reason IS NULL`,
         )
         .one().next_run_at;
       if (next === null) {
@@ -922,8 +1156,54 @@ export class IdentityDirectoryStore {
     return nextRunAt;
   }
 
+  clearReconcileFailure(operation: OperationId): void {
+    this.storage.sql.exec(
+      "DELETE FROM directory_reconcile_failures WHERE operation_id = ?",
+      operation,
+    );
+  }
+
+  failReconcileOperation(
+    operation: OperationId,
+    errorCode: string,
+    now: number,
+  ): number | null {
+    return this.storage.transactionSync(() => {
+      const current =
+        this.storage.sql
+          .exec<{ attempt: number }>(
+            `SELECT attempt FROM directory_reconcile_failures
+             WHERE operation_id = ?`,
+            operation,
+          )
+          .toArray()[0]?.attempt ?? 0;
+      const attempt = current + 1;
+      const poison = attempt >= 5;
+      const nextRunAt = now + Math.min(15 * 60_000, 1_000 * 2 ** attempt);
+      this.storage.sql.exec(
+        `INSERT INTO directory_reconcile_failures(
+           operation_id, attempt, next_run_at, last_error_code,
+           poison_reason, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(operation_id) DO UPDATE SET
+           attempt = excluded.attempt,
+           next_run_at = excluded.next_run_at,
+           last_error_code = excluded.last_error_code,
+           poison_reason = excluded.poison_reason,
+           updated_at = excluded.updated_at`,
+        operation,
+        attempt,
+        nextRunAt,
+        errorCode.slice(0, 128),
+        poison ? errorCode.slice(0, 128) : null,
+        now,
+      );
+      return poison ? null : nextRunAt;
+    });
+  }
+
   private requireOwned(input: {
-    locator: CredentialLocator;
+    locator: PhysicalCredentialLocator;
     operationId: OperationId;
     userId: UserId;
   }): MappingRow {
@@ -943,7 +1223,8 @@ export class IdentityDirectoryStore {
       this.storage.sql
         .exec<MappingRow>(
           `SELECT opaque_key, generation, bucket, canonical_value, kind, provider,
-                  verified_email, user_id, operation_id, state, password_hash,
+                  logical_credential_id, verified_email, subject_encrypted,
+                  user_id, operation_id, state, password_hash,
                   account_epoch, reservation_expires_at
            FROM credential_mappings WHERE opaque_key = ?`,
           opaqueKey,
@@ -952,7 +1233,7 @@ export class IdentityDirectoryStore {
     );
   }
 
-  private validateCredential(credential: CredentialRef): void {
+  private validateCredential(credential: StoredCredentialRef): void {
     if (
       credential.kind === "password" &&
       credential.passwordHash.length === 0
@@ -962,26 +1243,29 @@ export class IdentityDirectoryStore {
     if (
       credential.kind === "sso" &&
       (credential.provider.length === 0 ||
-        credential.verifiedEmail.length === 0)
+        credential.subjectEncrypted.length === 0 ||
+        credential.verifiedEmailEncrypted.length === 0)
     ) {
       throw new Error("SSO_PROVIDER_AND_EMAIL_REQUIRED");
     }
   }
 
-  private sameCredential(row: MappingRow, credential: CredentialRef): boolean {
+  private sameCredential(
+    row: MappingRow,
+    credential: StoredCredentialRef,
+  ): boolean {
     if (
       row.kind !== credential.kind ||
-      row.canonical_value !== credential.canonicalValue
+      row.logical_credential_id !== credential.credentialId
     ) {
       return false;
     }
     return credential.kind === "password"
       ? row.password_hash === credential.passwordHash
-      : row.provider === credential.provider &&
-          row.verified_email === credential.verifiedEmail;
+      : row.provider === credential.provider;
   }
 
-  private toLocator(row: MappingRow): CredentialLocator {
+  private toLocator(row: MappingRow): PhysicalCredentialLocator {
     return {
       opaqueKey: opaqueCredentialKey(row.opaque_key),
       generation: row.generation,
@@ -989,20 +1273,27 @@ export class IdentityDirectoryStore {
     };
   }
 
-  private toCredential(row: MappingRow): DirectoryCredential {
-    const credential: CredentialRef =
-      row.kind === "password"
-        ? {
-            kind: "password",
-            canonicalValue: row.canonical_value,
-            passwordHash: PasswordHash.create(row.password_hash ?? ""),
-          }
-        : {
-            kind: "sso",
-            canonicalValue: row.canonical_value,
-            provider: SsoProvider.create(row.provider ?? ""),
-            verifiedEmail: Email.create(row.verified_email ?? ""),
-          };
+  private toStoredCredential(row: MappingRow): StoredCredentialRef {
+    return row.kind === "password"
+      ? {
+          credentialId: row.logical_credential_id,
+          kind: "password",
+          canonicalValueEncrypted: row.canonical_value,
+          emailEncrypted: row.verified_email ?? "",
+          passwordHash: PasswordHash.create(row.password_hash ?? ""),
+        }
+      : {
+          credentialId: row.logical_credential_id,
+          kind: "sso",
+          canonicalValueEncrypted: row.canonical_value,
+          provider: row.provider ?? "",
+          subjectEncrypted: row.subject_encrypted ?? "",
+          verifiedEmailEncrypted: row.verified_email ?? "",
+        };
+  }
+
+  private toCredential(row: MappingRow): StoredDirectoryCredential {
+    const credential = this.toStoredCredential(row);
     return {
       userId: UserId.create(row.user_id),
       operationId: operationId(row.operation_id),

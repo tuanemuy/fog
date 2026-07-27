@@ -66,6 +66,16 @@
     {
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "encrypts and delivers reset mail once after Durable Object eviction"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "backs off reset mail and poisons it after five retryable failures"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
       "test": "uses one deletion epoch for retries and leaves no active authority"
     }
   ],
@@ -78,14 +88,34 @@
     {
       "suite": "unit",
       "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
-      "test": "reports an unreadable dummy hash, naming the failure's type only"
+      "test": "uses one lookup, verify, and authority read for 'unknown' without logging PII"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
+      "test": "uses one lookup, verify, and authority read for 'sso-only' without logging PII"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
+      "test": "uses one lookup, verify, and authority read for 'wrong' without logging PII"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
+      "test": "uses one lookup, verify, and authority read for 'malformed' without logging PII"
     }
   ],
   "TEST-APP-004": [
     {
       "suite": "unit",
-      "file": "apps/web/app/presentation/__tests__/currentUser.test.ts",
-      "test": "reports nobody when Account Home has advanced the session epoch"
+      "file": "packages/core/src/application/identity/__tests__/getCurrentUser.test.ts",
+      "test": "rejects a retryable error instead of a partial view when account-home is unavailable"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/application/identity/__tests__/getCurrentUser.test.ts",
+      "test": "rejects a retryable error instead of a partial view when user-data is unavailable"
     }
   ],
   "TEST-APP-005": [
@@ -109,7 +139,17 @@
     {
       "suite": "unit",
       "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
-      "test": "keeps request/state bindings and secrets separated"
+      "test": "keeps request/state bindings and secrets separated for local"
+    },
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps request/state bindings and secrets separated for .staging"
+    },
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps request/state bindings and secrets separated for .production"
     },
     {
       "suite": "unit",
@@ -121,7 +161,7 @@
     {
       "suite": "integration-state",
       "file": "apps/web/app/testing/__tests__/migrations.integration.test.ts",
-      "test": "upgrades a real v1 fixture lazily and survives eviction"
+      "test": "User Data upgrades a real v1 fixture lazily and survives eviction"
     }
   ],
   "TEST-DO-003": [
@@ -246,6 +286,16 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
       "test": "consumes a reset once, updates the password mapping, and bumps one epoch"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "encrypts and delivers reset mail once after Durable Object eviction"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "backs off reset mail and poisons it after five retryable failures"
     }
   ],
   "TEST-ID-004": [
@@ -271,9 +321,9 @@
   ],
   "TEST-PRES-001": [
     {
-      "suite": "integration-request",
-      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
-      "test": "runs signup, current-user, logout, and login across the two Workers"
+      "suite": "integration-production",
+      "file": "apps/web/app/testing/__tests__/productionEntry.integration.test.ts",
+      "test": "runs defaultEntry and the built signup/login/logout server functions over HTTP"
     }
   ],
   "TEST-PRES-002": [
@@ -291,6 +341,11 @@
     }
   ],
   "TEST-PRES-004": [
+    {
+      "suite": "integration-production",
+      "file": "apps/web/app/testing/__tests__/productionEntry.integration.test.ts",
+      "test": "runs defaultEntry and the built signup/login/logout server functions over HTTP"
+    },
     {
       "suite": "integration-request",
       "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
@@ -317,6 +372,16 @@
   ],
   "TEST-OPS-001": [
     {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/pitr-operator.test.ts",
+      "test": "passes restore stdout to the undo CLI through a fake operator server"
+    },
+    {
+      "suite": "unit",
+      "file": "scripts/__tests__/write-pitr-evidence.test.ts",
+      "test": "creates one commit-bound passed result for each restored class"
+    },
+    {
       "suite": "release-gate",
       "file": ".thread/19/progress.md",
       "marker": "staging の実bookmark取得・restore・verify・undo restore",
@@ -338,9 +403,19 @@
   ],
   "TEST-OPS-003": [
     {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/rpcCompatibilityWindow.integration.test.ts",
+      "test": "keeps old request, new request, and request rollback safe across state deployment"
+    },
+    {
       "suite": "unit",
       "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
-      "test": "keeps request/state bindings and secrets separated"
+      "test": "keeps request/state bindings and secrets separated for .staging"
+    },
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps request/state bindings and secrets separated for .production"
     },
     {
       "suite": "ci-command",

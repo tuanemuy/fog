@@ -12,7 +12,7 @@ const initialSchema = [
   `CREATE TABLE IF NOT EXISTS settings (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     trash_retention_days INTEGER NOT NULL DEFAULT 30,
-    version INTEGER NOT NULL DEFAULT 1,
+    version INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS ai_client_connections (
@@ -140,20 +140,20 @@ const initialSchema = [
 ] as const;
 
 const historyAndOwnershipSchema = [
-  "ALTER TABLE profile ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE profile ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0)",
   "ALTER TABLE ai_client_connections ADD COLUMN client_name TEXT",
   "ALTER TABLE ai_client_connections ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked'))",
   "ALTER TABLE ai_client_connections ADD COLUMN connected_at INTEGER",
   "ALTER TABLE ai_client_connections ADD COLUMN last_used_at INTEGER",
-  "ALTER TABLE ai_client_connections ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE ai_client_connections ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0)",
   `UPDATE ai_client_connections
    SET client_name = label,
        connected_at = created_at,
        status = CASE WHEN revoked_at IS NULL THEN 'active' ELSE 'revoked' END
    WHERE client_name IS NULL OR connected_at IS NULL`,
   "ALTER TABLE topics ADD COLUMN description TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE topics ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
-  "ALTER TABLE content ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE topics ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0)",
+  "ALTER TABLE content ADD COLUMN version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0)",
   "ALTER TABLE content ADD COLUMN latest_revision_version INTEGER NOT NULL DEFAULT 0 CHECK (latest_revision_version >= 0)",
   "ALTER TABLE content ADD COLUMN updated_by TEXT NOT NULL DEFAULT 'local-user'",
   "ALTER TABLE content_revisions ADD COLUMN actor_id TEXT NOT NULL DEFAULT 'local-user'",
@@ -182,7 +182,7 @@ const historyAndOwnershipSchema = [
    END`,
   `CREATE TRIGGER IF NOT EXISTS settings_version_guard
    BEFORE UPDATE ON settings
-   WHEN NEW.version < 1 OR NEW.trash_retention_days < 1
+   WHEN NEW.version < 0 OR NEW.trash_retention_days < 1
    BEGIN
      SELECT RAISE(ABORT, 'SETTINGS_INVARIANT_INVALID');
    END`,
@@ -196,15 +196,63 @@ const historyAndOwnershipSchema = [
   `CREATE TRIGGER IF NOT EXISTS ai_client_connection_update_guard
    BEFORE UPDATE ON ai_client_connections
    WHEN NEW.client_name IS NULL OR trim(NEW.client_name) = ''
-     OR NEW.connected_at IS NULL OR NEW.version < 1
+     OR NEW.connected_at IS NULL OR NEW.version < 0
    BEGIN
      SELECT RAISE(ABORT, 'AI_CLIENT_CONNECTION_PROVENANCE_REQUIRED');
+   END`,
+] as const;
+
+const canonicalProvenanceSchema = [
+  `CREATE TABLE ai_client_connections_next (
+    id TEXT PRIMARY KEY,
+    client_name TEXT NOT NULL CHECK (trim(client_name) <> ''),
+    status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+    connected_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked_at INTEGER,
+    version INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
+    CHECK (
+      (status = 'active' AND revoked_at IS NULL)
+      OR (status = 'revoked' AND revoked_at IS NOT NULL)
+    )
+  )`,
+  `INSERT INTO ai_client_connections_next(
+     id, client_name, status, connected_at, last_used_at, revoked_at, version
+   )
+   SELECT id, COALESCE(client_name, label),
+          CASE WHEN revoked_at IS NULL THEN 'active' ELSE 'revoked' END,
+          COALESCE(connected_at, created_at), last_used_at, revoked_at, version
+   FROM ai_client_connections`,
+  "DROP TABLE ai_client_connections",
+  "ALTER TABLE ai_client_connections_next RENAME TO ai_client_connections",
+  "ALTER TABLE content_revisions ADD COLUMN actor_kind TEXT NOT NULL DEFAULT 'user' CHECK (actor_kind IN ('user', 'aiClient'))",
+  "ALTER TABLE content_revisions ADD COLUMN actor_client_name TEXT",
+  `CREATE TRIGGER content_revision_actor_insert_guard
+   BEFORE INSERT ON content_revisions
+   WHEN trim(NEW.actor_id) = ''
+     OR (NEW.actor_kind = 'user' AND NEW.actor_client_name IS NOT NULL)
+     OR (
+       NEW.actor_kind = 'aiClient'
+       AND (
+         NEW.actor_client_name IS NULL
+         OR trim(NEW.actor_client_name) = ''
+       )
+     )
+   BEGIN
+     SELECT RAISE(ABORT, 'CONTENT_REVISION_ACTOR_INVALID');
+   END`,
+  `CREATE TRIGGER settings_insert_guard
+   BEFORE INSERT ON settings
+   WHEN NEW.version < 0 OR NEW.trash_retention_days < 1
+   BEGIN
+     SELECT RAISE(ABORT, 'SETTINGS_INVARIANT_INVALID');
    END`,
 ] as const;
 
 export const userDataMigrations: readonly OrderedMigration[] = [
   { version: 1, up: initialSchema },
   { version: 2, up: historyAndOwnershipSchema },
+  { version: 3, up: canonicalProvenanceSchema },
 ];
 
 export function migrateUserData(storage: DurableSqlStorage, now: number): void {

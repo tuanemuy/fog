@@ -18,6 +18,10 @@ export default defineConfig({
           DIRECTORY_ROUTING_SECRET_ACTIVE:
             "integration-routing-secret-with-32-bytes",
         },
+        serviceBindings: {
+          RPC_STATE_OLD: "rpc-state-old",
+          RPC_STATE_NEW: "rpc-state-new",
+        },
         durableObjects: {
           USER_DATA: {
             className: "UserDataDurableObject",
@@ -55,6 +59,20 @@ export default defineConfig({
               },
             },
           },
+          {
+            name: "rpc-state-old",
+            modules: true,
+            scriptPath:
+              "apps/web/app/testing/rpc-compatibility.state.worker.mjs",
+            bindings: { ACCEPTED_RPC_VERSIONS: "1" },
+          },
+          {
+            name: "rpc-state-new",
+            modules: true,
+            scriptPath:
+              "apps/web/app/testing/rpc-compatibility.state.worker.mjs",
+            bindings: { ACCEPTED_RPC_VERSIONS: "1,2" },
+          },
         ],
       },
     }),
@@ -62,6 +80,7 @@ export default defineConfig({
   test: {
     include: [
       "apps/web/app/testing/**/requestStateBoundary.integration.test.ts",
+      "apps/web/app/testing/**/rpcCompatibilityWindow.integration.test.ts",
     ],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
   },

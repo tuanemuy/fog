@@ -2,19 +2,22 @@ import { DurableObject } from "cloudflare:workers";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { migrateIdentityDirectory } from "@repo/core/adapters/cloudflare/identity-directory/schema";
 import { IdentityDirectoryStore } from "@repo/core/adapters/cloudflare/identity-directory/store";
+import {
+  decryptIdentityValue,
+  encryptIdentityValue,
+} from "@repo/core/adapters/cloudflare/identityEnvelope";
 import type {
-  CredentialLocator,
-  CredentialRef,
-  DirectoryCredential,
   IdentityRpcMutation,
   IdentityRpcQuery,
-  PasswordCredential,
   RpcResult,
 } from "@repo/core/application/identity/contracts";
-import {
-  opaqueCredentialKey,
-  operationId,
-} from "@repo/core/application/identity/contracts";
+import { operationId } from "@repo/core/application/identity/contracts";
+import type {
+  PhysicalCredentialLocator,
+  StoredCredentialRef,
+  StoredDirectoryCredential,
+} from "@repo/core/adapters/cloudflare/identityPhysical";
+import { opaqueCredentialKey } from "@repo/core/adapters/cloudflare/identityPhysical";
 import {
   rpcFailure,
   rpcOk,
@@ -24,7 +27,6 @@ import {
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
 import {
-  Email,
   PasswordHash,
   SsoProvider,
   UserId,
@@ -40,7 +42,11 @@ type UserDataIdentityStub = {
 type StateEnv = {
   ACCOUNT_HOME: DurableObjectNamespace<AccountHomeDurableObject>;
   USER_DATA: DurableObjectNamespace;
+  IDENTITY_MAIL_ENCRYPTION_KEY?: string;
+  IDENTITY_MAIL_PROVIDER?: Fetcher;
 };
+
+const OPERATION_REPLAY_TTL_MS = 24 * 60 * 60_000;
 
 const conflictCodes = new Set([
   "CREDENTIAL_ALREADY_REGISTERED",
@@ -74,7 +80,9 @@ function execute<T>(operation: () => T): RpcResult<T> {
   }
 }
 
-function parseLocator(input: CredentialLocator): CredentialLocator {
+function parseLocator(
+  input: PhysicalCredentialLocator,
+): PhysicalCredentialLocator {
   if (
     typeof input !== "object" ||
     input === null ||
@@ -95,28 +103,33 @@ function parseLocator(input: CredentialLocator): CredentialLocator {
   };
 }
 
-function parseCredential(input: CredentialRef): CredentialRef {
+function parseCredential(input: StoredCredentialRef): StoredCredentialRef {
   if (
     typeof input !== "object" ||
     input === null ||
-    typeof input.canonicalValue !== "string" ||
-    new TextEncoder().encode(input.canonicalValue).byteLength > 1024
+    typeof input.credentialId !== "string" ||
+    typeof input.canonicalValueEncrypted !== "string" ||
+    new TextEncoder().encode(input.canonicalValueEncrypted).byteLength > 4096
   ) {
     throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
   }
   if (input.kind === "password") {
     return {
       kind: "password",
-      canonicalValue: input.canonicalValue,
+      credentialId: input.credentialId,
+      canonicalValueEncrypted: input.canonicalValueEncrypted,
+      emailEncrypted: input.emailEncrypted,
       passwordHash: PasswordHash.create(input.passwordHash),
     };
   }
   if (input.kind === "sso") {
     return {
       kind: "sso",
-      canonicalValue: input.canonicalValue,
+      credentialId: input.credentialId,
+      canonicalValueEncrypted: input.canonicalValueEncrypted,
       provider: SsoProvider.create(input.provider),
-      verifiedEmail: Email.create(input.verifiedEmail),
+      subjectEncrypted: input.subjectEncrypted,
+      verifiedEmailEncrypted: input.verifiedEmailEncrypted,
     };
   }
   throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
@@ -146,8 +159,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   async reserve(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
-      credential: CredentialRef;
+      locator: PhysicalCredentialLocator;
+      credential: StoredCredentialRef;
       userId: string;
       accountEpoch: number;
       now: number;
@@ -198,7 +211,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         Date.now() + 15 * 60_000,
       );
       store.enqueueReconcile(scheduledAt, request.payload.now);
-      await this.scheduleReconcileAlarm(scheduledAt);
+      await this.scheduleAlarm(scheduledAt);
     }
     return result;
   }
@@ -206,15 +219,41 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   async alarm(): Promise<void> {
     const now = Date.now();
     const store = new IdentityDirectoryStore(this.ctx.storage);
+    let reconcileNext: number | null = null;
+    let reconcileFailure: unknown;
+    try {
+      reconcileNext = await this.runReconcile(now, store);
+    } catch (error) {
+      reconcileNext = store.failReconcile(
+        error instanceof Error ? error.message : "RECONCILE_FAILED",
+        now,
+      );
+      reconcileFailure = error;
+    }
+    const mailNext = await this.runIdentityMail(now, store);
+    store.purgeExpiredOperationRegistries(now);
+    const next = [reconcileNext, mailNext]
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0];
+    if (next === undefined) {
+      await this.ctx.storage.deleteAlarm();
+    } else {
+      await this.ctx.storage.setAlarm(next);
+    }
+    if (reconcileFailure) throw reconcileFailure;
+  }
+
+  private async runReconcile(
+    now: number,
+    store: IdentityDirectoryStore,
+  ): Promise<number | null> {
     const job = store.claimReconcile(now);
     if (!job) {
-      const next = store.finishReconcile(now);
-      if (next !== null) await this.ctx.storage.setAlarm(next);
-      return;
+      return store.finishReconcile(now);
     }
-    try {
-      const rows = store.expiredReservations(now, 100);
-      for (const row of rows) {
+    const rows = store.expiredReservations(now, 100);
+    for (const row of rows) {
+      try {
         const userData = this.stateEnv.USER_DATA.getByName(
           row.userId,
         ) as unknown as UserDataIdentityStub;
@@ -299,11 +338,6 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
                   userId: row.userId,
                   expectedState: "directory-active",
                   nextState: "completed",
-                  credentialKind: row.credential.kind,
-                  primaryEmail:
-                    row.credential.kind === "sso"
-                      ? row.credential.verifiedEmail
-                      : row.credential.canonicalValue.replace(/^email:/, ""),
                   now,
                 },
               });
@@ -326,20 +360,123 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
             if (!compensated.ok) throw new Error(compensated.error.code);
           }
         }
+        store.clearReconcileFailure(row.operationId);
+      } catch (error) {
+        store.failReconcileOperation(
+          row.operationId,
+          error instanceof Error ? error.message : "RECONCILE_ROW_FAILED",
+          now,
+        );
       }
-      const next = store.finishReconcile(now);
-      if (next !== null) await this.ctx.storage.setAlarm(next);
-    } catch (error) {
-      const next = store.failReconcile(
-        error instanceof Error ? error.message : "RECONCILE_FAILED",
+    }
+    return store.finishReconcile(now);
+  }
+
+  private async runIdentityMail(
+    now: number,
+    store: IdentityDirectoryStore,
+  ): Promise<number | null> {
+    const ownerToken = `${this.sessionId}:${crypto.randomUUID()}`;
+    const job = store.claimIdentityMail(now, ownerToken);
+    if (!job) return store.nextIdentityMailRun();
+    const encryptionKey = this.stateEnv.IDENTITY_MAIL_ENCRYPTION_KEY;
+    const provider = this.stateEnv.IDENTITY_MAIL_PROVIDER;
+    if (!encryptionKey || new TextEncoder().encode(encryptionKey).length < 32) {
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode: "IDENTITY_MAIL_ENCRYPTION_KEY_UNAVAILABLE",
+        retryable: true,
         now,
+      });
+    }
+    if (!provider) {
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode: "IDENTITY_MAIL_PROVIDER_UNAVAILABLE",
+        retryable: true,
+        now,
+      });
+    }
+    let deliveryPayload: {
+      email: string;
+      resetSecret: string;
+      expiresAt: number;
+    };
+    try {
+      const decrypted = await decryptIdentityValue(
+        job.deliveryPayloadEncrypted,
+        { active: { generation: "mail-v1", secret: encryptionKey } },
+        `mail:${job.operationId}:delivery`,
       );
-      await this.ctx.storage.setAlarm(next);
-      throw error;
+      const parsed = JSON.parse(decrypted) as Partial<typeof deliveryPayload>;
+      if (
+        typeof parsed.email !== "string" ||
+        typeof parsed.resetSecret !== "string" ||
+        !isSafeNonNegativeInteger(parsed.expiresAt)
+      ) {
+        throw new Error("IDENTITY_MAIL_PAYLOAD_INVALID");
+      }
+      deliveryPayload = {
+        email: parsed.email,
+        resetSecret: parsed.resetSecret,
+        expiresAt: parsed.expiresAt,
+      };
+    } catch (error) {
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode:
+          error instanceof Error
+            ? error.message
+            : "IDENTITY_MAIL_DECRYPT_FAILED",
+        retryable: false,
+        now,
+      });
+    }
+    try {
+      const response = await provider.fetch(
+        "https://identity-mail.invalid/password-reset",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": job.providerIdempotencyKey,
+          },
+          body: JSON.stringify({
+            kind: "password-reset",
+            deliveryPayload,
+            idempotencyKey: job.providerIdempotencyKey,
+          }),
+        },
+      );
+      if (response.ok) {
+        store.completeIdentityMail(job.operationId, ownerToken, now);
+        return store.nextIdentityMailRun();
+      }
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode: `IDENTITY_MAIL_PROVIDER_${response.status}`,
+        retryable: response.status === 429 || response.status >= 500,
+        now,
+      });
+    } catch (error) {
+      return store.failIdentityMail({
+        operationId: job.operationId,
+        ownerToken,
+        errorCode:
+          error instanceof Error
+            ? error.message
+            : "IDENTITY_MAIL_PROVIDER_FAILED",
+        retryable: true,
+        now,
+      });
     }
   }
 
-  private async scheduleReconcileAlarm(at: number): Promise<void> {
+  private async scheduleAlarm(at: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || at < current) {
       await this.ctx.storage.setAlarm(at);
@@ -351,7 +488,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<
     RpcResult<{
       userId: string;
-      email: string;
+      emailEncrypted: string;
       passwordHash: string;
       preparedAt: number;
     } | null>
@@ -378,11 +515,11 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     );
   }
 
-  preparePasswordSignup(
+  async preparePasswordSignup(
     request: IdentityRpcMutation<{
       opaqueOperationKey: string;
       proposedUserId: string;
-      email: string;
+      emailEncrypted: string;
       passwordHash: string;
       now: number;
     }>,
@@ -399,7 +536,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     const invalid = invalidPayload(request.payload, [
       "opaqueOperationKey",
       "proposedUserId",
-      "email",
+      "emailEncrypted",
       "passwordHash",
       "now",
     ]);
@@ -413,26 +550,28 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           ),
       );
     }
-    return Promise.resolve(
-      execute(() =>
-        new IdentityDirectoryStore(this.ctx.storage).preparePasswordSignup({
-          opaqueOperationKey: request.payload.opaqueOperationKey,
-          proposedUserId: UserId.create(request.payload.proposedUserId),
-          email: Email.create(request.payload.email),
-          passwordHash: PasswordHash.create(request.payload.passwordHash),
-          now: request.payload.now,
-        }),
-      ),
+    const result = execute(() =>
+      new IdentityDirectoryStore(this.ctx.storage).preparePasswordSignup({
+        opaqueOperationKey: request.payload.opaqueOperationKey,
+        proposedUserId: UserId.create(request.payload.proposedUserId),
+        emailEncrypted: request.payload.emailEncrypted,
+        passwordHash: PasswordHash.create(request.payload.passwordHash),
+        now: request.payload.now,
+      }),
     );
+    if (result.ok) {
+      await this.scheduleAlarm(request.payload.now + OPERATION_REPLAY_TTL_MS);
+    }
+    return result;
   }
 
-  prepareSsoCreate(
+  async prepareSsoCreate(
     request: IdentityRpcMutation<{
       opaqueOperationKey: string;
       proposedUserId: string;
       provider: string;
-      subject: string;
-      email: string;
+      subjectEncrypted: string;
+      emailEncrypted: string;
       now: number;
     }>,
   ): Promise<RpcResult<{ userId: string; replayed: boolean }>> {
@@ -442,15 +581,15 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       "opaqueOperationKey",
       "proposedUserId",
       "provider",
-      "subject",
-      "email",
+      "subjectEncrypted",
+      "emailEncrypted",
       "now",
     ]);
     if (
       invalid ||
-      typeof request.payload.subject !== "string" ||
-      request.payload.subject.length === 0 ||
-      request.payload.subject.length > 512 ||
+      typeof request.payload.subjectEncrypted !== "string" ||
+      request.payload.subjectEncrypted.length === 0 ||
+      request.payload.subjectEncrypted.length > 4096 ||
       !isSafeNonNegativeInteger(request.payload.now)
     ) {
       return Promise.resolve(
@@ -462,23 +601,25 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           ),
       );
     }
-    return Promise.resolve(
-      execute(() =>
-        new IdentityDirectoryStore(this.ctx.storage).prepareSsoCreate({
-          opaqueOperationKey: request.payload.opaqueOperationKey,
-          proposedUserId: UserId.create(request.payload.proposedUserId),
-          provider: SsoProvider.create(request.payload.provider),
-          subject: request.payload.subject,
-          email: Email.create(request.payload.email),
-          now: request.payload.now,
-        }),
-      ),
+    const result = execute(() =>
+      new IdentityDirectoryStore(this.ctx.storage).prepareSsoCreate({
+        opaqueOperationKey: request.payload.opaqueOperationKey,
+        proposedUserId: UserId.create(request.payload.proposedUserId),
+        provider: SsoProvider.create(request.payload.provider),
+        subjectEncrypted: request.payload.subjectEncrypted,
+        emailEncrypted: request.payload.emailEncrypted,
+        now: request.payload.now,
+      }),
     );
+    if (result.ok) {
+      await this.scheduleAlarm(request.payload.now + OPERATION_REPLAY_TTL_MS);
+    }
+    return result;
   }
 
   markInitialized(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       now: number;
     }>,
@@ -515,7 +656,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   activate(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
       now: number;
@@ -557,8 +698,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   }
 
   lookupPassword(
-    request: IdentityRpcQuery<{ locator: CredentialLocator }>,
-  ): Promise<RpcResult<PasswordCredential | null>> {
+    request: IdentityRpcQuery<{ locator: PhysicalCredentialLocator }>,
+  ): Promise<RpcResult<StoredDirectoryCredential | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
     const invalid = invalidPayload(request.payload, ["locator"]);
@@ -573,8 +714,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   }
 
   lookup(
-    request: IdentityRpcQuery<{ locator: CredentialLocator }>,
-  ): Promise<RpcResult<DirectoryCredential | null>> {
+    request: IdentityRpcQuery<{ locator: PhysicalCredentialLocator }>,
+  ): Promise<RpcResult<StoredDirectoryCredential | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
     const invalid = invalidPayload(request.payload, ["locator"]);
@@ -590,7 +731,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   replacePassword(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       passwordHash: string;
       accountEpoch: number;
@@ -637,7 +778,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   tombstone(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
       now: number;
@@ -680,7 +821,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   purge(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       accountEpoch: number;
     }>,
@@ -716,7 +857,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
 
   storePasswordReset(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       userId: string;
       tokenHash: string;
       expiresAt: number;
@@ -760,11 +901,12 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     );
   }
 
-  enqueuePasswordResetMail(
+  async enqueuePasswordResetMail(
     request: IdentityRpcMutation<{
       userId: string;
       email: string;
-      tokenHash: string;
+      resetSecret: string;
+      expiresAt: number;
       providerIdempotencyKey: string;
       now: number;
     }>,
@@ -774,15 +916,17 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     const invalid = invalidPayload(request.payload, [
       "userId",
       "email",
-      "tokenHash",
+      "resetSecret",
+      "expiresAt",
       "providerIdempotencyKey",
       "now",
     ]);
     if (
       invalid ||
-      typeof request.payload.tokenHash !== "string" ||
-      request.payload.tokenHash.length === 0 ||
-      request.payload.tokenHash.length > 256 ||
+      typeof request.payload.resetSecret !== "string" ||
+      request.payload.resetSecret.length < 16 ||
+      request.payload.resetSecret.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.expiresAt) ||
       typeof request.payload.providerIdempotencyKey !== "string" ||
       request.payload.providerIdempotencyKey.length === 0 ||
       request.payload.providerIdempotencyKey.length > 256 ||
@@ -797,24 +941,52 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           ),
       );
     }
-    return Promise.resolve(
-      execute(() => {
-        new IdentityDirectoryStore(this.ctx.storage).enqueuePasswordResetMail({
-          operationId: operationId(request.operationId),
-          userId: UserId.create(request.payload.userId),
-          email: Email.create(request.payload.email),
-          tokenHash: request.payload.tokenHash,
-          providerIdempotencyKey: request.payload.providerIdempotencyKey,
-          now: request.payload.now,
-        });
-        return null;
-      }),
-    );
+    const encryptionKey = this.stateEnv.IDENTITY_MAIL_ENCRYPTION_KEY;
+    if (!encryptionKey || new TextEncoder().encode(encryptionKey).length < 32) {
+      return rpcFailure(
+        "infrastructure",
+        "IDENTITY_MAIL_ENCRYPTION_KEY_UNAVAILABLE",
+        "Identity mail delivery is temporarily unavailable",
+        true,
+      );
+    }
+    const keyring = {
+      active: { generation: "mail-v1", secret: encryptionKey },
+    } as const;
+    const [emailEncrypted, deliveryPayloadEncrypted] = await Promise.all([
+      encryptIdentityValue(
+        request.payload.email,
+        keyring,
+        `mail:${request.operationId}:email`,
+      ),
+      encryptIdentityValue(
+        JSON.stringify({
+          email: request.payload.email,
+          resetSecret: request.payload.resetSecret,
+          expiresAt: request.payload.expiresAt,
+        }),
+        keyring,
+        `mail:${request.operationId}:delivery`,
+      ),
+    ]);
+    const result = execute(() => {
+      new IdentityDirectoryStore(this.ctx.storage).enqueuePasswordResetMail({
+        operationId: operationId(request.operationId),
+        userId: UserId.create(request.payload.userId),
+        emailEncrypted,
+        deliveryPayloadEncrypted,
+        providerIdempotencyKey: request.payload.providerIdempotencyKey,
+        now: request.payload.now,
+      });
+      return null;
+    });
+    if (result.ok) await this.scheduleAlarm(request.payload.now);
+    return result;
   }
 
   lookupPasswordReset(
     request: IdentityRpcMutation<{
-      locator: CredentialLocator;
+      locator: PhysicalCredentialLocator;
       tokenHash: string;
       now: number;
     }>,

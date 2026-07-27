@@ -1,19 +1,19 @@
 {
-  "recordedAt": "2026-07-27T19:15:39Z",
+  "recordedAt": "2026-07-27T20:00:14Z",
   "source": "working-tree",
-  "baseCommit": "502776e5a797fd042636164314755f1f5aa137d4",
+  "baseCommit": "e2ec1ace9c15b281a120ee577a56c23ec4d0936e",
   "workingTree": true,
   "branch": "issue/19/cloudflare-do-fts",
   "automated": [
     {
       "command": "pnpm test:unit",
       "result": "passed",
-      "evidence": "31 files, 407 tests"
+      "evidence": "35 files, 421 tests; machine-readable reporter artifact bound to the working-tree fingerprint"
     },
     {
       "command": "pnpm test:integration",
       "result": "passed",
-      "evidence": "request boundary 1 file/5 tests; state 6 files/66 tests"
+      "evidence": "request boundary 2 files/6 tests; production defaultEntry 1 file/1 test; state 6 files/77 tests; machine-readable reporter artifacts bound to the working-tree fingerprint"
     },
     {
       "command": "pnpm test:lifecycle:cli",
@@ -45,17 +45,19 @@
     {
       "command": "pnpm audit:legacy",
       "result": "passed",
-      "evidence": "271 active files; production artifact inputs clean"
+      "evidence": "276 active files; production artifact inputs clean"
     },
     {
       "command": "pnpm audit:test-traceability",
       "result": "passed",
-      "evidence": "34 TEST IDs; source, CI inclusion, recorded suite results checked; pending release/manual evidence reported without claiming verification"
+      "evidence": "34 TEST IDs; exact passed reporter results and command evidence matched HEAD plus the working-tree fingerprint; external release/manual evidence remains pending"
     }
   ],
   "committedCi": {
-    "result": "pending",
-    "reason": "The reviewed fixes are not committed; no CI run can represent this working tree yet"
+    "result": "passed",
+    "commitSha": "e2ec1ace9c15b281a120ee577a56c23ec4d0936e",
+    "runUrl": "https://github.com/tuanemuy/fog/actions/runs/30297557438",
+    "scope": "base commit only; the current working-tree fixes require fresh reporter evidence"
   },
   "releaseGates": [
     {
@@ -63,8 +65,19 @@
       "result": "pending",
       "stage": "staging",
       "namespace": null,
-      "verifiedAt": null,
+      "commitSha": null,
+      "runUrl": null,
       "expiresAt": null,
+      "classes": [
+        {
+          "kind": "user-data",
+          "result": "pending"
+        },
+        {
+          "kind": "identity-directory",
+          "result": "pending"
+        }
+      ],
       "reason": "Cloudflare credentials and a disposable remote namespace are not available in the local environment"
     },
     {

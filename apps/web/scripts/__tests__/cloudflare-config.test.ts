@@ -30,7 +30,16 @@ describe("Cloudflare two-Worker configuration", () => {
         expect(state).toContain('storage = "sqlite"');
       }
       expect(request).toContain("PITR_OPERATOR_TOKEN");
-      expect(state).toContain("required = []");
+      if (stage === "") {
+        expect(state).toContain("required = []");
+        expect(state).not.toContain("IDENTITY_MAIL_PROVIDER");
+      } else {
+        expect(state).toContain('required = ["IDENTITY_MAIL_ENCRYPTION_KEY"]');
+        expect(state).toContain('binding = "IDENTITY_MAIL_PROVIDER"');
+        expect(state).toContain(
+          `service = "\${RESOURCE_PREFIX}-identity-mail-provider"`,
+        );
+      }
       expect(state).not.toMatch(
         /SESSION_SECRET|DIRECTORY_ROUTING_SECRET|PITR_OPERATOR_TOKEN/u,
       );

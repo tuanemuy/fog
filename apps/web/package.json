@@ -18,7 +18,7 @@
     "preview": "vite preview --config vite.config.cloudflare.ts",
     "typecheck": "tsgo",
     "cf:types": "wrangler types -c wrangler.request.toml -c wrangler.state.toml",
-    "test:integration:prepare": "wrangler deploy --config wrangler.state.toml --dry-run --outdir dist/test/state",
+    "test:integration:prepare": "pnpm build:request && wrangler deploy --config wrangler.state.toml --dry-run --outdir dist/test/state",
     "lifecycle:dev": "wrangler dev --config wrangler.lifecycle.toml --local --persist-to .wrangler/lifecycle",
     "lifecycle:run": "tsx scripts/run-lifecycle.ts",
     "pitr:operator": "tsx scripts/pitr-operator.ts",

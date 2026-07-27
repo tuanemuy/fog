@@ -131,8 +131,12 @@ export interface SearchProjectionPort {
 type SemanticRpcCommandBase = Readonly<{
   version: typeof SEARCH_RPC_VERSION;
   operationId: string;
-  actorId?: string;
+  actor?: SemanticActor;
 }>;
+
+export type SemanticActor =
+  | Readonly<{ kind: "user"; id: string }>
+  | Readonly<{ kind: "aiClient"; id: string; clientName: string }>;
 
 export type SemanticRpcCommand =
   | (SemanticRpcCommandBase &
@@ -141,7 +145,7 @@ export type SemanticRpcCommand =
       Readonly<{
         type: "update-memo";
         memo: MemoWriteDto;
-        expectedVersion?: number;
+        expectedVersion: number;
         changeReason?: string;
       }>)
   | (SemanticRpcCommandBase &
@@ -149,21 +153,21 @@ export type SemanticRpcCommand =
         type: "trash-memo";
         memoId: string;
         trashedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "restore-memo";
         memoId: string;
         restoredAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "remove-memo";
         memoId: string;
         removedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{ type: "create-document"; document: DocumentWriteDto }>)
@@ -171,7 +175,7 @@ export type SemanticRpcCommand =
       Readonly<{
         type: "update-document";
         document: DocumentWriteDto;
-        expectedVersion?: number;
+        expectedVersion: number;
         changeReason: string;
       }>)
   | (SemanticRpcCommandBase &
@@ -179,21 +183,22 @@ export type SemanticRpcCommand =
         type: "trash-document";
         documentId: string;
         trashedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "restore-document";
         documentId: string;
         restoredAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
+        destinationTopicId?: string;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "remove-document";
         documentId: string;
         removedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{ type: "create-topic"; topic: TopicWriteDto }>)
@@ -203,45 +208,60 @@ export type SemanticRpcCommand =
         topicId: string;
         archivedAt: number | null;
         updatedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "trash-topic";
         topicId: string;
         trashedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "restore-topic";
         topicId: string;
         restoredAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>)
   | (SemanticRpcCommandBase &
       Readonly<{
         type: "remove-topic";
         topicId: string;
         removedAt: number;
-        expectedVersion?: number;
+        expectedVersion: number;
       }>);
 
-type WithoutRpcVersion<T> = T extends unknown ? Omit<T, "version"> : never;
+type PreparedCommand<T> = T extends unknown
+  ? Omit<T, "version" | "actor"> &
+      Readonly<{
+        actor: SemanticActor;
+        completedAt: number;
+      }>
+  : never;
 
-/** Prepared application command after the RPC version gate has succeeded. */
-export type SemanticCommand = WithoutRpcVersion<SemanticRpcCommand>;
+/** Domain-validated application command after the RPC boundary has prepared it. */
+export type PreparedSemanticCommand = PreparedCommand<SemanticRpcCommand>;
+
+export type SemanticCommand = PreparedSemanticCommand;
 
 export type SemanticCommitResult = Readonly<{
   operationId: string;
   replayed: boolean;
 }>;
 
+export interface SemanticTransactionRepositories {
+  apply(
+    command: PreparedSemanticCommand,
+    projection: SearchProjectionPort,
+  ): void;
+}
+
 export interface SemanticCommitPort {
   transactionSync(
-    command: SemanticCommand,
-    callback?: (
-      repositories: Readonly<{ storage: "user-data" }>,
+    command: PreparedSemanticCommand,
+    callback: (
+      repositories: SemanticTransactionRepositories,
       projection: SearchProjectionPort,
     ) => void,
   ): SemanticCommitResult;

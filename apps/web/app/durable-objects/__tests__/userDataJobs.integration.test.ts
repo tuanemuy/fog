@@ -151,6 +151,49 @@ describe("User Data persistent jobs", () => {
     });
   });
 
+  it("poisons a corrupt stored payload without starving later due jobs", async () => {
+    const stub = await initialized("corrupt-payload");
+    await runInDurableObject(stub, (_instance, state) => {
+      const store = new DurableJobStore(state.storage);
+      for (const id of ["a-corrupt", "b-valid"]) {
+        store.enqueue({
+          id,
+          kind: "purge-trash",
+          payload: { id, kind: "memo", trashedAt: 1 },
+          nextRunAt: 1,
+          providerIdempotencyKey: id,
+          now: 1,
+        });
+      }
+      state.storage.sql.exec(
+        "UPDATE jobs SET payload_json = '{' WHERE id = 'a-corrupt'",
+      );
+      const claimed = store.claim({
+        now: 2,
+        leaseMs: 60_000,
+        ownerToken: "owner",
+        limit: 25,
+      });
+      expect(claimed.map(({ id }) => id)).toEqual(["b-valid"]);
+      expect(store.complete("b-valid", "owner", 3)).toBe(true);
+      expect(
+        state.storage.sql
+          .exec<{ id: string; status: string; terminal_reason: string | null }>(
+            `SELECT id, status, terminal_reason FROM jobs
+             ORDER BY id`,
+          )
+          .toArray(),
+      ).toEqual([
+        {
+          id: "a-corrupt",
+          status: "poison",
+          terminal_reason: "STORED_JOB_PAYLOAD_INVALID",
+        },
+        { id: "b-valid", status: "completed", terminal_reason: null },
+      ]);
+    });
+  });
+
   it("prunes terminal rows according to bounded retention", async () => {
     const stub = await initialized("retention");
     await runInDurableObject(stub, (_instance, state) => {
@@ -261,6 +304,37 @@ describe("User Data persistent jobs", () => {
     }
   });
 
+  it("recovers a failed alarm schedule from the next input gate", async () => {
+    const stub = await initialized("alarm-schedule-failure");
+    await runInDurableObject(stub, async (_instance, state) => {
+      const now = Date.now();
+      new DurableJobStore(state.storage).enqueue({
+        id: "unsupported",
+        kind: "unsupported",
+        payload: {},
+        nextRunAt: now - 1,
+        providerIdempotencyKey: "unsupported",
+        now,
+      });
+      await state.storage.setAlarm(now + 1_000);
+    });
+    await stub.failNextAlarmSchedules(1);
+    await expect(runDurableObjectAlarm(stub)).rejects.toThrow(
+      "TEST_SET_ALARM_FAILURE",
+    );
+    value(await stub.getProfile());
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      expect(
+        state.storage.sql
+          .exec<{ status: string; attempt: number }>(
+            "SELECT status, attempt FROM jobs WHERE id = 'unsupported'",
+          )
+          .one(),
+      ).toEqual({ status: "pending", attempt: 1 });
+    });
+  });
+
   it("recomputes existing trash and jobs when retention changes", async () => {
     const stub = await initialized("dynamic-retention");
     const trashedAt = Date.now();
@@ -279,6 +353,7 @@ describe("User Data persistent jobs", () => {
         type: "trash-memo",
         memoId: "memo",
         trashedAt,
+        expectedVersion: 0,
       }),
     );
     expect(
@@ -351,6 +426,7 @@ describe("User Data persistent jobs", () => {
         type: "trash-memo",
         memoId: "memo",
         trashedAt,
+        expectedVersion: 0,
       }),
     );
     await runInDurableObject(stub, (_instance, state) => {
@@ -436,10 +512,36 @@ describe("User Data persistent jobs", () => {
     value(
       await stub.commit({
         version: 1,
+        operationId: "independent-document",
+        type: "create-document",
+        document: {
+          id: "independent-document",
+          title: "Independent",
+          body: "restore after alarm purge",
+          topicId: "topic",
+          sourceMemoIds: [],
+          timestamp: expiredAt - 1,
+        },
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "trash-independent-document",
+        type: "trash-document",
+        documentId: "independent-document",
+        trashedAt: Date.now(),
+        expectedVersion: 0,
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
         operationId: "trash-topic",
         type: "trash-topic",
         topicId: "topic",
         trashedAt: expiredAt,
+        expectedVersion: 0,
       }),
     );
     expect(await runDurableObjectAlarm(stub)).toBe(true);
@@ -462,6 +564,39 @@ describe("User Data persistent jobs", () => {
           )
           .one().count,
       ).toBe(0);
+    });
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "destination-topic",
+        type: "create-topic",
+        topic: {
+          id: "destination-topic",
+          name: "Destination",
+          timestamp: Date.now(),
+        },
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "restore-independent-document",
+        type: "restore-document",
+        documentId: "independent-document",
+        destinationTopicId: "destination-topic",
+        restoredAt: Date.now(),
+        expectedVersion: 1,
+      }),
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ topic_id: string; trashed_at: number | null }>(
+            `SELECT topic_id, trashed_at FROM content
+             WHERE id = 'independent-document'`,
+          )
+          .one(),
+      ).toEqual({ topic_id: "destination-topic", trashed_at: null });
     });
   });
 
@@ -487,6 +622,7 @@ describe("User Data persistent jobs", () => {
           type: "trash-memo",
           memoId: id,
           trashedAt,
+          expectedVersion: 0,
         }),
       );
     }

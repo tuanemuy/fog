@@ -8,7 +8,7 @@ Worker containing three SQLite-backed Durable Object classes.
 | Worker | Entry | Responsibility | Secrets |
 | --- | --- | --- | --- |
 | Request | `app/server.cloudflare.ts` | HTTP, session validation, canonical user routing, RPC error translation, authenticated PITR operator boundary | `SESSION_SECRET`, directory-routing keyring, `PITR_OPERATOR_TOKEN` |
-| State | `app/server.state.ts` | User Data, Identity Directory, Account Home DOs and Alarms | Only secrets needed by external job adapters |
+| State | `app/server.state.ts` | User Data, Identity Directory, Account Home DOs and Alarms | `IDENTITY_MAIL_ENCRYPTION_KEY`; external mail-provider service binding |
 
 The request Worker binds `USER_DATA`, `IDENTITY_DIRECTORY`, and `ACCOUNT_HOME`
 to the `fog-state` script. A client never provides a Durable Object ID or
@@ -95,10 +95,11 @@ be installed.
 The canonical `pnpm deploy:<stage>` command validates that the resources and
 routes stacks use the same account, zone, and hostname before deploying either
 Worker. After state and request deploy in that order, it applies the routes
-stack.
+stack. Download the protected staging PITR workflow artifact for the exact
+release commit and point the preflight at it:
 
 ```bash
-pnpm deploy:staging
+PITR_EVIDENCE_PATH=.artifacts/pitr/staging.json pnpm deploy:staging
 ```
 
 Repeat with `production` for production.
@@ -125,11 +126,28 @@ pnpm --filter @repo/web secrets:check:staging
 ```
 
 Repeat against `wrangler.request.production.toml` for production. Never set
-these secrets on `wrangler.state.*.toml`. The secret inventory command is a
-release gate: it reads names only, fails for missing request secrets or
-request-only secrets present on the state Worker, and never reads secret values.
-Wrangler dry-run validates bindings and bundles but is not a substitute for
-this authenticated inventory check.
+these request secrets on `wrangler.state.*.toml`.
+
+Password-reset delivery runs from the state Worker. Set its encryption secret
+on the state config and provision the stage-specific
+`IDENTITY_MAIL_PROVIDER` service named `fog-<stage>-identity-mail-provider`:
+
+```bash
+openssl rand -base64 48
+pnpm --filter @repo/web exec wrangler secret put \
+  IDENTITY_MAIL_ENCRYPTION_KEY \
+  --config wrangler.state.staging.toml
+```
+
+The provider receives only the password-reset delivery payload and its
+idempotency key. The request Worker never receives the encryption key. Repeat
+against `wrangler.state.production.toml` for production.
+
+The secret inventory command is a release gate: it reads names only, fails for
+missing request or state secrets, rejects request-only secrets present on the
+state Worker, and never reads secret values. Wrangler dry-run validates
+bindings and bundles but is not a substitute for this authenticated inventory
+check.
 
 `SESSION_SECRET` rotation invalidates every existing session immediately. Set
 the replacement on the request Worker and verify an old cookie is rejected.
@@ -147,7 +165,7 @@ Directory routing uses an active/previous keyring:
    cursor:
 
    ```bash
-   pnpm --filter @repo/web identity:operator -- \
+   pnpm --filter @repo/web identity:operator \
      rotate-page "$PREVIOUS_GENERATION" "$BUCKET" 100
    ```
 
@@ -212,9 +230,11 @@ on the object's next activation.
 
 ## Alarm and reconciler incidents
 
-User Data external-I/O/retention jobs are at-least-once. A job records its
-attempt, next-run time, provider idempotency key, lease, owner token, and poison
-reason. The mutation and earliest next-run lookup commit before `setAlarm`.
+User Data external-I/O/retention jobs and Identity Directory reset-mail jobs are
+at-least-once. A job records its attempt, next-run time, provider idempotency
+key, lease, owner token, and poison reason. The mutation and earliest next-run
+lookup commit before `setAlarm`. Reset delivery treats provider 2xx as complete,
+429/5xx as retryable, and other 4xx responses as poison.
 
 For an incident:
 
@@ -235,9 +255,9 @@ operation or manually activate only one side of the saga.
 Run one bounded reconciliation page with:
 
 ```bash
-pnpm --filter @repo/web identity:operator -- \
+pnpm --filter @repo/web identity:operator \
   reconcile-page "$GENERATION" "$BUCKET" 100
-pnpm --filter @repo/web identity:operator -- \
+pnpm --filter @repo/web identity:operator \
   status "$GENERATION" "$BUCKET"
 ```
 
@@ -262,12 +282,20 @@ epoch. Never reactivate restored directory/user data whose epoch is older than
 Account Home.
 
 Password change remains Issue #11. Password reset and SSO link/unlink UI remain
-Issue #12; only their storage/primitive contracts exist here.
+Issue #12; the reset storage, encrypted delivery, retry, and poison contracts
+exist here without that UI.
 
 ## PITR policy and staging smoke
 
 Cloudflare PITR is remote-only and object-scoped. Run this smoke only against
 authenticated disposable staging objects:
+
+Use the `Staging PITR smoke` workflow with the protected `staging-pitr`
+environment. Store `PITR_OPERATOR_URL` and `PITR_OPERATOR_TOKEN` as environment
+secrets, require the configured environment approval, and provide the
+disposable targets and pre-change bookmarks as workflow inputs. The workflow
+uploads `staging-pitr-<commit SHA>` with seven-day retention only after both
+classes complete restore and undo verification.
 
 | Class | Restore allowed | Required check |
 | --- | --- | --- |
@@ -285,7 +313,7 @@ For User Data or Identity Directory:
 3. Through the operator-only wrapper, record the current bookmark:
 
    ```bash
-   pnpm --filter @repo/web pitr:operator -- \
+   pnpm --filter @repo/web pitr:operator \
      bookmark user-data "$OPAQUE_ACCOUNT_ID"
    ```
 
@@ -300,7 +328,7 @@ For User Data or Identity Directory:
 5. Schedule the old bookmark through the same wrapper:
 
    ```bash
-   pnpm --filter @repo/web pitr:operator -- \
+   pnpm --filter @repo/web pitr:operator \
      restore user-data "$OPAQUE_ACCOUNT_ID" "$OLD_BOOKMARK"
    ```
 
@@ -322,13 +350,19 @@ For User Data or Identity Directory:
    same schedule → restart → verify protocol:
 
    ```bash
-   pnpm --filter @repo/web pitr:operator -- undo "$PITR_RECEIPT_JSON"
+   pnpm --filter @repo/web pitr:operator undo "$PITR_RECEIPT_JSON"
    ```
 
    Do not mark the smoke complete until undo verification also succeeds.
-8. Record stage, disposable namespace, class, opaque object identifier,
-   bookmarks, verification time, evidence expiry, and outcome without PII.
-   `release:preflight:*` accepts only a passed, unexpired staging record.
+8. Record both class results in one protected workflow artifact. Include the
+   staging disposable namespace, release commit SHA, workflow run URL, a
+   maximum seven-day expiry, each opaque target, and the exact restore and undo
+   version 2 receipts. Each class result must be `passed`. For Directory, also
+   record a completed full scan with a null cursor and zero conflicts; for User
+   Data, record completed restore and undo verification.
+   `release:preflight:*` accepts only one result for each class, from the
+   release commit and same workflow run, whose verification
+   timestamps are not in the future and whose fixed TTL is still valid.
 
 PITR is not supported by local workerd. Never substitute another storage product's restore commands
 for Durable Object PITR.

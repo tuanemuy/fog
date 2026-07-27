@@ -4,7 +4,11 @@ compatibility_date = "2026-07-04"
 compatibility_flags = ["nodejs_compat"]
 
 [secrets]
-required = []
+required = ["IDENTITY_MAIL_ENCRYPTION_KEY"]
+
+[[services]]
+binding = "IDENTITY_MAIL_PROVIDER"
+service = "${RESOURCE_PREFIX}-identity-mail-provider"
 
 [[durable_objects.bindings]]
 name = "USER_DATA"

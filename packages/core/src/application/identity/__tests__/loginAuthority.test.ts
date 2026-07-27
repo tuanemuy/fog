@@ -1,5 +1,5 @@
 import type { RequestContainer } from "@repo/core/application/di/types";
-import { opaqueCredentialKey } from "@repo/core/application/identity/contracts";
+import { directoryReference } from "@repo/core/application/identity/contracts";
 import { loginWithPassword } from "@repo/core/application/identity/loginWithPassword";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -13,11 +13,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 const userId = UserId.create("authority-user");
-const locator = {
-  generation: "generation-1",
-  bucket: 0,
-  opaqueKey: opaqueCredentialKey("opaque-authority-key"),
-} as const;
+const reference = directoryReference("opaque-authority-reference");
 
 function container(
   status: "active" | "pending" | "deleting" | "deleted",
@@ -31,22 +27,24 @@ function container(
       registerWithPassword: async () => ({ sessionEpoch: 0 }),
       findPasswordCredential: async () => ({
         userId,
+        credentialId: "password-credential",
+        email: Email.create("person@example.com"),
         passwordHash: PasswordHash.create("stored-hash"),
-        locator,
+        directoryReference: reference,
         accountEpoch: 2,
       }),
       getAccountAuthority: async () => ({
         userId,
-        userDataObjectName: userId,
         status,
         primaryEmail: Email.create("person@example.com"),
         authMethods: ["password"],
-        locators: [locator],
         credentials: [
           {
-            credentialId: locator.opaqueKey,
+            credentialId: "password-credential",
             kind: "password",
-            locators: [locator],
+            email: Email.create("person@example.com"),
+            passwordHash: PasswordHash.create("stored-hash"),
+            directoryReferences: [reference],
           },
         ],
         sessionEpoch: 4,

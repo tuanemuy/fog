@@ -139,6 +139,7 @@ describe("Durable Object infrastructure contracts", () => {
           operationId: "trash",
           memoId: "memo",
           trashedAt: 3,
+          expectedVersion: 0,
         }),
       ).toMatchObject({
         ok: false,

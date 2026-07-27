@@ -137,7 +137,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
         this.ctx.storage.sql.exec(
           `INSERT OR IGNORE INTO settings(
            singleton, trash_retention_days, version, updated_at
-         ) VALUES (1, 30, 1, ?)`,
+         ) VALUES (1, 30, 0, ?)`,
           input.payload.now,
         );
         this.ctx.storage.sql.exec(

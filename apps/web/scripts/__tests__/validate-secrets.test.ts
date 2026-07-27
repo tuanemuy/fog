@@ -21,6 +21,17 @@ describe("validateSecretInventory", () => {
     ).toEqual(["forbidden request-only secret is present: SESSION_SECRET"]);
   });
 
+  it("requires the state-only mail encryption secret", () => {
+    expect(
+      validateSecretInventory({
+        required: ["IDENTITY_MAIL_ENCRYPTION_KEY"],
+        configured: [],
+        forbidden: new Set(["SESSION_SECRET"]),
+        allowed: new Set(["IDENTITY_MAIL_ENCRYPTION_KEY"]),
+      }),
+    ).toEqual(["missing required secret IDENTITY_MAIL_ENCRYPTION_KEY"]);
+  });
+
   it("rejects a retired previous routing secret outside a rotation window", () => {
     expect(
       validateSecretInventory({

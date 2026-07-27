@@ -8,14 +8,14 @@ import type {
 } from "./valueObject";
 
 export type PasswordCredential = Readonly<{
-  id: string;
+  credentialId: string;
   kind: "password";
   email: Email;
   passwordHash: PasswordHash;
 }>;
 
 export type SsoCredential = Readonly<{
-  id: string;
+  credentialId: string;
   kind: "sso";
   provider: SsoProvider;
   subject: SsoSubject;
@@ -55,6 +55,12 @@ function create(input: AccountIdentity): AccountIdentity {
       "An active account must have a login credential",
     );
   }
+  if (input.status === "active" && input.primaryEmail === null) {
+    fail(
+      "IDENTITY_PRIMARY_EMAIL_REQUIRED",
+      "An active account must have a primary email",
+    );
+  }
   if (input.status === "deleted") {
     if (input.primaryEmail !== null || input.credentials.length !== 0) {
       fail(
@@ -65,8 +71,8 @@ function create(input: AccountIdentity): AccountIdentity {
     return input;
   }
   if (
-    new Set(input.credentials.map((credential) => credential.id)).size !==
-    input.credentials.length
+    new Set(input.credentials.map((credential) => credential.credentialId))
+      .size !== input.credentials.length
   ) {
     fail(
       "IDENTITY_CREDENTIAL_DUPLICATED",
@@ -120,7 +126,7 @@ function canUnlink(
   account: Readonly<{
     status: AccountIdentity["status"];
     credentials: readonly Readonly<{
-      id: string;
+      credentialId: string;
       kind: LoginCredential["kind"];
     }>[];
   }>,
@@ -128,7 +134,9 @@ function canUnlink(
 ): boolean {
   return (
     account.status === "active" &&
-    account.credentials.some((credential) => credential.id === credentialId) &&
+    account.credentials.some(
+      (credential) => credential.credentialId === credentialId,
+    ) &&
     account.credentials.length > 1
   );
 }
@@ -144,7 +152,7 @@ function unlink(
     );
   }
   const credentials = account.credentials.filter(
-    (credential) => credential.id !== credentialId,
+    (credential) => credential.credentialId !== credentialId,
   );
   const primaryEmail =
     account.primaryEmail !== null &&
@@ -170,7 +178,8 @@ function replacePassword(
 ): AccountIdentity {
   const target = account.credentials.find(
     (credential) =>
-      credential.id === credentialId && credential.kind === "password",
+      credential.credentialId === credentialId &&
+      credential.kind === "password",
   );
   if (!target) {
     fail(
@@ -181,7 +190,7 @@ function replacePassword(
   return create({
     ...account,
     credentials: account.credentials.map((credential) =>
-      credential.id === credentialId && credential.kind === "password"
+      credential.credentialId === credentialId && credential.kind === "password"
         ? { ...credential, passwordHash }
         : credential,
     ),

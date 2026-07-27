@@ -84,6 +84,7 @@ const contentAuditAllowlist = new Set([
 ]);
 const activeFiles = trackedFiles.filter(
   (file) =>
+    existsSync(file) &&
     (/^(?:apps|packages|infra|spec)\//u.test(file) ||
       file === ".github/workflows/ci.yml") &&
     !file.includes("/review/") &&

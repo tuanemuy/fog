@@ -24,6 +24,9 @@ const invalidCredentials = (): ValidationError =>
 const DUMMY_AUTHORITY_USER_ID = UserId.create(
   "00000000-0000-7000-8000-000000000000",
 );
+const DUMMY_LOOKUP_EMAIL = Email.create(
+  "login-equalization.invalid@example.com",
+);
 
 /**
  * The work factor {@link DUMMY_PASSWORD_HASH} declares.
@@ -106,8 +109,9 @@ async function burnVerificationTime(
  * Response time is levelled the same way: an address with no password
  * account still pays for one key derivation
  * ({@link burnVerificationTime}), so the wall clock does not disclose what
- * the answer refuses to. The malformed-input path is exempt — it never
- * reaches storage and reveals only what the caller already typed.
+ * the answer refuses to. Malformed input uses dummy lookup values so it keeps
+ * the same storage and verification call profile without sending the invalid
+ * caller value to a gateway.
  */
 export async function loginWithPassword({
   container,
@@ -119,6 +123,9 @@ export async function loginWithPassword({
     email = Email.create(input.email);
     plainPassword = PlainPassword.create(input.password);
   } catch {
+    if (container.identity) {
+      await container.identity.findPasswordCredential(DUMMY_LOOKUP_EMAIL);
+    }
     await burnVerificationTime(
       container.passwordHasher,
       input.password as PlainPassword,
@@ -148,19 +155,16 @@ export async function loginWithPassword({
     found.passwordHash,
   );
   const authority = await container.identity.getAccountAuthority(found.userId);
-  const locatorIsCurrent = authority?.credentials.some((credential) =>
-    credential.locators.some(
-      (locator) =>
-        locator.generation === found.locator.generation &&
-        locator.bucket === found.locator.bucket &&
-        locator.opaqueKey === found.locator.opaqueKey,
-    ),
+  const referenceIsCurrent = authority?.credentials.some(
+    (credential) =>
+      credential.credentialId === found.credentialId &&
+      credential.directoryReferences.includes(found.directoryReference),
   );
   if (
     authority?.status !== "active" ||
     !matches ||
     authority.operationEpoch !== found.accountEpoch ||
-    locatorIsCurrent !== true
+    referenceIsCurrent !== true
   ) {
     throw invalidCredentials();
   }

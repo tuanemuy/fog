@@ -1,5 +1,11 @@
-import type { CredentialLocator } from "@repo/core/application/identity/contracts";
-import { opaqueCredentialKey } from "@repo/core/application/identity/contracts";
+import {
+  directoryReference,
+  type DirectoryReference,
+} from "@repo/core/application/identity/contracts";
+import {
+  opaqueCredentialKey,
+  type PhysicalCredentialLocator,
+} from "./identityPhysical";
 
 export type DirectoryKeyring = Readonly<{
   active: Readonly<{ generation: string; secret: string }>;
@@ -60,7 +66,7 @@ async function locatorFor(
   generation: string,
   secret: string,
   buckets: number,
-): Promise<CredentialLocator> {
+): Promise<PhysicalCredentialLocator> {
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -81,7 +87,7 @@ async function locatorFor(
 export async function credentialLocators(
   canonicalCredential: string,
   keyring: DirectoryKeyring,
-): Promise<readonly CredentialLocator[]> {
+): Promise<readonly PhysicalCredentialLocator[]> {
   validateDirectoryKeyring(keyring);
   const buckets = keyring.buckets ?? 64;
   if (!Number.isInteger(buckets) || buckets < 1 || buckets > 1024) {
@@ -107,8 +113,63 @@ export async function credentialLocators(
   );
 }
 
-export function directoryObjectName(locator: CredentialLocator): string {
+export function directoryObjectName(
+  locator: PhysicalCredentialLocator,
+): string {
   return `${locator.generation}:${locator.bucket}`;
+}
+
+export function encodeDirectoryReference(
+  locator: PhysicalCredentialLocator,
+): DirectoryReference {
+  return directoryReference(
+    base64Url(
+      encoder.encode(
+        JSON.stringify([
+          1,
+          locator.generation,
+          locator.bucket,
+          locator.opaqueKey,
+        ]),
+      ),
+    ),
+  );
+}
+
+export function decodeDirectoryReference(
+  reference: DirectoryReference,
+): PhysicalCredentialLocator {
+  try {
+    const padded = reference
+      .replaceAll("-", "+")
+      .replaceAll("_", "/")
+      .padEnd(Math.ceil(reference.length / 4) * 4, "=");
+    const bytes = Uint8Array.from(atob(padded), (character) =>
+      character.charCodeAt(0),
+    );
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 4 ||
+      parsed[0] !== 1 ||
+      typeof parsed[1] !== "string" ||
+      parsed[1].length === 0 ||
+      parsed[1].length > 64 ||
+      !Number.isInteger(parsed[2]) ||
+      (parsed[2] as number) < 0 ||
+      (parsed[2] as number) > 1023 ||
+      typeof parsed[3] !== "string"
+    ) {
+      throw new Error("invalid directory reference");
+    }
+    return {
+      generation: parsed[1],
+      bucket: parsed[2] as number,
+      opaqueKey: opaqueCredentialKey(parsed[3]),
+    };
+  } catch (error) {
+    throw new Error("IDENTITY_DIRECTORY_REFERENCE_INVALID", { cause: error });
+  }
 }
 
 export function canonicalPasswordCredential(email: string): string {

@@ -1,17 +1,23 @@
 import type {
-  AccountAuthSummary,
   CredentialKind,
-  CredentialLocator,
   IdentityOperation,
   IdentityOperationKind,
   IdentityOperationState,
+  LogicalCredential,
   OperationId,
 } from "@repo/core/application/identity/contracts";
+import { operationId } from "@repo/core/application/identity/contracts";
 import {
   opaqueCredentialKey,
-  operationId,
-} from "@repo/core/application/identity/contracts";
-import { Email, UserId } from "@repo/core/domain/identity/valueObject";
+  type PhysicalCredentialLocator,
+} from "../identityPhysical";
+import {
+  Email,
+  PasswordHash,
+  SsoProvider,
+  SsoSubject,
+  UserId,
+} from "@repo/core/domain/identity/valueObject";
 import type { DurableSqlStorage } from "../sql";
 
 type OperationRow = {
@@ -21,6 +27,17 @@ type OperationRow = {
   payload_json: string;
   operation_epoch: number;
 };
+
+export type PhysicalAccountAuthSummary = Readonly<{
+  userId: UserId;
+  status: "pending" | "active" | "deleting" | "deleted";
+  primaryEmail: Email | null;
+  authMethods: readonly CredentialKind[];
+  credentials: readonly (LogicalCredential &
+    Readonly<{ locators: readonly PhysicalCredentialLocator[] }>)[];
+  sessionEpoch: number;
+  operationEpoch: number;
+}>;
 
 const ALLOWED_TRANSITIONS: Readonly<
   Partial<Record<IdentityOperationKind, ReadonlySet<string>>>
@@ -151,9 +168,8 @@ export class AccountHomeStore {
     userId: UserId;
     expectedState: IdentityOperationState;
     nextState: IdentityOperationState;
-    locator?: CredentialLocator;
-    credentialId?: string;
-    credentialKind?: CredentialKind;
+    locator?: PhysicalCredentialLocator;
+    credential?: LogicalCredential;
     primaryEmail?: Email;
     bumpSessionEpoch?: boolean;
     now: number;
@@ -177,11 +193,10 @@ export class AccountHomeStore {
       ) {
         throw new Error("IDENTITY_OPERATION_TRANSITION_INVALID");
       }
-      if (input.locator && input.credentialKind) {
+      if (input.locator && input.credential) {
         this.upsertLocator(
           input.locator,
-          input.credentialId ?? input.locator.opaqueKey,
-          input.credentialKind,
+          input.credential,
           input.nextState === "completed" ? "active" : "reserved",
           input.now,
         );
@@ -203,7 +218,7 @@ export class AccountHomeStore {
              updated_at = ?
            WHERE singleton = 1 AND user_id = ?`,
           input.primaryEmail ?? null,
-          input.credentialKind ?? null,
+          input.credential?.kind ?? null,
           input.bumpSessionEpoch ? 1 : 0,
           input.now,
           input.userId,
@@ -213,8 +228,8 @@ export class AccountHomeStore {
            WHERE state = 'reserved'
              AND (? IS NULL OR logical_credential_id = ?)`,
           input.now,
-          input.credentialId ?? null,
-          input.credentialId ?? null,
+          input.credential?.credentialId ?? null,
+          input.credential?.credentialId ?? null,
         );
       }
       return this.operation(input.operationId) as IdentityOperation;
@@ -272,13 +287,12 @@ export class AccountHomeStore {
   addCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
-    credentialId: string;
-    kind: CredentialKind;
+    locator: PhysicalCredentialLocator;
+    credential: LogicalCredential;
     primaryEmail?: Email;
     bumpSessionEpoch: boolean;
     now: number;
-  }): AccountAuthSummary {
+  }): PhysicalAccountAuthSummary {
     return this.storage.transactionSync(() => {
       const existing = this.storage.sql
         .exec<{ state: string; kind: IdentityOperationKind }>(
@@ -295,8 +309,7 @@ export class AccountHomeStore {
       }
       this.upsertLocator(
         input.locator,
-        input.credentialId,
-        input.kind,
+        input.credential,
         existing?.state === "completed" ||
           (!existing && this.accountStatus() === "active")
           ? "active"
@@ -325,8 +338,8 @@ export class AccountHomeStore {
              session_epoch = session_epoch + ?, updated_at = ?
            WHERE singleton = 1 AND user_id = ? AND status != 'deleted'`,
           input.primaryEmail ?? null,
-          input.kind,
-          input.kind,
+          input.credential.kind,
+          input.credential.kind,
           input.bumpSessionEpoch ? 1 : 0,
           input.now,
           input.userId,
@@ -344,7 +357,7 @@ export class AccountHomeStore {
     credentialId: string;
     bumpSessionEpoch: boolean;
     now: number;
-  }): AccountAuthSummary {
+  }): PhysicalAccountAuthSummary {
     return this.storage.transactionSync(() => {
       const activeCredentialCount = this.storage.sql
         .exec<{ count: number }>(
@@ -424,8 +437,8 @@ export class AccountHomeStore {
   replaceCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    previous: CredentialLocator;
-    active: CredentialLocator;
+    previous: PhysicalCredentialLocator;
+    active: PhysicalCredentialLocator;
     kind: CredentialKind;
     now: number;
   }): void {
@@ -447,8 +460,9 @@ export class AccountHomeStore {
         .toArray()[0];
       this.upsertLocator(
         input.active,
-        previousCredential?.logical_credential_id ?? input.previous.opaqueKey,
-        input.kind,
+        this.logicalCredential(
+          previousCredential?.logical_credential_id ?? input.previous.opaqueKey,
+        ),
         "active",
         input.now,
       );
@@ -479,7 +493,7 @@ export class AccountHomeStore {
   }): {
     epoch: number;
     state: IdentityOperationState;
-    locators: readonly CredentialLocator[];
+    locators: readonly PhysicalCredentialLocator[];
   } {
     return this.storage.transactionSync(() => {
       const existing = this.operation(input.operationId);
@@ -555,11 +569,11 @@ export class AccountHomeStore {
     });
   }
 
-  authSummary(): AccountAuthSummary | null {
+  authSummary(): PhysicalAccountAuthSummary | null {
     const row = this.storage.sql
       .exec<{
         user_id: string;
-        status: AccountAuthSummary["status"];
+        status: PhysicalAccountAuthSummary["status"];
         primary_email: string | null;
         session_epoch: number;
         operation_epoch: number;
@@ -576,8 +590,10 @@ export class AccountHomeStore {
         opaque_key: string;
         generation: string;
         bucket: number;
+        credential_json: string | null;
       }>(
-        `SELECT logical_credential_id, kind, opaque_key, generation, bucket
+        `SELECT logical_credential_id, kind, opaque_key, generation, bucket,
+                credential_json
          FROM credential_locators
          WHERE state = 'active'
          ORDER BY logical_credential_id, generation, bucket, opaque_key`,
@@ -589,9 +605,14 @@ export class AccountHomeStore {
       const rows = credentialRows.filter(
         (row) => row.logical_credential_id === credentialId,
       );
-      return {
+      const credential = this.parseCredential(
         credentialId,
-        kind: rows[0]?.kind ?? "password",
+        rows[0]?.kind ?? "password",
+        rows[0]?.credential_json ?? null,
+        row.primary_email,
+      );
+      return {
+        ...credential,
         locators: rows.map((row) => ({
           opaqueKey: opaqueCredentialKey(row.opaque_key),
           generation: row.generation,
@@ -634,29 +655,95 @@ export class AccountHomeStore {
     };
   }
 
-  private upsertLocator(
-    locator: CredentialLocator,
-    logicalCredentialId: string,
+  private logicalCredential(credentialId: string): LogicalCredential {
+    const row = this.storage.sql
+      .exec<{ kind: CredentialKind; credential_json: string | null }>(
+        `SELECT kind, credential_json FROM credential_locators
+         WHERE logical_credential_id = ? LIMIT 1`,
+        credentialId,
+      )
+      .toArray()[0];
+    if (!row) throw new Error("ACCOUNT_CREDENTIAL_NOT_FOUND");
+    const primaryEmail = this.storage.sql
+      .exec<{ primary_email: string | null }>(
+        "SELECT primary_email FROM account WHERE singleton = 1",
+      )
+      .toArray()[0]?.primary_email;
+    return this.parseCredential(
+      credentialId,
+      row.kind,
+      row.credential_json,
+      primaryEmail ?? null,
+    );
+  }
+
+  private parseCredential(
+    credentialId: string,
     kind: CredentialKind,
+    serialized: string | null,
+    fallbackEmail: string | null,
+  ): LogicalCredential {
+    if (serialized) {
+      const value = JSON.parse(serialized) as Record<string, unknown>;
+      if (value.kind === "password") {
+        return {
+          credentialId,
+          kind: "password",
+          email: Email.create(String(value.email)),
+          passwordHash: PasswordHash.create(String(value.passwordHash)),
+        };
+      }
+      if (value.kind === "sso") {
+        return {
+          credentialId,
+          kind: "sso",
+          provider: SsoProvider.create(String(value.provider)),
+          subject: SsoSubject.create(String(value.subject)),
+          verifiedEmail: Email.create(String(value.verifiedEmail)),
+        };
+      }
+    }
+    const email = Email.create(fallbackEmail ?? "legacy@example.invalid");
+    return kind === "password"
+      ? {
+          credentialId,
+          kind,
+          email,
+          passwordHash: PasswordHash.create("legacy-unavailable"),
+        }
+      : {
+          credentialId,
+          kind,
+          provider: SsoProvider.create("legacy"),
+          subject: SsoSubject.create(credentialId),
+          verifiedEmail: email,
+        };
+  }
+
+  private upsertLocator(
+    locator: PhysicalCredentialLocator,
+    credential: LogicalCredential,
     state: "reserved" | "active" | "tombstoned",
     now: number,
   ): void {
     this.storage.sql.exec(
       `INSERT INTO credential_locators(
          opaque_key, generation, bucket, logical_credential_id, kind, state,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         credential_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(opaque_key) DO UPDATE SET
          generation = excluded.generation, bucket = excluded.bucket,
          logical_credential_id = excluded.logical_credential_id,
          kind = excluded.kind, state = excluded.state,
+         credential_json = excluded.credential_json,
          updated_at = excluded.updated_at`,
       locator.opaqueKey,
       locator.generation,
       locator.bucket,
-      logicalCredentialId,
-      kind,
+      credential.credentialId,
+      credential.kind,
       state,
+      JSON.stringify(credential),
       now,
       now,
     );
@@ -664,7 +751,7 @@ export class AccountHomeStore {
 
   private locators(
     state?: "reserved" | "active" | "tombstoned",
-  ): readonly CredentialLocator[] {
+  ): readonly PhysicalCredentialLocator[] {
     return this.storage.sql
       .exec<{ opaque_key: string; generation: string; bucket: number }>(
         `SELECT opaque_key, generation, bucket FROM credential_locators
@@ -680,10 +767,10 @@ export class AccountHomeStore {
       }));
   }
 
-  private accountStatus(): AccountAuthSummary["status"] | null {
+  private accountStatus(): PhysicalAccountAuthSummary["status"] | null {
     return (
       this.storage.sql
-        .exec<{ status: AccountAuthSummary["status"] }>(
+        .exec<{ status: PhysicalAccountAuthSummary["status"] }>(
           "SELECT status FROM account WHERE singleton = 1",
         )
         .toArray()[0]?.status ?? null

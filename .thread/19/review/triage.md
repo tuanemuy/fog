@@ -110,3 +110,28 @@
 | `tests/lazy-migration-fixtures` | R3 TS3-B006 | fix | 3 classの旧schemaから通常RPC/eviction経由でupgradeする | 1 |
 | `tests/pitr-realistic-failure` | R3 TS3-B007 | fix | restart未到達/conflictとstaging pendingを正確に記録する | 0 |
 | `tests/committed-ci-evidence` | R3 INFRA3-W003 / TS3-B001 | fix | committed SHA/Actions URLとworking tree結果を分離する | 0 |
+
+## Round 4
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `identity/opaque-logical-authority` | R4 IDDA4-B001 | fix | generation/bucket/opaqueKeyをadapter内部へ閉じる | 1 |
+| `identity/domain-runtime-authority` | R4 IDDA4-B002 | fix | active aggregateのprimary email/credential/epochを必須化し全sagaで使う | 1 |
+| `identity/executable-reset-mail` | R4 IDDA4-B003 | fix | secret生成・暗号化delivery・lease/retry/poison Alarmを実装する | 0 |
+| `identity/credential-pii-encryption` | R4 IDDA4-B004 | fix | canonical/operation PIIを暗号化しTTL/削除する | 0 |
+| `identity/deterministic-create-winner` | R4 IDDA4-B005 | fix | password/SSO同時初回を最小operation IDへ収束する | 0 |
+| `identity/enumeration-work-profile` | R4 IDDA4-W001 / IT4-B005 | fix | 4失敗分岐のverify/authority/log profileを一致させる | 1 |
+| `identity/no-production-fault-hook` | R4 IDDA4-W002 | fix | production classからhook/factoryを完全除去する | 1 |
+| `search/real-semantic-capability` | R4 SDJ4-B001 | fix | prepared commandと必須repository/projection callbackへ再構成する | 1 |
+| `search/mandatory-occ-topic-version` | R4 SDJ4-B002 | fix | create以外のexpectedVersionとtopic配下versionをCASする | 0 |
+| `search/orphan-document-restore` | R4 SDJ4-B003 | fix | 親削除後もdestination topicへatomic restoreする | 0 |
+| `search/ai-history-provenance` | R4 SDJ4-B004 | fix | AI connection移行とrevision actor provenanceを完全化する | 1 |
+| `tests/search-meaningful-fault-consumers` | R4 SDJ4-B005 | fix | rollback/UI-AI/Alarm testsを別consumer/実fail pointへ直す | 1 |
+| `infra/pitr-cli-roundtrip` | R4 IT4-B001 | fix | restore stdoutを無加工でundo可能にする | 0 |
+| `infra/pitr-dual-class-evidence` | R4 IT4-B002 | fix | 両class receipt/commit/run/TTL証跡をgateへ要求する | 0 |
+| `identity/rotation-zero-reference` | R4 IT4-B003 | fix | active旧世代参照を両側集計しzeroまでsecret削除を拒否する | 1 |
+| `tests/production-entry-acceptance` | R4 IT4-B004 | fix | production bundle/defaultEntry/server-fnを実HTTPで通す | 2 |
+| `tests/non-self-attested-traceability` | R4 IT4-B006 | fix | HEAD/Actions/reporter artifactへ証跡を結び付ける | 2 |
+| `identity/reconcile-backoff-poison` | R4 IT4-W001 | fix | 未分類stateのhot loopをbackoff/poisonへする | 0 |
+| `tests/current-user-partial-failure` | R4 IT4-W002 | fix | Account Home/User Data各unavailableをretryable errorにする | 0 |
+| `tests/rpc-compatibility-window` | R4 IT4-W003 | fix | state先行/新request/rollback組合せを検証する | 0 |

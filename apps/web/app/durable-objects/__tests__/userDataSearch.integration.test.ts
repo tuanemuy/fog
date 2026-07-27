@@ -6,6 +6,10 @@ import {
 import { env } from "cloudflare:workers";
 import { Fts5SearchAdapter } from "@repo/core/adapters/cloudflare/user-data/searchIndex";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
+import {
+  AiSearchConsumer,
+  UiSearchConsumer,
+} from "@repo/core/application/search/consumers";
 import type {
   SearchPage,
   SemanticCommitResult,
@@ -17,6 +21,11 @@ import type { LocalUserDataDurableObject as UserDataDurableObject } from "../../
 type TestEnv = {
   USER_DATA: DurableObjectNamespace<UserDataDurableObject>;
 };
+
+type OptionalExpected<T> = T extends unknown
+  ? Omit<T, "expectedVersion"> & { expectedVersion?: number }
+  : never;
+type TestSemanticCommand = OptionalExpected<SemanticRpcCommand>;
 
 const bindings = env as unknown as TestEnv;
 
@@ -34,9 +43,55 @@ function value<T>(result: RpcResult<T>): T {
 
 async function commit(
   stub: DurableObjectStub<UserDataDurableObject>,
-  command: SemanticRpcCommand,
+  command: TestSemanticCommand,
 ): Promise<SemanticCommitResult> {
-  return value(await stub.commit(command));
+  if (
+    command.type === "create-memo" ||
+    command.type === "create-document" ||
+    command.type === "create-topic" ||
+    command.expectedVersion !== undefined
+  ) {
+    return value(await stub.commit(command as SemanticRpcCommand));
+  }
+  const topicMutation =
+    command.type === "set-topic-archived" ||
+    command.type === "trash-topic" ||
+    command.type === "restore-topic" ||
+    command.type === "remove-topic";
+  const id =
+    "memoId" in command
+      ? command.memoId
+      : "documentId" in command
+        ? command.documentId
+        : "topicId" in command
+          ? command.topicId
+          : command.type === "update-memo"
+            ? command.memo.id
+            : command.document.id;
+  let expectedVersion = -1;
+  await runInDurableObject(stub, (_instance, state) => {
+    expectedVersion = (
+      topicMutation
+        ? state.storage.sql
+            .exec<{ version: number }>(
+              "SELECT version FROM topics WHERE id = ?",
+              id,
+            )
+            .one()
+        : state.storage.sql
+            .exec<{ version: number }>(
+              "SELECT version FROM content WHERE id = ?",
+              id,
+            )
+            .one()
+    ).version;
+  });
+  return value(
+    await stub.commit({
+      ...command,
+      expectedVersion,
+    } as SemanticRpcCommand),
+  );
 }
 
 async function query(
@@ -192,6 +247,44 @@ describe("User Data semantic search contract", () => {
     });
   });
 
+  it("uses a trusted clock for semantic idempotency retention", async () => {
+    const stub = object("trusted-idempotency-clock");
+    value(
+      await stub.initialize({
+        operationId: "init",
+        userId: "trusted-idempotency-clock",
+        now: 1,
+      }),
+    );
+    await commit(stub, {
+      version: 1,
+      operationId: "stable-operation",
+      type: "create-memo",
+      memo: { id: "stable", body: "stable", timestamp: 1 },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "future-business-time",
+      type: "create-memo",
+      memo: {
+        id: "future",
+        body: "future",
+        timestamp: 8_000_000_000_000_000,
+      },
+    });
+    expect(
+      await stub.commit({
+        version: 1,
+        operationId: "stable-operation",
+        type: "create-memo",
+        memo: { id: "stable", body: "different", timestamp: 1 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "IDEMPOTENCY_CONFLICT", kind: "conflict" },
+    });
+  });
+
   it("uses topic authority for archive, trash, restore, and topic source scope", async () => {
     const stub = object("topic");
     value(
@@ -307,14 +400,41 @@ describe("User Data semantic search contract", () => {
     expect(
       await stub.commit({
         version: 1,
+        operationId: "stale-document-after-topic-restore",
+        type: "update-document",
+        expectedVersion: 1,
+        changeReason: "stale edit",
+        document: {
+          id: "document",
+          title: "Stale",
+          body: "must not overwrite",
+          topicId: "topic",
+          sourceMemoIds: ["memo"],
+          timestamp: 8,
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "CONTENT_VERSION_CONFLICT", kind: "conflict" },
+    });
+    expect(
+      await stub.commit({
+        version: 1,
         operationId: "remove-active-topic",
         type: "remove-topic",
         topicId: "topic",
         removedAt: 8,
+        expectedVersion: 3,
       }),
     ).toMatchObject({
       ok: false,
       error: { code: "TOPIC_NOT_FOUND", kind: "not-found" },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "destination-topic",
+      type: "create-topic",
+      topic: { id: "destination", name: "Destination", timestamp: 8 },
     });
     await commit(stub, {
       version: 1,
@@ -347,6 +467,34 @@ describe("User Data semantic search contract", () => {
           .one().count,
       ).toBe(0);
     });
+    expect(
+      await stub.commit({
+        version: 1,
+        operationId: "restore-independent-without-destination",
+        type: "restore-document",
+        documentId: "document-independent",
+        restoredAt: 11,
+        expectedVersion: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "DOCUMENT_TOPIC_REQUIRED", kind: "conflict" },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "restore-independent-to-destination",
+      type: "restore-document",
+      documentId: "document-independent",
+      destinationTopicId: "destination",
+      restoredAt: 11,
+    });
+    expect((await query(stub, "共有検索語")).items).toContainEqual(
+      expect.objectContaining({
+        type: "document",
+        id: "document-independent",
+        topic: expect.objectContaining({ id: "destination" }),
+      }),
+    );
   });
 
   it("returns original NFKC snippets and typed validation errors", async () => {
@@ -429,6 +577,79 @@ describe("User Data semantic search contract", () => {
       ok: false,
       error: { code: "EMPTY_MEMO_BODY", kind: "validation" },
     });
+  });
+
+  it("prepares topic and revision value objects before opening a transaction", async () => {
+    const stub = object("prepared-domain-values");
+    value(
+      await stub.initialize({
+        operationId: "init",
+        userId: "prepared-domain-values",
+        now: 1,
+      }),
+    );
+    for (const [name, code] of [
+      ["   ", "EMPTY_TOPIC_NAME"],
+      ["line one\nline two", "TOPIC_NAME_MULTILINE"],
+      ["界".repeat(101), "TOPIC_NAME_TOO_LONG"],
+    ] as const) {
+      expect(
+        await stub.commit({
+          version: 1,
+          operationId: `topic-${code}`,
+          type: "create-topic",
+          topic: { id: `topic-${code}`, name, timestamp: 2 },
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code, kind: "validation" },
+      });
+    }
+    await commit(stub, {
+      version: 1,
+      operationId: "topic",
+      type: "create-topic",
+      topic: { id: "topic", name: "Topic", timestamp: 3 },
+    });
+    await commit(stub, {
+      version: 1,
+      operationId: "document",
+      type: "create-document",
+      document: {
+        id: "document",
+        title: "Document",
+        body: "",
+        topicId: "topic",
+        sourceMemoIds: [],
+        timestamp: 4,
+      },
+    });
+    for (const [changeReason, code] of [
+      ["   ", "EMPTY_CHANGE_REASON"],
+      ["line one\nline two", "CHANGE_REASON_MULTILINE"],
+      ["界".repeat(201), "CHANGE_REASON_TOO_LONG"],
+    ] as const) {
+      expect(
+        await stub.commit({
+          version: 1,
+          operationId: `update-${code}`,
+          type: "update-document",
+          expectedVersion: 1,
+          changeReason,
+          document: {
+            id: "document",
+            title: "Document",
+            body: "changed",
+            topicId: "topic",
+            sourceMemoIds: [],
+            timestamp: 5,
+          },
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { code, kind: "validation" },
+      });
+    }
   });
 
   it("rolls back a rejected main write including its idempotency record", async () => {
@@ -522,6 +743,54 @@ describe("User Data semantic search contract", () => {
     ).toEqual({ operationId, replayed: true });
   });
 
+  it("rolls back main, FTS, and idempotency after a projection write fails", async () => {
+    const stub = object("projection-mid-write-rollback");
+    value(
+      await stub.initialize({
+        operationId: "init",
+        userId: "projection-mid-write-rollback",
+        now: 1,
+      }),
+    );
+    expect(
+      await stub.commitWithProjectionFailure({
+        version: 1,
+        operationId: "create",
+        type: "create-memo",
+        memo: { id: "memo", body: "projection rollback", timestamp: 2 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "infrastructure" },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM content
+             WHERE id = 'memo'`,
+          )
+          .one().count,
+      ).toBe(0);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM search_entries
+             WHERE entity_id = 'memo'`,
+          )
+          .one().count,
+      ).toBe(0);
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM idempotency
+             WHERE namespace = 'semantic' AND operation_id = 'create'`,
+          )
+          .one().count,
+      ).toBe(0);
+    });
+  });
+
   it("requires an exhaustive versioned RPC schema and rejects legacy input", async () => {
     const stub = object("rpc-schema");
     value(
@@ -551,6 +820,12 @@ describe("User Data semantic search contract", () => {
         operationId: "malformed",
         type: "create-memo",
         memo: { id: "memo", body: 1, timestamp: 2 },
+      },
+      {
+        version: 1,
+        operationId: "missing-expected-version",
+        type: "update-memo",
+        memo: { id: "memo", body: "body", timestamp: 2 },
       },
       {
         version: 1,
@@ -621,6 +896,7 @@ describe("User Data semantic search contract", () => {
         type: "remove-document",
         documentId: "document",
         removedAt: 4,
+        expectedVersion: 0,
       }),
     ).toMatchObject({
       ok: false,
@@ -849,6 +1125,7 @@ describe("User Data semantic search contract", () => {
         type: "restore-memo",
         memoId: "expired",
         restoredAt: Date.now(),
+        expectedVersion: 2,
       }),
     ).toMatchObject({
       ok: false,
@@ -914,15 +1191,19 @@ describe("User Data semantic search contract", () => {
       version: 1,
       operationId: "create",
       type: "create-memo",
-      actorId: "user:one",
+      actor: { kind: "user", id: "user:one" },
       memo: { id: "memo", body: "first", timestamp: 2 },
     });
     await commit(stub, {
       version: 1,
       operationId: "update",
       type: "update-memo",
-      actorId: "user:one",
-      expectedVersion: 1,
+      actor: {
+        kind: "aiClient",
+        id: "ai:writer",
+        clientName: "Research Assistant",
+      },
+      expectedVersion: 0,
       changeReason: "clarify",
       memo: { id: "memo", body: "second", timestamp: 3 },
     });
@@ -931,7 +1212,7 @@ describe("User Data semantic search contract", () => {
         version: 1,
         operationId: "stale",
         type: "update-memo",
-        expectedVersion: 1,
+        expectedVersion: 0,
         memo: { id: "memo", body: "stale", timestamp: 4 },
       }),
     ).toMatchObject({
@@ -942,14 +1223,14 @@ describe("User Data semantic search contract", () => {
       version: 1,
       operationId: "no-op",
       type: "update-memo",
-      expectedVersion: 2,
+      expectedVersion: 1,
       memo: { id: "memo", body: "second", timestamp: 5 },
     });
     await commit(stub, {
       version: 1,
       operationId: "trash",
       type: "trash-memo",
-      expectedVersion: 2,
+      expectedVersion: 1,
       memoId: "memo",
       trashedAt: 6,
     });
@@ -957,7 +1238,7 @@ describe("User Data semantic search contract", () => {
       version: 1,
       operationId: "restore",
       type: "restore-memo",
-      expectedVersion: 3,
+      expectedVersion: 2,
       memoId: "memo",
       restoredAt: 7,
     });
@@ -974,20 +1255,36 @@ describe("User Data semantic search contract", () => {
           )
           .one(),
       ).toEqual({
-        version: 4,
+        version: 3,
         latest_revision_version: 2,
         updated_by: "local-user",
       });
       expect(
         state.storage.sql
-          .exec<{ actor_id: string; change_reason: string | null }>(
-            `SELECT actor_id, change_reason FROM content_revisions
+          .exec<{
+            actor_kind: string;
+            actor_id: string;
+            actor_client_name: string | null;
+            change_reason: string | null;
+          }>(
+            `SELECT actor_kind, actor_id, actor_client_name, change_reason
+             FROM content_revisions
              WHERE content_id = 'memo' ORDER BY version`,
           )
           .toArray(),
       ).toEqual([
-        { actor_id: "user:one", change_reason: null },
-        { actor_id: "user:one", change_reason: "clarify" },
+        {
+          actor_kind: "user",
+          actor_id: "user:one",
+          actor_client_name: null,
+          change_reason: null,
+        },
+        {
+          actor_kind: "aiClient",
+          actor_id: "ai:writer",
+          actor_client_name: "Research Assistant",
+          change_reason: "clarify",
+        },
       ]);
     });
   });
@@ -1114,14 +1411,16 @@ describe("User Data semantic search contract", () => {
       type: "create-memo",
       memo: { id: "memo", body: "shared capability", timestamp: 2 },
     });
-    const capabilityInput = {
-      version: 1,
-      keyword: "shared capability",
-      limit: 20,
-    } as const;
-    const uiResult = value(await stub.search(capabilityInput));
-    const aiResult = value(await stub.search(capabilityInput));
-    expect(aiResult).toEqual(uiResult);
-    expect(uiResult.items.map(({ id }) => id)).toEqual(["memo"]);
+    await runInDurableObject(stub, async (_instance, state) => {
+      const searchIndex = new Fts5SearchAdapter(state.storage.sql);
+      const query = {
+        keyword: "shared capability",
+        pagination: { limit: 20 },
+      } as const;
+      const uiResult = await new UiSearchConsumer(searchIndex).search(query);
+      const aiResult = await new AiSearchConsumer(searchIndex).search(query);
+      expect(aiResult).toEqual(uiResult);
+      expect(uiResult.items.map(({ id }) => id)).toEqual(["memo"]);
+    });
   });
 });

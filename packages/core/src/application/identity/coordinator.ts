@@ -14,7 +14,7 @@ import type {
   AccountAuthSummary,
   AccountHomePort,
   CredentialDirectoryPort,
-  CredentialLocator,
+  DirectoryReference,
   CurrentAccount,
   DirectoryCredential,
   IdentityApplicationPort,
@@ -34,34 +34,6 @@ type Ports = Readonly<{
   newUserId: () => UserId;
 }>;
 
-export type IdentitySagaFaultPoint =
-  | "signup-after-reserve"
-  | "signup-after-initialize"
-  | "signup-after-activate"
-  | "signup-after-finalize"
-  | "sso-after-provider-reserve"
-  | "sso-after-email-reserve"
-  | "sso-after-provider-activate"
-  | "sso-after-email-activate"
-  | "link-after-reserve"
-  | "link-after-initialize"
-  | "link-after-activate"
-  | "link-after-finalize"
-  | "unlink-after-directory"
-  | "unlink-after-authority"
-  | "reset-after-consume"
-  | "reset-after-hash"
-  | "reset-after-epoch"
-  | "change-after-hash"
-  | "change-after-epoch"
-  | "delete-after-user-data"
-  | "delete-after-directory"
-  | "delete-after-finish";
-
-export type IdentitySagaFaultHook = (
-  point: IdentitySagaFaultPoint,
-) => void | Promise<void>;
-
 async function fingerprint(parts: readonly string[]): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -70,17 +42,6 @@ async function fingerprint(parts: readonly string[]): Promise<string> {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-}
-
-function sameLocator(
-  left: CredentialLocator,
-  right: CredentialLocator,
-): boolean {
-  return (
-    left.generation === right.generation &&
-    left.bucket === right.bucket &&
-    left.opaqueKey === right.opaqueKey
-  );
 }
 
 const SIGNUP_PHASES: readonly IdentityOperationState[] = [
@@ -116,39 +77,26 @@ function activeAuthority(
 export class IdentityCoordinator
   implements IdentityApplicationPort, IdentityPrimitivePort
 {
-  private faultHook?: IdentitySagaFaultHook;
-
   constructor(private readonly ports: Ports) {}
-
-  static withFaultInjectionForTest(
-    ports: Ports,
-    faultHook: IdentitySagaFaultHook,
-  ): IdentityCoordinator {
-    const coordinator = new IdentityCoordinator(ports);
-    coordinator.faultHook = faultHook;
-    return coordinator;
-  }
-
-  private async checkpoint(point: IdentitySagaFaultPoint): Promise<void> {
-    await this.faultHook?.(point);
-  }
 
   private async compensateCreate(input: {
     operationId: IdentityRegistration["operationId"];
     userId: UserId;
-    locators: readonly CredentialLocator[];
+    directoryReferences: readonly DirectoryReference[];
     accountEpoch: number;
     now: number;
   }): Promise<void> {
-    for (const locator of input.locators) {
-      await this.ports.directory.tombstone({
-        operationId: input.operationId,
-        locator,
-        userId: input.userId,
-        accountEpoch: input.accountEpoch,
-        now: input.now,
-      });
-    }
+    await Promise.allSettled(
+      input.directoryReferences.map((directoryReference) =>
+        this.ports.directory.tombstone({
+          operationId: input.operationId,
+          directoryReference,
+          userId: input.userId,
+          accountEpoch: input.accountEpoch,
+          now: input.now,
+        }),
+      ),
+    );
     await this.ports.accountHome.compensateCreate({
       operationId: input.operationId,
       userId: input.userId,
@@ -166,9 +114,10 @@ export class IdentityCoordinator
     input: IdentityRegistration,
   ): Promise<{ sessionEpoch: number }> {
     const canonical = `email:${input.email.normalize("NFKC")}`;
-    const locators = await this.ports.directory.locators(canonical);
-    const credentialId = locators[0]?.opaqueKey;
-    if (!credentialId) {
+    const directoryReferences =
+      await this.ports.directory.references(canonical);
+    const credentialId = `password:${input.operationId}`;
+    if (directoryReferences.length === 0) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "Password credential has no active locator",
@@ -179,7 +128,7 @@ export class IdentityCoordinator
       input.userId,
       input.email,
       input.passwordHash,
-      ...locators.map((locator) => locator.opaqueKey),
+      ...directoryReferences,
     ]);
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
@@ -201,11 +150,12 @@ export class IdentityCoordinator
             "Credential is already registered",
           );
         }
-        for (const locator of locators) {
+        for (const directoryReference of directoryReferences) {
           await this.ports.directory.reserve({
             operationId: input.operationId,
             userId: input.userId,
-            locator,
+            directoryReference,
+            credentialId,
             credential: {
               kind: "password",
               canonicalValue: canonical,
@@ -220,32 +170,39 @@ export class IdentityCoordinator
           await this.compensateCreate({
             operationId: input.operationId,
             userId: input.userId,
-            locators,
+            directoryReferences,
             accountEpoch: operation.epoch,
             now: input.now,
           });
         }
         throw error;
       }
-      await this.checkpoint("signup-after-reserve");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
         expectedState: "pending",
         nextState: "credential-reserved",
-        locator: locators[0],
-        credentialId,
-        credentialKind: "password",
+        directoryReference: directoryReferences[0],
+        credential: {
+          credentialId,
+          kind: "password",
+          email: input.email,
+          passwordHash: input.passwordHash,
+        },
         primaryEmail: input.email,
         now: input.now,
       });
-      for (const locator of locators.slice(1)) {
+      for (const directoryReference of directoryReferences.slice(1)) {
         await this.ports.accountHome.addCredentialLocator({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
-          credentialId,
-          kind: "password",
+          directoryReference,
+          credential: {
+            credentialId,
+            kind: "password",
+            email: input.email,
+            passwordHash: input.passwordHash,
+          },
           primaryEmail: input.email,
           bumpSessionEpoch: false,
           now: input.now,
@@ -259,15 +216,14 @@ export class IdentityCoordinator
         userId: input.userId,
         now: input.now,
       });
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.markInitialized({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
+          directoryReference,
           now: input.now,
         });
       }
-      await this.checkpoint("signup-after-initialize");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
@@ -278,15 +234,14 @@ export class IdentityCoordinator
     }
 
     if (!reached(operation, "directory-active")) {
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.activate({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
+          directoryReference,
           accountEpoch: operation.epoch,
           now: input.now,
         });
-        await this.checkpoint("signup-after-activate");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -303,12 +258,15 @@ export class IdentityCoordinator
         userId: input.userId,
         expectedState: "directory-active",
         nextState: "completed",
-        credentialId,
-        credentialKind: "password",
+        credential: {
+          credentialId,
+          kind: "password",
+          email: input.email,
+          passwordHash: input.passwordHash,
+        },
         primaryEmail: input.email,
         now: input.now,
       });
-      await this.checkpoint("signup-after-finalize");
     }
 
     const authority = activeAuthority(
@@ -321,6 +279,15 @@ export class IdentityCoordinator
         "Signup completed without an active Account Home authority",
       );
     }
+    AccountIdentity.create({
+      id: authority.userId,
+      status: "active",
+      primaryEmail: authority.primaryEmail,
+      credentials: authority.credentials.map(
+        ({ directoryReferences: _, ...credential }) => credential,
+      ),
+      sessionEpoch: authority.sessionEpoch,
+    });
     return { sessionEpoch: authority.sessionEpoch };
   }
 
@@ -392,9 +359,7 @@ export class IdentityCoordinator
             item.userId === existingProvider.userId &&
             item.accountEpoch === authority?.operationEpoch &&
             authority?.credentials.some((credential) =>
-              credential.locators.some((locator) =>
-                sameLocator(locator, item.locator),
-              ),
+              credential.directoryReferences.includes(item.directoryReference),
             ),
         );
       if (!authority || !consistent) {
@@ -471,12 +436,20 @@ export class IdentityCoordinator
       );
     }
 
-    const providerLocators =
-      await this.ports.directory.locators(providerCredential);
-    const emailLocators = await this.ports.directory.locators(emailCredential);
-    const locators = [...providerLocators, ...emailLocators];
-    const credentialId = providerLocators[0]?.opaqueKey;
-    if (!credentialId) {
+    const providerReferences =
+      await this.ports.directory.references(providerCredential);
+    const emailReferences =
+      await this.ports.directory.references(emailCredential);
+    const directoryReferences = [...providerReferences, ...emailReferences];
+    const credentialId = `sso:${input.operationId}`;
+    const logicalCredential = {
+      credentialId,
+      kind: "sso" as const,
+      provider: input.provider,
+      subject,
+      verifiedEmail: input.email,
+    };
+    if (providerReferences.length === 0) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "SSO credential has no active locator",
@@ -497,16 +470,15 @@ export class IdentityCoordinator
     });
     if (!reached(operation, "credential-reserved")) {
       try {
-        for (const locator of locators) {
+        for (const directoryReference of directoryReferences) {
           await this.ports.directory.reserve({
             operationId: input.operationId,
             userId: sagaAccountId,
-            locator,
+            directoryReference,
+            credentialId,
             credential: {
               kind: "sso",
-              canonicalValue: providerLocators.some((item) =>
-                sameLocator(item, locator),
-              )
+              canonicalValue: providerReferences.includes(directoryReference)
                 ? providerCredential
                 : emailCredential,
               provider: input.provider,
@@ -515,18 +487,13 @@ export class IdentityCoordinator
             accountEpoch: operation.epoch,
             now: input.now,
           });
-          await this.checkpoint(
-            providerLocators.some((item) => sameLocator(item, locator))
-              ? "sso-after-provider-reserve"
-              : "sso-after-email-reserve",
-          );
         }
       } catch (error) {
         if (error instanceof ConflictError) {
           await this.compensateCreate({
             operationId: input.operationId,
             userId: sagaAccountId,
-            locators,
+            directoryReferences,
             accountEpoch: operation.epoch,
             now: input.now,
           });
@@ -538,19 +505,17 @@ export class IdentityCoordinator
         userId: sagaAccountId,
         expectedState: "pending",
         nextState: "credential-reserved",
-        locator: locators[0],
-        credentialId,
-        credentialKind: "sso",
+        directoryReference: directoryReferences[0],
+        credential: logicalCredential,
         primaryEmail: input.email,
         now: input.now,
       });
-      for (const locator of locators.slice(1)) {
+      for (const directoryReference of directoryReferences.slice(1)) {
         await this.ports.accountHome.addCredentialLocator({
           operationId: input.operationId,
           userId: sagaAccountId,
-          locator,
-          credentialId,
-          kind: "sso",
+          directoryReference,
+          credential: logicalCredential,
           primaryEmail: input.email,
           bumpSessionEpoch: false,
           now: input.now,
@@ -563,11 +528,11 @@ export class IdentityCoordinator
         userId: sagaAccountId,
         now: input.now,
       });
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.markInitialized({
           operationId: input.operationId,
           userId: sagaAccountId,
-          locator,
+          directoryReference,
           now: input.now,
         });
       }
@@ -580,19 +545,14 @@ export class IdentityCoordinator
       });
     }
     if (!reached(operation, "directory-active")) {
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.activate({
           operationId: input.operationId,
           userId: sagaAccountId,
-          locator,
+          directoryReference,
           accountEpoch: operation.epoch,
           now: input.now,
         });
-        await this.checkpoint(
-          providerLocators.some((item) => sameLocator(item, locator))
-            ? "sso-after-provider-activate"
-            : "sso-after-email-activate",
-        );
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -608,8 +568,7 @@ export class IdentityCoordinator
         userId: sagaAccountId,
         expectedState: "directory-active",
         nextState: "completed",
-        credentialId,
-        credentialKind: "sso",
+        credential: logicalCredential,
         primaryEmail: input.email,
         now: input.now,
       });
@@ -624,6 +583,15 @@ export class IdentityCoordinator
         "SSO operation completed without active authority",
       );
     }
+    AccountIdentity.create({
+      id: authority.userId,
+      status: "active",
+      primaryEmail: authority.primaryEmail,
+      credentials: authority.credentials.map(
+        ({ directoryReferences: _, ...credential }) => credential,
+      ),
+      sessionEpoch: authority.sessionEpoch,
+    });
     return {
       userId: sagaAccountId,
       sessionEpoch: authority.sessionEpoch,
@@ -659,7 +627,7 @@ export class IdentityCoordinator
       mappings.map((mapping) =>
         this.ports.directory.storePasswordReset({
           ...input,
-          locator: mapping.locator,
+          directoryReference: mapping.directoryReference,
         }),
       ),
     );
@@ -668,6 +636,8 @@ export class IdentityCoordinator
   async requestPasswordReset(
     input: Parameters<IdentityPrimitivePort["requestPasswordReset"]>[0],
   ): Promise<{ accepted: true }> {
+    const resetSecret = crypto.randomUUID();
+    const tokenHash = await fingerprint(["password-reset-token", resetSecret]);
     const mappings = (
       await this.ports.directory.lookupPassword(input.email)
     ).filter((item): item is PasswordCredential => item !== null);
@@ -695,19 +665,20 @@ export class IdentityCoordinator
       mappings.map((mapping) =>
         this.ports.directory.storePasswordReset({
           operationId: input.operationId,
-          locator: mapping.locator,
+          directoryReference: mapping.directoryReference,
           userId: first.userId,
-          tokenHash: input.tokenHash,
+          tokenHash,
           expiresAt: input.expiresAt,
         }),
       ),
     );
     await this.ports.directory.enqueuePasswordResetMail({
       operationId: input.operationId,
-      locator: first.locator,
+      directoryReference: first.directoryReference,
       userId: first.userId,
       email: input.email,
-      tokenHash: input.tokenHash,
+      resetSecret,
+      expiresAt: input.expiresAt,
       providerIdempotencyKey: `password-reset:${input.operationId}`,
       now: input.now,
     });
@@ -737,12 +708,10 @@ export class IdentityCoordinator
       (item) =>
         item.kind === "password" &&
         mappings.every((mapping) =>
-          item.locators.some((locator) =>
-            sameLocator(locator, mapping.locator),
-          ),
+          item.directoryReferences.includes(mapping.directoryReference),
         ),
     );
-    if (!authority || !credential) {
+    if (!authority || !credential || credential.kind !== "password") {
       throw new ConflictError(
         "ACCOUNT_AUTHORITY_MISMATCH",
         "Password credential is unavailable",
@@ -773,13 +742,12 @@ export class IdentityCoordinator
       for (const mapping of mappings) {
         await this.ports.directory.replacePassword({
           operationId: input.operationId,
-          locator: mapping.locator,
+          directoryReference: mapping.directoryReference,
           userId: input.userId,
           passwordHash: input.passwordHash,
           accountEpoch: authority.operationEpoch,
           now: input.now,
         });
-        await this.checkpoint("change-after-hash");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -795,12 +763,13 @@ export class IdentityCoordinator
         userId: input.userId,
         expectedState: "directory-active",
         nextState: "completed",
-        credentialId: credential.credentialId,
-        credentialKind: "password",
+        credential: {
+          ...credential,
+          passwordHash: input.passwordHash,
+        },
         bumpSessionEpoch: true,
         now: input.now,
       });
-      await this.checkpoint("change-after-epoch");
     }
     const updated = activeAuthority(
       await this.ports.accountHome.getAuthSummary(input.userId),
@@ -812,6 +781,19 @@ export class IdentityCoordinator
         "Password change completed without active authority",
       );
     }
+    AccountIdentity.replacePassword(
+      AccountIdentity.create({
+        id: authority.userId,
+        status: "active",
+        primaryEmail: authority.primaryEmail,
+        credentials: authority.credentials.map(
+          ({ directoryReferences: _, ...item }) => item,
+        ),
+        sessionEpoch: authority.sessionEpoch,
+      }),
+      credential.credentialId,
+      input.passwordHash,
+    );
     return { sessionEpoch: updated.sessionEpoch };
   }
 
@@ -824,21 +806,21 @@ export class IdentityCoordinator
     passwordHash: PasswordHash;
     now: number;
   }): Promise<{ userId: UserId; sessionEpoch: number } | null> {
-    const locators = await this.ports.directory.locators(
+    const directoryReferences = await this.ports.directory.references(
       `email:${input.email.normalize("NFKC")}`,
     );
     const candidates: Array<{
       userId: UserId;
-      locator: CredentialLocator;
+      directoryReference: DirectoryReference;
     }> = [];
-    for (const locator of locators) {
+    for (const directoryReference of directoryReferences) {
       const result = await this.ports.directory.lookupPasswordReset({
         operationId: input.operationId,
-        locator,
+        directoryReference,
         tokenHash: input.tokenHash,
         now: input.now,
       });
-      if (result) candidates.push({ ...result, locator });
+      if (result) candidates.push({ ...result, directoryReference });
     }
     const first = candidates[0];
     if (!first) return null;
@@ -857,15 +839,15 @@ export class IdentityCoordinator
       (candidate) =>
         candidate.kind === "password" &&
         candidates.every((item) =>
-          candidate.locators.some((locator) =>
-            sameLocator(locator, item.locator),
-          ),
+          candidate.directoryReferences.includes(item.directoryReference),
         ) &&
-        candidate.locators.every((locator) =>
-          candidates.some((item) => sameLocator(locator, item.locator)),
+        candidate.directoryReferences.every((directoryReference) =>
+          candidates.some(
+            (item) => item.directoryReference === directoryReference,
+          ),
         ),
     );
-    if (!credential) {
+    if (credential?.kind !== "password") {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "Reset target is not one logical password credential",
@@ -887,12 +869,11 @@ export class IdentityCoordinator
       for (const item of candidates) {
         const consumed = await this.ports.directory.consumePasswordReset({
           operationId: input.operationId,
-          locator: item.locator,
+          directoryReference: item.directoryReference,
           tokenHash: input.tokenHash,
           now: input.now,
         });
         if (!consumed || consumed.userId !== first.userId) return null;
-        await this.checkpoint("reset-after-consume");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -906,13 +887,12 @@ export class IdentityCoordinator
       for (const item of candidates) {
         await this.ports.directory.replacePassword({
           operationId: input.operationId,
-          locator: item.locator,
+          directoryReference: item.directoryReference,
           userId: first.userId,
           passwordHash: input.passwordHash,
           accountEpoch: authority.operationEpoch,
           now: input.now,
         });
-        await this.checkpoint("reset-after-hash");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -928,12 +908,13 @@ export class IdentityCoordinator
         userId: first.userId,
         expectedState: "directory-active",
         nextState: "completed",
-        credentialId: credential.credentialId,
-        credentialKind: "password",
+        credential: {
+          ...credential,
+          passwordHash: input.passwordHash,
+        },
         bumpSessionEpoch: true,
         now: input.now,
       });
-      await this.checkpoint("reset-after-epoch");
     }
     const updated = activeAuthority(
       await this.ports.accountHome.getAuthSummary(first.userId),
@@ -945,6 +926,19 @@ export class IdentityCoordinator
         "Password reset completed without active authority",
       );
     }
+    AccountIdentity.replacePassword(
+      AccountIdentity.create({
+        id: authority.userId,
+        status: "active",
+        primaryEmail: authority.primaryEmail,
+        credentials: authority.credentials.map(
+          ({ directoryReferences: _, ...item }) => item,
+        ),
+        sessionEpoch: authority.sessionEpoch,
+      }),
+      credential.credentialId,
+      input.passwordHash,
+    );
     return { userId: first.userId, sessionEpoch: updated.sessionEpoch };
   }
 
@@ -961,9 +955,17 @@ export class IdentityCoordinator
     }
     const subject = SsoSubject.create(input.subject);
     const canonical = `sso:${input.provider}\u0000${subject}`;
-    const locators = await this.ports.directory.locators(canonical);
-    const credentialId = locators[0]?.opaqueKey;
-    if (!credentialId) {
+    const directoryReferences =
+      await this.ports.directory.references(canonical);
+    const credentialId = `sso:${input.operationId}`;
+    const logicalCredential = {
+      credentialId,
+      kind: "sso" as const,
+      provider: input.provider,
+      subject,
+      verifiedEmail: input.email,
+    };
+    if (directoryReferences.length === 0) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         "SSO credential has no active locator",
@@ -999,11 +1001,24 @@ export class IdentityCoordinator
       now: input.now,
     });
     if (!reached(operation, "credential-reserved")) {
-      for (const locator of locators) {
+      AccountIdentity.addCredential(
+        AccountIdentity.create({
+          id: authority.userId,
+          status: "active",
+          primaryEmail: authority.primaryEmail,
+          credentials: authority.credentials.map(
+            ({ directoryReferences: _, ...credential }) => credential,
+          ),
+          sessionEpoch: authority.sessionEpoch,
+        }),
+        logicalCredential,
+      );
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.reserve({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
+          directoryReference,
+          credentialId,
           credential: {
             kind: "sso",
             canonicalValue: canonical,
@@ -1014,39 +1029,35 @@ export class IdentityCoordinator
           now: input.now,
         });
       }
-      await this.checkpoint("link-after-reserve");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
         expectedState: "pending",
         nextState: "credential-reserved",
-        locator: locators[0],
-        credentialId,
-        credentialKind: "sso",
+        directoryReference: directoryReferences[0],
+        credential: logicalCredential,
         now: input.now,
       });
-      for (const locator of locators.slice(1)) {
+      for (const directoryReference of directoryReferences.slice(1)) {
         await this.ports.accountHome.addCredentialLocator({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
-          credentialId,
-          kind: "sso",
+          directoryReference,
+          credential: logicalCredential,
           bumpSessionEpoch: false,
           now: input.now,
         });
       }
     }
     if (!reached(operation, "user-data-initialized")) {
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.markInitialized({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
+          directoryReference,
           now: input.now,
         });
       }
-      await this.checkpoint("link-after-initialize");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
@@ -1056,15 +1067,14 @@ export class IdentityCoordinator
       });
     }
     if (!reached(operation, "directory-active")) {
-      for (const locator of locators) {
+      for (const directoryReference of directoryReferences) {
         await this.ports.directory.activate({
           operationId: input.operationId,
           userId: input.userId,
-          locator,
+          directoryReference,
           accountEpoch: authority.operationEpoch,
           now: input.now,
         });
-        await this.checkpoint("link-after-activate");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -1080,12 +1090,10 @@ export class IdentityCoordinator
         userId: input.userId,
         expectedState: "directory-active",
         nextState: "completed",
-        credentialId,
-        credentialKind: "sso",
+        credential: logicalCredential,
         bumpSessionEpoch: true,
         now: input.now,
       });
-      await this.checkpoint("link-after-finalize");
     }
   }
 
@@ -1099,7 +1107,7 @@ export class IdentityCoordinator
       payloadDigest: await fingerprint([
         "sso-unlink",
         input.userId,
-        input.locator.opaqueKey,
+        input.credentialId,
       ]),
       now: input.now,
     });
@@ -1111,10 +1119,8 @@ export class IdentityCoordinator
     if (!authority) {
       throw new ConflictError("ACCOUNT_INACTIVE", "Account is not active");
     }
-    const target = authority.credentials.find((credential) =>
-      credential.locators.some((locator) =>
-        sameLocator(locator, input.locator),
-      ),
+    const target = authority.credentials.find(
+      (credential) => credential.credentialId === input.credentialId,
     );
     if (!target) {
       throw new ConflictError(
@@ -1128,13 +1134,15 @@ export class IdentityCoordinator
         "Active account has no primary email authority",
       );
     }
-    const accountIdentity = {
-      status: authority.status,
-      credentials: authority.credentials.map((credential) => ({
-        id: credential.credentialId,
-        kind: credential.kind,
-      })),
-    };
+    const accountIdentity = AccountIdentity.create({
+      id: authority.userId,
+      status: "active",
+      primaryEmail: authority.primaryEmail,
+      credentials: authority.credentials.map(
+        ({ directoryReferences: _, ...credential }) => credential,
+      ),
+      sessionEpoch: authority.sessionEpoch,
+    });
     if (!AccountIdentity.canUnlink(accountIdentity, target.credentialId)) {
       throw new ConflictError(
         "LAST_CREDENTIAL_UNLINK_FORBIDDEN",
@@ -1151,16 +1159,16 @@ export class IdentityCoordinator
       });
     }
     if (!reached(operation, "directory-active")) {
-      for (const locator of target.locators) {
+      AccountIdentity.unlink(accountIdentity, target.credentialId);
+      for (const directoryReference of target.directoryReferences) {
         await this.ports.directory.tombstone({
           operationId: input.operationId,
-          locator,
+          directoryReference,
           userId: input.userId,
           accountEpoch: authority.operationEpoch,
           now: input.now,
         });
       }
-      await this.checkpoint("unlink-after-directory");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
@@ -1176,7 +1184,6 @@ export class IdentityCoordinator
       bumpSessionEpoch: true,
       now: input.now,
     });
-    await this.checkpoint("unlink-after-authority");
   }
 
   async deleteAccount(
@@ -1184,30 +1191,27 @@ export class IdentityCoordinator
   ): Promise<void> {
     const deletion = await this.ports.accountHome.beginDeletion(input);
     if (deletion.state === "completed") return;
-    for (const locator of deletion.locators) {
+    for (const directoryReference of deletion.directoryReferences) {
       await this.ports.directory.tombstone({
         operationId: input.operationId,
-        locator,
+        directoryReference,
         userId: input.userId,
         accountEpoch: deletion.epoch,
         now: input.now,
       });
     }
     await this.ports.userData.deleteAll(input);
-    await this.checkpoint("delete-after-user-data");
-    for (const locator of deletion.locators) {
+    for (const directoryReference of deletion.directoryReferences) {
       await this.ports.directory.purge({
         operationId: input.operationId,
-        locator,
+        directoryReference,
         userId: input.userId,
         accountEpoch: deletion.epoch,
       });
-      await this.checkpoint("delete-after-directory");
     }
     await this.ports.accountHome.finishDeletion({
       ...input,
       epoch: deletion.epoch,
     });
-    await this.checkpoint("delete-after-finish");
   }
 }

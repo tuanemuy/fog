@@ -1,21 +1,22 @@
 import { DurableObject } from "cloudflare:workers";
 import { migrateAccountHome } from "@repo/core/adapters/cloudflare/account-home/schema";
-import { AccountHomeStore } from "@repo/core/adapters/cloudflare/account-home/store";
+import {
+  AccountHomeStore,
+  type PhysicalAccountAuthSummary,
+} from "@repo/core/adapters/cloudflare/account-home/store";
+import type { PhysicalCredentialLocator } from "@repo/core/adapters/cloudflare/identityPhysical";
+import { opaqueCredentialKey } from "@repo/core/adapters/cloudflare/identityPhysical";
 import type {
-  AccountAuthSummary,
   CredentialKind,
-  CredentialLocator,
   IdentityOperation,
   IdentityOperationKind,
   IdentityOperationState,
   IdentityRpcMutation,
   IdentityRpcQuery,
+  LogicalCredential,
   RpcResult,
 } from "@repo/core/application/identity/contracts";
-import {
-  opaqueCredentialKey,
-  operationId,
-} from "@repo/core/application/identity/contracts";
+import { operationId } from "@repo/core/application/identity/contracts";
 import {
   rpcFailure,
   rpcOk,
@@ -24,7 +25,12 @@ import {
   validateRpcMutation,
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
-import { Email, UserId } from "@repo/core/domain/identity/valueObject";
+import {
+  Email,
+  PasswordHash,
+  SsoProvider,
+  UserId,
+} from "@repo/core/domain/identity/valueObject";
 
 type StateEnv = Record<string, never>;
 
@@ -40,9 +46,8 @@ type AdvanceOperationPayload = {
   userId: string;
   expectedState: IdentityOperationState;
   nextState: IdentityOperationState;
-  locator?: CredentialLocator;
-  credentialId?: string;
-  credentialKind?: CredentialKind;
+  locator?: PhysicalCredentialLocator;
+  credential?: LogicalCredential;
   primaryEmail?: string;
   bumpSessionEpoch?: boolean;
   now: number;
@@ -108,7 +113,7 @@ function execute<T>(operation: () => T): RpcResult<T> {
   }
 }
 
-function locator(input: CredentialLocator): CredentialLocator {
+function locator(input: PhysicalCredentialLocator): PhysicalCredentialLocator {
   if (
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
@@ -124,6 +129,36 @@ function locator(input: CredentialLocator): CredentialLocator {
     bucket: input.bucket,
     opaqueKey: opaqueCredentialKey(input.opaqueKey),
   };
+}
+
+function logicalCredential(input: LogicalCredential): LogicalCredential {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    typeof input.credentialId !== "string" ||
+    input.credentialId.length === 0 ||
+    input.credentialId.length > 256
+  ) {
+    throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
+  }
+  if (input.kind === "password") {
+    return {
+      credentialId: input.credentialId,
+      kind: input.kind,
+      email: Email.create(input.email),
+      passwordHash: PasswordHash.create(input.passwordHash),
+    };
+  }
+  if (input.kind === "sso") {
+    return {
+      credentialId: input.credentialId,
+      kind: input.kind,
+      provider: SsoProvider.create(input.provider),
+      subject: input.subject,
+      verifiedEmail: Email.create(input.verifiedEmail),
+    };
+  }
+  throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
 }
 
 export class AccountHomeDurableObject extends DurableObject<StateEnv> {
@@ -187,13 +222,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
     const shape = validatePayloadKeys(
       request.payload,
       ["userId", "expectedState", "nextState", "now"],
-      [
-        "locator",
-        "credentialId",
-        "credentialKind",
-        "primaryEmail",
-        "bumpSessionEpoch",
-      ],
+      ["locator", "credential", "primaryEmail", "bumpSessionEpoch"],
     );
     if (!shape.ok) return Promise.resolve(shape);
     const payload = request.payload;
@@ -201,12 +230,6 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       typeof payload.userId !== "string" ||
       !operationStates.has(payload.expectedState) ||
       !operationStates.has(payload.nextState) ||
-      (payload.credentialKind !== undefined &&
-        payload.credentialKind !== "password" &&
-        payload.credentialKind !== "sso") ||
-      (payload.credentialId !== undefined &&
-        (payload.credentialId.length === 0 ||
-          payload.credentialId.length > 256)) ||
       !isSafeNonNegativeInteger(payload.now)
     ) {
       return Promise.resolve(
@@ -225,11 +248,8 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
           expectedState: payload.expectedState,
           nextState: payload.nextState,
           ...(payload.locator ? { locator: locator(payload.locator) } : {}),
-          ...(payload.credentialId
-            ? { credentialId: payload.credentialId }
-            : {}),
-          ...(payload.credentialKind
-            ? { credentialKind: payload.credentialKind }
+          ...(payload.credential
+            ? { credential: logicalCredential(payload.credential) }
             : {}),
           ...(payload.primaryEmail
             ? { primaryEmail: Email.create(payload.primaryEmail) }
@@ -259,7 +279,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
 
   getAuthSummary(
     request: IdentityRpcQuery<Record<string, never>>,
-  ): Promise<RpcResult<AccountAuthSummary | null>> {
+  ): Promise<RpcResult<PhysicalAccountAuthSummary | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
     const shape = validatePayloadKeys(request.payload, []);
@@ -299,19 +319,18 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   addCredentialLocator(
     request: IdentityRpcMutation<{
       userId: string;
-      locator: CredentialLocator;
-      credentialId: string;
-      kind: CredentialKind;
+      locator: PhysicalCredentialLocator;
+      credential: LogicalCredential;
       primaryEmail?: string;
       bumpSessionEpoch: boolean;
       now: number;
     }>,
-  ): Promise<RpcResult<AccountAuthSummary>> {
+  ): Promise<RpcResult<PhysicalAccountAuthSummary>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     const shape = validatePayloadKeys(
       request.payload,
-      ["userId", "locator", "credentialId", "kind", "bumpSessionEpoch", "now"],
+      ["userId", "locator", "credential", "bumpSessionEpoch", "now"],
       ["primaryEmail"],
     );
     if (!shape.ok) return Promise.resolve(shape);
@@ -321,8 +340,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
           operationId: operationId(request.operationId),
           userId: UserId.create(request.payload.userId),
           locator: locator(request.payload.locator),
-          credentialId: request.payload.credentialId,
-          kind: request.payload.kind,
+          credential: logicalCredential(request.payload.credential),
           ...(request.payload.primaryEmail
             ? { primaryEmail: Email.create(request.payload.primaryEmail) }
             : {}),
@@ -340,7 +358,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       bumpSessionEpoch: boolean;
       now: number;
     }>,
-  ): Promise<RpcResult<AccountAuthSummary>> {
+  ): Promise<RpcResult<PhysicalAccountAuthSummary>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     const shape = validatePayloadKeys(request.payload, [
@@ -366,8 +384,8 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   replaceCredentialLocator(
     request: IdentityRpcMutation<{
       userId: string;
-      previous: CredentialLocator;
-      active: CredentialLocator;
+      previous: PhysicalCredentialLocator;
+      active: PhysicalCredentialLocator;
       kind: CredentialKind;
       now: number;
     }>,
@@ -403,7 +421,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
     RpcResult<{
       epoch: number;
       state: IdentityOperationState;
-      locators: readonly CredentialLocator[];
+      locators: readonly PhysicalCredentialLocator[];
     }>
   > {
     const validated = validateRpcMutation(request);

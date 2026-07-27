@@ -17,7 +17,7 @@ describe("AccountIdentity", () => {
       sessionEpoch: 0,
       credentials: [
         {
-          id: "password:owner@example.com",
+          credentialId: "password:owner@example.com",
           kind: "password",
           email,
           passwordHash,
@@ -25,7 +25,7 @@ describe("AccountIdentity", () => {
       ],
     });
     const linked = AccountIdentity.addCredential(account, {
-      id: "sso:google:subject",
+      credentialId: "sso:google:subject",
       kind: "sso",
       provider: "google",
       subject: SsoSubject.create("subject"),
@@ -45,7 +45,7 @@ describe("AccountIdentity", () => {
         sessionEpoch: 0,
         credentials: [
           {
-            id: "password:owner@example.com",
+            credentialId: "password:owner@example.com",
             kind: "password",
             email,
             passwordHash,
@@ -63,13 +63,13 @@ describe("AccountIdentity", () => {
       sessionEpoch: 3,
       credentials: [
         {
-          id: "password:owner@example.com",
+          credentialId: "password:owner@example.com",
           kind: "password",
           email,
           passwordHash,
         },
         {
-          id: "sso:google:subject",
+          credentialId: "sso:google:subject",
           kind: "sso",
           provider: "google",
           subject: SsoSubject.create("subject"),
@@ -93,7 +93,7 @@ describe("AccountIdentity", () => {
       sessionEpoch: 4,
       credentials: [
         {
-          id: "password:owner@example.com",
+          credentialId: "password:owner@example.com",
           kind: "password",
           email,
           passwordHash,
@@ -117,7 +117,7 @@ describe("AccountIdentity", () => {
       sessionEpoch: 0,
       credentials: [
         {
-          id: "password:owner@example.com",
+          credentialId: "password:owner@example.com",
           kind: "password",
           email,
           passwordHash,

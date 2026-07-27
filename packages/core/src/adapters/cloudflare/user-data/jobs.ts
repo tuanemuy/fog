@@ -154,10 +154,12 @@ export class DurableJobStore {
             id: string;
             kind: string;
             payload_json: string;
+            payload_digest: string;
             attempt: number;
             provider_idempotency_key: string;
           }>(
-            `SELECT id, kind, payload_json, attempt, provider_idempotency_key
+            `SELECT id, kind, payload_json, payload_digest, attempt,
+                    provider_idempotency_key
              FROM jobs
              WHERE status = 'pending' AND next_run_at <= ?
              ORDER BY next_run_at, id LIMIT ?`,
@@ -167,6 +169,28 @@ export class DurableJobStore {
           .toArray();
         const claimed: PersistentJob[] = [];
         for (const job of due) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(job.payload_json);
+            if (
+              payloadDigest({ kind: job.kind, payload }) !== job.payload_digest
+            ) {
+              throw new Error("PAYLOAD_DIGEST_MISMATCH");
+            }
+          } catch {
+            this.storage.sql.exec(
+              `UPDATE jobs
+               SET status = 'poison', attempt = attempt + 1,
+                   terminal_reason = 'STORED_JOB_PAYLOAD_INVALID',
+                   terminal_at = ?, lease_until = NULL, owner_token = NULL,
+                   updated_at = ?
+               WHERE id = ? AND status = 'pending'`,
+              input.now,
+              input.now,
+              job.id,
+            );
+            continue;
+          }
           const cursor = this.storage.sql.exec(
             `UPDATE jobs
              SET status = 'leased', lease_until = ?, owner_token = ?,
@@ -178,16 +202,6 @@ export class DurableJobStore {
             job.id,
           );
           if (cursor.rowsWritten === 0) continue;
-          let payload: unknown;
-          try {
-            payload = JSON.parse(job.payload_json);
-          } catch (error) {
-            throw new SystemError(
-              SystemErrorCode.DataIntegrityError,
-              "Stored persistent job payload is invalid",
-              error,
-            );
-          }
           claimed.push({
             id: job.id,
             kind: job.kind,

@@ -1,4 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
+import { workingTreeFingerprint } from "./evidence-working-tree.mjs";
 
 const inventory = readFileSync("spec/inventory/test.md", "utf8");
 const evidencePath = "spec/inventory/test-evidence.json";
@@ -8,6 +14,10 @@ const webScripts = JSON.parse(
   readFileSync("apps/web/package.json", "utf8"),
 ).scripts;
 const requestConfig = readFileSync("vitest.config.integration.ts", "utf8");
+const productionConfig = readFileSync(
+  "vitest.config.production-entry.ts",
+  "utf8",
+);
 const stateConfig = readFileSync(
   "vitest.config.integration-state.ts",
   "utf8",
@@ -16,13 +26,34 @@ const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
 const results = JSON.parse(
   readFileSync(".thread/19/test-results.json", "utf8"),
 );
-const passedCommands = new Set(
-  results.automated
-    .filter((entry) => entry.result === "passed")
-    .map((entry) => entry.command),
-);
 const releaseResults = new Map(
   results.releaseGates.map((entry) => [entry.name, entry]),
+);
+const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+  encoding: "utf8",
+}).trim();
+const sourceFingerprint = workingTreeFingerprint(process.cwd());
+const expectedRunUrl =
+  process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+    ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : null;
+const artifactDirectory = ".artifacts/test-results";
+const artifacts = existsSync(artifactDirectory)
+  ? readdirSync(artifactDirectory)
+      .filter((file) => file.endsWith(".evidence.json"))
+      .map((file) =>
+        JSON.parse(readFileSync(`${artifactDirectory}/${file}`, "utf8")),
+      )
+  : [];
+const vitestArtifacts = new Map(
+  artifacts
+    .filter((artifact) => artifact.kind === "vitest")
+    .map((artifact) => [artifact.suite, artifact]),
+);
+const commandArtifacts = new Map(
+  artifacts
+    .filter((artifact) => artifact.kind === "command")
+    .map((artifact) => [artifact.command, artifact]),
 );
 
 const rows = [
@@ -51,15 +82,45 @@ for (const id of Object.keys(evidence)) {
 const automatedSuites = new Set([
   "unit",
   "integration-request",
+  "integration-production",
   "integration-state",
   "ci-command",
 ]);
-const suiteCommand = new Map([
-  ["unit", "pnpm test:unit"],
-  ["integration-request", "pnpm test:integration"],
-  ["integration-state", "pnpm test:integration"],
-]);
 const pending = [];
+
+for (const suite of [
+  "unit",
+  "integration-request",
+  "integration-production",
+  "integration-state",
+]) {
+  if (!vitestArtifacts.has(suite)) {
+    fail(`${suite} has no machine-readable Vitest reporter artifact`);
+  }
+}
+
+for (const artifact of artifacts) {
+  if (artifact.commitSha !== headSha) {
+    fail(
+      `${artifact.kind} evidence for ${artifact.suite ?? artifact.command} belongs to ${String(artifact.commitSha)}, not HEAD ${headSha}`,
+    );
+  }
+  if (artifact.workingTreeFingerprint !== sourceFingerprint) {
+    fail(
+      `${artifact.kind} evidence for ${artifact.suite ?? artifact.command} belongs to another working-tree state`,
+    );
+  }
+  if (process.env.CI === "true" && artifact.runUrl !== expectedRunUrl) {
+    fail(
+      `${artifact.kind} evidence for ${artifact.suite ?? artifact.command} is not bound to this Actions run`,
+    );
+  }
+  if (process.env.CI === "true" && artifact.workingTreeFingerprint !== "clean") {
+    fail(
+      `${artifact.kind} evidence for ${artifact.suite ?? artifact.command} is not from a clean checkout`,
+    );
+  }
+}
 
 for (const row of rows) {
   if (row.target.length === 0) fail(`${row.id} has no target`);
@@ -105,8 +166,12 @@ for (const row of rows) {
       if (!workflow.includes(`pnpm ${record.command}`)) {
         fail(`${row.id} command ${record.command} is absent from CI`);
       }
-      if (!passedCommands.has(`pnpm ${record.command}`)) {
-        fail(`${row.id} command ${record.command} has no current passing result`);
+      const command = `pnpm ${record.command}`;
+      const artifact = commandArtifacts.get(command);
+      if (artifact?.result !== "passed") {
+        fail(
+          `${row.id} command ${record.command} has no current passing command artifact`,
+        );
       }
       continue;
     }
@@ -145,12 +210,21 @@ for (const row of rows) {
       }
       continue;
     }
-    if (typeof record.test !== "string" || !source.includes(record.test)) {
-      fail(`${row.id} test name is absent from ${record.file}`);
+    if (typeof record.test !== "string" || record.test.length === 0) {
+      fail(`${row.id} has no test title in ${record.file}`);
     }
-    const command = suiteCommand.get(record.suite);
-    if (command !== undefined && !passedCommands.has(command)) {
-      fail(`${row.id} suite ${record.suite} has no current passing result`);
+    const reporter = vitestArtifacts.get(record.suite);
+    if (
+      !reporter?.tests?.some(
+        (test) =>
+          test.file === record.file &&
+          test.test === record.test &&
+          test.status === "passed",
+      )
+    ) {
+      fail(
+        `${row.id} test was not reported passed by ${record.suite}: ${record.test}`,
+      );
     }
     if (
       record.suite === "unit" &&
@@ -161,9 +235,16 @@ for (const row of rows) {
     if (
       record.suite === "integration-request" &&
       (!record.file.endsWith(".integration.test.ts") ||
-        !requestConfig.includes("requestStateBoundary.integration.test.ts"))
+        !requestConfig.includes(record.file.split("/").at(-1)))
     ) {
       fail(`${row.id} is not included by request integration config`);
+    }
+    if (
+      record.suite === "integration-production" &&
+      (!record.file.endsWith(".integration.test.ts") ||
+        !productionConfig.includes(record.file.split("/").at(-1)))
+    ) {
+      fail(`${row.id} is not included by production integration config`);
     }
     if (
       record.suite === "integration-state" &&
@@ -188,6 +269,6 @@ if (failures.length > 0) {
       ? "no pending manual/release evidence"
       : `pending evidence: ${pending.join("; ")}`;
   console.log(
-    `test traceability structure passed (${rows.length} TEST IDs; source, CI inclusion, and recorded suite results checked; ${suffix})`,
+    `test traceability passed (${rows.length} TEST IDs; HEAD-bound reporter and command evidence checked${expectedRunUrl ? ` for ${expectedRunUrl}` : ""}; ${suffix})`,
   );
 }

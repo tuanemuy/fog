@@ -1,0 +1,88 @@
+name: Staging PITR smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: Disposable staging namespace label
+        required: true
+        type: string
+      user_data_target:
+        description: Opaque disposable Account Home identifier
+        required: true
+        type: string
+      user_data_bookmark:
+        description: User Data bookmark to restore
+        required: true
+        type: string
+      directory_target:
+        description: Disposable Directory generation:bucket
+        required: true
+        type: string
+      directory_bookmark:
+        description: Identity Directory bookmark to restore
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  restore-verify-undo:
+    name: Restore, verify, and undo both DO classes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-pitr
+    env:
+      PITR_OPERATOR_URL: ${{ secrets.PITR_OPERATOR_URL }}
+      PITR_OPERATOR_TOKEN: ${{ secrets.PITR_OPERATOR_TOKEN }}
+      PITR_NAMESPACE: ${{ inputs.namespace }}
+      PITR_USER_DATA_TARGET: ${{ inputs.user_data_target }}
+      PITR_USER_DATA_BOOKMARK: ${{ inputs.user_data_bookmark }}
+      PITR_DIRECTORY_TARGET: ${{ inputs.directory_target }}
+      PITR_DIRECTORY_BOOKMARK: ${{ inputs.directory_bookmark }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: User Data restore and undo
+        run: |
+          mkdir -p .artifacts/pitr
+          pnpm --filter @repo/web pitr:operator restore user-data \
+            "$PITR_USER_DATA_TARGET" \
+            "$PITR_USER_DATA_BOOKMARK" \
+            > .artifacts/pitr/user-data-restore.json
+          pnpm --filter @repo/web pitr:operator undo \
+            "$(cat .artifacts/pitr/user-data-restore.json)" \
+            > .artifacts/pitr/user-data-undo.json
+
+      - name: Identity Directory restore and undo
+        run: |
+          pnpm --filter @repo/web pitr:operator restore identity-directory \
+            "$PITR_DIRECTORY_TARGET" \
+            "$PITR_DIRECTORY_BOOKMARK" \
+            > .artifacts/pitr/identity-directory-restore.json
+          pnpm --filter @repo/web pitr:operator undo \
+            "$(cat .artifacts/pitr/identity-directory-restore.json)" \
+            > .artifacts/pitr/identity-directory-undo.json
+
+      - name: Create commit-bound evidence
+        run: node scripts/write-pitr-evidence.mjs
+
+      - name: Upload protected PITR evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-pitr-${{ github.sha }}
+          path: .artifacts/pitr/staging.json
+          retention-days: 7

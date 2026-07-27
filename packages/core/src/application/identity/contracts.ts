@@ -2,6 +2,7 @@ import type {
   Email,
   PasswordHash,
   SsoProvider,
+  SsoSubject,
   UserId,
 } from "@repo/core/domain/identity/valueObject";
 
@@ -9,11 +10,11 @@ export const IDENTITY_RPC_VERSION = 1 as const;
 export const IDENTITY_OPERATION_ID_MAX_BYTES = 128;
 
 declare const operationIdBrand: unique symbol;
-declare const opaqueCredentialKeyBrand: unique symbol;
+declare const directoryReferenceBrand: unique symbol;
 
 export type OperationId = string & { readonly [operationIdBrand]: true };
-export type OpaqueCredentialKey = string & {
-  readonly [opaqueCredentialKeyBrand]: true;
+export type DirectoryReference = string & {
+  readonly [directoryReferenceBrand]: true;
 };
 
 export function operationId(raw: string): OperationId {
@@ -25,11 +26,11 @@ export function operationId(raw: string): OperationId {
   return value as OperationId;
 }
 
-export function opaqueCredentialKey(raw: string): OpaqueCredentialKey {
-  if (raw.length === 0) {
-    throw new TypeError("opaque credential key is malformed");
+export function directoryReference(raw: string): DirectoryReference {
+  if (raw.length === 0 || raw.length > 1024) {
+    throw new TypeError("directory reference is malformed");
   }
-  return raw as OpaqueCredentialKey;
+  return raw as DirectoryReference;
 }
 
 export type RpcError = Readonly<{
@@ -61,17 +62,23 @@ export type CredentialState =
   | "active"
   | "tombstoned";
 
-export type CredentialLocator = Readonly<{
-  generation: string;
-  bucket: number;
-  opaqueKey: OpaqueCredentialKey;
-}>;
+export type LogicalCredential =
+  | Readonly<{
+      credentialId: string;
+      kind: "password";
+      email: Email;
+      passwordHash: PasswordHash;
+    }>
+  | Readonly<{
+      credentialId: string;
+      kind: "sso";
+      provider: SsoProvider;
+      subject: SsoSubject;
+      verifiedEmail: Email;
+    }>;
 
-export type LogicalCredentialAuthority = Readonly<{
-  credentialId: string;
-  kind: CredentialKind;
-  locators: readonly CredentialLocator[];
-}>;
+export type LogicalCredentialAuthority = LogicalCredential &
+  Readonly<{ directoryReferences: readonly DirectoryReference[] }>;
 
 export type CredentialRef =
   | Readonly<{
@@ -89,10 +96,10 @@ export type CredentialRef =
 export type DirectoryCredential = Readonly<{
   userId: UserId;
   operationId: OperationId;
-  locator: CredentialLocator;
+  directoryReference: DirectoryReference;
   state: CredentialState;
   accountEpoch: number;
-  credential: CredentialRef;
+  credential: LogicalCredential;
 }>;
 
 export type IdentityRegistration = Readonly<{
@@ -105,15 +112,17 @@ export type IdentityRegistration = Readonly<{
 
 export type PasswordCredential = Readonly<{
   userId: UserId;
+  credentialId: string;
+  email: Email;
   passwordHash: PasswordHash;
-  locator: CredentialLocator;
+  directoryReference: DirectoryReference;
   accountEpoch: number;
 }>;
 
 export type DirectoryAuthorityRow = Readonly<{
   userId: UserId;
   operationId: OperationId;
-  locator: CredentialLocator;
+  directoryReference: DirectoryReference;
   state: CredentialState;
   accountEpoch: number;
 }>;
@@ -208,7 +217,9 @@ export type IdentityOperation = Readonly<{
 }>;
 
 export interface CredentialDirectoryPort {
-  locators(canonicalCredential: string): Promise<readonly CredentialLocator[]>;
+  references(
+    canonicalCredential: string,
+  ): Promise<readonly DirectoryReference[]>;
   lookupPassword(email: Email): Promise<readonly (PasswordCredential | null)[]>;
   lookupCredential(
     canonicalCredential: string,
@@ -236,7 +247,8 @@ export interface CredentialDirectoryPort {
   reserve(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
+    credentialId: string;
     credential: CredentialRef;
     accountEpoch: number;
     now: number;
@@ -244,19 +256,19 @@ export interface CredentialDirectoryPort {
   markInitialized(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     now: number;
   }): Promise<void>;
   activate(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     accountEpoch: number;
     now: number;
   }): Promise<void>;
   replacePassword(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     userId: UserId;
     passwordHash: PasswordHash;
     accountEpoch: number;
@@ -264,42 +276,43 @@ export interface CredentialDirectoryPort {
   }): Promise<void>;
   tombstone(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     userId: UserId;
     accountEpoch: number;
     now: number;
   }): Promise<void>;
   purge(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     userId: UserId;
     accountEpoch: number;
   }): Promise<void>;
   storePasswordReset(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     userId: UserId;
     tokenHash: string;
     expiresAt: number;
   }): Promise<void>;
   enqueuePasswordResetMail(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     userId: UserId;
     email: Email;
-    tokenHash: string;
+    resetSecret: string;
+    expiresAt: number;
     providerIdempotencyKey: string;
     now: number;
   }): Promise<void>;
   lookupPasswordReset(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     tokenHash: string;
     now: number;
   }): Promise<{ userId: UserId } | null>;
   consumePasswordReset(input: {
     operationId: OperationId;
-    locator: CredentialLocator;
+    directoryReference: DirectoryReference;
     tokenHash: string;
     now: number;
   }): Promise<{ userId: UserId } | null>;
@@ -319,9 +332,8 @@ export interface AccountHomePort {
     userId: UserId;
     expectedState: IdentityOperationState;
     nextState: IdentityOperationState;
-    locator?: CredentialLocator;
-    credentialId?: string;
-    credentialKind?: CredentialKind;
+    directoryReference?: DirectoryReference;
+    credential?: LogicalCredential;
     primaryEmail?: Email;
     bumpSessionEpoch?: boolean;
     now: number;
@@ -339,9 +351,8 @@ export interface AccountHomePort {
   addCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
-    credentialId: string;
-    kind: CredentialKind;
+    directoryReference: DirectoryReference;
+    credential: LogicalCredential;
     primaryEmail?: Email;
     bumpSessionEpoch: boolean;
     now: number;
@@ -356,8 +367,8 @@ export interface AccountHomePort {
   replaceCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    previous: CredentialLocator;
-    active: CredentialLocator;
+    previous: DirectoryReference;
+    active: DirectoryReference;
     kind: CredentialKind;
     now: number;
   }): Promise<void>;
@@ -368,7 +379,7 @@ export interface AccountHomePort {
   }): Promise<{
     epoch: number;
     state: IdentityOperationState;
-    locators: readonly CredentialLocator[];
+    directoryReferences: readonly DirectoryReference[];
   }>;
   finishDeletion(input: {
     operationId: OperationId;
@@ -413,9 +424,12 @@ export interface IdentityPrimitivePort {
   storePasswordReset(
     input: ResetPrimitive & { email: Email; userId: UserId },
   ): Promise<void>;
-  requestPasswordReset(
-    input: ResetPrimitive & { email: Email; now: number },
-  ): Promise<PasswordResetRequestResult>;
+  requestPasswordReset(input: {
+    operationId: OperationId;
+    email: Email;
+    expiresAt: number;
+    now: number;
+  }): Promise<PasswordResetRequestResult>;
   changePassword(input: {
     operationId: OperationId;
     userId: UserId;
@@ -434,7 +448,7 @@ export interface IdentityPrimitivePort {
   unlinkCredential(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    credentialId: string;
     now: number;
   }): Promise<void>;
   deleteAccount(input: {

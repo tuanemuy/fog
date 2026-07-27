@@ -8,6 +8,7 @@ import {
   identityDirectoryMigrations,
   migrateIdentityDirectory,
 } from "@repo/core/adapters/cloudflare/identity-directory/schema";
+import { opaqueCredentialKey } from "@repo/core/adapters/cloudflare/identityPhysical";
 import {
   type OrderedMigration,
   runOrderedMigrations,
@@ -16,7 +17,6 @@ import {
   migrateUserData,
   userDataMigrations,
 } from "@repo/core/adapters/cloudflare/user-data/schema";
-import { opaqueCredentialKey } from "@repo/core/application/identity/contracts";
 import { rpcQuery } from "@repo/core/application/identity/rpc";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AccountHomeDurableObject } from "../../durable-objects/AccountHomeDurableObject";
@@ -149,6 +149,14 @@ describe("ordered Durable Object migrations", () => {
              content_id, version, title, body, created_at
            ) VALUES ('memo-v1', 1, '', 'preserved v1 memo', 1)`,
         );
+        storage.sql.exec(
+          `INSERT INTO ai_client_connections(
+             id, client_id, label, scopes_json, created_at, revoked_at
+           ) VALUES (
+             'ai-v1', 'legacy-client', 'Legacy Assistant', '["search"]',
+             1, 2
+           )`,
+        );
       },
       async invoke(stub: DurableObjectStub<UserDataDurableObject>) {
         return stub.identityGetProfileV1(
@@ -164,7 +172,7 @@ describe("ordered Durable Object migrations", () => {
               "SELECT user_id, version FROM profile WHERE singleton = 1",
             )
             .one(),
-        ).toEqual({ user_id: "user-v1", version: 1 });
+        ).toEqual({ user_id: "user-v1", version: 0 });
         expect(
           storage.sql
             .exec<{
@@ -178,9 +186,70 @@ describe("ordered Durable Object migrations", () => {
             .one(),
         ).toEqual({
           body: "preserved v1 memo",
-          version: 1,
+          version: 0,
           latest_revision_version: 1,
         });
+        expect(
+          storage.sql
+            .exec<{
+              id: string;
+              client_name: string;
+              status: string;
+              connected_at: number;
+              revoked_at: number | null;
+              version: number;
+            }>(
+              `SELECT id, client_name, status, connected_at, revoked_at, version
+               FROM ai_client_connections WHERE id = 'ai-v1'`,
+            )
+            .one(),
+        ).toEqual({
+          id: "ai-v1",
+          client_name: "Legacy Assistant",
+          status: "revoked",
+          connected_at: 1,
+          revoked_at: 2,
+          version: 0,
+        });
+        expect(
+          storage.sql
+            .exec<{ name: string }>(
+              `SELECT name FROM pragma_table_info('ai_client_connections')
+               ORDER BY cid`,
+            )
+            .toArray()
+            .map(({ name }) => name),
+        ).toEqual([
+          "id",
+          "client_name",
+          "status",
+          "connected_at",
+          "last_used_at",
+          "revoked_at",
+          "version",
+        ]);
+        storage.sql.exec(
+          `INSERT INTO ai_client_connections(
+             id, client_name, status, connected_at, version
+           ) VALUES ('ai-current', 'Current Assistant', 'active', 3, 0)`,
+        );
+        storage.sql.exec(
+          `UPDATE ai_client_connections
+           SET status = 'revoked', revoked_at = 4, version = version + 1
+           WHERE id = 'ai-current' AND version = 0`,
+        );
+        expect(
+          storage.sql
+            .exec<{
+              status: string;
+              revoked_at: number | null;
+              version: number;
+            }>(
+              `SELECT status, revoked_at, version
+               FROM ai_client_connections WHERE id = 'ai-current'`,
+            )
+            .one(),
+        ).toEqual({ status: "revoked", revoked_at: 4, version: 1 });
       },
     },
     {

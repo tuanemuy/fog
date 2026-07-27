@@ -1,6 +1,12 @@
 import type { RequestContainer } from "@repo/core/application/di/types";
+import { directoryReference } from "@repo/core/application/identity/contracts";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
+import {
+  Email,
+  PasswordHash,
+  UserId,
+} from "@repo/core/domain/identity/valueObject";
 import { describe, expect, it, vi } from "vitest";
 import { content } from "../../../config";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -153,4 +159,107 @@ describe("burnVerificationTime's unreadable-dummy warning", () => {
 
     expect(logger.entries).toEqual([]);
   });
+});
+
+describe("login failure work profile", () => {
+  it.each([
+    { kind: "unknown", email: "unknown@example.com", password: "password123" },
+    { kind: "sso-only", email: "sso@example.com", password: "password123" },
+    { kind: "wrong", email: "password@example.com", password: "password123" },
+    { kind: "malformed", email: "not-an-email", password: "password123" },
+  ] as const)(
+    "uses one lookup, verify, and authority read for $kind without logging PII",
+    async ({ kind, email, password }) => {
+      const calls: string[] = [];
+      const logger = new FakeLogger();
+      const userId = UserId.create("work-profile-user");
+      const reference = directoryReference("work-profile-reference");
+      const storedHash = PasswordHash.create("stored-password-hash");
+      const hasPassword = kind === "wrong";
+      const testContainer: RequestContainer = {
+        config: { ...content, appUrl: "http://localhost:3000" },
+        identity: {
+          preparePasswordSignup: async () => {
+            throw new Error("login must not prepare signup");
+          },
+          registerWithPassword: async () => {
+            throw new Error("login must not register");
+          },
+          findPasswordCredential: async () => {
+            calls.push("credential");
+            return hasPassword
+              ? {
+                  userId,
+                  credentialId: "password-credential",
+                  email: Email.create("password@example.com"),
+                  passwordHash: storedHash,
+                  directoryReference: reference,
+                  accountEpoch: 2,
+                }
+              : null;
+          },
+          getAccountAuthority: async (requestedUserId) => {
+            calls.push("authority");
+            return hasPassword && requestedUserId === userId
+              ? {
+                  userId,
+                  status: "active",
+                  primaryEmail: Email.create("password@example.com"),
+                  authMethods: ["password"],
+                  credentials: [
+                    {
+                      credentialId: "password-credential",
+                      kind: "password",
+                      email: Email.create("password@example.com"),
+                      passwordHash: storedHash,
+                      directoryReferences: [reference],
+                    },
+                  ],
+                  sessionEpoch: 4,
+                  operationEpoch: 2,
+                }
+              : null;
+          },
+          getCurrentAccount: async () => null,
+        },
+        passwordHasher: {
+          hash: async () => {
+            throw new Error("login must not hash");
+          },
+          verify: async (_plain, hash) => {
+            calls.push(hash === storedHash ? "verify-real" : "verify-dummy");
+            return false;
+          },
+        },
+        sessionCodec: {
+          issue: async () => {
+            throw new Error("login must not issue a session");
+          },
+          verify: async () => null,
+        },
+        clock: SystemClock,
+        idGenerator: UuidV7Generator,
+        logger,
+      };
+
+      const login = await freshLogin();
+      const failure = await login({
+        container: testContainer,
+        input: { email, password },
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password",
+      });
+      expect(calls).toEqual([
+        "credential",
+        kind === "wrong" ? "verify-real" : "verify-dummy",
+        "authority",
+      ]);
+      expect(logger.entries).toEqual([]);
+      expect(JSON.stringify(logger.entries)).not.toContain(email);
+      expect(JSON.stringify(logger.entries)).not.toContain(password);
+    },
+  );
 });

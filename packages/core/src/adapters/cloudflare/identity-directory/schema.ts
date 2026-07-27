@@ -136,6 +136,38 @@ const V9 = [
   )`,
 ] as const;
 
+const V10 = [
+  "ALTER TABLE credential_mappings ADD COLUMN logical_credential_id TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE credential_mappings ADD COLUMN subject_encrypted TEXT",
+  `UPDATE credential_mappings
+   SET logical_credential_id = operation_id
+   WHERE logical_credential_id = ''`,
+  "ALTER TABLE signup_operations ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE sso_create_operations ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN delivery_payload_encrypted TEXT",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN lease_until INTEGER",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN owner_token TEXT",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN last_error_code TEXT",
+  "ALTER TABLE identity_mail_jobs ADD COLUMN poison_reason TEXT",
+  `CREATE INDEX IF NOT EXISTS signup_operations_expiry_idx
+   ON signup_operations(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS sso_create_operations_expiry_idx
+   ON sso_create_operations(expires_at)`,
+] as const;
+
+const V11 = [
+  `CREATE TABLE IF NOT EXISTS directory_reconcile_failures (
+    operation_id TEXT PRIMARY KEY,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    next_run_at INTEGER NOT NULL,
+    last_error_code TEXT NOT NULL,
+    poison_reason TEXT,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS directory_reconcile_failures_due_idx
+   ON directory_reconcile_failures(poison_reason, next_run_at)`,
+] as const;
+
 export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
@@ -146,6 +178,8 @@ export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 7, up: V7 },
   { version: 8, up: V8 },
   { version: 9, up: V9 },
+  { version: 10, up: V10 },
+  { version: 11, up: V11 },
 ];
 
 export function migrateIdentityDirectory(

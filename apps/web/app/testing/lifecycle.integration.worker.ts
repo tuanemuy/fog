@@ -72,12 +72,14 @@ async function executeLifecycle(
       version: 1,
       type: "update-memo",
       operationId: `${runId}:update-memo`,
+      expectedVersion: 0,
       memo: { id: "memo-1", body: "東京駅の復旧メモ", timestamp: 6 },
     },
     {
       version: 1,
       type: "update-document",
       operationId: `${runId}:update-document`,
+      expectedVersion: 0,
       changeReason: "local lifecycle edit",
       document: {
         id: "document-1",
@@ -94,6 +96,7 @@ async function executeLifecycle(
       operationId: `${runId}:trash-document`,
       documentId: "document-1",
       trashedAt: 6,
+      expectedVersion: 1,
     },
     {
       version: 1,
@@ -101,6 +104,7 @@ async function executeLifecycle(
       operationId: `${runId}:restore-document`,
       documentId: "document-1",
       restoredAt: 7,
+      expectedVersion: 2,
     },
     {
       version: 1,
@@ -108,6 +112,7 @@ async function executeLifecycle(
       operationId: `${runId}:trash-memo`,
       memoId: "memo-1",
       trashedAt: 8,
+      expectedVersion: 1,
     },
     {
       version: 1,
@@ -115,6 +120,7 @@ async function executeLifecycle(
       operationId: `${runId}:restore-memo`,
       memoId: "memo-1",
       restoredAt: 9,
+      expectedVersion: 2,
     },
     {
       version: 1,
@@ -122,6 +128,7 @@ async function executeLifecycle(
       operationId: `${runId}:trash-document-before-remove`,
       documentId: "document-1",
       trashedAt: 10,
+      expectedVersion: 3,
     },
     {
       version: 1,
@@ -129,6 +136,7 @@ async function executeLifecycle(
       operationId: `${runId}:remove-document`,
       documentId: "document-1",
       removedAt: 11,
+      expectedVersion: 4,
     },
     {
       version: 1,
@@ -136,6 +144,7 @@ async function executeLifecycle(
       operationId: `${runId}:trash-memo-before-remove`,
       memoId: "memo-1",
       trashedAt: 12,
+      expectedVersion: 3,
     },
     {
       version: 1,
@@ -143,6 +152,7 @@ async function executeLifecycle(
       operationId: `${runId}:remove-memo`,
       memoId: "memo-1",
       removedAt: 13,
+      expectedVersion: 4,
     },
   ];
   const expectedIds = new Map<string, readonly string[]>([
