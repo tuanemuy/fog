@@ -6,9 +6,9 @@ import { serverData } from "@/presentation/serverAction";
 
 const loadCurrentUser = cache(
   serverData(
-    () => import("@repo/core/application/identity/getCurrentUser"),
-    async ({ container }, { getCurrentUser }, userId: string) =>
-      getCurrentUser({ container, input: { userId } }),
+    () => import("@/presentation/identityActionHandlers"),
+    async ({ container }, { currentUserAction }, userId: string) =>
+      currentUserAction(container, userId),
   ),
 );
 

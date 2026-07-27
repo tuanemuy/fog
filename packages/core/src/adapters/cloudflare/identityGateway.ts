@@ -29,6 +29,7 @@ import type {
   RpcResult,
   UserDataIdentityPort,
   UserDataIdentityProfile,
+  UserDataIdentityStatus,
 } from "@repo/core/application/identity/contracts";
 import { operationId } from "@repo/core/application/identity/contracts";
 import { IdentityCoordinator } from "@repo/core/application/identity/coordinator";
@@ -85,6 +86,7 @@ type DirectoryStub = {
       userId: string;
       email: string;
       passwordHash: string;
+      preparedAt: number;
     } | null>
   >;
   preparePasswordSignup(
@@ -99,9 +101,20 @@ type DirectoryStub = {
     RpcResult<{
       userId: string;
       passwordHash: string;
+      preparedAt: number;
       replayed: boolean;
     }>
   >;
+  prepareSsoCreate(
+    input: IdentityRpcMutation<{
+      opaqueOperationKey: string;
+      proposedUserId: string;
+      provider: string;
+      subject: string;
+      email: string;
+      now: number;
+    }>,
+  ): Promise<RpcResult<{ userId: string; replayed: boolean }>>;
   reserve(
     input: IdentityRpcMutation<{
       locator: CredentialLocator;
@@ -163,6 +176,15 @@ type DirectoryStub = {
       userId: string;
       tokenHash: string;
       expiresAt: number;
+    }>,
+  ): Promise<RpcResult<null>>;
+  enqueuePasswordResetMail(
+    input: IdentityRpcMutation<{
+      userId: string;
+      email: string;
+      tokenHash: string;
+      providerIdempotencyKey: string;
+      now: number;
     }>,
   ): Promise<RpcResult<null>>;
   lookupPasswordReset(
@@ -277,6 +299,9 @@ type AccountHomeStub = {
   getAuthSummary(
     input: IdentityRpcQuery<Record<string, never>>,
   ): Promise<RpcResult<AccountAuthSummary | null>>;
+  compensateCreate(
+    input: IdentityRpcMutation<{ userId: string; now: number }>,
+  ): Promise<RpcResult<null>>;
   addCredentialLocator(
     input: IdentityRpcMutation<{
       userId: string;
@@ -324,21 +349,22 @@ type AccountHomeStub = {
 };
 
 type UserDataStub = {
-  initialize(input: {
-    operationId: string;
-    userId: string;
-    now: number;
-  }): Promise<RpcResult<{ userId: string; trashRetentionDays: number }>>;
-  getProfile(): Promise<
+  identityInitializeV1(
+    input: IdentityRpcMutation<{ userId: string; now: number }>,
+  ): Promise<RpcResult<{ userId: string; trashRetentionDays: number }>>;
+  identityGetProfileV1(input: IdentityRpcQuery<{ userId: string }>): Promise<
     RpcResult<{
       userId: string;
       trashRetentionDays: number;
       displayName?: string | null;
     }>
   >;
-  deleteAll(input: {
-    expectedUserId: string;
-  }): Promise<RpcResult<{ deleted: true }>>;
+  identityGetStatusV1(
+    input: IdentityRpcQuery<{ userId: string }>,
+  ): Promise<RpcResult<UserDataIdentityStatus>>;
+  identityDeleteAllV1(
+    input: IdentityRpcMutation<{ userId: string }>,
+  ): Promise<RpcResult<{ deleted: true }>>;
 };
 
 class RemoteIdentityError extends Error {
@@ -484,6 +510,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         userId: UserIdValue.create(existing.userId),
         passwordHash:
           existing.passwordHash as PasswordCredential["passwordHash"],
+        preparedAt: existing.preparedAt,
         replayed: true,
       };
     }
@@ -501,6 +528,42 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     return {
       userId: UserIdValue.create(prepared.userId),
       passwordHash: prepared.passwordHash as PasswordCredential["passwordHash"],
+      preparedAt: prepared.preparedAt,
+      replayed: prepared.replayed,
+    };
+  }
+
+  async prepareSsoCreate(
+    input: Parameters<CredentialDirectoryPort["prepareSsoCreate"]>[0],
+  ): ReturnType<CredentialDirectoryPort["prepareSsoCreate"]> {
+    const operationDigest = [
+      ...new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(input.operationId),
+        ),
+      ),
+    ]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const registry = stub<DirectoryStub>(
+      this.namespace,
+      `sso-operation:${operationDigest}`,
+    );
+    const prepared = await retryRpc(() =>
+      registry.prepareSsoCreate(
+        rpcMutation(input.operationId, {
+          opaqueOperationKey: operationDigest,
+          proposedUserId: input.proposedUserId,
+          provider: input.provider,
+          subject: input.subject,
+          email: input.email,
+          now: input.now,
+        }),
+      ),
+    );
+    return {
+      userId: UserIdValue.create(prepared.userId),
       replayed: prepared.replayed,
     };
   }
@@ -611,6 +674,22 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
+  async enqueuePasswordResetMail(
+    input: Parameters<CredentialDirectoryPort["enqueuePasswordResetMail"]>[0],
+  ): Promise<void> {
+    await retryRpc(() =>
+      this.forLocator(input.locator).enqueuePasswordResetMail(
+        rpcMutation(input.operationId, {
+          userId: input.userId,
+          email: input.email,
+          tokenHash: input.tokenHash,
+          providerIdempotencyKey: input.providerIdempotencyKey,
+          now: input.now,
+        }),
+      ),
+    );
+  }
+
   lookupPasswordReset(
     input: Parameters<CredentialDirectoryPort["lookupPasswordReset"]>[0],
   ): Promise<{ userId: UserId } | null> {
@@ -638,9 +717,12 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  scanForAuthorityReconcile(
-    input: Parameters<CredentialDirectoryPort["scanForAuthorityReconcile"]>[0],
-  ): Promise<{
+  scanForAuthorityReconcile(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit: number;
+  }): Promise<{
     rows: readonly DirectoryAuthorityRow[];
     nextCursor: string | null;
   }> {
@@ -656,9 +738,12 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  scanForRotation(
-    input: Parameters<CredentialDirectoryPort["scanForRotation"]>[0],
-  ): Promise<{
+  scanForRotation(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit: number;
+  }): Promise<{
     rows: readonly RotationRow[];
     nextCursor: string | null;
   }> {
@@ -673,11 +758,26 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  async saveRotationCheckpoint(
-    input: Parameters<CredentialDirectoryPort["saveRotationCheckpoint"]>[0],
-  ): Promise<void> {
+  async saveRotationCheckpoint(input: {
+    generation: string;
+    bucket: number;
+    cursor: string | null;
+    scanned: number;
+    moved: number;
+    conflicts: number;
+    completedAt: number | null;
+  }): Promise<void> {
     const checkpointId = operationId(
-      `rotation-checkpoint:${input.generation}:${input.bucket}:${input.cursor ?? "done"}`,
+      [
+        "rotation-checkpoint",
+        input.generation,
+        input.bucket,
+        input.cursor ?? "done",
+        input.scanned,
+        input.moved,
+        input.conflicts,
+        input.completedAt ?? "pending",
+      ].join(":"),
     );
     await retryRpc(() =>
       this.forBucket(input.generation, input.bucket).saveRotationCheckpoint(
@@ -686,9 +786,12 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
-  expiredReservations(
-    input: Parameters<CredentialDirectoryPort["expiredReservations"]>[0],
-  ): Promise<readonly RotationRow[]> {
+  expiredReservations(input: {
+    generation: string;
+    bucket: number;
+    now: number;
+    limit: number;
+  }): Promise<readonly RotationRow[]> {
     return retryRpc(() =>
       this.forBucket(input.generation, input.bucket).expiredReservations(
         rpcQuery({ now: input.now, limit: input.limit }),
@@ -793,6 +896,19 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
     return retryRpc(() => this.forUser(userId).getAuthSummary(rpcQuery({})));
   }
 
+  async compensateCreate(
+    input: Parameters<AccountHomePort["compensateCreate"]>[0],
+  ): Promise<void> {
+    await retryRpc(() =>
+      this.forUser(input.userId).compensateCreate(
+        rpcMutation(input.operationId, {
+          userId: input.userId,
+          now: input.now,
+        }),
+      ),
+    );
+  }
+
   addCredentialLocator(
     input: Parameters<AccountHomePort["addCredentialLocator"]>[0],
   ): Promise<AccountAuthSummary> {
@@ -886,17 +1002,20 @@ class CloudflareUserDataIdentityAdapter implements UserDataIdentityPort {
     input: Parameters<UserDataIdentityPort["initialize"]>[0],
   ): Promise<void> {
     await retryRpc(() =>
-      this.forUser(input.userId).initialize({
-        operationId: input.operationId,
-        userId: input.userId,
-        now: input.now,
-      }),
+      this.forUser(input.userId).identityInitializeV1(
+        rpcMutation(input.operationId, {
+          userId: input.userId,
+          now: input.now,
+        }),
+      ),
     );
   }
 
   async getProfile(userId: UserId): Promise<UserDataIdentityProfile | null> {
     try {
-      const profile = await retryRpc(() => this.forUser(userId).getProfile());
+      const profile = await retryRpc(() =>
+        this.forUser(userId).identityGetProfileV1(rpcQuery({ userId })),
+      );
       return {
         userId: profile.userId as UserId,
         displayName: profile.displayName ?? null,
@@ -908,12 +1027,22 @@ class CloudflareUserDataIdentityAdapter implements UserDataIdentityPort {
     }
   }
 
+  getStatus(userId: UserId): Promise<UserDataIdentityStatus> {
+    return retryRpc(() =>
+      this.forUser(userId).identityGetStatusV1(rpcQuery({ userId })),
+    );
+  }
+
   async deleteAll(
     input: Parameters<UserDataIdentityPort["deleteAll"]>[0],
   ): Promise<void> {
     try {
+      const status = await this.getStatus(input.userId);
+      if (status.deleted) return;
       await retryRpc(() =>
-        this.forUser(input.userId).deleteAll({ expectedUserId: input.userId }),
+        this.forUser(input.userId).identityDeleteAllV1(
+          rpcMutation(input.operationId, { userId: input.userId }),
+        ),
       );
     } catch (error) {
       if (
@@ -939,7 +1068,8 @@ export class CloudflareIdentityGateway
 {
   private readonly directoryPort: CloudflareCredentialDirectoryAdapter;
   private readonly accountHomePort: CloudflareAccountHomeAdapter;
-  private readonly coordinator: IdentityCoordinator;
+  private readonly userDataPort: CloudflareUserDataIdentityAdapter;
+  private coordinator: IdentityCoordinator;
   readonly keyring: DirectoryKeyring;
 
   constructor(
@@ -947,7 +1077,6 @@ export class CloudflareIdentityGateway
     accountHomes: DurableObjectNamespace,
     userData: DurableObjectNamespace,
     keyring: DirectoryKeyring,
-    faultHook?: IdentitySagaFaultHook,
   ) {
     this.keyring = validateDirectoryKeyring(keyring);
     this.directoryPort = new CloudflareCredentialDirectoryAdapter(
@@ -955,14 +1084,38 @@ export class CloudflareIdentityGateway
       this.keyring,
     );
     this.accountHomePort = new CloudflareAccountHomeAdapter(accountHomes);
-    this.coordinator = new IdentityCoordinator(
+    this.userDataPort = new CloudflareUserDataIdentityAdapter(userData);
+    this.coordinator = new IdentityCoordinator({
+      directory: this.directoryPort,
+      accountHome: this.accountHomePort,
+      userData: this.userDataPort,
+      newUserId: () => UserIdValue.create(crypto.randomUUID()),
+    });
+  }
+
+  static withFaultInjectionForTest(
+    directory: DurableObjectNamespace,
+    accountHomes: DurableObjectNamespace,
+    userData: DurableObjectNamespace,
+    keyring: DirectoryKeyring,
+    faultHook: IdentitySagaFaultHook,
+  ): CloudflareIdentityGateway {
+    const gateway = new CloudflareIdentityGateway(
+      directory,
+      accountHomes,
+      userData,
+      keyring,
+    );
+    gateway.coordinator = IdentityCoordinator.withFaultInjectionForTest(
       {
-        directory: this.directoryPort,
-        accountHome: this.accountHomePort,
-        userData: new CloudflareUserDataIdentityAdapter(userData),
+        directory: gateway.directoryPort,
+        accountHome: gateway.accountHomePort,
+        userData: gateway.userDataPort,
+        newUserId: () => UserIdValue.create(crypto.randomUUID()),
       },
       faultHook,
     );
+    return gateway;
   }
 
   registerWithPassword(
@@ -1014,6 +1167,18 @@ export class CloudflareIdentityGateway
     input: Parameters<IdentityPrimitivePort["storePasswordReset"]>[0],
   ): Promise<void> {
     return this.coordinator.storePasswordReset(input);
+  }
+
+  requestPasswordReset(
+    input: Parameters<IdentityPrimitivePort["requestPasswordReset"]>[0],
+  ): ReturnType<IdentityPrimitivePort["requestPasswordReset"]> {
+    return this.coordinator.requestPasswordReset(input);
+  }
+
+  changePassword(
+    input: Parameters<IdentityPrimitivePort["changePassword"]>[0],
+  ): ReturnType<IdentityPrimitivePort["changePassword"]> {
+    return this.coordinator.changePassword(input);
   }
 
   consumePasswordReset(
@@ -1116,16 +1281,17 @@ export class CloudflareIdentityGateway
         totals.scanned += page.rows.length;
         totals.moved += moved;
         totals.conflicts += conflicts;
+        const blocked = conflicts > 0;
         await this.directoryPort.saveRotationCheckpoint({
           generation: previous.generation,
           bucket,
-          cursor: page.nextCursor,
+          cursor: blocked ? (cursor ?? null) : page.nextCursor,
           scanned: page.rows.length,
           moved,
           conflicts,
-          completedAt: page.nextCursor === null ? input.now : null,
+          completedAt: !blocked && page.nextCursor === null ? input.now : null,
         });
-        cursor = page.nextCursor ?? undefined;
+        cursor = blocked ? undefined : (page.nextCursor ?? undefined);
       } while (cursor);
     }
     return totals;
@@ -1151,40 +1317,9 @@ export class CloudflareIdentityGateway
           limit: input.limitPerBucket ?? 100,
         });
         for (const row of rows) {
-          const [authority, operation] = await Promise.all([
-            this.accountHomePort.getAuthSummary(row.userId),
-            this.accountHomePort.getOperation(row.userId, row.operationId),
-          ]);
-          if (
-            authority?.status === "active" &&
-            operation &&
-            ["user-data-initialized", "directory-active", "completed"].includes(
-              operation.state,
-            )
-          ) {
-            await this.directoryPort.activate({
-              operationId: row.operationId,
-              userId: row.userId,
-              locator: row.locator,
-              accountEpoch: authority.operationEpoch,
-              now: input.now,
-            });
-            activated += 1;
-          } else if (
-            authority?.status === "deleting" ||
-            authority?.status === "deleted" ||
-            (operation !== null &&
-              ["pending", "credential-reserved"].includes(operation.state))
-          ) {
-            await this.directoryPort.tombstone({
-              operationId: row.operationId,
-              locator: row.locator,
-              userId: row.userId,
-              accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
-              now: input.now,
-            });
-            tombstoned += 1;
-          }
+          const result = await this.reconcileReservation(row, input.now);
+          if (result === "activated") activated += 1;
+          if (result === "tombstoned") tombstoned += 1;
         }
       }
     }
@@ -1251,21 +1386,23 @@ export class CloudflareIdentityGateway
         conflicts += 1;
       }
     }
+    const blocked = conflicts > 0;
+    const nextCursor = blocked ? (checkpoint?.cursor ?? null) : page.nextCursor;
     await this.directoryPort.saveRotationCheckpoint({
       generation: input.generation,
       bucket: input.bucket,
-      cursor: page.nextCursor,
+      cursor: nextCursor,
       scanned: page.rows.length,
       moved,
       conflicts,
-      completedAt: page.nextCursor === null ? input.now : null,
+      completedAt: !blocked && page.nextCursor === null ? input.now : null,
     });
     return {
       scanned: page.rows.length,
       moved,
       conflicts,
-      nextCursor: page.nextCursor,
-      completed: page.nextCursor === null,
+      nextCursor,
+      completed: !blocked && page.nextCursor === null,
     };
   }
 
@@ -1294,13 +1431,40 @@ export class CloudflareIdentityGateway
     let activated = 0;
     let tombstoned = 0;
     for (const row of rows) {
-      const [authority, operation] = await Promise.all([
-        this.accountHomePort.getAuthSummary(row.userId),
-        this.accountHomePort.getOperation(row.userId, row.operationId),
-      ]);
+      const result = await this.reconcileReservation(row, input.now);
+      if (result === "activated") activated += 1;
+      if (result === "tombstoned") tombstoned += 1;
+    }
+    return { examined: rows.length, activated, tombstoned };
+  }
+
+  private async reconcileReservation(
+    row: RotationRow,
+    now: number,
+  ): Promise<"activated" | "tombstoned" | "unchanged"> {
+    const [authority, initialOperation, userData] = await Promise.all([
+      this.accountHomePort.getAuthSummary(row.userId),
+      this.accountHomePort.getOperation(row.userId, row.operationId),
+      this.userDataPort.getStatus(row.userId),
+    ]);
+    if (
+      userData.initialized &&
+      !userData.deleted &&
+      initialOperation &&
+      authority &&
+      !["deleting", "deleted"].includes(authority.status)
+    ) {
+      let operation = initialOperation;
+      if (operation.state === "credential-reserved") {
+        operation = await this.accountHomePort.advanceOperation({
+          operationId: row.operationId,
+          userId: row.userId,
+          expectedState: "credential-reserved",
+          nextState: "user-data-initialized",
+          now,
+        });
+      }
       if (
-        authority?.status === "active" &&
-        operation &&
         ["user-data-initialized", "directory-active", "completed"].includes(
           operation.state,
         )
@@ -1310,26 +1474,63 @@ export class CloudflareIdentityGateway
           userId: row.userId,
           locator: row.locator,
           accountEpoch: authority.operationEpoch,
-          now: input.now,
+          now,
         });
-        activated += 1;
-      } else if (
-        authority?.status === "deleting" ||
-        authority?.status === "deleted" ||
-        (operation !== null &&
-          ["pending", "credential-reserved"].includes(operation.state))
-      ) {
-        await this.directoryPort.tombstone({
-          operationId: row.operationId,
-          locator: row.locator,
-          userId: row.userId,
-          accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
-          now: input.now,
-        });
-        tombstoned += 1;
+        if (operation.state === "user-data-initialized") {
+          operation = await this.accountHomePort.advanceOperation({
+            operationId: row.operationId,
+            userId: row.userId,
+            expectedState: "user-data-initialized",
+            nextState: "directory-active",
+            now,
+          });
+        }
+        if (operation.state === "directory-active") {
+          const primaryEmail =
+            row.credential.kind === "sso"
+              ? row.credential.verifiedEmail
+              : EmailValue.create(
+                  row.credential.canonicalValue.replace(/^email:/, ""),
+                );
+          await this.accountHomePort.advanceOperation({
+            operationId: row.operationId,
+            userId: row.userId,
+            expectedState: "directory-active",
+            nextState: "completed",
+            credentialKind: row.credential.kind,
+            primaryEmail,
+            now,
+          });
+        }
+        return "activated";
       }
     }
-    return { examined: rows.length, activated, tombstoned };
+    if (
+      userData.deleted ||
+      !userData.initialized ||
+      authority?.status === "deleting" ||
+      authority?.status === "deleted"
+    ) {
+      await this.directoryPort.tombstone({
+        operationId: row.operationId,
+        locator: row.locator,
+        userId: row.userId,
+        accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
+        now,
+      });
+      if (
+        initialOperation &&
+        ["signup", "sso-create"].includes(initialOperation.kind)
+      ) {
+        await this.accountHomePort.compensateCreate({
+          operationId: row.operationId,
+          userId: row.userId,
+          now,
+        });
+      }
+      return "tombstoned";
+    }
+    return "unchanged";
   }
 
   async operatorReconcileRestoredPage(input: {
@@ -1376,8 +1577,10 @@ export class CloudflareIdentityGateway
         const authoritative =
           authority?.status === "active" &&
           authority.operationEpoch === row.accountEpoch &&
-          authority.locators.some((locator) =>
-            sameCredentialLocator(locator, row.locator),
+          authority.credentials.some((credential) =>
+            credential.locators.some((locator) =>
+              sameCredentialLocator(locator, row.locator),
+            ),
           );
         if (authoritative) continue;
         await this.directoryPort.tombstone({

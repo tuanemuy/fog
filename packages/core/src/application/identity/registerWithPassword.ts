@@ -76,7 +76,7 @@ export async function registerWithPassword({
       userId: prepared.userId,
       email,
       passwordHash: prepared.passwordHash,
-      now: now.getTime(),
+      now: prepared.preparedAt,
     });
     return { userId: prepared.userId, sessionEpoch: result.sessionEpoch };
   } catch (error) {

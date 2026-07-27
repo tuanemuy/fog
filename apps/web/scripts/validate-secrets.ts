@@ -18,6 +18,7 @@ export function validateSecretInventory(input: {
   required: readonly string[];
   configured: readonly SecretRecord[];
   forbidden?: ReadonlySet<string>;
+  allowed?: ReadonlySet<string>;
 }): string[] {
   const configured = new Set(input.configured.map(({ name }) => name));
   const failures = input.required
@@ -26,6 +27,8 @@ export function validateSecretInventory(input: {
   for (const name of configured) {
     if (input.forbidden?.has(name)) {
       failures.push(`forbidden request-only secret is present: ${name}`);
+    } else if (input.allowed !== undefined && !input.allowed.has(name)) {
+      failures.push(`unexpected secret is present: ${name}`);
     }
   }
   return failures;
@@ -84,6 +87,7 @@ function main(): void {
       ...validateSecretInventory({
         required,
         configured,
+        allowed: new Set(required),
         ...(worker === "state" ? { forbidden: requestOnlySecrets } : {}),
       }).map((failure) => `${worker}: ${failure}`),
     );

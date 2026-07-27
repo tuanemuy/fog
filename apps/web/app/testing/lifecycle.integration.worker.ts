@@ -1,13 +1,15 @@
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import type {
   SearchPage,
-  SemanticCommand,
+  SemanticRpcCommand,
 } from "@repo/core/application/search/contracts";
-import type { UserDataDurableObject } from "../durable-objects/UserDataDurableObject";
+import type { LocalUserDataDurableObject } from "./LocalUserDataDurableObject";
+
+export { LocalUserDataDurableObject as UserDataDurableObject } from "./LocalUserDataDurableObject";
 
 type LifecycleEnv = Readonly<{
   LOCAL_LIFECYCLE_ENABLED: string;
-  USER_DATA: DurableObjectNamespace<UserDataDurableObject>;
+  USER_DATA: DurableObjectNamespace<LocalUserDataDurableObject>;
 }>;
 
 type SearchCapableStub = Readonly<{
@@ -35,7 +37,7 @@ async function executeLifecycle(
       now: 1,
     }),
   );
-  const commands: readonly SemanticCommand[] = [
+  const commands: readonly SemanticRpcCommand[] = [
     {
       version: 1,
       type: "create-memo",
@@ -76,6 +78,7 @@ async function executeLifecycle(
       version: 1,
       type: "update-document",
       operationId: `${runId}:update-document`,
+      changeReason: "local lifecycle edit",
       document: {
         id: "document-1",
         title: "耐障害性の復旧",
@@ -96,14 +99,8 @@ async function executeLifecycle(
       version: 1,
       type: "restore-document",
       operationId: `${runId}:restore-document`,
-      document: {
-        id: "document-1",
-        title: "耐障害性",
-        body: "東京駅から始める運用設計",
-        timestamp: 7,
-        topicId: "topic-1",
-        sourceMemoIds: ["memo-1"],
-      },
+      documentId: "document-1",
+      restoredAt: 7,
     },
     {
       version: 1,
@@ -116,7 +113,8 @@ async function executeLifecycle(
       version: 1,
       type: "restore-memo",
       operationId: `${runId}:restore-memo`,
-      memo: { id: "memo-1", body: "東京駅の復旧メモ", timestamp: 9 },
+      memoId: "memo-1",
+      restoredAt: 9,
     },
     {
       version: 1,

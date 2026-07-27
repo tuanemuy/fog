@@ -15,14 +15,22 @@ import type {
   TopicWriteDto,
 } from "@repo/core/application/search/contracts";
 import { SearchErrorCode } from "@repo/core/application/search/contracts";
+import { BusinessRuleError } from "@repo/core/domain/error";
 import { type DurableSqlStorage, sqliteErrorCode } from "../sql";
 import { payloadDigest } from "./canonical";
+import { DurableJobStore } from "./jobs";
 import { Fts5SearchAdapter } from "./searchIndex";
 
 const MAX_TITLE_BYTES = 1_024;
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_MEMO_BODY_CODE_POINTS = 10_000;
+const MAX_DOCUMENT_TITLE_CODE_POINTS = 200;
 const MAX_SOURCES = 100;
+const SOURCE_INSERT_BATCH = 33;
 const DAY_MS = 86_400_000;
+const MAX_TOPIC_DOCUMENTS_PER_COMMAND = 100;
+const IDEMPOTENCY_RETENTION_MS = 90 * DAY_MS;
+const MAX_SEMANTIC_IDEMPOTENCY_ROWS = 10_000;
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
@@ -32,11 +40,12 @@ function commandTimestamp(command: SemanticCommand): number {
   switch (command.type) {
     case "create-memo":
     case "update-memo":
-    case "restore-memo":
       return command.memo.timestamp;
+    case "restore-memo":
+    case "restore-document":
+      return command.restoredAt;
     case "create-document":
     case "update-document":
-    case "restore-document":
       return command.document.timestamp;
     case "create-topic":
       return command.topic.timestamp;
@@ -57,6 +66,18 @@ function commandTimestamp(command: SemanticCommand): number {
 
 function commandPayload(command: SemanticCommand): unknown {
   const { operationId: _operationId, ...payload } = command;
+  if (
+    payload.type === "create-document" ||
+    payload.type === "update-document"
+  ) {
+    return {
+      ...payload,
+      document: {
+        ...payload.document,
+        sourceMemoIds: [...new Set(payload.document.sourceMemoIds)].sort(),
+      },
+    };
+  }
   return payload;
 }
 
@@ -66,7 +87,10 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     private readonly retentionDays: () => number,
   ) {}
 
-  commit(command: SemanticCommand): SemanticCommitResult {
+  transactionSync(
+    command: SemanticCommand,
+    callback?: Parameters<SemanticCommitPort["transactionSync"]>[1],
+  ): SemanticCommitResult {
     try {
       return this.storage.transactionSync(() => {
         const digest = payloadDigest(commandPayload(command));
@@ -98,6 +122,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           };
         }
         this.execute(command);
+        callback?.({ storage: "user-data" }, this.projection());
         const result: SemanticCommitResult = {
           operationId: command.operationId,
           replayed: false,
@@ -113,13 +138,15 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
           JSON.stringify(result),
           commandTimestamp(command),
         );
+        this.pruneIdempotency(commandTimestamp(command));
         return result;
       });
     } catch (error) {
       if (
         error instanceof ConflictError ||
         error instanceof NotFoundError ||
-        error instanceof SystemError
+        error instanceof SystemError ||
+        error instanceof BusinessRuleError
       ) {
         throw error;
       }
@@ -139,42 +166,110 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     }
   }
 
+  private pruneIdempotency(now: number): void {
+    this.storage.sql.exec(
+      `DELETE FROM idempotency
+       WHERE namespace = 'semantic' AND completed_at < ?`,
+      now - IDEMPOTENCY_RETENTION_MS,
+    );
+    this.storage.sql.exec(
+      `DELETE FROM idempotency
+       WHERE namespace = 'semantic' AND operation_id IN (
+         SELECT operation_id FROM idempotency
+         WHERE namespace = 'semantic'
+         ORDER BY completed_at DESC, operation_id DESC
+         LIMIT -1 OFFSET ?
+       )`,
+      MAX_SEMANTIC_IDEMPOTENCY_ROWS,
+    );
+  }
+
   private execute(command: SemanticCommand): void {
     switch (command.type) {
       case "create-memo":
-        this.writeMemo(command.memo, "create");
+        this.writeMemo(
+          command.memo,
+          "create",
+          undefined,
+          command.actorId,
+          undefined,
+        );
         return;
       case "update-memo":
-        this.writeMemo(command.memo, "update");
+        this.writeMemo(
+          command.memo,
+          "update",
+          command.expectedVersion,
+          command.actorId,
+          command.changeReason,
+        );
         return;
       case "trash-memo":
+        this.assertExpectedVersion(command.memoId, command.expectedVersion);
         this.trashContent(command.memoId, "memo", command.trashedAt);
+        this.enqueueRetention("memo", command.memoId, command.trashedAt);
         return;
       case "restore-memo":
-        this.restoreMemo(command.memo);
+        this.assertExpectedVersion(command.memoId, command.expectedVersion);
+        this.restoreContent(
+          command.memoId,
+          "memo",
+          command.restoredAt,
+          command.actorId,
+        );
         return;
       case "remove-memo":
+        this.assertExpectedVersion(command.memoId, command.expectedVersion);
         this.hardDelete(command.memoId, "memo");
         return;
       case "create-document":
-        this.writeDocument(command.document, "create");
+        this.writeDocument(
+          command.document,
+          "create",
+          undefined,
+          command.actorId,
+          "created",
+        );
         return;
       case "update-document":
-        this.writeDocument(command.document, "update");
+        this.writeDocument(
+          command.document,
+          "update",
+          command.expectedVersion,
+          command.actorId,
+          command.changeReason,
+        );
         return;
       case "trash-document":
+        this.assertExpectedVersion(command.documentId, command.expectedVersion);
         this.trashContent(command.documentId, "document", command.trashedAt);
+        this.enqueueRetention(
+          "document",
+          command.documentId,
+          command.trashedAt,
+        );
         return;
       case "restore-document":
-        this.restoreDocument(command.document);
+        this.assertExpectedVersion(command.documentId, command.expectedVersion);
+        this.restoreContent(
+          command.documentId,
+          "document",
+          command.restoredAt,
+          command.actorId,
+        );
         return;
       case "remove-document":
+        this.assertExpectedVersion(command.documentId, command.expectedVersion);
         this.hardDelete(command.documentId, "document");
         return;
       case "create-topic":
         this.createTopic(command.topic);
         return;
       case "set-topic-archived":
+        this.assertTopicExpectedVersion(
+          command.topicId,
+          command.expectedVersion,
+        );
         this.setTopicArchived(
           command.topicId,
           command.archivedAt,
@@ -182,146 +277,141 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         );
         return;
       case "trash-topic":
+        this.assertTopicExpectedVersion(
+          command.topicId,
+          command.expectedVersion,
+        );
         this.setTopicTrash(command.topicId, command.trashedAt, true);
+        this.enqueueRetention("topic", command.topicId, command.trashedAt);
         return;
       case "restore-topic":
+        this.assertTopicExpectedVersion(
+          command.topicId,
+          command.expectedVersion,
+        );
         this.setTopicTrash(command.topicId, command.restoredAt, false);
         return;
       case "remove-topic":
+        this.assertTopicExpectedVersion(
+          command.topicId,
+          command.expectedVersion,
+        );
         this.removeTopic(command.topicId);
         return;
     }
   }
 
-  private writeMemo(memo: MemoWriteDto, mode: "create" | "update"): void {
-    this.validateText("", memo.body);
+  private writeMemo(
+    memo: MemoWriteDto,
+    mode: "create" | "update",
+    expectedVersion: number | undefined,
+    actorId: string | undefined,
+    changeReason: string | undefined,
+  ): void {
+    this.validateMemo(memo.body);
     this.assertWriteMode(memo.id, "memo", mode);
+    if (mode === "update") {
+      this.assertExpectedVersion(memo.id, expectedVersion);
+      const current = this.storage.sql
+        .exec<{ body: string }>(
+          "SELECT body FROM content WHERE id = ? AND kind = 'memo'",
+          memo.id,
+        )
+        .one();
+      if (current.body === memo.body) return;
+    }
     if (mode === "create") {
       this.storage.sql.exec(
         `INSERT INTO content(
-           id, kind, title, body, created_at, updated_at
-         ) VALUES (?, 'memo', '', ?, ?, ?)`,
+           id, kind, title, body, version, updated_by, created_at, updated_at
+         ) VALUES (?, 'memo', '', ?, 1, ?, ?, ?)`,
         memo.id,
         memo.body,
+        actorId ?? "local-user",
         memo.timestamp,
         memo.timestamp,
       );
     } else {
       this.storage.sql.exec(
-        `UPDATE content SET body = ?, updated_at = ?
+        `UPDATE content
+         SET body = ?, version = version + 1, updated_by = ?, updated_at = ?
          WHERE id = ? AND kind = 'memo' AND trashed_at IS NULL`,
         memo.body,
+        actorId ?? "local-user",
         memo.timestamp,
         memo.id,
       );
     }
-    this.addRevision(memo.id, "", memo.body, memo.timestamp);
-    this.projection().apply({
-      type: "upsert",
-      entry: this.readProjection(memo.id),
-    });
-  }
-
-  private restoreMemo(memo: MemoWriteDto): void {
-    this.assertTrashed(memo.id, "memo");
-    this.validateText("", memo.body);
-    this.storage.sql.exec(
-      `UPDATE content SET body = ?, trashed_at = NULL, updated_at = ?
-       WHERE id = ? AND kind = 'memo'`,
+    this.addRevision(
+      memo.id,
+      "",
       memo.body,
       memo.timestamp,
-      memo.id,
+      actorId,
+      changeReason,
     );
-    this.storage.sql.exec("DELETE FROM trash WHERE content_id = ?", memo.id);
-    this.addRevision(memo.id, "", memo.body, memo.timestamp);
-    this.projection().apply({
-      type: "upsert",
-      entry: this.readProjection(memo.id),
-    });
+    this.projection().upsert(this.readProjection(memo.id));
   }
 
   private writeDocument(
     document: DocumentWriteDto,
     mode: "create" | "update",
+    expectedVersion: number | undefined,
+    actorId: string | undefined,
+    changeReason: string | undefined,
   ): void {
     this.validateDocument(document);
     this.assertWriteMode(document.id, "document", mode);
+    if (mode === "update") {
+      this.assertExpectedVersion(document.id, expectedVersion);
+    }
     this.assertTopic(document.topicId);
-    this.assertSources(document.sourceMemoIds);
+    const sourceMemoIds = this.normalizeSources(document.sourceMemoIds);
+    this.assertSources(sourceMemoIds);
+    if (
+      mode === "update" &&
+      this.documentIsUnchanged(document, sourceMemoIds)
+    ) {
+      return;
+    }
     if (mode === "create") {
       this.storage.sql.exec(
         `INSERT INTO content(
-           id, kind, title, body, topic_id, created_at, updated_at
-         ) VALUES (?, 'document', ?, ?, ?, ?, ?)`,
+           id, kind, title, body, topic_id, version, updated_by,
+           created_at, updated_at
+         ) VALUES (?, 'document', ?, ?, ?, 1, ?, ?, ?)`,
         document.id,
         document.title,
         document.body,
         document.topicId,
+        actorId ?? "local-user",
         document.timestamp,
         document.timestamp,
       );
     } else {
       this.storage.sql.exec(
-        `UPDATE content SET title = ?, body = ?, topic_id = ?, updated_at = ?
+        `UPDATE content
+         SET title = ?, body = ?, topic_id = ?, version = version + 1,
+             updated_by = ?, updated_at = ?
          WHERE id = ? AND kind = 'document' AND trashed_at IS NULL`,
         document.title,
         document.body,
         document.topicId,
+        actorId ?? "local-user",
         document.timestamp,
         document.id,
       );
     }
-    this.replaceSources(
-      document.id,
-      document.sourceMemoIds,
-      document.timestamp,
-    );
+    this.replaceSources(document.id, sourceMemoIds, document.timestamp);
     this.addRevision(
       document.id,
       document.title,
       document.body,
       document.timestamp,
+      actorId,
+      changeReason,
     );
-    this.projection().apply({
-      type: "upsert",
-      entry: this.readProjection(document.id),
-    });
-  }
-
-  private restoreDocument(document: DocumentWriteDto): void {
-    this.assertTrashed(document.id, "document");
-    this.validateDocument(document);
-    this.assertTopic(document.topicId);
-    this.assertSources(document.sourceMemoIds);
-    this.storage.sql.exec(
-      `UPDATE content
-       SET title = ?, body = ?, topic_id = ?, trashed_at = NULL, updated_at = ?
-       WHERE id = ? AND kind = 'document'`,
-      document.title,
-      document.body,
-      document.topicId,
-      document.timestamp,
-      document.id,
-    );
-    this.storage.sql.exec(
-      "DELETE FROM trash WHERE content_id = ?",
-      document.id,
-    );
-    this.replaceSources(
-      document.id,
-      document.sourceMemoIds,
-      document.timestamp,
-    );
-    this.addRevision(
-      document.id,
-      document.title,
-      document.body,
-      document.timestamp,
-    );
-    this.projection().apply({
-      type: "upsert",
-      entry: this.readProjection(document.id),
-    });
+    this.projection().upsert(this.readProjection(document.id));
   }
 
   private trashContent(
@@ -331,7 +421,8 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   ): void {
     this.assertActive(id, expectedKind);
     this.storage.sql.exec(
-      "UPDATE content SET trashed_at = ?, updated_at = ? WHERE id = ?",
+      `UPDATE content
+       SET trashed_at = ?, version = version + 1, updated_at = ? WHERE id = ?`,
       trashedAt,
       trashedAt,
       id,
@@ -348,20 +439,33 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       trashedAt,
       trashedAt + this.retentionDays() * DAY_MS,
     );
-    this.projection().apply({
-      type: "remove",
-      entityType: expectedKind,
+    this.projection().remove(expectedKind, id);
+  }
+
+  private restoreContent(
+    id: string,
+    kind: SearchContentKind,
+    restoredAt: number,
+    actorId?: string,
+  ): void {
+    this.assertTrashed(id, kind);
+    this.storage.sql.exec(
+      `UPDATE content
+       SET trashed_at = NULL, version = version + 1, updated_by = ?,
+           updated_at = ?
+       WHERE id = ? AND kind = ?`,
+      actorId ?? "local-user",
+      restoredAt,
       id,
-    });
+      kind,
+    );
+    this.storage.sql.exec("DELETE FROM trash WHERE content_id = ?", id);
+    this.projection().upsert(this.readProjection(id));
   }
 
   private hardDelete(id: string, expectedKind: SearchContentKind): void {
     this.assertTrashed(id, expectedKind);
-    this.projection().apply({
-      type: "remove",
-      entityType: expectedKind,
-      id,
-    });
+    this.projection().remove(expectedKind, id);
     this.storage.sql.exec("DELETE FROM content WHERE id = ?", id);
   }
 
@@ -380,8 +484,8 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     }
     this.storage.sql.exec(
       `INSERT INTO topics(
-         id, name, source_memo_id, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?)`,
+         id, name, source_memo_id, version, created_at, updated_at
+       ) VALUES (?, ?, ?, 1, ?, ?)`,
       topic.id,
       topic.name,
       topic.sourceMemoId ?? null,
@@ -397,7 +501,8 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   ): void {
     this.assertTopic(topicId);
     this.storage.sql.exec(
-      "UPDATE topics SET archived_at = ?, updated_at = ? WHERE id = ?",
+      `UPDATE topics
+       SET archived_at = ?, version = version + 1, updated_at = ? WHERE id = ?`,
       archivedAt,
       updatedAt,
       topicId,
@@ -429,13 +534,17 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         .exec<{ id: string }>(
           `SELECT id FROM content
            WHERE kind = 'document' AND topic_id = ?
-             AND trashed_at IS NULL AND trashed_with_topic_id IS NULL`,
+             AND trashed_at IS NULL AND trashed_with_topic_id IS NULL
+           LIMIT ?`,
           topicId,
+          MAX_TOPIC_DOCUMENTS_PER_COMMAND + 1,
         )
         .toArray();
+      this.assertTopicDocumentLimit(documents.length);
       this.storage.sql.exec(
         `UPDATE topics
-         SET trashed_at = ?, purge_after = ?, updated_at = ? WHERE id = ?`,
+         SET trashed_at = ?, purge_after = ?, version = version + 1,
+             updated_at = ? WHERE id = ?`,
         timestamp,
         timestamp + this.retentionDays() * DAY_MS,
         timestamp,
@@ -451,24 +560,24 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         topicId,
       );
       for (const document of documents) {
-        this.projection().apply({
-          type: "remove",
-          entityType: "document",
-          id: document.id,
-        });
+        this.projection().remove("document", document.id);
       }
       return;
     }
     const documents = this.storage.sql
       .exec<{ id: string }>(
         `SELECT id FROM content
-         WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+         WHERE kind = 'document' AND trashed_with_topic_id = ?
+         LIMIT ?`,
         topicId,
+        MAX_TOPIC_DOCUMENTS_PER_COMMAND + 1,
       )
       .toArray();
+    this.assertTopicDocumentLimit(documents.length);
     this.storage.sql.exec(
       `UPDATE topics
-       SET trashed_at = NULL, purge_after = NULL, updated_at = ? WHERE id = ?`,
+       SET trashed_at = NULL, purge_after = NULL, version = version + 1,
+           updated_at = ? WHERE id = ?`,
       timestamp,
       topicId,
     );
@@ -480,10 +589,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       topicId,
     );
     for (const document of documents) {
-      this.projection().apply({
-        type: "upsert",
-        entry: this.readProjection(document.id),
-      });
+      this.projection().upsert(this.readProjection(document.id));
     }
   }
 
@@ -503,16 +609,15 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     const setDocuments = this.storage.sql
       .exec<{ id: string }>(
         `SELECT id FROM content
-         WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+         WHERE kind = 'document' AND trashed_with_topic_id = ?
+         LIMIT ?`,
         topicId,
+        MAX_TOPIC_DOCUMENTS_PER_COMMAND + 1,
       )
       .toArray();
+    this.assertTopicDocumentLimit(setDocuments.length);
     for (const document of setDocuments) {
-      this.projection().apply({
-        type: "remove",
-        entityType: "document",
-        id: document.id,
-      });
+      this.projection().remove("document", document.id);
     }
     this.storage.sql.exec(
       "DELETE FROM content WHERE kind = 'document' AND trashed_with_topic_id = ?",
@@ -600,13 +705,18 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       "DELETE FROM content_sources WHERE content_id = ?",
       documentId,
     );
-    for (const memoId of [...new Set(sourceMemoIds)].sort()) {
+    const normalized = this.normalizeSources(sourceMemoIds);
+    for (
+      let start = 0;
+      start < normalized.length;
+      start += SOURCE_INSERT_BATCH
+    ) {
+      const batch = normalized.slice(start, start + SOURCE_INSERT_BATCH);
+      const values = batch.map(() => "(?, ?, '', ?)").join(", ");
       this.storage.sql.exec(
         `INSERT INTO content_sources(content_id, memo_id, label, linked_at)
-         VALUES (?, ?, '', ?)`,
-        documentId,
-        memoId,
-        linkedAt,
+         VALUES ${values}`,
+        ...batch.flatMap((memoId) => [documentId, memoId, linkedAt]),
       );
     }
   }
@@ -616,6 +726,8 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     title: string,
     body: string,
     timestamp: number,
+    actorId?: string,
+    changeReason?: string,
   ): void {
     const version = this.storage.sql
       .exec<{ version: number }>(
@@ -626,14 +738,109 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       .one().version;
     this.storage.sql.exec(
       `INSERT INTO content_revisions(
-         content_id, version, title, body, created_at
-       ) VALUES (?, ?, ?, ?, ?)`,
+         content_id, version, title, body, actor_id, change_reason, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       contentId,
       version,
       title,
       body,
+      actorId ?? "local-user",
+      changeReason ?? null,
       timestamp,
     );
+    this.storage.sql.exec(
+      "UPDATE content SET latest_revision_version = ? WHERE id = ?",
+      version,
+      contentId,
+    );
+  }
+
+  private assertExpectedVersion(id: string, expected?: number): void {
+    if (expected === undefined) return;
+    const row = this.storage.sql
+      .exec<{ version: number }>("SELECT version FROM content WHERE id = ?", id)
+      .toArray()[0];
+    if (!row || row.version !== expected) {
+      throw new ConflictError(
+        "CONTENT_VERSION_CONFLICT",
+        "Content version did not match",
+      );
+    }
+  }
+
+  private assertTopicExpectedVersion(topicId: string, expected?: number): void {
+    if (expected === undefined) return;
+    const row = this.storage.sql
+      .exec<{ version: number }>(
+        "SELECT version FROM topics WHERE id = ?",
+        topicId,
+      )
+      .toArray()[0];
+    if (!row || row.version !== expected) {
+      throw new ConflictError(
+        "TOPIC_VERSION_CONFLICT",
+        "Topic version did not match",
+      );
+    }
+  }
+
+  private normalizeSources(
+    sourceMemoIds: readonly string[],
+  ): readonly string[] {
+    return [...new Set(sourceMemoIds)].sort();
+  }
+
+  private documentIsUnchanged(
+    document: DocumentWriteDto,
+    sourceMemoIds: readonly string[],
+  ): boolean {
+    const current = this.storage.sql
+      .exec<{ title: string; body: string; topic_id: string | null }>(
+        "SELECT title, body, topic_id FROM content WHERE id = ?",
+        document.id,
+      )
+      .one();
+    if (
+      current.title !== document.title ||
+      current.body !== document.body ||
+      current.topic_id !== document.topicId
+    ) {
+      return false;
+    }
+    const currentSources = this.storage.sql
+      .exec<{ memo_id: string }>(
+        "SELECT memo_id FROM content_sources WHERE content_id = ? ORDER BY memo_id",
+        document.id,
+      )
+      .toArray()
+      .map(({ memo_id }) => memo_id);
+    return JSON.stringify(currentSources) === JSON.stringify(sourceMemoIds);
+  }
+
+  private enqueueRetention(
+    kind: SearchContentKind | "topic",
+    id: string,
+    trashedAt: number,
+  ): void {
+    const jobKind = kind === "topic" ? "purge-topic" : "purge-trash";
+    const jobId = `purge-${jobKind}:${kind}:${id}:${trashedAt}`;
+    new DurableJobStore(this.storage).enqueueInTransaction({
+      id: jobId,
+      kind: jobKind,
+      payload: { id, kind, trashedAt },
+      nextRunAt: trashedAt + this.retentionDays() * DAY_MS,
+      providerIdempotencyKey: jobId,
+      now: trashedAt,
+    });
+  }
+
+  private assertTopicDocumentLimit(count: number): void {
+    if (count > MAX_TOPIC_DOCUMENTS_PER_COMMAND) {
+      throw new ConflictError(
+        SearchErrorCode.ContentLimitExceeded,
+        `A topic command may affect at most ${MAX_TOPIC_DOCUMENTS_PER_COMMAND} documents`,
+      );
+    }
   }
 
   private assertWriteMode(
@@ -757,30 +964,49 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   }
 
   private assertSources(sourceMemoIds: readonly string[]): void {
-    if (sourceMemoIds.length > MAX_SOURCES) {
+    const normalized = this.normalizeSources(sourceMemoIds);
+    if (normalized.length > MAX_SOURCES) {
       throw new ConflictError(
         SearchErrorCode.SourceLimitExceeded,
         `A document may have at most ${MAX_SOURCES} source memos`,
       );
     }
-    for (const memoId of new Set(sourceMemoIds)) {
-      const row = this.storage.sql
-        .exec<{ id: string }>(
-          `SELECT id FROM content
-           WHERE id = ? AND kind = 'memo' AND trashed_at IS NULL`,
-          memoId,
-        )
-        .toArray()[0];
-      if (!row) {
-        throw new NotFoundError(
-          SearchErrorCode.SourceNotFound,
-          "Source memo was not found",
-        );
-      }
+    if (normalized.length === 0) return;
+    const placeholders = normalized.map(() => "?").join(", ");
+    const found = this.storage.sql
+      .exec<{ id: string }>(
+        `SELECT id FROM content
+         WHERE id IN (${placeholders}) AND kind = 'memo' AND trashed_at IS NULL`,
+        ...normalized,
+      )
+      .toArray();
+    if (found.length !== normalized.length) {
+      throw new NotFoundError(
+        SearchErrorCode.SourceNotFound,
+        "Source memo was not found",
+      );
     }
   }
 
   private validateDocument(document: DocumentWriteDto): void {
+    if (document.title.trim().length === 0) {
+      throw new BusinessRuleError(
+        SearchErrorCode.EmptyDocumentTitle,
+        "Document title must not be empty",
+      );
+    }
+    if (/[\r\n]/u.test(document.title)) {
+      throw new BusinessRuleError(
+        SearchErrorCode.DocumentTitleMultiline,
+        "Document title must be a single line",
+      );
+    }
+    if ([...document.title].length > MAX_DOCUMENT_TITLE_CODE_POINTS) {
+      throw new BusinessRuleError(
+        SearchErrorCode.DocumentTitleTooLong,
+        `Document title may have at most ${MAX_DOCUMENT_TITLE_CODE_POINTS} characters`,
+      );
+    }
     this.validateText(document.title, document.body);
     if (document.topicId.length === 0) {
       throw new ConflictError(
@@ -788,6 +1014,22 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         "Document must belong to a topic",
       );
     }
+  }
+
+  private validateMemo(body: string): void {
+    if (body.trim().length === 0) {
+      throw new BusinessRuleError(
+        SearchErrorCode.EmptyMemoBody,
+        "Memo body must not be empty",
+      );
+    }
+    if ([...body].length > MAX_MEMO_BODY_CODE_POINTS) {
+      throw new BusinessRuleError(
+        SearchErrorCode.MemoBodyTooLong,
+        `Memo body may have at most ${MAX_MEMO_BODY_CODE_POINTS} characters`,
+      );
+    }
+    this.validateText("", body);
   }
 
   private validateText(title: string, body: string): void {

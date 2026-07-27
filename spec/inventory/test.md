@@ -61,7 +61,7 @@ Issue #19後のactive test inventory。個別業務ケースは`spec/testcases/`
 | ID | 対象 | Status | 実装・手順 |
 |---|---|---|---|
 | TEST-MAN-001 | local-only lifecycle CLI。本番artifact/route不在 | automated | `spec/inventory/test-evidence.json#TEST-MAN-001` |
-| TEST-MAN-002 | `spec/manual-tests/search.md` の直後反映、日本語/短語/topic/trash | manual | `spec/inventory/test-evidence.json#TEST-MAN-002` |
+| TEST-MAN-002 | Issue #10の検索UI完成後に実施する直後反映、日本語/短語/topic/trash | manual | `spec/inventory/test-evidence.json#TEST-MAN-002` |
 | TEST-OPS-001 | staging disposable User Data/Identity Directory PITR smoke | release gate | `spec/inventory/test-evidence.json#TEST-OPS-001` |
 | TEST-OPS-002 | Account Home restore拒否、復旧後epoch/Directory全authority照合 | automated + staging | `spec/inventory/test-evidence.json#TEST-OPS-002` |
 | TEST-OPS-003 | state先→request後deploy、RPC compatibility window、secret隔離 | automated + release gate | `spec/inventory/test-evidence.json#TEST-OPS-003` |

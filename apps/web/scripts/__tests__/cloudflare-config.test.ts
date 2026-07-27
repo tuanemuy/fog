@@ -47,6 +47,24 @@ describe("Cloudflare two-Worker configuration", () => {
     expect(vite).toContain('production: "./wrangler.request.production.toml"');
   });
 
+  it("keeps raw semantic commits out of the production state artifact", () => {
+    const production = readFileSync(
+      "apps/web/app/durable-objects/UserDataDurableObject.ts",
+      "utf8",
+    );
+    const local = readFileSync(
+      "apps/web/app/testing/LocalUserDataDurableObject.ts",
+      "utf8",
+    );
+    const productionEntry = readFileSync(
+      "apps/web/app/server.state.ts",
+      "utf8",
+    );
+    expect(production).not.toMatch(/\basync\s+commit\s*\(/u);
+    expect(local).toMatch(/\basync\s+commit\s*\(/u);
+    expect(productionEntry).not.toContain("LocalUserDataDurableObject");
+  });
+
   it("treats the DNS zone as shared existing infrastructure", () => {
     const resources = readFileSync(
       "infra/cloudflare/pulumi/resources/index.ts",
@@ -67,5 +85,26 @@ describe("Cloudflare two-Worker configuration", () => {
       "REPLACE_WITH_SHARED_CF_ZONE_ID",
       "REPLACE_WITH_SHARED_CF_ZONE_ID",
     ]);
+    for (const stage of ["staging", "production"]) {
+      const resourcesConfig = readFileSync(
+        `infra/cloudflare/pulumi/resources/Pulumi.${stage}.yaml`,
+        "utf8",
+      );
+      const routesConfig = readFileSync(
+        `infra/cloudflare/pulumi/routes/Pulumi.${stage}.yaml`,
+        "utf8",
+      );
+      for (const key of ["accountId", "zoneId", "appHostname"]) {
+        const resourceValue = new RegExp(
+          `fog-cf-resources:${key}:\\s*(\\S+)`,
+          "u",
+        ).exec(resourcesConfig)?.[1];
+        const routeValue = new RegExp(
+          `fog-cf-routes:${key}:\\s*(\\S+)`,
+          "u",
+        ).exec(routesConfig)?.[1];
+        expect(routeValue).toBe(resourceValue);
+      }
+    }
   });
 });

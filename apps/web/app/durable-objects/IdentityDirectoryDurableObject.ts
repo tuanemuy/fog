@@ -18,6 +18,8 @@ import {
 import {
   rpcFailure,
   rpcOk,
+  validatePayloadKeys,
+  isSafeNonNegativeInteger,
   validateRpcMutation,
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
@@ -29,8 +31,15 @@ import {
 } from "@repo/core/domain/identity/valueObject";
 import type { AccountHomeDurableObject } from "./AccountHomeDurableObject";
 
+type UserDataIdentityStub = {
+  identityGetStatusV1(
+    input: IdentityRpcQuery<{ userId: string }>,
+  ): Promise<RpcResult<{ initialized: boolean; deleted: boolean }>>;
+};
+
 type StateEnv = {
   ACCOUNT_HOME: DurableObjectNamespace<AccountHomeDurableObject>;
+  USER_DATA: DurableObjectNamespace;
 };
 
 const conflictCodes = new Set([
@@ -47,14 +56,20 @@ function execute<T>(operation: () => T): RpcResult<T> {
   } catch (error) {
     const code =
       error instanceof Error ? error.message : "IDENTITY_STORAGE_ERROR";
+    const validation =
+      code.startsWith("IDENTITY_RPC_") ||
+      code.endsWith("_INVALID") ||
+      code.endsWith("_REQUIRED");
     const conflict = conflictCodes.has(code);
     return rpcFailure(
-      conflict ? "conflict" : "infrastructure",
-      conflict ? code : "IDENTITY_STORAGE_ERROR",
-      conflict
-        ? "Identity operation conflicted with current state"
-        : "Identity storage operation failed",
-      !conflict,
+      validation ? "validation" : conflict ? "conflict" : "infrastructure",
+      validation || conflict ? code : "IDENTITY_STORAGE_ERROR",
+      validation
+        ? "Invalid identity payload"
+        : conflict
+          ? "Identity operation conflicted with current state"
+          : "Identity storage operation failed",
+      !validation && !conflict,
     );
   }
 }
@@ -107,7 +122,18 @@ function parseCredential(input: CredentialRef): CredentialRef {
   throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
 }
 
+function invalidPayload(
+  payload: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): RpcResult<never> | null {
+  const result = validatePayloadKeys(payload, required, optional);
+  return result.ok ? null : result;
+}
+
 export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
+  private readonly sessionId = crypto.randomUUID();
+
   constructor(
     ctx: DurableObjectState,
     private readonly stateEnv: StateEnv,
@@ -118,7 +144,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  reserve(
+  async reserve(
     request: IdentityRpcMutation<{
       locator: CredentialLocator;
       credential: CredentialRef;
@@ -129,20 +155,195 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     }>,
   ): Promise<RpcResult<{ userId: string }>> {
     const validated = validateRpcMutation(request);
-    if (!validated.ok) return Promise.resolve(validated);
-    return Promise.resolve(
-      execute(() => ({
-        userId: new IdentityDirectoryStore(this.ctx.storage).reserve({
-          operationId: operationId(request.operationId),
-          userId: UserId.create(request.payload.userId),
-          locator: parseLocator(request.payload.locator),
-          credential: parseCredential(request.payload.credential),
-          accountEpoch: request.payload.accountEpoch,
-          now: request.payload.now,
-          reservationExpiresAt: request.payload.reservationExpiresAt,
-        }),
-      })),
-    );
+    if (!validated.ok) return validated;
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "credential",
+      "userId",
+      "accountEpoch",
+      "now",
+      "reservationExpiresAt",
+    ]);
+    if (
+      invalid ||
+      !isSafeNonNegativeInteger(request.payload.accountEpoch) ||
+      !isSafeNonNegativeInteger(request.payload.now) ||
+      !isSafeNonNegativeInteger(request.payload.reservationExpiresAt) ||
+      request.payload.reservationExpiresAt < request.payload.now
+    ) {
+      return (
+        invalid ??
+        rpcFailure(
+          "validation",
+          "IDENTITY_RPC_PAYLOAD_INVALID",
+          "Invalid identity payload",
+        )
+      );
+    }
+    const result = execute(() => ({
+      userId: new IdentityDirectoryStore(this.ctx.storage).reserve({
+        operationId: operationId(request.operationId),
+        userId: UserId.create(request.payload.userId),
+        locator: parseLocator(request.payload.locator),
+        credential: parseCredential(request.payload.credential),
+        accountEpoch: request.payload.accountEpoch,
+        now: request.payload.now,
+        reservationExpiresAt: request.payload.reservationExpiresAt,
+      }),
+    }));
+    if (result.ok) {
+      const store = new IdentityDirectoryStore(this.ctx.storage);
+      const scheduledAt = Math.max(
+        request.payload.reservationExpiresAt,
+        Date.now() + 15 * 60_000,
+      );
+      store.enqueueReconcile(scheduledAt, request.payload.now);
+      await this.scheduleReconcileAlarm(scheduledAt);
+    }
+    return result;
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const store = new IdentityDirectoryStore(this.ctx.storage);
+    const job = store.claimReconcile(now);
+    if (!job) {
+      const next = store.finishReconcile(now);
+      if (next !== null) await this.ctx.storage.setAlarm(next);
+      return;
+    }
+    try {
+      const rows = store.expiredReservations(now, 100);
+      for (const row of rows) {
+        const userData = this.stateEnv.USER_DATA.getByName(
+          row.userId,
+        ) as unknown as UserDataIdentityStub;
+        const userDataResult = await userData.identityGetStatusV1({
+          version: 1,
+          payload: { userId: row.userId },
+        });
+        if (!userDataResult.ok) {
+          throw new Error(userDataResult.error.code);
+        }
+        const account = this.stateEnv.ACCOUNT_HOME.getByName(row.userId);
+        const [authorityResult, operationResult] = await Promise.all([
+          account.getAuthSummary({ version: 1, payload: {} }),
+          account.getOperation({
+            version: 1,
+            payload: { operationId: row.operationId },
+          }),
+        ]);
+        if (!authorityResult.ok || !operationResult.ok) {
+          throw new Error(
+            !authorityResult.ok
+              ? authorityResult.error.code
+              : operationResult.ok
+                ? "ACCOUNT_OPERATION_UNAVAILABLE"
+                : operationResult.error.code,
+          );
+        }
+        const authority = authorityResult.value;
+        let operation = operationResult.value;
+        if (
+          userDataResult.value.initialized &&
+          !userDataResult.value.deleted &&
+          authority &&
+          operation &&
+          !["deleting", "deleted"].includes(authority.status)
+        ) {
+          if (operation.state === "credential-reserved") {
+            const advanced = await account.advanceOperation({
+              version: 1,
+              operationId: row.operationId,
+              payload: {
+                userId: row.userId,
+                expectedState: "credential-reserved",
+                nextState: "user-data-initialized",
+                now,
+              },
+            });
+            if (!advanced.ok) throw new Error(advanced.error.code);
+            operation = advanced.value;
+          }
+          if (
+            ["user-data-initialized", "directory-active", "completed"].includes(
+              operation.state,
+            )
+          ) {
+            store.activate({
+              operationId: row.operationId,
+              userId: row.userId,
+              locator: row.locator,
+              accountEpoch: authority.operationEpoch,
+              now,
+            });
+            if (operation.state === "user-data-initialized") {
+              const advanced = await account.advanceOperation({
+                version: 1,
+                operationId: row.operationId,
+                payload: {
+                  userId: row.userId,
+                  expectedState: "user-data-initialized",
+                  nextState: "directory-active",
+                  now,
+                },
+              });
+              if (!advanced.ok) throw new Error(advanced.error.code);
+              operation = advanced.value;
+            }
+            if (operation.state === "directory-active") {
+              const completed = await account.advanceOperation({
+                version: 1,
+                operationId: row.operationId,
+                payload: {
+                  userId: row.userId,
+                  expectedState: "directory-active",
+                  nextState: "completed",
+                  credentialKind: row.credential.kind,
+                  primaryEmail:
+                    row.credential.kind === "sso"
+                      ? row.credential.verifiedEmail
+                      : row.credential.canonicalValue.replace(/^email:/, ""),
+                  now,
+                },
+              });
+              if (!completed.ok) throw new Error(completed.error.code);
+            }
+          }
+        } else {
+          store.tombstone({
+            locator: row.locator,
+            userId: row.userId,
+            accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
+            now,
+          });
+          if (operation && ["signup", "sso-create"].includes(operation.kind)) {
+            const compensated = await account.compensateCreate({
+              version: 1,
+              operationId: row.operationId,
+              payload: { userId: row.userId, now },
+            });
+            if (!compensated.ok) throw new Error(compensated.error.code);
+          }
+        }
+      }
+      const next = store.finishReconcile(now);
+      if (next !== null) await this.ctx.storage.setAlarm(next);
+    } catch (error) {
+      const next = store.failReconcile(
+        error instanceof Error ? error.message : "RECONCILE_FAILED",
+        now,
+      );
+      await this.ctx.storage.setAlarm(next);
+      throw error;
+    }
+  }
+
+  private async scheduleReconcileAlarm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || at < current) {
+      await this.ctx.storage.setAlarm(at);
+    }
   }
 
   lookupPasswordSignup(
@@ -152,10 +353,13 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       userId: string;
       email: string;
       passwordHash: string;
+      preparedAt: number;
     } | null>
   > {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["opaqueOperationKey"]);
+    if (invalid) return Promise.resolve(invalid);
     if (typeof request.payload.opaqueOperationKey !== "string") {
       return Promise.resolve(
         rpcFailure(
@@ -186,11 +390,29 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     RpcResult<{
       userId: string;
       passwordHash: string;
+      preparedAt: number;
       replayed: boolean;
     }>
   > {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "opaqueOperationKey",
+      "proposedUserId",
+      "email",
+      "passwordHash",
+      "now",
+    ]);
+    if (invalid || !isSafeNonNegativeInteger(request.payload.now)) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).preparePasswordSignup({
@@ -198,6 +420,56 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           proposedUserId: UserId.create(request.payload.proposedUserId),
           email: Email.create(request.payload.email),
           passwordHash: PasswordHash.create(request.payload.passwordHash),
+          now: request.payload.now,
+        }),
+      ),
+    );
+  }
+
+  prepareSsoCreate(
+    request: IdentityRpcMutation<{
+      opaqueOperationKey: string;
+      proposedUserId: string;
+      provider: string;
+      subject: string;
+      email: string;
+      now: number;
+    }>,
+  ): Promise<RpcResult<{ userId: string; replayed: boolean }>> {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "opaqueOperationKey",
+      "proposedUserId",
+      "provider",
+      "subject",
+      "email",
+      "now",
+    ]);
+    if (
+      invalid ||
+      typeof request.payload.subject !== "string" ||
+      request.payload.subject.length === 0 ||
+      request.payload.subject.length > 512 ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).prepareSsoCreate({
+          opaqueOperationKey: request.payload.opaqueOperationKey,
+          proposedUserId: UserId.create(request.payload.proposedUserId),
+          provider: SsoProvider.create(request.payload.provider),
+          subject: request.payload.subject,
+          email: Email.create(request.payload.email),
           now: request.payload.now,
         }),
       ),
@@ -213,6 +485,21 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "now",
+    ]);
+    if (invalid || !isSafeNonNegativeInteger(request.payload.now)) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).markInitialized({
@@ -236,6 +523,26 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<{ userId: string }>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "accountEpoch",
+      "now",
+    ]);
+    if (
+      invalid ||
+      !isSafeNonNegativeInteger(request.payload.accountEpoch) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => ({
         userId: new IdentityDirectoryStore(this.ctx.storage).activate({
@@ -254,6 +561,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<PasswordCredential | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["locator"]);
+    if (invalid) return Promise.resolve(invalid);
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).lookupPassword(
@@ -268,6 +577,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<DirectoryCredential | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["locator"]);
+    if (invalid) return Promise.resolve(invalid);
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).lookup(
@@ -288,6 +599,27 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "passwordHash",
+      "accountEpoch",
+      "now",
+    ]);
+    if (
+      invalid ||
+      !isSafeNonNegativeInteger(request.payload.accountEpoch) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).replacePassword({
@@ -313,6 +645,26 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "accountEpoch",
+      "now",
+    ]);
+    if (
+      invalid ||
+      !isSafeNonNegativeInteger(request.payload.accountEpoch) ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).tombstone({
@@ -335,6 +687,21 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "accountEpoch",
+    ]);
+    if (invalid || !isSafeNonNegativeInteger(request.payload.accountEpoch)) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).purge(
@@ -357,6 +724,28 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "userId",
+      "tokenHash",
+      "expiresAt",
+    ]);
+    if (
+      invalid ||
+      typeof request.payload.tokenHash !== "string" ||
+      request.payload.tokenHash.length === 0 ||
+      request.payload.tokenHash.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.expiresAt)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).storePasswordReset({
@@ -365,6 +754,58 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
           userId: UserId.create(request.payload.userId),
           tokenHash: request.payload.tokenHash,
           expiresAt: request.payload.expiresAt,
+        });
+        return null;
+      }),
+    );
+  }
+
+  enqueuePasswordResetMail(
+    request: IdentityRpcMutation<{
+      userId: string;
+      email: string;
+      tokenHash: string;
+      providerIdempotencyKey: string;
+      now: number;
+    }>,
+  ): Promise<RpcResult<null>> {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "userId",
+      "email",
+      "tokenHash",
+      "providerIdempotencyKey",
+      "now",
+    ]);
+    if (
+      invalid ||
+      typeof request.payload.tokenHash !== "string" ||
+      request.payload.tokenHash.length === 0 ||
+      request.payload.tokenHash.length > 256 ||
+      typeof request.payload.providerIdempotencyKey !== "string" ||
+      request.payload.providerIdempotencyKey.length === 0 ||
+      request.payload.providerIdempotencyKey.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
+    return Promise.resolve(
+      execute(() => {
+        new IdentityDirectoryStore(this.ctx.storage).enqueuePasswordResetMail({
+          operationId: operationId(request.operationId),
+          userId: UserId.create(request.payload.userId),
+          email: Email.create(request.payload.email),
+          tokenHash: request.payload.tokenHash,
+          providerIdempotencyKey: request.payload.providerIdempotencyKey,
+          now: request.payload.now,
         });
         return null;
       }),
@@ -380,6 +821,27 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<{ userId: string } | null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "locator",
+      "tokenHash",
+      "now",
+    ]);
+    if (
+      invalid ||
+      typeof request.payload.tokenHash !== "string" ||
+      request.payload.tokenHash.length === 0 ||
+      request.payload.tokenHash.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).lookupPasswordReset({
@@ -396,6 +858,23 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<{ userId: string } | null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["tokenHash", "now"]);
+    if (
+      invalid ||
+      typeof request.payload.tokenHash !== "string" ||
+      request.payload.tokenHash.length === 0 ||
+      request.payload.tokenHash.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).consumePasswordReset({
@@ -416,6 +895,32 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<ReturnType<IdentityDirectoryStore["scanForRotation"]>>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(
+      request.payload,
+      ["generation", "limit"],
+      ["cursor"],
+    );
+    if (
+      invalid ||
+      typeof request.payload.generation !== "string" ||
+      request.payload.generation.length === 0 ||
+      request.payload.generation.length > 64 ||
+      !isSafeNonNegativeInteger(request.payload.limit) ||
+      request.payload.limit < 1 ||
+      request.payload.limit > 100 ||
+      (request.payload.cursor !== undefined &&
+        (typeof request.payload.cursor !== "string" ||
+          request.payload.cursor.length > 256))
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).scanForRotation(
@@ -437,6 +942,34 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   > {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(
+      request.payload,
+      ["generation", "bucket", "limit"],
+      ["cursor"],
+    );
+    if (
+      invalid ||
+      typeof request.payload.generation !== "string" ||
+      request.payload.generation.length === 0 ||
+      request.payload.generation.length > 64 ||
+      !isSafeNonNegativeInteger(request.payload.bucket) ||
+      request.payload.bucket > 1023 ||
+      !isSafeNonNegativeInteger(request.payload.limit) ||
+      request.payload.limit < 1 ||
+      request.payload.limit > 100 ||
+      (request.payload.cursor !== undefined &&
+        (typeof request.payload.cursor !== "string" ||
+          request.payload.cursor.length > 256))
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).scanForAuthorityReconcile(
@@ -459,11 +992,46 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, [
+      "generation",
+      "bucket",
+      "cursor",
+      "scanned",
+      "moved",
+      "conflicts",
+      "completedAt",
+    ]);
+    if (
+      invalid ||
+      typeof request.payload.generation !== "string" ||
+      request.payload.generation.length === 0 ||
+      request.payload.generation.length > 64 ||
+      !isSafeNonNegativeInteger(request.payload.bucket) ||
+      request.payload.bucket > 1023 ||
+      !isSafeNonNegativeInteger(request.payload.scanned) ||
+      !isSafeNonNegativeInteger(request.payload.moved) ||
+      !isSafeNonNegativeInteger(request.payload.conflicts) ||
+      (request.payload.cursor !== null &&
+        (typeof request.payload.cursor !== "string" ||
+          request.payload.cursor.length > 256)) ||
+      (request.payload.completedAt !== null &&
+        !isSafeNonNegativeInteger(request.payload.completedAt))
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
-        new IdentityDirectoryStore(this.ctx.storage).saveRotationCheckpoint(
-          request.payload,
-        );
+        new IdentityDirectoryStore(this.ctx.storage).saveRotationCheckpoint({
+          operationId: operationId(request.operationId),
+          ...request.payload,
+        });
         return null;
       }),
     );
@@ -476,6 +1044,24 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   > {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["generation", "bucket"]);
+    if (
+      invalid ||
+      typeof request.payload.generation !== "string" ||
+      request.payload.generation.length === 0 ||
+      request.payload.generation.length > 64 ||
+      !isSafeNonNegativeInteger(request.payload.bucket) ||
+      request.payload.bucket > 1023
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).rotationCheckpoint(
@@ -491,6 +1077,8 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<ReturnType<IdentityDirectoryStore["authorityStatus"]>>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, []);
+    if (invalid) return Promise.resolve(invalid);
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).authorityStatus(),
@@ -503,6 +1091,23 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["marker", "now"]);
+    if (
+      invalid ||
+      typeof request.payload.marker !== "string" ||
+      request.payload.marker.length === 0 ||
+      request.payload.marker.length > 256 ||
+      !isSafeNonNegativeInteger(request.payload.now)
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).markRestoredSession(
@@ -521,6 +1126,23 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   > {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const invalid = invalidPayload(request.payload, ["now", "limit"]);
+    if (
+      invalid ||
+      !isSafeNonNegativeInteger(request.payload.now) ||
+      !isSafeNonNegativeInteger(request.payload.limit) ||
+      request.payload.limit < 1 ||
+      request.payload.limit > 100
+    ) {
+      return Promise.resolve(
+        invalid ??
+          rpcFailure(
+            "validation",
+            "IDENTITY_RPC_PAYLOAD_INVALID",
+            "Invalid identity payload",
+          ),
+      );
+    }
     return Promise.resolve(
       execute(() =>
         new IdentityDirectoryStore(this.ctx.storage).expiredReservations(
@@ -539,16 +1161,47 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     return this.ctx.storage.onNextSessionRestoreBookmark(bookmark);
   }
 
+  async operatorPrepareRestoreProof(
+    proofId: string,
+  ): Promise<{ sessionId: string }> {
+    if (
+      proofId.length === 0 ||
+      new TextEncoder().encode(proofId).byteLength > 128
+    ) {
+      throw new Error("PITR_PROOF_ID_INVALID");
+    }
+    await this.ctx.storage.put(`pitr-proof:${proofId}`, this.sessionId);
+    return { sessionId: this.sessionId };
+  }
+
   async operatorRestartSession(): Promise<void> {
     this.ctx.abort("PITR_RESTART_REQUESTED");
   }
 
-  async operatorVerifyRestoredSession(bookmark: string): Promise<string> {
+  async operatorVerifyRestoredSession(
+    bookmark: string,
+    proof?: {
+      id: string;
+      previousSessionId: string;
+      undoBookmark: string;
+    },
+  ): Promise<string> {
+    const current = await this.ctx.storage.getCurrentBookmark();
+    if (
+      !proof ||
+      proof.id.length === 0 ||
+      proof.previousSessionId === this.sessionId ||
+      current < proof.undoBookmark ||
+      (await this.ctx.storage.get(`pitr-proof:${proof.id}`)) !== undefined
+    ) {
+      throw new Error("PITR_RESTORE_NOT_APPLIED");
+    }
+    if (current < bookmark) throw new Error("PITR_BOOKMARK_INVALID");
     new IdentityDirectoryStore(this.ctx.storage).markRestoredSession(
       bookmark,
       Date.now(),
     );
-    return this.ctx.storage.getCurrentBookmark();
+    return current;
   }
 
   async operatorReconcileRestoredPage(input: {
@@ -601,11 +1254,13 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
       const authoritative =
         authority.value?.status === "active" &&
         authority.value.operationEpoch === row.accountEpoch &&
-        authority.value.locators.some(
-          (candidate) =>
-            candidate.generation === row.locator.generation &&
-            candidate.bucket === row.locator.bucket &&
-            candidate.opaqueKey === row.locator.opaqueKey,
+        authority.value.credentials.some((credential) =>
+          credential.locators.some(
+            (candidate) =>
+              candidate.generation === row.locator.generation &&
+              candidate.bucket === row.locator.bucket &&
+              candidate.opaqueKey === row.locator.opaqueKey,
+          ),
         );
       if (authoritative) continue;
       store.tombstone({

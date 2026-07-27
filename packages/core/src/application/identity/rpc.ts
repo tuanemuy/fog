@@ -78,6 +78,31 @@ export function validateRpcMutation(
   });
 }
 
+export function validatePayloadKeys(
+  payload: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): RpcResult<Record<string, unknown>> {
+  const value = record(payload);
+  const allowed = new Set([...required, ...optional]);
+  if (
+    !value ||
+    required.some((key) => !(key in value)) ||
+    Object.keys(value).some((key) => !allowed.has(key))
+  ) {
+    return rpcFailure(
+      "validation",
+      "IDENTITY_RPC_PAYLOAD_INVALID",
+      "Invalid identity payload",
+    );
+  }
+  return rpcOk(value);
+}
+
+export function isSafeNonNegativeInteger(input: unknown): input is number {
+  return Number.isSafeInteger(input) && (input as number) >= 0;
+}
+
 export function rpcBoundary<T>(operation: () => T): RpcResult<T> {
   try {
     return rpcOk(operation());

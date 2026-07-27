@@ -10,7 +10,7 @@ import type {
   MemoSearchResultItem,
   SearchIndexPort,
   SearchPage,
-  SearchProjectionOperation,
+  SearchProjectionEntry,
   SearchProjectionPort,
   SearchQuery,
   SearchResultItem,
@@ -30,6 +30,7 @@ const SOURCE_QUERY_BATCH = 50;
 const MAX_ACTIVE_SNAPSHOTS = 8;
 const MAX_SNAPSHOT_ITEMS = 5_000;
 const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
+const MAX_CANDIDATE_SOURCE_BYTES = 4 * 1024 * 1024;
 
 function normalizeText(value: string): string {
   return value.normalize("NFKC").trim();
@@ -165,14 +166,20 @@ export class Fts5SearchAdapter
 {
   constructor(private readonly sql: SqlStorage) {}
 
-  apply(operation: SearchProjectionOperation): void {
+  upsert(entry: SearchProjectionEntry): void {
+    this.replace(entry.type, entry.id, entry);
+  }
+
+  remove(entityType: "memo" | "document", id: string): void {
+    this.replace(entityType, id);
+  }
+
+  private replace(
+    kind: "memo" | "document",
+    id: string,
+    entry?: SearchProjectionEntry,
+  ): void {
     try {
-      const id =
-        operation.type === "remove" ? operation.id : operation.entry.id;
-      const kind =
-        operation.type === "remove"
-          ? operation.entityType
-          : operation.entry.type;
       const existing = this.sql
         .exec<{ rowid: number; title: string; body: string }>(
           `SELECT rowid, title, body FROM search_entries
@@ -194,8 +201,7 @@ export class Fts5SearchAdapter
           existing.rowid,
         );
       }
-      if (operation.type === "remove") return;
-      const entry = operation.entry;
+      if (entry === undefined) return;
       const title = normalizeText(entry.type === "document" ? entry.title : "");
       const body = normalizeText(entry.body);
       const row = this.sql
@@ -222,7 +228,11 @@ export class Fts5SearchAdapter
     }
   }
 
-  query(query: SearchQuery): SearchPage {
+  async query(query: SearchQuery): Promise<SearchPage> {
+    return this.querySync(query);
+  }
+
+  querySync(query: SearchQuery): SearchPage {
     try {
       return this.queryUnchecked(query);
     } catch (error) {
@@ -231,6 +241,7 @@ export class Fts5SearchAdapter
   }
 
   private queryUnchecked(query: SearchQuery): SearchPage {
+    const pagination = query.pagination ?? {};
     const keyword = normalizeText(query.keyword);
     if (keyword.length === 0) {
       throw new BusinessRuleError(
@@ -244,14 +255,15 @@ export class Fts5SearchAdapter
         "Search keyword must be at most 50 UTF-8 bytes",
       );
     }
-    const limit = query.limit ?? DEFAULT_LIMIT;
-    const page = query.page ?? 1;
+    const limit = pagination.limit ?? DEFAULT_LIMIT;
+    const page = pagination.page ?? 1;
     if (
       !Number.isSafeInteger(limit) ||
       limit < 1 ||
       limit > MAX_LIMIT ||
       !Number.isSafeInteger(page) ||
-      page < 1
+      page < 1 ||
+      (pagination.cursor !== undefined && pagination.page !== undefined)
     ) {
       throw new ValidationError(
         SearchErrorCode.InvalidPagination,
@@ -265,8 +277,8 @@ export class Fts5SearchAdapter
       limit,
     });
     this.pruneSnapshots(Date.now());
-    if (query.cursor !== undefined) {
-      const cursor = decodeCursor(query.cursor);
+    if (pagination.cursor !== undefined) {
+      const cursor = decodeCursor(pagination.cursor);
       if (cursor.queryDigest !== digest || cursor.limit !== limit) {
         throw new ValidationError(
           SearchErrorCode.InvalidCursor,
@@ -274,6 +286,17 @@ export class Fts5SearchAdapter
         );
       }
       return this.readSnapshot(cursor);
+    }
+    const candidates = this.findCandidateBudget(keyword, query.topicId);
+    if (
+      candidates.length > MAX_MATCHES_PER_SNAPSHOT ||
+      candidates.reduce((total, row) => total + row.source_bytes, 0) >
+        MAX_CANDIDATE_SOURCE_BYTES
+    ) {
+      throw new BusinessRuleError(
+        SearchErrorCode.QueryTooComplex,
+        "Search result set exceeds the materialization limit",
+      );
     }
     const rows = this.findRows(keyword, query.topicId);
     if (rows.length > MAX_MATCHES_PER_SNAPSHOT) {
@@ -284,6 +307,12 @@ export class Fts5SearchAdapter
     }
     const items = this.toItems(rows, keyword);
     const offset = (page - 1) * limit;
+    if (!Number.isSafeInteger(offset)) {
+      throw new ValidationError(
+        SearchErrorCode.InvalidPagination,
+        "Search page offset is invalid",
+      );
+    }
     const pageItems = items.slice(offset, offset + limit);
     if (offset + pageItems.length >= items.length) {
       return {
@@ -331,6 +360,66 @@ export class Fts5SearchAdapter
       );
     }
     return this.snapshotPage(snapshotId, digest, offset, limit, items.length);
+  }
+
+  private findCandidateBudget(
+    keyword: string,
+    topicId?: string,
+  ): readonly { source_bytes: number }[] {
+    const longQuery = [...keyword].length >= 3;
+    const predicate = longQuery
+      ? "search_fts MATCH ?"
+      : "(instr(e.title, ?) > 0 OR instr(e.body, ?) > 0)";
+    const bindings: unknown[] = longQuery
+      ? [matchLiteral(keyword)]
+      : [keyword, keyword];
+    bindings.push(
+      topicId ?? null,
+      topicId ?? null,
+      topicId ?? null,
+      topicId ?? null,
+      MAX_MATCHES_PER_SNAPSHOT + 1,
+    );
+    return this.sql
+      .exec<{ source_bytes: number }>(
+        `SELECT length(CAST(c.title AS BLOB)) +
+                length(CAST(c.body AS BLOB)) AS source_bytes
+         FROM search_fts
+         JOIN search_entries e ON e.rowid = search_fts.rowid
+         JOIN content c ON c.id = e.entity_id AND c.kind = e.entity_type
+         LEFT JOIN topics t ON t.id = c.topic_id
+         WHERE ${predicate}
+           AND c.trashed_at IS NULL
+           AND c.trashed_with_topic_id IS NULL
+           AND (c.kind = 'memo' OR (t.id IS NOT NULL AND t.trashed_at IS NULL))
+           AND (
+             ? IS NULL
+             OR (c.kind = 'document' AND c.topic_id = ?)
+             OR (
+               c.kind = 'memo'
+               AND EXISTS (
+                 SELECT 1 FROM content_sources cs
+                 JOIN content d ON d.id = cs.content_id
+                 JOIN topics dt ON dt.id = d.topic_id
+                 WHERE cs.memo_id = c.id AND d.topic_id = ?
+                   AND d.trashed_at IS NULL
+                   AND d.trashed_with_topic_id IS NULL
+                   AND dt.trashed_at IS NULL
+               )
+             )
+             OR (
+               c.kind = 'memo'
+               AND EXISTS (
+                 SELECT 1 FROM topics st
+                 WHERE st.id = ? AND st.source_memo_id = c.id
+                   AND st.trashed_at IS NULL
+               )
+             )
+           )
+         LIMIT ?`,
+        ...bindings,
+      )
+      .toArray();
   }
 
   private assertTopic(topicId: string): void {

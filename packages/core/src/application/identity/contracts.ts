@@ -122,11 +122,9 @@ export type AccountStatus = "pending" | "active" | "deleting" | "deleted";
 
 export type AccountAuthSummary = Readonly<{
   userId: UserId;
-  userDataObjectName: string;
   status: AccountStatus;
   primaryEmail: Email | null;
   authMethods: readonly CredentialKind[];
-  locators: readonly CredentialLocator[];
   credentials: readonly LogicalCredentialAuthority[];
   sessionEpoch: number;
   operationEpoch: number;
@@ -137,6 +135,19 @@ export type UserDataIdentityProfile = Readonly<{
   displayName: string | null;
   trashRetentionDays: number;
 }>;
+
+export type UserDataIdentityStatus = Readonly<{
+  initialized: boolean;
+  deleted: boolean;
+}>;
+
+export type UserDataIdentityInitializeRpc = IdentityRpcMutation<{
+  userId: string;
+  now: number;
+}>;
+export type UserDataIdentityProfileRpc = IdentityRpcQuery<{ userId: string }>;
+export type UserDataIdentityStatusRpc = IdentityRpcQuery<{ userId: string }>;
+export type UserDataIdentityDeleteRpc = IdentityRpcMutation<{ userId: string }>;
 
 export type CurrentAccount = Readonly<{
   auth: AccountAuthSummary;
@@ -153,6 +164,7 @@ export interface IdentityApplicationPort {
   }): Promise<{
     userId: UserId;
     passwordHash: PasswordHash;
+    preparedAt: number;
     replayed: boolean;
   }>;
   registerWithPassword(input: IdentityRegistration): Promise<{
@@ -210,8 +222,17 @@ export interface CredentialDirectoryPort {
   }): Promise<{
     userId: UserId;
     passwordHash: PasswordHash;
+    preparedAt: number;
     replayed: boolean;
   }>;
+  prepareSsoCreate(input: {
+    operationId: OperationId;
+    proposedUserId: UserId;
+    provider: SsoProvider;
+    subject: string;
+    email: Email;
+    now: number;
+  }): Promise<{ userId: UserId; replayed: boolean }>;
   reserve(input: {
     operationId: OperationId;
     userId: UserId;
@@ -261,6 +282,15 @@ export interface CredentialDirectoryPort {
     tokenHash: string;
     expiresAt: number;
   }): Promise<void>;
+  enqueuePasswordResetMail(input: {
+    operationId: OperationId;
+    locator: CredentialLocator;
+    userId: UserId;
+    email: Email;
+    tokenHash: string;
+    providerIdempotencyKey: string;
+    now: number;
+  }): Promise<void>;
   lookupPasswordReset(input: {
     operationId: OperationId;
     locator: CredentialLocator;
@@ -273,53 +303,6 @@ export interface CredentialDirectoryPort {
     tokenHash: string;
     now: number;
   }): Promise<{ userId: UserId } | null>;
-  scanForAuthorityReconcile(input: {
-    generation: string;
-    bucket: number;
-    cursor?: string;
-    limit: number;
-  }): Promise<{
-    rows: readonly DirectoryAuthorityRow[];
-    nextCursor: string | null;
-  }>;
-  scanForRotation(input: {
-    generation: string;
-    bucket: number;
-    cursor?: string;
-    limit: number;
-  }): Promise<{
-    rows: readonly Readonly<{
-      locator: CredentialLocator;
-      credential: CredentialRef;
-      userId: UserId;
-      operationId: OperationId;
-      accountEpoch: number;
-    }>[];
-    nextCursor: string | null;
-  }>;
-  saveRotationCheckpoint(input: {
-    generation: string;
-    bucket: number;
-    cursor: string | null;
-    scanned: number;
-    moved: number;
-    conflicts: number;
-    completedAt: number | null;
-  }): Promise<void>;
-  expiredReservations(input: {
-    generation: string;
-    bucket: number;
-    now: number;
-    limit: number;
-  }): Promise<
-    readonly Readonly<{
-      locator: CredentialLocator;
-      credential: CredentialRef;
-      userId: UserId;
-      operationId: OperationId;
-      accountEpoch: number;
-    }>[]
-  >;
 }
 
 export interface AccountHomePort {
@@ -348,6 +331,11 @@ export interface AccountHomePort {
     operationId: OperationId,
   ): Promise<IdentityOperation | null>;
   getAuthSummary(userId: UserId): Promise<AccountAuthSummary | null>;
+  compensateCreate(input: {
+    operationId: OperationId;
+    userId: UserId;
+    now: number;
+  }): Promise<void>;
   addCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
@@ -397,6 +385,7 @@ export interface UserDataIdentityPort {
     now: number;
   }): Promise<void>;
   getProfile(userId: UserId): Promise<UserDataIdentityProfile | null>;
+  getStatus(userId: UserId): Promise<UserDataIdentityStatus>;
   deleteAll(input: { operationId: OperationId; userId: UserId }): Promise<void>;
 }
 
@@ -405,7 +394,6 @@ export type SsoCredentialInput = Readonly<{
   provider: SsoProvider;
   subject: string;
   email: Email;
-  proposedUserId: UserId;
   now: number;
 }>;
 
@@ -415,6 +403,8 @@ export type ResetPrimitive = Readonly<{
   expiresAt: number;
 }>;
 
+export type PasswordResetRequestResult = Readonly<{ accepted: true }>;
+
 export interface IdentityPrimitivePort {
   lookupOrCreateSso(input: SsoCredentialInput): Promise<{
     userId: UserId;
@@ -423,6 +413,16 @@ export interface IdentityPrimitivePort {
   storePasswordReset(
     input: ResetPrimitive & { email: Email; userId: UserId },
   ): Promise<void>;
+  requestPasswordReset(
+    input: ResetPrimitive & { email: Email; now: number },
+  ): Promise<PasswordResetRequestResult>;
+  changePassword(input: {
+    operationId: OperationId;
+    userId: UserId;
+    email: Email;
+    passwordHash: PasswordHash;
+    now: number;
+  }): Promise<{ sessionEpoch: number }>;
   consumePasswordReset(input: {
     operationId: OperationId;
     tokenHash: string;

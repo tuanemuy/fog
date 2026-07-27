@@ -22,6 +22,50 @@ type OperationRow = {
   operation_epoch: number;
 };
 
+const ALLOWED_TRANSITIONS: Readonly<
+  Partial<Record<IdentityOperationKind, ReadonlySet<string>>>
+> = {
+  signup: new Set([
+    "pending>credential-reserved",
+    "credential-reserved>user-data-initialized",
+    "user-data-initialized>directory-active",
+    "directory-active>completed",
+    "pending>compensating",
+    "credential-reserved>compensating",
+    "compensating>failed",
+  ]),
+  "sso-create": new Set([
+    "pending>credential-reserved",
+    "credential-reserved>user-data-initialized",
+    "user-data-initialized>directory-active",
+    "directory-active>completed",
+    "pending>compensating",
+    "credential-reserved>compensating",
+    "compensating>failed",
+  ]),
+  "sso-link": new Set([
+    "pending>credential-reserved",
+    "credential-reserved>user-data-initialized",
+    "user-data-initialized>directory-active",
+    "directory-active>completed",
+  ]),
+  "sso-unlink": new Set([
+    "pending>credential-reserved",
+    "credential-reserved>directory-active",
+    "directory-active>completed",
+  ]),
+  "password-reset": new Set([
+    "pending>credential-reserved",
+    "credential-reserved>directory-active",
+    "directory-active>completed",
+  ]),
+  "password-change": new Set([
+    "pending>credential-reserved",
+    "credential-reserved>directory-active",
+    "directory-active>completed",
+  ]),
+};
+
 export class AccountHomeStore {
   constructor(private readonly storage: DurableSqlStorage) {}
 
@@ -126,6 +170,13 @@ export class AccountHomeStore {
         }
         throw new Error("IDENTITY_OPERATION_PHASE_CONFLICT");
       }
+      if (
+        !ALLOWED_TRANSITIONS[current.kind]?.has(
+          `${input.expectedState}>${input.nextState}`,
+        )
+      ) {
+        throw new Error("IDENTITY_OPERATION_TRANSITION_INVALID");
+      }
       if (input.locator && input.credentialKind) {
         this.upsertLocator(
           input.locator,
@@ -172,6 +223,50 @@ export class AccountHomeStore {
 
   getOperation(operation: OperationId): IdentityOperation | null {
     return this.operation(operation);
+  }
+
+  compensateCreate(input: {
+    operationId: OperationId;
+    userId: UserId;
+    now: number;
+  }): void {
+    this.storage.transactionSync(() => {
+      const current = this.operation(input.operationId);
+      if (!current) return;
+      if (!["signup", "sso-create"].includes(current.kind)) {
+        throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+      }
+      if (current.state === "failed") return;
+      if (
+        !["pending", "credential-reserved", "compensating"].includes(
+          current.state,
+        )
+      ) {
+        throw new Error("IDENTITY_OPERATION_COMPENSATION_FORBIDDEN");
+      }
+      this.storage.sql.exec(
+        `UPDATE identity_operations SET state = 'compensating', updated_at = ?
+         WHERE operation_id = ? AND state IN ('pending', 'credential-reserved')`,
+        input.now,
+        input.operationId,
+      );
+      this.storage.sql.exec("DELETE FROM credential_locators");
+      this.storage.sql.exec(
+        `UPDATE account SET status = 'deleted', primary_email = NULL,
+           auth_method = NULL, deleted_at = ?, updated_at = ?
+         WHERE singleton = 1 AND user_id = ? AND status = 'pending'`,
+        input.now,
+        input.now,
+        input.userId,
+      );
+      this.storage.sql.exec(
+        `UPDATE identity_operations SET state = 'failed',
+           payload_json = '{"digest":"compensated"}', updated_at = ?
+         WHERE operation_id = ? AND state = 'compensating'`,
+        input.now,
+        input.operationId,
+      );
+    });
   }
 
   addCredentialLocator(input: {
@@ -507,12 +602,10 @@ export class AccountHomeStore {
     const activeKinds = [...new Set(credentials.map((item) => item.kind))];
     return {
       userId: UserId.create(row.user_id),
-      userDataObjectName: row.user_id,
       status: row.status,
       primaryEmail:
         row.primary_email === null ? null : Email.create(row.primary_email),
       authMethods: activeKinds,
-      locators: this.locators("active"),
       credentials,
       sessionEpoch: row.session_epoch,
       operationEpoch: row.operation_epoch,

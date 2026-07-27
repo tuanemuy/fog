@@ -4,6 +4,7 @@ import { getContainer } from "@repo/core/application/di/containerStore";
 import { getCookie, setResponseHeader } from "@tanstack/react-start/server";
 import {
   buildSessionCookie,
+  issueSessionCookie,
   SESSION_COOKIE_NAME,
   toSessionSystemError,
 } from "./sessionCookie";
@@ -45,12 +46,14 @@ export async function startSession(
       ? sessionEpochOrHeader
       : maybeSetCookieHeader;
   const container = await getContainer();
-  const token = await container.sessionCodec.issue(
-    userId,
-    sessionEpoch,
-    container.clock.now(),
-  );
-  writeSessionCookie(token, setCookieHeader);
+  const cookie = await issueSessionCookie(container, userId, sessionEpoch, {
+    secure: import.meta.env.PROD,
+  });
+  try {
+    setCookieHeader(cookie);
+  } catch (cause) {
+    throw toSessionSystemError(cause);
+  }
 }
 
 export function endSession(

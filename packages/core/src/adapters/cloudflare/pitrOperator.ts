@@ -7,7 +7,8 @@ export type UserDataPitrTarget = Readonly<{
 
 export type IdentityDirectoryPitrTarget = Readonly<{
   kind: "identity-directory";
-  shard: string;
+  generation: string;
+  bucket: number;
 }>;
 
 export type PitrTarget = UserDataPitrTarget | IdentityDirectoryPitrTarget;
@@ -30,20 +31,36 @@ export type DirectoryReconciliation = Readonly<{
   cursor: string | null;
 }>;
 
+export type PitrRestoreProof = Readonly<{
+  id: string;
+  previousSessionId: string;
+  undoBookmark: string;
+}>;
+
 export type PitrReceipt = Readonly<{
-  version: 1;
+  version: 2;
   target: CanonicalPitrTarget;
   restoreBookmark: string;
   undoBookmark: string;
+  proof: PitrRestoreProof;
   authority?: AccountAuthority;
   reconcileCursor?: string | null;
+  reconciliationTotals?: Readonly<{
+    scanned: number;
+    tombstoned: number;
+    conflictsObserved: number;
+  }>;
 }>;
 
 export type PitrObject = Readonly<{
   getCurrentBookmark(): Promise<string>;
+  prepareRestoreProof(proofId: string): Promise<{ sessionId: string }>;
   scheduleRestore(bookmark: string): Promise<string>;
   restartSession(): Promise<void>;
-  verifyRestoredSession(bookmark: string): Promise<string>;
+  verifyRestoredSession(
+    bookmark: string,
+    proof: PitrRestoreProof,
+  ): Promise<string>;
   reconcileDirectoryAuthority?(
     cursor?: string,
   ): Promise<DirectoryReconciliation>;
@@ -57,7 +74,7 @@ export type PitrOperatorDependencies = Readonly<{
       object: PitrObject;
     }>
   >;
-  resolveDirectory(shard: string): PitrObject;
+  resolveDirectory(target: IdentityDirectoryPitrTarget): PitrObject;
 }>;
 
 async function resolveTarget(
@@ -71,7 +88,7 @@ async function resolveTarget(
   }>
 > {
   if (target.kind === "identity-directory") {
-    return { target, object: dependencies.resolveDirectory(target.shard) };
+    return { target, object: dependencies.resolveDirectory(target) };
   }
   const resolved = await dependencies.resolveUserData(target.accountId);
   assertRestoreAuthority(resolved.authority, resolved.authority);
@@ -96,7 +113,7 @@ async function resolveReceiptTarget(
   }>
 > {
   if (receipt.target.kind === "identity-directory") {
-    return { object: dependencies.resolveDirectory(receipt.target.shard) };
+    return { object: dependencies.resolveDirectory(receipt.target) };
   }
   const resolved = await dependencies.resolveUserData(receipt.target.accountId);
   if (resolved.objectName !== receipt.target.objectName) {
@@ -123,14 +140,28 @@ export async function schedulePitrRestore(
   dependencies: PitrOperatorDependencies,
 ): Promise<PitrReceipt> {
   const resolved = await resolveTarget(target, dependencies);
+  const proofId = crypto.randomUUID();
+  const prepared = await resolved.object.prepareRestoreProof(proofId);
   const undoBookmark = await resolved.object.scheduleRestore(bookmark);
   return {
-    version: 1,
+    version: 2,
     target: resolved.target,
     restoreBookmark: bookmark,
     undoBookmark,
+    proof: {
+      id: proofId,
+      previousSessionId: prepared.sessionId,
+      undoBookmark,
+    },
     ...(resolved.authority === undefined
-      ? { reconcileCursor: null }
+      ? {
+          reconcileCursor: null,
+          reconciliationTotals: {
+            scanned: 0,
+            tombstoned: 0,
+            conflictsObserved: 0,
+          },
+        }
       : { authority: resolved.authority }),
   };
 }
@@ -141,6 +172,17 @@ export async function restartPitrTarget(
 ): Promise<void> {
   const resolved = await resolveReceiptTarget(receipt, dependencies);
   await resolved.object.restartSession();
+  throw new Error("PITR_RESTART_DID_NOT_ABORT");
+}
+
+export function isExpectedPitrRestartError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === "PITR_RESTART_REQUESTED") return true;
+  return (
+    error.message.includes("Durable Object") &&
+    error.message.includes("abort") &&
+    error.message.endsWith("PITR_RESTART_REQUESTED")
+  );
 }
 
 export async function verifyPitrRestore(
@@ -156,6 +198,7 @@ export async function verifyPitrRestore(
   const resolved = await resolveReceiptTarget(receipt, dependencies);
   const currentBookmark = await resolved.object.verifyRestoredSession(
     receipt.restoreBookmark,
+    receipt.proof,
   );
   if (receipt.target.kind === "identity-directory") {
     const reconcile = resolved.object.reconcileDirectoryAuthority;
@@ -165,12 +208,32 @@ export async function verifyPitrRestore(
     const reconciliation = await reconcile(
       receipt.reconcileCursor ?? undefined,
     );
+    const previous = receipt.reconciliationTotals ?? {
+      scanned: 0,
+      tombstoned: 0,
+      conflictsObserved: 0,
+    };
+    const totals = {
+      scanned: previous.scanned + reconciliation.scanned,
+      tombstoned: previous.tombstoned + reconciliation.tombstoned,
+      conflictsObserved: previous.conflictsObserved + reconciliation.conflicts,
+    };
+    const retryCursor =
+      reconciliation.conflicts > 0
+        ? (receipt.reconcileCursor ?? null)
+        : reconciliation.cursor;
+    const effectiveReconciliation = {
+      ...reconciliation,
+      complete: reconciliation.complete && reconciliation.conflicts === 0,
+      cursor: retryCursor,
+    };
     return {
       currentBookmark,
-      reconciliation,
+      reconciliation: effectiveReconciliation,
       receipt: {
         ...receipt,
-        reconcileCursor: reconciliation.cursor,
+        reconcileCursor: retryCursor,
+        reconciliationTotals: totals,
       },
     };
   }
@@ -181,16 +244,9 @@ export async function schedulePitrUndo(
   receipt: PitrReceipt,
   dependencies: PitrOperatorDependencies,
 ): Promise<PitrReceipt> {
-  const resolved = await resolveReceiptTarget(receipt, dependencies);
-  const redoBookmark = await resolved.object.scheduleRestore(
+  return schedulePitrRestore(
+    receipt.target,
     receipt.undoBookmark,
+    dependencies,
   );
-  return {
-    ...receipt,
-    restoreBookmark: receipt.undoBookmark,
-    undoBookmark: redoBookmark,
-    ...(receipt.target.kind === "identity-directory"
-      ? { reconcileCursor: null }
-      : {}),
-  };
 }

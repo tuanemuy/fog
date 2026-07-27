@@ -67,6 +67,9 @@ jobs:
       - name: Local lifecycle acceptance
         run: pnpm test:lifecycle:cli
 
+      - name: Operator CLI dependency smoke
+        run: pnpm --filter @repo/web operator:cli:smoke
+
   build:
     name: Cloudflare build and configuration audit
     runs-on: ubuntu-latest

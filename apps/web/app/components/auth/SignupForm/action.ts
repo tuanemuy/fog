@@ -9,12 +9,12 @@ export const signupFn = createServerFn({ method: "POST" })
   .inputValidator(validateInput(signupSchema))
   .handler(async ({ data }) => {
     const { container, module } = await loadServerDeps(
-      () => import("@repo/core/application/identity/registerWithPassword"),
+      () => import("@/presentation/identityActionHandlers"),
     );
-    const { userId, sessionEpoch } = await module.registerWithPassword({
+    const { userId, sessionEpoch } = await module.registerPasswordAction(
       container,
-      input: data,
-    });
+      data,
+    );
     const { startSession } = await import("@/presentation/session");
     await startSession(userId, sessionEpoch);
     return { ok: true } as const;

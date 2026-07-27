@@ -92,12 +92,13 @@ Real deploy and secret-inventory commands deliberately use authenticated
 `pulumi stack output`; they never fall back based on whether the CLI happens to
 be installed.
 
-After both Workers have been deployed, apply the routes stack. Its config takes
-the zone ID, hostname, and request Worker name directly; it does not read a
-resources-stack reference.
+The canonical `pnpm deploy:<stage>` command validates that the resources and
+routes stacks use the same account, zone, and hostname before deploying either
+Worker. After state and request deploy in that order, it applies the routes
+stack.
 
 ```bash
-pnpm --filter @repo/infra-cloudflare exec pulumi -C routes -s staging up
+pnpm deploy:staging
 ```
 
 Repeat with `production` for production.
@@ -155,7 +156,20 @@ Directory routing uses an active/previous keyring:
    the bucket.
 5. Confirm both directory mappings and Account Home reverse locators have zero
    references to the previous generation.
-6. Remove the previous key/generation and deploy again.
+6. After every Directory mapping and Account Home reverse locator reports zero
+   previous-generation references, delete the remote previous secret, remove the
+   previous generation from config, deploy again, and run the inventory gate:
+
+   ```bash
+   pnpm --filter @repo/web exec wrangler secret delete \
+     DIRECTORY_ROUTING_SECRET_PREVIOUS \
+     --config wrangler.request.staging.toml
+   pnpm --filter @repo/web secrets:check:staging
+   ```
+
+   Repeat with the production config for production. Outside an active rotation
+   window the request secret inventory is exact, so a retained previous secret
+   fails the release gate.
 
 Do not log canonical credentials, email addresses, SSO subjects, raw locators,
 or secret-derived routing material.
@@ -170,11 +184,15 @@ pnpm deploy:staging:dry
 pnpm deploy:staging
 ```
 
-The aggregate command preserves that order. During rollout, state RPC handlers
-must accept the request Worker's currently deployed contract as well as the new
-contract. Remove an old RPC version only after the request deployment using it
-has been retired. If the state deployment fails, do not deploy request. If
-request fails, keep the backward-compatible state deployment and retry request.
+The aggregate command first runs config/zone validation, authenticated secret
+inventory, Wrangler dry-runs, and the unexpired staging PITR evidence gate. It
+then preserves state → request → routes order. Raw per-Worker commands are for
+initial bootstrap or recovery and do not constitute a release. During rollout,
+state RPC handlers must accept the request Worker's currently deployed contract
+as well as the new contract. Remove an old RPC version only after the request
+deployment using it has been retired. If the state deployment fails, do not
+deploy request. If request fails, keep the backward-compatible state deployment
+and retry request.
 
 ## Schema migrations
 
@@ -271,9 +289,13 @@ For User Data or Identity Directory:
      bookmark user-data "$OPAQUE_ACCOUNT_ID"
    ```
 
-   For Directory use `bookmark identity-directory "$DIRECTORY_SHARD"`.
+   For Directory use
+   `bookmark identity-directory "$DIRECTORY_GENERATION:$DIRECTORY_BUCKET"`.
+   Only the configured active generation, or the still-configured previous
+   generation during rotation, and buckets 0–63 are accepted before any
+   restore RPC is issued.
    User Data accepts no caller-provided object name: the wrapper reads Account
-   Home and selects its canonical `userDataObjectName`.
+   Home authority and derives the object identity from its canonical user ID.
 4. Write a recognizable disposable change and obtain a newer bookmark.
 5. Schedule the old bookmark through the same wrapper:
 
@@ -283,14 +305,19 @@ For User Data or Identity Directory:
    ```
 
    The command executes schedule → explicit Durable Object session restart →
-   restored-session verification. It prints a versioned receipt containing the
-   undo bookmark. For Directory use `restore identity-directory
-   "$DIRECTORY_SHARD" "$OLD_BOOKMARK"`; verification is successful only after
-   the full shard authority scan completes with a null cursor.
+   restored-session verification. It prints a version 2 receipt containing the
+   undo bookmark and a one-use proof: the pre-restore session nonce plus a
+   sentinel tied to that undo bookmark. Verification requires a new session,
+   disappearance of the sentinel, and a bookmark at or beyond the scheduled
+   boundary. For Directory use `restore identity-directory
+   "$DIRECTORY_GENERATION:$DIRECTORY_BUCKET" "$OLD_BOOKMARK"`; verification is
+   successful only after the full shard authority scan completes with a null
+   cursor and zero accumulated authority conflicts.
 6. Confirm only the intended object returned to the expected state. User Data
    verification fails closed if canonical ownership, status, or epoch changed.
    Directory verification tombstones stale restored mappings and reports
-   scanned/tombstoned/conflict counts.
+   cumulative scanned/tombstoned/conflict counts. Any conflict keeps the cursor
+   on that page and makes the CLI exit non-zero.
 7. Undo the smoke using the exact receipt printed by step 5. This performs the
    same schedule → restart → verify protocol:
 
@@ -299,8 +326,9 @@ For User Data or Identity Directory:
    ```
 
    Do not mark the smoke complete until undo verification also succeeds.
-8. Record stage, class, opaque object identifier, bookmarks, timestamps, and
-   outcome without PII.
+8. Record stage, disposable namespace, class, opaque object identifier,
+   bookmarks, verification time, evidence expiry, and outcome without PII.
+   `release:preflight:*` accepts only a passed, unexpired staging record.
 
 PITR is not supported by local workerd. Never substitute another storage product's restore commands
 for Durable Object PITR.

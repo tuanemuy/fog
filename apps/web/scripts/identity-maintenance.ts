@@ -8,14 +8,18 @@ function required(value: string | undefined, name: string): string {
 
 async function main(): Promise<void> {
   const [action, generation, bucketValue, limitValue] = process.argv.slice(2);
+  const usage =
+    "usage: identity-maintenance.ts <rotate-page|reconcile-page|status> <generation> <bucket> [limit]";
+  if (action === "--help") {
+    process.stdout.write(`${usage}\n`);
+    return;
+  }
   if (
     action !== "rotate-page" &&
     action !== "reconcile-page" &&
     action !== "status"
   ) {
-    throw new Error(
-      "usage: identity-maintenance.ts <rotate-page|reconcile-page|status> <generation> <bucket> [limit]",
-    );
+    throw new Error(usage);
   }
   const bucket = Number(required(bucketValue, "bucket"));
   const limit = limitValue === undefined ? undefined : Number(limitValue);

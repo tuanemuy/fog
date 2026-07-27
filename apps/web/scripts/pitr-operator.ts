@@ -15,7 +15,19 @@ function target(
 ): PitrTarget {
   const value = required(name, "account-or-shard");
   if (kind === "user-data") return { kind, accountId: value };
-  if (kind === "identity-directory") return { kind, shard: value };
+  if (kind === "identity-directory") {
+    const match = /^([^:]+):([0-9]+)$/u.exec(value);
+    if (match?.[1] === undefined || match[2] === undefined) {
+      throw new Error(
+        "identity-directory target must be <generation>:<bucket>",
+      );
+    }
+    return {
+      kind,
+      generation: match[1],
+      bucket: Number(match[2]),
+    };
+  }
   throw new Error("target kind must be user-data or identity-directory");
 }
 
@@ -25,9 +37,9 @@ function receipt(value: string | undefined): PitrReceipt {
     typeof parsed !== "object" ||
     parsed === null ||
     !("version" in parsed) ||
-    parsed.version !== 1
+    parsed.version !== 2
   ) {
-    throw new Error("receipt-json must be a version 1 PITR receipt");
+    throw new Error("receipt-json must be a version 2 PITR receipt");
   }
   return parsed as PitrReceipt;
 }
@@ -85,9 +97,17 @@ async function verifyUntilComplete(initial: PitrReceipt): Promise<unknown> {
       receipt: current,
     })) as {
       receipt?: PitrReceipt;
-      reconciliation?: { complete: boolean };
+      reconciliation?: { complete: boolean; conflicts: number };
     };
     if (verification.receipt !== undefined) current = verification.receipt;
+    if (
+      verification.reconciliation !== undefined &&
+      verification.reconciliation.conflicts > 0
+    ) {
+      throw new Error(
+        `Directory reconciliation found ${verification.reconciliation.conflicts} unresolved conflicts`,
+      );
+    }
     if (
       verification.reconciliation === undefined ||
       verification.reconciliation.complete
@@ -100,6 +120,12 @@ async function verifyUntilComplete(initial: PitrReceipt): Promise<unknown> {
 
 async function main(): Promise<void> {
   const [action, kindOrReceipt, name, bookmark] = process.argv.slice(2);
+  const usage =
+    "usage: pitr-operator.ts bookmark <user-data|identity-directory> <account-or-generation:bucket> | restore <kind> <account-or-generation:bucket> <bookmark> | undo|verify '<receipt-json>'";
+  if (action === "--help") {
+    process.stdout.write(`${usage}\n`);
+    return;
+  }
   let result: unknown;
   if (action === "bookmark") {
     result = await call({
@@ -116,9 +142,7 @@ async function main(): Promise<void> {
   } else if (action === "verify") {
     result = await call({ action, receipt: receipt(kindOrReceipt) });
   } else {
-    throw new Error(
-      "usage: pitr-operator.ts bookmark <user-data|identity-directory> <account-or-shard> | restore <kind> <account-or-shard> <bookmark> | undo|verify '<receipt-json>'",
-    );
+    throw new Error(usage);
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

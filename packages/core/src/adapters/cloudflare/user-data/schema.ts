@@ -139,8 +139,72 @@ const initialSchema = [
   "CREATE INDEX IF NOT EXISTS jobs_terminal_idx ON jobs(status, terminal_at)",
 ] as const;
 
+const historyAndOwnershipSchema = [
+  "ALTER TABLE profile ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE ai_client_connections ADD COLUMN client_name TEXT",
+  "ALTER TABLE ai_client_connections ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked'))",
+  "ALTER TABLE ai_client_connections ADD COLUMN connected_at INTEGER",
+  "ALTER TABLE ai_client_connections ADD COLUMN last_used_at INTEGER",
+  "ALTER TABLE ai_client_connections ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  `UPDATE ai_client_connections
+   SET client_name = label,
+       connected_at = created_at,
+       status = CASE WHEN revoked_at IS NULL THEN 'active' ELSE 'revoked' END
+   WHERE client_name IS NULL OR connected_at IS NULL`,
+  "ALTER TABLE topics ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE topics ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE content ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)",
+  "ALTER TABLE content ADD COLUMN latest_revision_version INTEGER NOT NULL DEFAULT 0 CHECK (latest_revision_version >= 0)",
+  "ALTER TABLE content ADD COLUMN updated_by TEXT NOT NULL DEFAULT 'local-user'",
+  "ALTER TABLE content_revisions ADD COLUMN actor_id TEXT NOT NULL DEFAULT 'local-user'",
+  "ALTER TABLE content_revisions ADD COLUMN change_reason TEXT",
+  `UPDATE content
+   SET latest_revision_version = COALESCE(
+     (SELECT MAX(r.version) FROM content_revisions r WHERE r.content_id = content.id),
+     0
+   )`,
+  `CREATE TABLE IF NOT EXISTS user_data_delete_markers (
+    operation_id TEXT PRIMARY KEY,
+    expected_user_id TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    completed_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idempotency_completed_idx
+   ON idempotency(completed_at, namespace, operation_id)`,
+  `CREATE TRIGGER IF NOT EXISTS document_revision_reason_insert
+   BEFORE INSERT ON content_revisions
+   WHEN EXISTS (
+     SELECT 1 FROM content
+     WHERE id = NEW.content_id AND kind = 'document'
+   ) AND (NEW.change_reason IS NULL OR trim(NEW.change_reason) = '')
+   BEGIN
+     SELECT RAISE(ABORT, 'DOCUMENT_REVISION_CHANGE_REASON_REQUIRED');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS settings_version_guard
+   BEFORE UPDATE ON settings
+   WHEN NEW.version < 1 OR NEW.trash_retention_days < 1
+   BEGIN
+     SELECT RAISE(ABORT, 'SETTINGS_INVARIANT_INVALID');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS ai_client_connection_insert_guard
+   BEFORE INSERT ON ai_client_connections
+   WHEN NEW.client_name IS NULL OR trim(NEW.client_name) = ''
+     OR NEW.connected_at IS NULL
+   BEGIN
+     SELECT RAISE(ABORT, 'AI_CLIENT_CONNECTION_PROVENANCE_REQUIRED');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS ai_client_connection_update_guard
+   BEFORE UPDATE ON ai_client_connections
+   WHEN NEW.client_name IS NULL OR trim(NEW.client_name) = ''
+     OR NEW.connected_at IS NULL OR NEW.version < 1
+   BEGIN
+     SELECT RAISE(ABORT, 'AI_CLIENT_CONNECTION_PROVENANCE_REQUIRED');
+   END`,
+] as const;
+
 export const userDataMigrations: readonly OrderedMigration[] = [
   { version: 1, up: initialSchema },
+  { version: 2, up: historyAndOwnershipSchema },
 ];
 
 export function migrateUserData(storage: DurableSqlStorage, now: number): void {

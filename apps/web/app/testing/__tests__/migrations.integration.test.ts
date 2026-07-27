@@ -9,15 +9,15 @@ import {
   migrateIdentityDirectory,
 } from "@repo/core/adapters/cloudflare/identity-directory/schema";
 import {
-  runOrderedMigrations,
   type OrderedMigration,
+  runOrderedMigrations,
 } from "@repo/core/adapters/cloudflare/migrations";
 import {
   migrateUserData,
   userDataMigrations,
 } from "@repo/core/adapters/cloudflare/user-data/schema";
-import { rpcQuery } from "@repo/core/application/identity/rpc";
 import { opaqueCredentialKey } from "@repo/core/application/identity/contracts";
+import { rpcQuery } from "@repo/core/application/identity/rpc";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AccountHomeDurableObject } from "../../durable-objects/AccountHomeDurableObject";
 import type { IdentityDirectoryDurableObject } from "../../durable-objects/IdentityDirectoryDurableObject";
@@ -121,6 +121,69 @@ describe("ordered Durable Object migrations", () => {
 
   const upgradeCases = [
     {
+      name: "User Data",
+      stub: () => bindings.USER_DATA.getByName("migration-v1-user-data"),
+      migrations: userDataMigrations,
+      seed(storage: DurableObjectStorage) {
+        storage.sql.exec(
+          `INSERT INTO profile(
+             singleton, user_id, display_name, created_at, updated_at
+           ) VALUES (1, 'user-v1', 'V1 User', 1, 1)`,
+        );
+        storage.sql.exec(
+          `INSERT INTO settings(
+             singleton, trash_retention_days, version, updated_at
+           ) VALUES (1, 30, 1, 1)`,
+        );
+        storage.sql.exec(
+          `INSERT INTO content(
+             id, kind, title, body, topic_id, topic_archived, trashed_at,
+             trashed_with_topic_id, created_at, updated_at
+           ) VALUES (
+             'memo-v1', 'memo', '', 'preserved v1 memo', NULL, 0, NULL,
+             NULL, 1, 1
+           )`,
+        );
+        storage.sql.exec(
+          `INSERT INTO content_revisions(
+             content_id, version, title, body, created_at
+           ) VALUES ('memo-v1', 1, '', 'preserved v1 memo', 1)`,
+        );
+      },
+      async invoke(stub: DurableObjectStub<UserDataDurableObject>) {
+        return stub.identityGetProfileV1(
+          rpcQuery({
+            userId: "user-v1",
+          }),
+        );
+      },
+      assertFixture(storage: DurableObjectStorage) {
+        expect(
+          storage.sql
+            .exec<{ user_id: string; version: number }>(
+              "SELECT user_id, version FROM profile WHERE singleton = 1",
+            )
+            .one(),
+        ).toEqual({ user_id: "user-v1", version: 1 });
+        expect(
+          storage.sql
+            .exec<{
+              body: string;
+              version: number;
+              latest_revision_version: number;
+            }>(
+              `SELECT body, version, latest_revision_version
+               FROM content WHERE id = 'memo-v1'`,
+            )
+            .one(),
+        ).toEqual({
+          body: "preserved v1 memo",
+          version: 1,
+          latest_revision_version: 1,
+        });
+      },
+    },
+    {
       name: "Identity Directory",
       stub: () =>
         bindings.IDENTITY_DIRECTORY.getByName("migration-v1-directory"),
@@ -207,6 +270,7 @@ describe("ordered Durable Object migrations", () => {
     it(`${upgradeCase.name} upgrades a real v1 fixture lazily and survives eviction`, async () => {
       const stub = upgradeCase.stub();
       await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec("DROP TABLE IF EXISTS search_fts");
         const tables = state.storage.sql
           .exec<{ name: string }>(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -240,9 +304,6 @@ describe("ordered Durable Object migrations", () => {
             )
             .one().version,
         ).toBe(1);
-
-        upgradeCase.migrate(state.storage, 3);
-        upgradeCase.assertFixture(state.storage);
       });
 
       await evictDurableObject(stub);

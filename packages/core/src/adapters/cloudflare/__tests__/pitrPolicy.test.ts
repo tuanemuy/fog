@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  type DirectoryReconciliation,
+  type PitrObject,
   readPitrBookmark,
   restartPitrTarget,
   schedulePitrRestore,
   schedulePitrUndo,
-  type DirectoryReconciliation,
-  type PitrObject,
   verifyPitrRestore,
 } from "../pitrOperator";
 import { assertRestorableClass, assertRestoreAuthority } from "../pitrPolicy";
@@ -49,15 +49,22 @@ describe("PITR operator workflow", () => {
         sequence.push("bookmark");
         return "current";
       },
+      async prepareRestoreProof() {
+        sequence.push("prepare-proof");
+        return { sessionId: "session-before-restore" };
+      },
       async scheduleRestore(bookmark) {
         sequence.push(`schedule:${bookmark}`);
         return "undo";
       },
       async restartSession() {
         sequence.push("restart");
+        throw new Error("PITR_RESTART_REQUESTED");
       },
-      async verifyRestoredSession(bookmark) {
+      async verifyRestoredSession(bookmark, proof) {
         sequence.push(`verify:${bookmark}`);
+        expect(proof.previousSessionId).toBe("session-before-restore");
+        expect(proof.undoBookmark).toBe("undo");
         return "restored-current";
       },
       async reconcileDirectoryAuthority() {
@@ -99,7 +106,9 @@ describe("PITR operator workflow", () => {
       accountId: "account",
       objectName: "canonical-user-data",
     });
-    await restartPitrTarget(receipt, dependencies);
+    await expect(restartPitrTarget(receipt, dependencies)).rejects.toThrow(
+      "PITR_RESTART_REQUESTED",
+    );
     await expect(verifyPitrRestore(receipt, dependencies)).resolves.toEqual({
       currentBookmark: "restored-current",
     });
@@ -107,6 +116,7 @@ describe("PITR operator workflow", () => {
       "authority:account",
       "bookmark",
       "authority:account",
+      "prepare-proof",
       "schedule:old",
       "authority:account",
       "restart",
@@ -147,17 +157,23 @@ describe("PITR operator workflow", () => {
       async resolveUserData() {
         throw new Error("not used");
       },
-      resolveDirectory(shard: string) {
-        sequence.push(`directory:${shard}`);
+      resolveDirectory(shard: { generation: string; bucket: number }) {
+        sequence.push(`directory:${shard.generation}:${shard.bucket}`);
         return targetObject;
       },
     };
     const receipt = await schedulePitrRestore(
-      { kind: "identity-directory", shard: "generation-1:bucket-7" },
+      {
+        kind: "identity-directory",
+        generation: "generation-1",
+        bucket: 7,
+      },
       "old",
       dependencies,
     );
-    await restartPitrTarget(receipt, dependencies);
+    await expect(restartPitrTarget(receipt, dependencies)).rejects.toThrow(
+      "PITR_RESTART_REQUESTED",
+    );
     const verified = await verifyPitrRestore(receipt, dependencies);
     expect(verified.reconciliation).toMatchObject({
       complete: true,
@@ -188,7 +204,11 @@ describe("PITR operator workflow", () => {
       },
     };
     const receipt = await schedulePitrRestore(
-      { kind: "identity-directory", shard: "generation-1:bucket-7" },
+      {
+        kind: "identity-directory",
+        generation: "generation-1",
+        bucket: 7,
+      },
       "old",
       dependencies,
     );
@@ -197,6 +217,77 @@ describe("PITR operator workflow", () => {
     ).resolves.toMatchObject({
       reconciliation: { complete: false, cursor: "opaque-next" },
       receipt: { reconcileCursor: "opaque-next" },
+    });
+  });
+
+  it("does not accept a restart RPC that returns normally", async () => {
+    const targetObject = {
+      ...object([]),
+      async restartSession() {},
+    };
+    const dependencies = {
+      async resolveUserData() {
+        return {
+          objectName: "canonical-user-data",
+          authority: { status: "active" as const, epoch: 1 },
+          object: targetObject,
+        };
+      },
+      resolveDirectory() {
+        return targetObject;
+      },
+    };
+    const receipt = await schedulePitrRestore(
+      { kind: "user-data", accountId: "account" },
+      "old",
+      dependencies,
+    );
+    await expect(restartPitrTarget(receipt, dependencies)).rejects.toThrow(
+      "PITR_RESTART_DID_NOT_ABORT",
+    );
+  });
+
+  it("keeps the Directory cursor on a conflicting page and accumulates evidence", async () => {
+    const targetObject = object([], {
+      complete: true,
+      scanned: 2,
+      tombstoned: 1,
+      conflicts: 1,
+      cursor: null,
+    });
+    const dependencies = {
+      async resolveUserData() {
+        throw new Error("not used");
+      },
+      resolveDirectory() {
+        return targetObject;
+      },
+    };
+    const receipt = await schedulePitrRestore(
+      {
+        kind: "identity-directory",
+        generation: "generation-1",
+        bucket: 7,
+      },
+      "old",
+      dependencies,
+    );
+    await expect(
+      verifyPitrRestore(receipt, dependencies),
+    ).resolves.toMatchObject({
+      reconciliation: {
+        complete: false,
+        conflicts: 1,
+        cursor: null,
+      },
+      receipt: {
+        reconcileCursor: null,
+        reconciliationTotals: {
+          scanned: 2,
+          tombstoned: 1,
+          conflictsObserved: 1,
+        },
+      },
     });
   });
 });

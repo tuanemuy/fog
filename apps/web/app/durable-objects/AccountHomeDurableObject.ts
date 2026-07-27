@@ -19,6 +19,8 @@ import {
 import {
   rpcFailure,
   rpcOk,
+  validatePayloadKeys,
+  isSafeNonNegativeInteger,
   validateRpcMutation,
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
@@ -88,13 +90,20 @@ function execute<T>(operation: () => T): RpcResult<T> {
   } catch (error) {
     const code =
       error instanceof Error ? error.message : "IDENTITY_STORAGE_ERROR";
+    const validation = code.startsWith("IDENTITY_RPC_");
     return rpcFailure(
-      conflictCodes.has(code) ? "conflict" : "infrastructure",
-      conflictCodes.has(code) ? code : "IDENTITY_STORAGE_ERROR",
-      conflictCodes.has(code)
-        ? "Identity operation conflicted with current state"
-        : "Identity storage operation failed",
-      !conflictCodes.has(code),
+      validation
+        ? "validation"
+        : conflictCodes.has(code)
+          ? "conflict"
+          : "infrastructure",
+      validation || conflictCodes.has(code) ? code : "IDENTITY_STORAGE_ERROR",
+      validation
+        ? "Invalid identity payload"
+        : conflictCodes.has(code)
+          ? "Identity operation conflicted with current state"
+          : "Identity storage operation failed",
+      !validation && !conflictCodes.has(code),
     );
   }
 }
@@ -130,6 +139,12 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<IdentityOperation>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(
+      request.payload,
+      ["userId", "kind", "payloadDigest", "now"],
+      ["primaryEmail"],
+    );
+    if (!shape.ok) return Promise.resolve(shape);
     const payload = request.payload;
     if (
       typeof payload.userId !== "string" ||
@@ -138,8 +153,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       typeof payload.payloadDigest !== "string" ||
       payload.payloadDigest.length === 0 ||
       payload.payloadDigest.length > 128 ||
-      !Number.isFinite(payload.now) ||
-      payload.now < 0
+      !isSafeNonNegativeInteger(payload.now)
     ) {
       return Promise.resolve(
         rpcFailure(
@@ -170,6 +184,18 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<IdentityOperation>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(
+      request.payload,
+      ["userId", "expectedState", "nextState", "now"],
+      [
+        "locator",
+        "credentialId",
+        "credentialKind",
+        "primaryEmail",
+        "bumpSessionEpoch",
+      ],
+    );
+    if (!shape.ok) return Promise.resolve(shape);
     const payload = request.payload;
     if (
       typeof payload.userId !== "string" ||
@@ -181,8 +207,7 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
       (payload.credentialId !== undefined &&
         (payload.credentialId.length === 0 ||
           payload.credentialId.length > 256)) ||
-      !Number.isFinite(payload.now) ||
-      payload.now < 0
+      !isSafeNonNegativeInteger(payload.now)
     ) {
       return Promise.resolve(
         rpcFailure(
@@ -221,6 +246,8 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<IdentityOperation | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, ["operationId"]);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).getOperation(
@@ -235,8 +262,37 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<AccountAuthSummary | null>> {
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, []);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() => new AccountHomeStore(this.ctx.storage).authSummary()),
+    );
+  }
+
+  compensateCreate(
+    request: IdentityRpcMutation<{ userId: string; now: number }>,
+  ): Promise<RpcResult<null>> {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, ["userId", "now"]);
+    if (!shape.ok || !isSafeNonNegativeInteger(request.payload.now)) {
+      return Promise.resolve(
+        rpcFailure(
+          "validation",
+          "IDENTITY_RPC_PAYLOAD_INVALID",
+          "Invalid identity payload",
+        ),
+      );
+    }
+    return Promise.resolve(
+      execute(() => {
+        new AccountHomeStore(this.ctx.storage).compensateCreate({
+          operationId: operationId(request.operationId),
+          userId: UserId.create(request.payload.userId),
+          now: request.payload.now,
+        });
+        return null;
+      }),
     );
   }
 
@@ -253,6 +309,12 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<AccountAuthSummary>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(
+      request.payload,
+      ["userId", "locator", "credentialId", "kind", "bumpSessionEpoch", "now"],
+      ["primaryEmail"],
+    );
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).addCredentialLocator({
@@ -281,6 +343,13 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<AccountAuthSummary>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, [
+      "userId",
+      "credentialId",
+      "bumpSessionEpoch",
+      "now",
+    ]);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).removeCredentialLocator({
@@ -305,6 +374,14 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<null>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, [
+      "userId",
+      "previous",
+      "active",
+      "kind",
+      "now",
+    ]);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() => {
         new AccountHomeStore(this.ctx.storage).replaceCredentialLocator({
@@ -331,6 +408,8 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   > {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, ["userId", "now"]);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() =>
         new AccountHomeStore(this.ctx.storage).beginDeletion({
@@ -351,6 +430,12 @@ export class AccountHomeDurableObject extends DurableObject<StateEnv> {
   ): Promise<RpcResult<{ completed: boolean }>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const shape = validatePayloadKeys(request.payload, [
+      "userId",
+      "epoch",
+      "now",
+    ]);
+    if (!shape.ok) return Promise.resolve(shape);
     return Promise.resolve(
       execute(() => ({
         completed: new AccountHomeStore(this.ctx.storage).finishDeletion({

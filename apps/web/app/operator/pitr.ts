@@ -2,14 +2,15 @@ import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { CloudflareIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
 import { validateDirectoryKeyring } from "@repo/core/adapters/cloudflare/identityRouting";
 import {
-  readPitrBookmark,
-  restartPitrTarget,
-  schedulePitrRestore,
-  schedulePitrUndo,
+  isExpectedPitrRestartError,
   type PitrObject,
   type PitrOperatorDependencies,
   type PitrReceipt,
   type PitrTarget,
+  readPitrBookmark,
+  restartPitrTarget,
+  schedulePitrRestore,
+  schedulePitrUndo,
   verifyPitrRestore,
 } from "@repo/core/adapters/cloudflare/pitrOperator";
 import type { AccountHomeDurableObject } from "../durable-objects/AccountHomeDurableObject";
@@ -18,9 +19,13 @@ import type { UserDataDurableObject } from "../durable-objects/UserDataDurableOb
 
 type PitrCapableStub = Readonly<{
   operatorGetCurrentBookmark(): Promise<string>;
+  operatorPrepareRestoreProof(proofId: string): Promise<{ sessionId: string }>;
   operatorRestoreBookmark(bookmark: string): Promise<string>;
   operatorRestartSession(): Promise<void>;
-  operatorVerifyRestoredSession(bookmark: string): Promise<string>;
+  operatorVerifyRestoredSession(
+    bookmark: string,
+    proof: PitrReceipt["proof"],
+  ): Promise<string>;
 }>;
 
 export type PitrOperatorEnv = Readonly<{
@@ -44,6 +49,7 @@ type OperatorInput =
       action: "restart" | "verify" | "undo";
       receipt: PitrReceipt;
     }>;
+const DIRECTORY_BUCKET_COUNT = 64;
 
 export async function operatorTokenMatches(
   expected: string,
@@ -87,11 +93,19 @@ function isTarget(value: unknown): value is PitrTarget {
     (target.kind === "user-data" &&
       typeof target.accountId === "string" &&
       target.accountId.length > 0 &&
-      !("objectName" in target)) ||
+      Object.keys(target).every(
+        (key) => key === "kind" || key === "accountId",
+      )) ||
     (target.kind === "identity-directory" &&
-      typeof target.shard === "string" &&
-      target.shard.length > 0 &&
-      !("accountId" in target))
+      typeof target.generation === "string" &&
+      target.generation.length > 0 &&
+      target.generation.length <= 64 &&
+      Number.isInteger(target.bucket) &&
+      Number(target.bucket) >= 0 &&
+      Number(target.bucket) < DIRECTORY_BUCKET_COUNT &&
+      Object.keys(target).every(
+        (key) => key === "kind" || key === "generation" || key === "bucket",
+      ))
   );
 }
 
@@ -109,22 +123,48 @@ function isReceipt(value: unknown): value is PitrReceipt {
       typeof target.objectName === "string" &&
       target.objectName.length > 0) ||
       (target.kind === "identity-directory" &&
-        typeof target.shard === "string" &&
-        target.shard.length > 0));
+        typeof target.generation === "string" &&
+        target.generation.length > 0 &&
+        Number.isInteger(target.bucket) &&
+        Number(target.bucket) >= 0 &&
+        Number(target.bucket) < DIRECTORY_BUCKET_COUNT));
   const authority = receipt.authority as Record<string, unknown> | undefined;
+  const proof = receipt.proof as Record<string, unknown> | undefined;
+  const proofValid =
+    proof !== undefined &&
+    typeof proof.id === "string" &&
+    proof.id.length > 0 &&
+    typeof proof.previousSessionId === "string" &&
+    proof.previousSessionId.length > 0 &&
+    typeof proof.undoBookmark === "string" &&
+    proof.undoBookmark === receipt.undoBookmark;
   const authorityValid =
     target?.kind !== "user-data" ||
     (authority !== undefined &&
       typeof authority.status === "string" &&
       Number.isInteger(authority.epoch));
+  const totals = receipt.reconciliationTotals as
+    | Record<string, unknown>
+    | undefined;
+  const totalsValid =
+    target?.kind !== "identity-directory" ||
+    (totals !== undefined &&
+      Number.isInteger(totals.scanned) &&
+      Number(totals.scanned) >= 0 &&
+      Number.isInteger(totals.tombstoned) &&
+      Number(totals.tombstoned) >= 0 &&
+      Number.isInteger(totals.conflictsObserved) &&
+      Number(totals.conflictsObserved) >= 0);
   return (
-    receipt.version === 1 &&
+    receipt.version === 2 &&
     typeof receipt.restoreBookmark === "string" &&
     receipt.restoreBookmark.length > 0 &&
     typeof receipt.undoBookmark === "string" &&
     receipt.undoBookmark.length > 0 &&
     canonicalTarget &&
     authorityValid &&
+    proofValid &&
+    totalsValid &&
     (receipt.reconcileCursor === undefined ||
       receipt.reconcileCursor === null ||
       typeof receipt.reconcileCursor === "string")
@@ -153,10 +193,11 @@ function isOperatorInput(value: unknown): value is OperatorInput {
 function objectAdapter(stub: PitrCapableStub): PitrObject {
   return {
     getCurrentBookmark: () => stub.operatorGetCurrentBookmark(),
+    prepareRestoreProof: (proofId) => stub.operatorPrepareRestoreProof(proofId),
     scheduleRestore: (bookmark) => stub.operatorRestoreBookmark(bookmark),
     restartSession: () => stub.operatorRestartSession(),
-    verifyRestoredSession: (bookmark) =>
-      stub.operatorVerifyRestoredSession(bookmark),
+    verifyRestoredSession: (bookmark, proof) =>
+      stub.operatorVerifyRestoredSession(bookmark, proof),
   };
 }
 
@@ -196,7 +237,7 @@ function dependencies(env: PitrOperatorEnv): PitrOperatorDependencies {
       );
       if (!result.ok) throw new Error(result.error.code);
       if (result.value === null) throw new Error("ACCOUNT_NOT_FOUND");
-      const objectName = result.value.userDataObjectName;
+      const objectName = result.value.userId;
       return {
         objectName,
         authority: {
@@ -208,13 +249,24 @@ function dependencies(env: PitrOperatorEnv): PitrOperatorDependencies {
         ),
       };
     },
-    resolveDirectory(shard) {
-      const match = /^(.*):([0-9]+)$/u.exec(shard);
-      if (match?.[1] === undefined || match[2] === undefined) {
-        throw new Error("DIRECTORY_SHARD_INVALID");
+    resolveDirectory(target) {
+      const configuredGenerations = new Set([
+        env.DIRECTORY_ROUTING_GENERATION_ACTIVE ?? "generation-1",
+        ...(env.DIRECTORY_ROUTING_SECRET_PREVIOUS !== undefined &&
+        env.DIRECTORY_ROUTING_GENERATION_PREVIOUS !== undefined
+          ? [env.DIRECTORY_ROUTING_GENERATION_PREVIOUS]
+          : []),
+      ]);
+      if (
+        !configuredGenerations.has(target.generation) ||
+        !Number.isInteger(target.bucket) ||
+        target.bucket < 0 ||
+        target.bucket >= DIRECTORY_BUCKET_COUNT
+      ) {
+        throw new Error("DIRECTORY_SHARD_NOT_CONFIGURED");
       }
-      const generation = match[1];
-      const bucket = Number(match[2]);
+      const { generation, bucket } = target;
+      const shard = `${generation}:${bucket}`;
       const object = objectAdapter(
         env.IDENTITY_DIRECTORY.getByName(shard) as unknown as PitrCapableStub,
       );
@@ -315,18 +367,31 @@ export async function handlePitrOperatorRequest(
     if (input.action === "restart") {
       try {
         await restartPitrTarget(input.receipt, operatorDependencies);
-      } catch {
-        return operatorResponse(
-          { phase: "restart-requested" },
-          { status: 202 },
-        );
+      } catch (error) {
+        if (isExpectedPitrRestartError(error)) {
+          return operatorResponse(
+            { phase: "restart-requested" },
+            { status: 202 },
+          );
+        }
+        throw error;
       }
-      return operatorResponse({ phase: "restart-requested" }, { status: 202 });
     }
     if (input.action === "verify") {
-      return operatorResponse(
-        await verifyPitrRestore(input.receipt, operatorDependencies),
+      const verification = await verifyPitrRestore(
+        input.receipt,
+        operatorDependencies,
       );
+      if (
+        verification.reconciliation !== undefined &&
+        verification.reconciliation.conflicts > 0
+      ) {
+        return operatorResponse(
+          { error: "DIRECTORY_RECONCILIATION_CONFLICT", verification },
+          { status: 409 },
+        );
+      }
+      return operatorResponse(verification);
     }
     if (input.action === "undo") {
       return operatorResponse(

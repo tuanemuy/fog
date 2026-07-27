@@ -31,17 +31,20 @@ type Ports = Readonly<{
   directory: CredentialDirectoryPort;
   accountHome: AccountHomePort;
   userData: UserDataIdentityPort;
+  newUserId: () => UserId;
 }>;
 
 export type IdentitySagaFaultPoint =
   | "signup-after-reserve"
   | "signup-after-initialize"
+  | "signup-after-activate"
   | "signup-after-finalize"
   | "sso-after-provider-reserve"
   | "sso-after-email-reserve"
   | "sso-after-provider-activate"
   | "sso-after-email-activate"
   | "link-after-reserve"
+  | "link-after-initialize"
   | "link-after-activate"
   | "link-after-finalize"
   | "unlink-after-directory"
@@ -49,6 +52,8 @@ export type IdentitySagaFaultPoint =
   | "reset-after-consume"
   | "reset-after-hash"
   | "reset-after-epoch"
+  | "change-after-hash"
+  | "change-after-epoch"
   | "delete-after-user-data"
   | "delete-after-directory"
   | "delete-after-finish";
@@ -111,13 +116,44 @@ function activeAuthority(
 export class IdentityCoordinator
   implements IdentityApplicationPort, IdentityPrimitivePort
 {
-  constructor(
-    private readonly ports: Ports,
-    private readonly faultHook?: IdentitySagaFaultHook,
-  ) {}
+  private faultHook?: IdentitySagaFaultHook;
+
+  constructor(private readonly ports: Ports) {}
+
+  static withFaultInjectionForTest(
+    ports: Ports,
+    faultHook: IdentitySagaFaultHook,
+  ): IdentityCoordinator {
+    const coordinator = new IdentityCoordinator(ports);
+    coordinator.faultHook = faultHook;
+    return coordinator;
+  }
 
   private async checkpoint(point: IdentitySagaFaultPoint): Promise<void> {
     await this.faultHook?.(point);
+  }
+
+  private async compensateCreate(input: {
+    operationId: IdentityRegistration["operationId"];
+    userId: UserId;
+    locators: readonly CredentialLocator[];
+    accountEpoch: number;
+    now: number;
+  }): Promise<void> {
+    for (const locator of input.locators) {
+      await this.ports.directory.tombstone({
+        operationId: input.operationId,
+        locator,
+        userId: input.userId,
+        accountEpoch: input.accountEpoch,
+        now: input.now,
+      });
+    }
+    await this.ports.accountHome.compensateCreate({
+      operationId: input.operationId,
+      userId: input.userId,
+      now: input.now,
+    });
   }
 
   preparePasswordSignup(
@@ -143,10 +179,7 @@ export class IdentityCoordinator
       input.userId,
       input.email,
       input.passwordHash,
-      ...locators.map(
-        (locator) =>
-          `${locator.generation}:${locator.bucket}:${locator.opaqueKey}`,
-      ),
+      ...locators.map((locator) => locator.opaqueKey),
     ]);
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
@@ -158,28 +191,41 @@ export class IdentityCoordinator
     });
 
     if (!reached(operation, "credential-reserved")) {
-      const prior = (
-        await this.ports.directory.lookupCredential(canonical)
-      ).filter((item) => item !== null);
-      if (prior.some((item) => item.userId !== input.userId)) {
-        throw new ConflictError(
-          "CREDENTIAL_ALREADY_REGISTERED",
-          "Credential is already registered",
-        );
-      }
-      for (const locator of locators) {
-        await this.ports.directory.reserve({
-          operationId: input.operationId,
-          userId: input.userId,
-          locator,
-          credential: {
-            kind: "password",
-            canonicalValue: canonical,
-            passwordHash: input.passwordHash,
-          },
-          accountEpoch: operation.epoch,
-          now: input.now,
-        });
+      try {
+        const prior = (
+          await this.ports.directory.lookupCredential(canonical)
+        ).filter((item) => item !== null);
+        if (prior.some((item) => item.userId !== input.userId)) {
+          throw new ConflictError(
+            "CREDENTIAL_ALREADY_REGISTERED",
+            "Credential is already registered",
+          );
+        }
+        for (const locator of locators) {
+          await this.ports.directory.reserve({
+            operationId: input.operationId,
+            userId: input.userId,
+            locator,
+            credential: {
+              kind: "password",
+              canonicalValue: canonical,
+              passwordHash: input.passwordHash,
+            },
+            accountEpoch: operation.epoch,
+            now: input.now,
+          });
+        }
+      } catch (error) {
+        if (error instanceof ConflictError) {
+          await this.compensateCreate({
+            operationId: input.operationId,
+            userId: input.userId,
+            locators,
+            accountEpoch: operation.epoch,
+            now: input.now,
+          });
+        }
+        throw error;
       }
       await this.checkpoint("signup-after-reserve");
       operation = await this.ports.accountHome.advanceOperation({
@@ -240,6 +286,7 @@ export class IdentityCoordinator
           accountEpoch: operation.epoch,
           now: input.now,
         });
+        await this.checkpoint("signup-after-activate");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -329,7 +376,7 @@ export class IdentityCoordinator
     const existingProvider = providerFound.find(
       (item) => item?.state === "active",
     );
-    let sagaUserId = input.proposedUserId;
+    let sagaUserId: UserId | null = null;
     if (existingProvider) {
       const rawAuthority = await this.ports.accountHome.getAuthSummary(
         existingProvider.userId,
@@ -344,8 +391,10 @@ export class IdentityCoordinator
           (item) =>
             item.userId === existingProvider.userId &&
             item.accountEpoch === authority?.operationEpoch &&
-            authority?.locators.some((locator) =>
-              sameLocator(locator, item.locator),
+            authority?.credentials.some((credential) =>
+              credential.locators.some((locator) =>
+                sameLocator(locator, item.locator),
+              ),
             ),
         );
       if (!authority || !consistent) {
@@ -395,11 +444,24 @@ export class IdentityCoordinator
         sagaUserId = resumableProvider.userId;
       }
     }
+    if (sagaUserId === null) {
+      sagaUserId = (
+        await this.ports.directory.prepareSsoCreate({
+          operationId: input.operationId,
+          proposedUserId: this.ports.newUserId(),
+          provider: input.provider,
+          subject,
+          email: input.email,
+          now: input.now,
+        })
+      ).userId;
+    }
+    const sagaAccountId = sagaUserId;
     if (
       emailFound.some(
         (item) =>
           item !== null &&
-          (item.userId !== sagaUserId ||
+          (item.userId !== sagaAccountId ||
             item.operationId !== input.operationId),
       )
     ) {
@@ -422,45 +484,58 @@ export class IdentityCoordinator
     }
     let operation = await this.ports.accountHome.beginOperation({
       operationId: input.operationId,
-      userId: sagaUserId,
+      userId: sagaAccountId,
       kind: "sso-create",
       payloadDigest: await fingerprint([
         input.provider,
         subject,
         input.email,
-        sagaUserId,
+        sagaAccountId,
       ]),
       primaryEmail: input.email,
       now: input.now,
     });
     if (!reached(operation, "credential-reserved")) {
-      for (const locator of locators) {
-        await this.ports.directory.reserve({
-          operationId: input.operationId,
-          userId: sagaUserId,
-          locator,
-          credential: {
-            kind: "sso",
-            canonicalValue: providerLocators.some((item) =>
-              sameLocator(item, locator),
-            )
-              ? providerCredential
-              : emailCredential,
-            provider: input.provider,
-            verifiedEmail: input.email,
-          },
-          accountEpoch: operation.epoch,
-          now: input.now,
-        });
-        await this.checkpoint(
-          providerLocators.some((item) => sameLocator(item, locator))
-            ? "sso-after-provider-reserve"
-            : "sso-after-email-reserve",
-        );
+      try {
+        for (const locator of locators) {
+          await this.ports.directory.reserve({
+            operationId: input.operationId,
+            userId: sagaAccountId,
+            locator,
+            credential: {
+              kind: "sso",
+              canonicalValue: providerLocators.some((item) =>
+                sameLocator(item, locator),
+              )
+                ? providerCredential
+                : emailCredential,
+              provider: input.provider,
+              verifiedEmail: input.email,
+            },
+            accountEpoch: operation.epoch,
+            now: input.now,
+          });
+          await this.checkpoint(
+            providerLocators.some((item) => sameLocator(item, locator))
+              ? "sso-after-provider-reserve"
+              : "sso-after-email-reserve",
+          );
+        }
+      } catch (error) {
+        if (error instanceof ConflictError) {
+          await this.compensateCreate({
+            operationId: input.operationId,
+            userId: sagaAccountId,
+            locators,
+            accountEpoch: operation.epoch,
+            now: input.now,
+          });
+        }
+        throw error;
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
-        userId: sagaUserId,
+        userId: sagaAccountId,
         expectedState: "pending",
         nextState: "credential-reserved",
         locator: locators[0],
@@ -472,7 +547,7 @@ export class IdentityCoordinator
       for (const locator of locators.slice(1)) {
         await this.ports.accountHome.addCredentialLocator({
           operationId: input.operationId,
-          userId: sagaUserId,
+          userId: sagaAccountId,
           locator,
           credentialId,
           kind: "sso",
@@ -485,20 +560,20 @@ export class IdentityCoordinator
     if (!reached(operation, "user-data-initialized")) {
       await this.ports.userData.initialize({
         operationId: input.operationId,
-        userId: sagaUserId,
+        userId: sagaAccountId,
         now: input.now,
       });
       for (const locator of locators) {
         await this.ports.directory.markInitialized({
           operationId: input.operationId,
-          userId: sagaUserId,
+          userId: sagaAccountId,
           locator,
           now: input.now,
         });
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
-        userId: sagaUserId,
+        userId: sagaAccountId,
         expectedState: "credential-reserved",
         nextState: "user-data-initialized",
         now: input.now,
@@ -508,7 +583,7 @@ export class IdentityCoordinator
       for (const locator of locators) {
         await this.ports.directory.activate({
           operationId: input.operationId,
-          userId: sagaUserId,
+          userId: sagaAccountId,
           locator,
           accountEpoch: operation.epoch,
           now: input.now,
@@ -521,7 +596,7 @@ export class IdentityCoordinator
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
-        userId: sagaUserId,
+        userId: sagaAccountId,
         expectedState: "user-data-initialized",
         nextState: "directory-active",
         now: input.now,
@@ -530,7 +605,7 @@ export class IdentityCoordinator
     if (!reached(operation, "completed")) {
       await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
-        userId: sagaUserId,
+        userId: sagaAccountId,
         expectedState: "directory-active",
         nextState: "completed",
         credentialId,
@@ -540,8 +615,8 @@ export class IdentityCoordinator
       });
     }
     const authority = activeAuthority(
-      await this.ports.accountHome.getAuthSummary(sagaUserId),
-      sagaUserId,
+      await this.ports.accountHome.getAuthSummary(sagaAccountId),
+      sagaAccountId,
     );
     if (!authority) {
       throw new SystemError(
@@ -550,7 +625,7 @@ export class IdentityCoordinator
       );
     }
     return {
-      userId: sagaUserId,
+      userId: sagaAccountId,
       sessionEpoch: authority.sessionEpoch,
     };
   }
@@ -588,6 +663,156 @@ export class IdentityCoordinator
         }),
       ),
     );
+  }
+
+  async requestPasswordReset(
+    input: Parameters<IdentityPrimitivePort["requestPasswordReset"]>[0],
+  ): Promise<{ accepted: true }> {
+    const mappings = (
+      await this.ports.directory.lookupPassword(input.email)
+    ).filter((item): item is PasswordCredential => item !== null);
+    const first = mappings[0];
+    if (!first) return { accepted: true };
+    if (
+      mappings.some(
+        (item) =>
+          item.userId !== first.userId ||
+          item.passwordHash !== first.passwordHash ||
+          item.accountEpoch !== first.accountEpoch,
+      )
+    ) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Reset request generations disagree on password authority",
+      );
+    }
+    const authority = activeAuthority(
+      await this.ports.accountHome.getAuthSummary(first.userId),
+      first.userId,
+    );
+    if (!authority) return { accepted: true };
+    await Promise.all(
+      mappings.map((mapping) =>
+        this.ports.directory.storePasswordReset({
+          operationId: input.operationId,
+          locator: mapping.locator,
+          userId: first.userId,
+          tokenHash: input.tokenHash,
+          expiresAt: input.expiresAt,
+        }),
+      ),
+    );
+    await this.ports.directory.enqueuePasswordResetMail({
+      operationId: input.operationId,
+      locator: first.locator,
+      userId: first.userId,
+      email: input.email,
+      tokenHash: input.tokenHash,
+      providerIdempotencyKey: `password-reset:${input.operationId}`,
+      now: input.now,
+    });
+    return { accepted: true };
+  }
+
+  async changePassword(
+    input: Parameters<IdentityPrimitivePort["changePassword"]>[0],
+  ): Promise<{ sessionEpoch: number }> {
+    const mappings = (
+      await this.ports.directory.lookupPassword(input.email)
+    ).filter((item): item is PasswordCredential => item !== null);
+    if (
+      mappings.length === 0 ||
+      mappings.some((item) => item.userId !== input.userId)
+    ) {
+      throw new ConflictError(
+        "ACCOUNT_AUTHORITY_MISMATCH",
+        "Password credential is unavailable",
+      );
+    }
+    const authority = activeAuthority(
+      await this.ports.accountHome.getAuthSummary(input.userId),
+      input.userId,
+    );
+    const credential = authority?.credentials.find(
+      (item) =>
+        item.kind === "password" &&
+        mappings.every((mapping) =>
+          item.locators.some((locator) =>
+            sameLocator(locator, mapping.locator),
+          ),
+        ),
+    );
+    if (!authority || !credential) {
+      throw new ConflictError(
+        "ACCOUNT_AUTHORITY_MISMATCH",
+        "Password credential is unavailable",
+      );
+    }
+    let operation = await this.ports.accountHome.beginOperation({
+      operationId: input.operationId,
+      userId: input.userId,
+      kind: "password-change",
+      payloadDigest: await fingerprint([
+        "password-change",
+        input.userId,
+        input.email,
+        input.passwordHash,
+      ]),
+      now: input.now,
+    });
+    if (!reached(operation, "credential-reserved")) {
+      operation = await this.ports.accountHome.advanceOperation({
+        operationId: input.operationId,
+        userId: input.userId,
+        expectedState: "pending",
+        nextState: "credential-reserved",
+        now: input.now,
+      });
+    }
+    if (!reached(operation, "directory-active")) {
+      for (const mapping of mappings) {
+        await this.ports.directory.replacePassword({
+          operationId: input.operationId,
+          locator: mapping.locator,
+          userId: input.userId,
+          passwordHash: input.passwordHash,
+          accountEpoch: authority.operationEpoch,
+          now: input.now,
+        });
+        await this.checkpoint("change-after-hash");
+      }
+      operation = await this.ports.accountHome.advanceOperation({
+        operationId: input.operationId,
+        userId: input.userId,
+        expectedState: "credential-reserved",
+        nextState: "directory-active",
+        now: input.now,
+      });
+    }
+    if (!reached(operation, "completed")) {
+      await this.ports.accountHome.advanceOperation({
+        operationId: input.operationId,
+        userId: input.userId,
+        expectedState: "directory-active",
+        nextState: "completed",
+        credentialId: credential.credentialId,
+        credentialKind: "password",
+        bumpSessionEpoch: true,
+        now: input.now,
+      });
+      await this.checkpoint("change-after-epoch");
+    }
+    const updated = activeAuthority(
+      await this.ports.accountHome.getAuthSummary(input.userId),
+      input.userId,
+    );
+    if (!updated) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Password change completed without active authority",
+      );
+    }
+    return { sessionEpoch: updated.sessionEpoch };
   }
 
   async consumePasswordReset(input: {
@@ -821,7 +1046,7 @@ export class IdentityCoordinator
           now: input.now,
         });
       }
-      await this.checkpoint("link-after-activate");
+      await this.checkpoint("link-after-initialize");
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
         userId: input.userId,
@@ -839,6 +1064,7 @@ export class IdentityCoordinator
           accountEpoch: authority.operationEpoch,
           now: input.now,
         });
+        await this.checkpoint("link-after-activate");
       }
       operation = await this.ports.accountHome.advanceOperation({
         operationId: input.operationId,
@@ -873,8 +1099,6 @@ export class IdentityCoordinator
       payloadDigest: await fingerprint([
         "sso-unlink",
         input.userId,
-        input.locator.generation,
-        String(input.locator.bucket),
         input.locator.opaqueKey,
       ]),
       now: input.now,
@@ -904,14 +1128,13 @@ export class IdentityCoordinator
         "Active account has no primary email authority",
       );
     }
-    const accountIdentity = AccountIdentity.create({
-      id: authority.userId,
-      primaryEmail: authority.primaryEmail,
+    const accountIdentity = {
+      status: authority.status,
       credentials: authority.credentials.map((credential) => ({
         id: credential.credentialId,
         kind: credential.kind,
       })),
-    });
+    };
     if (!AccountIdentity.canUnlink(accountIdentity, target.credentialId)) {
       throw new ConflictError(
         "LAST_CREDENTIAL_UNLINK_FORBIDDEN",

@@ -1,45 +1,223 @@
 import { BusinessRuleError } from "../error";
-import type { Email, UserId } from "./valueObject";
+import type {
+  Email,
+  PasswordHash,
+  SsoProvider,
+  SsoSubject,
+  UserId,
+} from "./valueObject";
 
-export type LoginCredential = Readonly<{
+export type PasswordCredential = Readonly<{
   id: string;
-  kind: "password" | "sso";
+  kind: "password";
+  email: Email;
+  passwordHash: PasswordHash;
 }>;
+
+export type SsoCredential = Readonly<{
+  id: string;
+  kind: "sso";
+  provider: SsoProvider;
+  subject: SsoSubject;
+  verifiedEmail: Email;
+}>;
+
+export type LoginCredential = PasswordCredential | SsoCredential;
 
 export type AccountIdentity = Readonly<{
   id: UserId;
-  primaryEmail: Email;
+  status: "pending" | "active" | "deleting" | "deleted";
+  primaryEmail: Email | null;
   credentials: readonly LoginCredential[];
+  sessionEpoch: number;
 }>;
 
+function fail(code: string, message: string): never {
+  throw new BusinessRuleError(code, message);
+}
+
+function emailOf(credential: LoginCredential): Email {
+  return credential.kind === "password"
+    ? credential.email
+    : credential.verifiedEmail;
+}
+
 function create(input: AccountIdentity): AccountIdentity {
-  if (input.credentials.length === 0) {
-    throw new BusinessRuleError(
+  if (!Number.isSafeInteger(input.sessionEpoch) || input.sessionEpoch < 0) {
+    fail(
+      "IDENTITY_SESSION_EPOCH_INVALID",
+      "Session epoch must be non-negative",
+    );
+  }
+  if (input.status === "active" && input.credentials.length === 0) {
+    fail(
       "IDENTITY_LAST_CREDENTIAL_REQUIRED",
       "An active account must have a login credential",
     );
+  }
+  if (input.status === "deleted") {
+    if (input.primaryEmail !== null || input.credentials.length !== 0) {
+      fail(
+        "IDENTITY_DELETED_ACCOUNT_NOT_MINIMAL",
+        "A deleted account cannot retain credentials or primary email",
+      );
+    }
+    return input;
   }
   if (
     new Set(input.credentials.map((credential) => credential.id)).size !==
     input.credentials.length
   ) {
-    throw new BusinessRuleError(
+    fail(
       "IDENTITY_CREDENTIAL_DUPLICATED",
       "Logical credential identifiers must be unique",
+    );
+  }
+  const canonicalCredentials = input.credentials.map((credential) =>
+    credential.kind === "password"
+      ? `password:${credential.email}`
+      : `sso:${credential.provider}:${credential.subject}`,
+  );
+  if (new Set(canonicalCredentials).size !== canonicalCredentials.length) {
+    fail(
+      "IDENTITY_CREDENTIAL_DUPLICATED",
+      "Canonical login credentials must be unique",
+    );
+  }
+  if (
+    input.primaryEmail !== null &&
+    !input.credentials.some(
+      (credential) => emailOf(credential) === input.primaryEmail,
+    )
+  ) {
+    fail(
+      "IDENTITY_PRIMARY_EMAIL_NOT_VERIFIED",
+      "Primary email must belong to an active credential",
     );
   }
   return input;
 }
 
-function canUnlink(account: AccountIdentity, credentialId: string): boolean {
+function addCredential(
+  account: AccountIdentity,
+  credential: LoginCredential,
+): AccountIdentity {
+  if (account.status !== "active") {
+    fail(
+      "IDENTITY_ACCOUNT_NOT_ACTIVE",
+      "Credentials require an active account",
+    );
+  }
+  return create({
+    ...account,
+    credentials: [...account.credentials, credential],
+    primaryEmail: account.primaryEmail ?? emailOf(credential),
+    sessionEpoch: account.sessionEpoch + 1,
+  });
+}
+
+function canUnlink(
+  account: Readonly<{
+    status: AccountIdentity["status"];
+    credentials: readonly Readonly<{
+      id: string;
+      kind: LoginCredential["kind"];
+    }>[];
+  }>,
+  credentialId: string,
+): boolean {
   return (
+    account.status === "active" &&
     account.credentials.some((credential) => credential.id === credentialId) &&
     account.credentials.length > 1
   );
 }
 
+function unlink(
+  account: AccountIdentity,
+  credentialId: string,
+): AccountIdentity {
+  if (!canUnlink(account, credentialId)) {
+    fail(
+      "IDENTITY_LAST_CREDENTIAL_REQUIRED",
+      "The final login credential cannot be removed",
+    );
+  }
+  const credentials = account.credentials.filter(
+    (credential) => credential.id !== credentialId,
+  );
+  const primaryEmail =
+    account.primaryEmail !== null &&
+    credentials.some(
+      (credential) => emailOf(credential) === account.primaryEmail,
+    )
+      ? account.primaryEmail
+      : credentials[0]
+        ? emailOf(credentials[0])
+        : null;
+  return create({
+    ...account,
+    credentials,
+    primaryEmail,
+    sessionEpoch: account.sessionEpoch + 1,
+  });
+}
+
+function replacePassword(
+  account: AccountIdentity,
+  credentialId: string,
+  passwordHash: PasswordHash,
+): AccountIdentity {
+  const target = account.credentials.find(
+    (credential) =>
+      credential.id === credentialId && credential.kind === "password",
+  );
+  if (!target) {
+    fail(
+      "IDENTITY_PASSWORD_CREDENTIAL_NOT_FOUND",
+      "Password credential does not exist",
+    );
+  }
+  return create({
+    ...account,
+    credentials: account.credentials.map((credential) =>
+      credential.id === credentialId && credential.kind === "password"
+        ? { ...credential, passwordHash }
+        : credential,
+    ),
+    sessionEpoch: account.sessionEpoch + 1,
+  });
+}
+
+function markDeleting(account: AccountIdentity): AccountIdentity {
+  if (account.status === "deleted") return account;
+  return create({
+    ...account,
+    status: "deleting",
+    sessionEpoch: account.sessionEpoch + 1,
+  });
+}
+
+function markDeleted(account: AccountIdentity): AccountIdentity {
+  return create({
+    ...account,
+    status: "deleted",
+    primaryEmail: null,
+    credentials: [],
+  });
+}
+
 /**
- * Authentication aggregate. A credential is logical: routing-key generations
- * and email aliases are persistence locators, not additional login methods.
+ * Authentication authority. Credentials are logical domain values; routing
+ * generations, buckets, Durable Object names and checkpoints belong to the
+ * Cloudflare adapter.
  */
-export const AccountIdentity = { create, canUnlink };
+export const AccountIdentity = {
+  create,
+  addCredential,
+  canUnlink,
+  unlink,
+  replacePassword,
+  markDeleting,
+  markDeleted,
+};

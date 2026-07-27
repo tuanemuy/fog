@@ -12,7 +12,9 @@
 PITRの実staging smokeとsecret inventoryだけはCloudflare資格情報と
 disposable objectが必要なrelease gateとして未実施。ローカルでは
 User Data canonical target、Directory全authority cursor reconcile、
-schedule→restart→verify→undo protocolまでを自動検証した。
+restartの期待abort判別、session/sentinel proof、conflict-zero、undoの
+fail-closed contractを自動検証した。実際のisolate abort、bookmark適用、
+新sessionでのverifyはstagingでのみ検証できる。
 
 ## 確認環境
 

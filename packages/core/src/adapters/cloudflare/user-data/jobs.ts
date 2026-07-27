@@ -35,80 +35,88 @@ export class DurableJobStore {
   }): number | null {
     return this.withErrors(() =>
       this.storage.transactionSync(() => {
-        const payloadJson = canonicalJson(input.payload);
-        if (
-          input.id.length === 0 ||
-          input.kind.length === 0 ||
-          input.providerIdempotencyKey.length === 0 ||
-          !Number.isSafeInteger(input.nextRunAt) ||
-          !Number.isSafeInteger(input.now)
-        ) {
-          throw new ValidationError(
-            "JOB_INVALID_INPUT",
-            "Persistent job input is invalid",
-          );
-        }
-        if (
-          new TextEncoder().encode(payloadJson).byteLength >
-          MAX_JOB_PAYLOAD_BYTES
-        ) {
-          throw new ValidationError(
-            "JOB_PAYLOAD_TOO_LARGE",
-            "Persistent job payload exceeds 64 KiB",
-          );
-        }
-        const digest = payloadDigest({
-          kind: input.kind,
-          payload: input.payload,
-        });
-        const existing = this.storage.sql
-          .exec<{
-            id: string;
-            kind: string;
-            payload_digest: string;
-            provider_idempotency_key: string;
-          }>(
-            `SELECT id, kind, payload_digest, provider_idempotency_key
-             FROM jobs
-             WHERE id = ? OR provider_idempotency_key = ?
-             ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
-             LIMIT 1`,
-            input.id,
-            input.providerIdempotencyKey,
-            input.id,
-          )
-          .toArray()[0];
-        if (existing) {
-          const sameEffect =
-            existing.kind === input.kind &&
-            existing.payload_digest === digest &&
-            existing.provider_idempotency_key === input.providerIdempotencyKey;
-          if (!sameEffect) {
-            throw new ConflictError(
-              SearchErrorCode.JobIdempotencyConflict,
-              "Job ID or provider idempotency key has a different payload",
-            );
-          }
-          return this.nextRunAtUnchecked();
-        }
-        this.storage.sql.exec(
-          `INSERT INTO jobs(
-             id, kind, payload_json, payload_digest, status, attempt,
-             next_run_at, provider_idempotency_key, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
-          input.id,
-          input.kind,
-          payloadJson,
-          digest,
-          input.nextRunAt,
-          input.providerIdempotencyKey,
-          input.now,
-          input.now,
-        );
-        this.pruneTerminalUnchecked(input.now);
+        this.enqueueInTransaction(input);
         return this.nextRunAtUnchecked();
       }),
     );
+  }
+
+  /** Inserts a job in the caller's existing synchronous transaction. */
+  enqueueInTransaction(input: {
+    id: string;
+    kind: string;
+    payload: unknown;
+    nextRunAt: number;
+    providerIdempotencyKey: string;
+    now: number;
+  }): void {
+    const payloadJson = canonicalJson(input.payload);
+    if (
+      input.id.length === 0 ||
+      input.kind.length === 0 ||
+      input.providerIdempotencyKey.length === 0 ||
+      !Number.isSafeInteger(input.nextRunAt) ||
+      !Number.isSafeInteger(input.now)
+    ) {
+      throw new ValidationError(
+        "JOB_INVALID_INPUT",
+        "Persistent job input is invalid",
+      );
+    }
+    if (
+      new TextEncoder().encode(payloadJson).byteLength > MAX_JOB_PAYLOAD_BYTES
+    ) {
+      throw new ValidationError(
+        "JOB_PAYLOAD_TOO_LARGE",
+        "Persistent job payload exceeds 64 KiB",
+      );
+    }
+    const digest = payloadDigest({ kind: input.kind, payload: input.payload });
+    const existing = this.storage.sql
+      .exec<{
+        id: string;
+        kind: string;
+        payload_digest: string;
+        provider_idempotency_key: string;
+      }>(
+        `SELECT id, kind, payload_digest, provider_idempotency_key
+         FROM jobs
+         WHERE id = ? OR provider_idempotency_key = ?
+         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+         LIMIT 1`,
+        input.id,
+        input.providerIdempotencyKey,
+        input.id,
+      )
+      .toArray()[0];
+    if (existing) {
+      if (
+        existing.kind !== input.kind ||
+        existing.payload_digest !== digest ||
+        existing.provider_idempotency_key !== input.providerIdempotencyKey
+      ) {
+        throw new ConflictError(
+          SearchErrorCode.JobIdempotencyConflict,
+          "Job ID or provider idempotency key has a different payload",
+        );
+      }
+      return;
+    }
+    this.storage.sql.exec(
+      `INSERT INTO jobs(
+         id, kind, payload_json, payload_digest, status, attempt,
+         next_run_at, provider_idempotency_key, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
+      input.id,
+      input.kind,
+      payloadJson,
+      digest,
+      input.nextRunAt,
+      input.providerIdempotencyKey,
+      input.now,
+      input.now,
+    );
+    this.pruneTerminalUnchecked(input.now);
   }
 
   claim(input: {
@@ -203,6 +211,29 @@ export class DurableJobStore {
                terminal_at = ?, updated_at = ?
            WHERE id = ? AND status = 'leased' AND owner_token = ?`,
           now,
+          now,
+          id,
+          ownerToken,
+        );
+        return cursor.rowsWritten > 0;
+      }),
+    );
+  }
+
+  defer(
+    id: string,
+    ownerToken: string,
+    now: number,
+    nextRunAt: number,
+  ): boolean {
+    return this.withErrors(() =>
+      this.storage.transactionSync(() => {
+        const cursor = this.storage.sql.exec(
+          `UPDATE jobs
+           SET status = 'pending', next_run_at = ?, lease_until = NULL,
+               owner_token = NULL, updated_at = ?
+           WHERE id = ? AND status = 'leased' AND owner_token = ?`,
+          Math.max(nextRunAt, now + 1),
           now,
           id,
           ownerToken,

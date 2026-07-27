@@ -148,11 +148,13 @@ export async function loginWithPassword({
     found.passwordHash,
   );
   const authority = await container.identity.getAccountAuthority(found.userId);
-  const locatorIsCurrent = authority?.locators.some(
-    (locator) =>
-      locator.generation === found.locator.generation &&
-      locator.bucket === found.locator.bucket &&
-      locator.opaqueKey === found.locator.opaqueKey,
+  const locatorIsCurrent = authority?.credentials.some((credential) =>
+    credential.locators.some(
+      (locator) =>
+        locator.generation === found.locator.generation &&
+        locator.bucket === found.locator.bucket &&
+        locator.opaqueKey === found.locator.opaqueKey,
+    ),
   );
   if (
     authority?.status !== "active" ||

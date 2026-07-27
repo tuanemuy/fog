@@ -12,6 +12,18 @@ const stateConfig = readFileSync(
   "vitest.config.integration-state.ts",
   "utf8",
 );
+const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
+const results = JSON.parse(
+  readFileSync(".thread/19/test-results.json", "utf8"),
+);
+const passedCommands = new Set(
+  results.automated
+    .filter((entry) => entry.result === "passed")
+    .map((entry) => entry.command),
+);
+const releaseResults = new Map(
+  results.releaseGates.map((entry) => [entry.name, entry]),
+);
 
 const rows = [
   ...inventory.matchAll(
@@ -42,6 +54,12 @@ const automatedSuites = new Set([
   "integration-state",
   "ci-command",
 ]);
+const suiteCommand = new Map([
+  ["unit", "pnpm test:unit"],
+  ["integration-request", "pnpm test:integration"],
+  ["integration-state", "pnpm test:integration"],
+]);
+const pending = [];
 
 for (const row of rows) {
   if (row.target.length === 0) fail(`${row.id} has no target`);
@@ -84,6 +102,12 @@ for (const row of rows) {
       if (!(record.command in rootScripts) && !(record.command in webScripts)) {
         fail(`${row.id} references missing command ${record.command}`);
       }
+      if (!workflow.includes(`pnpm ${record.command}`)) {
+        fail(`${row.id} command ${record.command} is absent from CI`);
+      }
+      if (!passedCommands.has(`pnpm ${record.command}`)) {
+        fail(`${row.id} command ${record.command} has no current passing result`);
+      }
       continue;
     }
     if (typeof record.file !== "string" || !existsSync(record.file)) {
@@ -91,7 +115,28 @@ for (const row of rows) {
       continue;
     }
     const source = readFileSync(record.file, "utf8");
-    if (record.suite === "manual" || record.suite === "release-gate") {
+    if (record.suite === "manual") {
+      if (!["passed", "pending"].includes(record.result)) {
+        fail(`${row.id} manual evidence must declare passed or pending`);
+      }
+      if (record.result === "pending") pending.push(`${row.id} manual`);
+      if (
+        typeof record.marker !== "string" ||
+        !source.includes(record.marker)
+      ) {
+        fail(`${row.id} marker is absent from ${record.file}`);
+      }
+      continue;
+    }
+    if (record.suite === "release-gate") {
+      const result = releaseResults.get(record.gate);
+      if (!result) {
+        fail(`${row.id} references missing release result ${record.gate}`);
+        continue;
+      }
+      if (result.result !== "passed") {
+        pending.push(`${row.id} ${record.gate}: ${result.result}`);
+      }
       if (
         typeof record.marker !== "string" ||
         !source.includes(record.marker)
@@ -102,6 +147,10 @@ for (const row of rows) {
     }
     if (typeof record.test !== "string" || !source.includes(record.test)) {
       fail(`${row.id} test name is absent from ${record.file}`);
+    }
+    const command = suiteCommand.get(record.suite);
+    if (command !== undefined && !passedCommands.has(command)) {
+      fail(`${row.id} suite ${record.suite} has no current passing result`);
     }
     if (
       record.suite === "unit" &&
@@ -134,7 +183,11 @@ if (failures.length > 0) {
   console.error(failures.map((failure) => `- ${failure}`).join("\n"));
   process.exitCode = 1;
 } else {
+  const suffix =
+    pending.length === 0
+      ? "no pending manual/release evidence"
+      : `pending evidence: ${pending.join("; ")}`;
   console.log(
-    `test traceability audit passed (${rows.length} TEST IDs, executable evidence verified)`,
+    `test traceability structure passed (${rows.length} TEST IDs; source, CI inclusion, and recorded suite results checked; ${suffix})`,
   );
 }

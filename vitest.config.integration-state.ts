@@ -7,7 +7,7 @@ export default defineConfig({
   },
   plugins: [
     cloudflareTest({
-      main: "apps/web/app/server.state.ts",
+      main: "apps/web/app/server.state.integration.ts",
       miniflare: {
         compatibilityDate: "2026-07-02",
         compatibilityFlags: ["nodejs_compat"],

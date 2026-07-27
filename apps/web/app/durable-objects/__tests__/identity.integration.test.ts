@@ -46,13 +46,20 @@ function gateway(
   routing: DirectoryKeyring = keyring,
   faultHook?: IdentitySagaFaultHook,
 ): CloudflareIdentityGateway {
-  return new CloudflareIdentityGateway(
-    bindings.IDENTITY_DIRECTORY as never,
-    bindings.ACCOUNT_HOME as never,
-    bindings.USER_DATA as never,
-    routing,
-    faultHook,
-  );
+  return faultHook
+    ? CloudflareIdentityGateway.withFaultInjectionForTest(
+        bindings.IDENTITY_DIRECTORY as never,
+        bindings.ACCOUNT_HOME as never,
+        bindings.USER_DATA as never,
+        routing,
+        faultHook,
+      )
+    : new CloudflareIdentityGateway(
+        bindings.IDENTITY_DIRECTORY as never,
+        bindings.ACCOUNT_HOME as never,
+        bindings.USER_DATA as never,
+        routing,
+      );
 }
 
 function failOnceAt(expected: IdentitySagaFaultPoint): IdentitySagaFaultHook {
@@ -74,6 +81,7 @@ describe("identity Durable Object contract", () => {
   it.each([
     "signup-after-reserve",
     "signup-after-initialize",
+    "signup-after-activate",
     "signup-after-finalize",
   ] as const)("resumes signup after %s", async (point) => {
     const identity = gateway(keyring, failOnceAt(point));
@@ -107,14 +115,13 @@ describe("identity Durable Object contract", () => {
       provider: SsoProvider.create("google"),
       subject: `subject-${point}`,
       email: Email.create(`${point}@example.com`),
-      proposedUserId: UserId.create(`user-${point}`),
       now: 1,
     };
     await expect(identity.lookupOrCreateSso(input)).rejects.toThrow(
       `INJECTED_FAULT:${point}`,
     );
     await expect(identity.lookupOrCreateSso(input)).resolves.toMatchObject({
-      userId: input.proposedUserId,
+      userId: expect.any(String),
       sessionEpoch: 0,
     });
   });
@@ -145,9 +152,52 @@ describe("identity Durable Object contract", () => {
       sessionEpoch: 0,
       operationEpoch: 0,
     });
-    expect(new Set(authority?.locators.map((item) => item.generation))).toEqual(
-      new Set(["generation-1", "generation-2"]),
+    expect(
+      new Set(
+        authority?.credentials.flatMap((credential) =>
+          credential.locators.map((item) => item.generation),
+        ),
+      ),
+    ).toEqual(new Set(["generation-1", "generation-2"]));
+  });
+
+  it("de-identifies the losing Account Home during concurrent password signup", async () => {
+    const identity = gateway();
+    const email = Email.create("concurrent-signup@example.com");
+    const inputs = [
+      {
+        operationId: operationId("concurrent-signup-a"),
+        userId: UserId.create("concurrent-signup-user-a"),
+        email,
+        passwordHash: PasswordHash.create("concurrent-signup-hash-a"),
+        now: 1,
+      },
+      {
+        operationId: operationId("concurrent-signup-b"),
+        userId: UserId.create("concurrent-signup-user-b"),
+        email,
+        passwordHash: PasswordHash.create("concurrent-signup-hash-b"),
+        now: 1,
+      },
+    ] as const;
+
+    const results = await Promise.allSettled(
+      inputs.map((input) => identity.registerWithPassword(input)),
     );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const winner = await identity.findPasswordCredential(email);
+    expect(winner).not.toBeNull();
+    const loser = inputs.find((input) => input.userId !== winner?.userId);
+    if (!loser) throw new Error("Concurrent signup did not produce a loser");
+    await expect(
+      identity.getAccountAuthority(loser.userId),
+    ).resolves.toMatchObject({
+      status: "deleted",
+      primaryEmail: null,
+      credentials: [],
+    });
   });
 
   it("rejects an unknown RPC version before creating a mapping", async () => {
@@ -235,7 +285,6 @@ describe("identity Durable Object contract", () => {
       provider: SsoProvider.create("google"),
       subject: "same-subject",
       email: Email.create("sso@example.com"),
-      proposedUserId: UserId.create("sso-create-google"),
       now: 10,
     });
     await expect(
@@ -244,11 +293,10 @@ describe("identity Durable Object contract", () => {
         provider: SsoProvider.create("apple"),
         subject: "same-subject",
         email: Email.create("sso@example.com"),
-        proposedUserId: UserId.create("sso-create-apple"),
         now: 11,
       }),
     ).rejects.toMatchObject({ code: "CREDENTIAL_ALREADY_REGISTERED" });
-    expect(created.userId).toBe("sso-create-google");
+    expect(created.userId).toEqual(expect.any(String));
   });
 
   it("uses one deletion epoch for retries and leaves no active authority", async () => {
@@ -326,6 +374,49 @@ describe("identity Durable Object contract", () => {
     );
   });
 
+  it("keeps reset-request responses uniform and resumes password change", async () => {
+    const identity = gateway();
+    const userId = UserId.create("password-change-user");
+    const email = Email.create("password-change@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("password-change-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("password-change-old-hash"),
+      now: 1,
+    });
+
+    const unknown = await identity.requestPasswordReset({
+      operationId: operationId("password-reset-request-unknown"),
+      email: Email.create("unknown-password-reset@example.com"),
+      tokenHash: "unknown-reset-token-hash",
+      expiresAt: 10_000,
+      now: 2,
+    });
+    const known = await identity.requestPasswordReset({
+      operationId: operationId("password-reset-request-known"),
+      email,
+      tokenHash: "known-reset-token-hash",
+      expiresAt: 10_000,
+      now: 2,
+    });
+    expect(unknown).toEqual({ accepted: true });
+    expect(known).toEqual(unknown);
+
+    await expect(
+      identity.changePassword({
+        operationId: operationId("password-change-operation"),
+        userId,
+        email,
+        passwordHash: PasswordHash.create("password-change-new-hash"),
+        now: 3,
+      }),
+    ).resolves.toEqual({ sessionEpoch: 1 });
+    await expect(identity.findPasswordCredential(email)).resolves.toMatchObject(
+      { userId, passwordHash: "password-change-new-hash" },
+    );
+  });
+
   it("links and unlinks every generation of one logical SSO credential", async () => {
     const identity = gateway();
     const userId = UserId.create("logical-credential-operation");
@@ -340,7 +431,6 @@ describe("identity Durable Object contract", () => {
     const link = {
       operationId: operationId("logical-sso-link"),
       userId,
-      proposedUserId: userId,
       provider: SsoProvider.create("google"),
       subject: "logical-subject",
       email,
@@ -392,7 +482,6 @@ describe("identity Durable Object contract", () => {
     const input = {
       operationId: operationId(`fault-${point}`),
       userId,
-      proposedUserId: userId,
       provider: SsoProvider.create("google"),
       subject: `subject-${point}`,
       email,
@@ -426,7 +515,6 @@ describe("identity Durable Object contract", () => {
       await setup.linkSso({
         operationId: operationId(`link-${point}`),
         userId,
-        proposedUserId: userId,
         provider: SsoProvider.create("google"),
         subject: `subject-${point}`,
         email,
@@ -591,6 +679,35 @@ describe("identity Durable Object contract", () => {
     ).resolves.toMatchObject({
       userId,
     });
+  });
+
+  it("retires a previous locator created during dual-write signup", async () => {
+    const identity = gateway(keyring);
+    const userId = UserId.create("dual-write-rotation-user");
+    const email = Email.create("dual-write-rotation@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("dual-write-rotation-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("dual-write-rotation-hash"),
+      now: 1,
+    });
+
+    await expect(
+      identity.rotatePreviousGeneration({ now: 2 }),
+    ).resolves.toMatchObject({ scanned: 1, moved: 1, conflicts: 0 });
+
+    const authority = await identity.getAccountAuthority(userId);
+    expect(
+      authority?.credentials.flatMap((credential) =>
+        credential.locators.map((item) => item.generation),
+      ),
+    ).toEqual([keyring.active.generation]);
+    await expect(identity.findPasswordCredential(email)).resolves.toMatchObject(
+      {
+        userId,
+      },
+    );
   });
 
   it("keeps signup replay identity stable across routing-key removal", async () => {

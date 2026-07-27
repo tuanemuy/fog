@@ -70,3 +70,43 @@
 | `tests/search-full-lifecycle` | R2 TS2-B006/W003 | fix | document/topic/順位/UTF-8/cursor容量の全契約を自動化する | 0 |
 | `tests/executable-traceability` | R2 TS2-B007 | fix | evidence実在・test名・suite includeまで監査する | 0 |
 | `tests/lifecycle-ci-results` | R2 TS2-W002/W006 | fix | CLIをCI実行しcommit SHA付き実績を記録する | 0 |
+
+## Round 3
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `identity/domain-model-authority` | R3 DA3-B001/W002 | fix | 旧Userを除去し完全なAccountIdentity/Profile/Settingsへ統一する | 1 |
+| `identity/physical-routing-encapsulation` | R3 DA3-B002 | fix | generation/bucket/checkpointをapplication contractからadapterへ戻す | 0 |
+| `identity/fresh-retry-stability` | R3 IS3-B001 | fix | request時刻/hashが変わる再送でも初回stateを再利用する | 0 |
+| `identity/concurrent-create-compensation` | R3 DA3-B003 / IS3-B002 | fix | password/SSO同時初回の敗者を非PII tombstoneへ収束する | 0 |
+| `identity/reconciler-initialization-probe` | R3 IS3-B003 / INFRA3-B005 | fix | User Data状態を見て自動Alarm jobからactivate/回収を決める | 0 |
+| `identity/rotation-dual-write-conflict` | R3 IS3-B004 / INFRA3-B004 | fix | dual-write済みlocatorを冪等移送し未解決時checkpointを完了しない | 0 |
+| `identity/password-change-reset-request` | R3 DA3-B004 / IS3-B006 | fix | change sagaと列挙耐性reset request/mail job契約を実装する | 0 |
+| `identity/rpc-runtime-schema` | R3 IS3-B007 | fix | 全methodのbounds/enum/transition/unknown fieldをfail closedにする | 0 |
+| `identity/delete-eviction-resume` | R3 IS3-B008 | fix | 空再構築DOでも同operation deleteを再開可能にする | 0 |
+| `identity/activate-fault-points` | R3 DA3-B007 | fix | initialized後と各generation activate後を実注入点で検証する | 0 |
+| `identity/userdata-versioned-rpc` | R3 DA3-B008 | fix | initialize/profile/deleteを共通versioned envelopeとDO冪等性へ統一する | 0 |
+| `identity/fault-hook-isolation` | R3 DA3-W001 | fix | production APIからtest-only fault hookを除く | 0 |
+| `search/application-capability-contract` | R3 DA3-B005 | fix | transport DTOとdomain query、transaction-scoped projectionを分離する | 0 |
+| `search/local-harness-production-isolation` | R3 DA3-B006 | fix | raw semantic commitをlocal専用DO class/artifactへ移す | 0 |
+| `search/schema-history-occ-ai` | R3 SDJ3-B001 | fix | revision/OCC/connection provenanceをschemaとcontractへ実装する | 0 |
+| `search/restore-revision-semantics` | R3 SDJ3-B002 | fix | restoreで内容を巻き戻さず新revisionを正しく記録する | 0 |
+| `search/atomic-retention-enqueue` | R3 SDJ3-B003 | fix | trash stateとretention jobを同一transactionで確定する | 0 |
+| `search/leased-retention-update` | R3 SDJ3-B004 | fix | leased job更新時もpurgeを失わず新期限へ再駆動する | 0 |
+| `jobs/alarm-outer-reschedule` | R3 SDJ3-B005 | fix | claim/complete外の例外でも次Alarmをfinallyで復元する | 0 |
+| `search/topic-bounded-work` | R3 SDJ3-B006 | fix | topic集合処理をbounded chunk/jobへ分割する | 0 |
+| `search/bounded-candidate-materialization` | R3 SDJ3-B007 | fix | quota判定前の最大5001全文DTO materializeを避ける | 0 |
+| `tests/search-fault-large-consumers` | R3 SDJ3-B008 / TS3-B008 | fix | fault/大規模/restart/UI-AI/順位/文字境界を実証する | 0 |
+| `infra/pitr-proof-fail-closed` | R3 INFRA3-B002 / IS3-B005 | fix | restart例外、undo boundary、sentinel、conflict zeroを検証する | 0 |
+| `infra/directory-target-allowlist` | R3 INFRA3-B003 / IS3-W001 | fix | destructive restore前にgeneration/bucketを厳密検証する | 0 |
+| `infra/maintenance-input-and-secret-retirement` | R3 INFRA3-W001/W002 | fix | maintenance boundsとprevious secret削除/inventoryを固定する | 0 |
+| `infra/shared-zone-preflight` | R3 INFRA3-W004 | fix | resources/routesのzone/account整合をrelease前検証する | 0 |
+| `infra/release-aggregate-gate` | R3 INFRA3-W005 | fix | secret/config/PITR evidenceをcanonical release commandへ組み込む | 0 |
+| `ci/web-tsx-dependency` | R3 INFRA3-B001 / TS3-B001 | fix | web packageへtsxを直接宣言してclean CIをgreenにする | 0 |
+| `tests/production-entry-boundary` | R3 TS3-B002 / IS3-W002 | fix | test再実装でなく本番entry/action/epoch guardを通す | 1 |
+| `tests/semantic-traceability` | R3 TS3-B003 | fix | test名存在だけでなく目的/tag/resultまで検証する | 1 |
+| `tests/identity-concurrency-enumeration` | R3 TS3-B004 | fix | 同時初回と列挙耐性work profileを公開境界で実証する | 0 |
+| `tests/alarm-self-recovery` | R3 TS3-B005 | fix | test側補助なしでalarmが自己再設定することを証明する | 0 |
+| `tests/lazy-migration-fixtures` | R3 TS3-B006 | fix | 3 classの旧schemaから通常RPC/eviction経由でupgradeする | 1 |
+| `tests/pitr-realistic-failure` | R3 TS3-B007 | fix | restart未到達/conflictとstaging pendingを正確に記録する | 0 |
+| `tests/committed-ci-evidence` | R3 INFRA3-W003 / TS3-B001 | fix | committed SHA/Actions URLとworking tree結果を分離する | 0 |

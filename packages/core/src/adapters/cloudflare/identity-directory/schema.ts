@@ -81,11 +81,71 @@ const V4 = [
   )`,
 ] as const;
 
+const V5 = [
+  "ALTER TABLE signup_operations ADD COLUMN prepared_at INTEGER NOT NULL DEFAULT 0",
+  "UPDATE signup_operations SET prepared_at = created_at WHERE prepared_at = 0",
+] as const;
+
+const V6 = [
+  `CREATE TABLE IF NOT EXISTS rotation_checkpoint_mutations (
+    operation_id TEXT PRIMARY KEY,
+    generation TEXT NOT NULL,
+    bucket INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT 0
+  )`,
+] as const;
+
+const V7 = [
+  `CREATE TABLE IF NOT EXISTS directory_reconcile_jobs (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    phase TEXT NOT NULL CHECK (phase IN ('pending', 'running')),
+    attempt INTEGER NOT NULL DEFAULT 0,
+    next_run_at INTEGER NOT NULL,
+    last_error_code TEXT,
+    updated_at INTEGER NOT NULL
+  )`,
+] as const;
+
+const V8 = [
+  `CREATE TABLE IF NOT EXISTS identity_mail_jobs (
+    operation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    provider_idempotency_key TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'leased', 'completed', 'poison')),
+    attempt INTEGER NOT NULL DEFAULT 0,
+    next_run_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS identity_mail_jobs_due_idx
+   ON identity_mail_jobs(state, next_run_at)`,
+] as const;
+
+const V9 = [
+  `CREATE TABLE IF NOT EXISTS sso_create_operations (
+    opaque_operation_key TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    email TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+] as const;
+
 export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
   { version: 3, up: V3 },
   { version: 4, up: V4 },
+  { version: 5, up: V5 },
+  { version: 6, up: V6 },
+  { version: 7, up: V7 },
+  { version: 8, up: V8 },
+  { version: 9, up: V9 },
 ];
 
 export function migrateIdentityDirectory(

@@ -9,6 +9,7 @@ function fixture(): {
   identity: IdentityApplicationPort;
   prepare: ReturnType<typeof vi.fn>;
   register: ReturnType<typeof vi.fn>;
+  setNow: (value: number) => void;
 } {
   let prepared:
     | {
@@ -18,9 +19,11 @@ function fixture(): {
         passwordHash: Parameters<
           IdentityApplicationPort["preparePasswordSignup"]
         >[0]["passwordHash"];
+        preparedAt: number;
       }
     | undefined;
   let nextId = 0;
+  let now = 1;
   const prepare = vi.fn(
     async (
       input: Parameters<IdentityApplicationPort["preparePasswordSignup"]>[0],
@@ -29,6 +32,7 @@ function fixture(): {
       prepared = {
         userId: input.proposedUserId,
         passwordHash: input.passwordHash,
+        preparedAt: input.now,
       };
       return { ...prepared, replayed: false };
     },
@@ -45,6 +49,9 @@ function fixture(): {
     identity,
     prepare,
     register,
+    setNow: (value) => {
+      now = value;
+    },
     container: {
       config: {
         appUrl: "https://example.com",
@@ -54,7 +61,7 @@ function fixture(): {
         themeColor: "#000000",
       },
       identity,
-      clock: { now: () => new Date(1) },
+      clock: { now: () => new Date(now) },
       idGenerator: {
         next: () => `server-generated-user-${++nextId}`,
         validate: (value) => value.startsWith("server-generated-user-"),
@@ -97,7 +104,7 @@ describe("registerWithPassword public idempotency", () => {
   });
 
   it("reuses the original user and hash on a public replay", async () => {
-    const { container, register } = fixture();
+    const { container, register, setNow } = fixture();
     const input = {
       operationId: "0197f160-76f5-7000-8000-000000000019",
       email: "person@example.com",
@@ -105,6 +112,7 @@ describe("registerWithPassword public idempotency", () => {
     };
 
     await registerWithPassword({ container, input });
+    setNow(99_999);
     const replay = await registerWithPassword({ container, input });
 
     expect(replay.userId).toBe("server-generated-user-1");
@@ -112,6 +120,7 @@ describe("registerWithPassword public idempotency", () => {
       expect.objectContaining({
         userId: "server-generated-user-1",
         passwordHash: "hash:password123",
+        now: 1,
       }),
     );
   });

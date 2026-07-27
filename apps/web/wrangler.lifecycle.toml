@@ -9,4 +9,7 @@ LOCAL_LIFECYCLE_ENABLED = "true"
 [[durable_objects.bindings]]
 name = "USER_DATA"
 class_name = "UserDataDurableObject"
-script_name = "fog-state"
+
+[exports.UserDataDurableObject]
+type = "durable-object"
+storage = "sqlite"

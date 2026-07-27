@@ -10,9 +10,9 @@ export const logoutFn = createServerFn({ method: "POST" })
     const userId = await requireUserId();
 
     const { container, module } = await loadServerDeps(
-      () => import("@repo/core/application/identity/logout"),
+      () => import("@/presentation/identityActionHandlers"),
     );
-    await module.logout({ container, input: { userId } });
+    await module.logoutAction(container, userId);
 
     const { endSession } = await import("@/presentation/session");
     endSession();

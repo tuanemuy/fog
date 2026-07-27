@@ -33,7 +33,12 @@ describe("identity maintenance operator", () => {
         bucket: 7,
         limit: 100,
       }),
-      { PITR_OPERATOR_TOKEN: token } as IdentityMaintenanceEnv,
+      {
+        PITR_OPERATOR_TOKEN: token,
+        DIRECTORY_ROUTING_GENERATION_PREVIOUS: "previous-v1",
+        DIRECTORY_ROUTING_SECRET_PREVIOUS:
+          "previous-routing-secret-with-at-least-32-bytes",
+      } as IdentityMaintenanceEnv,
       () => ({
         rotatePage,
         reconcilePage: vi.fn(),
@@ -62,7 +67,10 @@ describe("identity maintenance operator", () => {
         bucket: 0,
         limit: 101,
       }),
-      { PITR_OPERATOR_TOKEN: token } as IdentityMaintenanceEnv,
+      {
+        PITR_OPERATOR_TOKEN: token,
+        DIRECTORY_ROUTING_GENERATION_ACTIVE: "active-v2",
+      } as IdentityMaintenanceEnv,
       () => {
         throw new Error("must not construct gateway");
       },
@@ -72,4 +80,33 @@ describe("identity maintenance operator", () => {
       error: "INVALID_OPERATOR_INPUT",
     });
   });
+
+  it.each([
+    ["unknown generation", "unknown-v9", 0],
+    ["negative bucket", "active-v2", -1],
+    ["bucket upper bound", "active-v2", 64],
+    ["huge bucket", "active-v2", Number.MAX_SAFE_INTEGER],
+  ])(
+    "rejects %s before constructing the gateway",
+    async (_label, generation, bucket) => {
+      const create = vi.fn(() => {
+        throw new Error("must not construct gateway");
+      });
+      const response = await handleIdentityMaintenanceRequest(
+        request({
+          action: "status",
+          generation,
+          bucket,
+        }),
+        {
+          PITR_OPERATOR_TOKEN: token,
+          DIRECTORY_ROUTING_GENERATION_ACTIVE: "active-v2",
+          DIRECTORY_ROUTING_GENERATION_PREVIOUS: "previous-v1",
+        } as IdentityMaintenanceEnv,
+        create,
+      );
+      expect(response?.status).toBe(400);
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
 });

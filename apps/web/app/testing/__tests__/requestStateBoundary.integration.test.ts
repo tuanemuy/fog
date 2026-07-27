@@ -1,5 +1,4 @@
-import { SELF } from "cloudflare:test";
-import { reset } from "cloudflare:test";
+import { reset, SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 
 afterEach(() => reset());
@@ -16,7 +15,12 @@ describe("request Worker to state auxiliary Worker boundary", () => {
         "content-type": "application/json",
         ...(cookie === undefined ? {} : { cookie }),
       },
-      body: JSON.stringify({ version: 1, action, ...body }),
+      body: JSON.stringify({
+        version: 1,
+        action,
+        ...(action === "signup" ? { operationId: crypto.randomUUID() } : {}),
+        ...body,
+      }),
     });
 
   it("keeps request-only secrets on request and requires authentication for User Data", async () => {
@@ -75,7 +79,7 @@ describe("request Worker to state auxiliary Worker boundary", () => {
     });
   });
 
-  it("rejects version mismatches and public routing overrides before RPC", async () => {
+  it("rejects version mismatches and ignores public routing overrides", async () => {
     const mismatch = await SELF.fetch(
       "https://fog.test/acceptance/user-data/profile",
       {
@@ -90,18 +94,26 @@ describe("request Worker to state auxiliary Worker boundary", () => {
       error: { code: "RPC_VERSION_UNSUPPORTED", retryable: false },
     });
 
+    const signup = await identity("signup", {
+      email: `routing-${crypto.randomUUID()}@example.com`,
+      password: "correct horse battery staple",
+    });
+    const cookie = signup.headers.get("set-cookie") ?? "";
+    const expectedUserId = (
+      (await signup.json()) as { value: { userId: string } }
+    ).value.userId;
     const override = await SELF.fetch(
       "https://fog.test/acceptance/user-data/profile",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", cookie },
         body: JSON.stringify({ version: 1, userId: "another-user" }),
       },
     );
-    expect(override.status).toBe(400);
+    expect(override.status).toBe(200);
     expect(await override.json()).toMatchObject({
-      ok: false,
-      error: { code: "ROUTING_OVERRIDE_FORBIDDEN", retryable: false },
+      ok: true,
+      value: { userId: expectedUserId },
     });
   });
 
@@ -139,5 +151,70 @@ describe("request Worker to state auxiliary Worker boundary", () => {
       ),
     ).toEqual(sessions.map(({ userId }) => userId));
     expect(new Set(sessions.map(({ userId }) => userId)).size).toBe(2);
+  });
+
+  it("uses the production login handler and public error projection for enumeration-resistant failures", async () => {
+    const credentials = {
+      email: `login-${crypto.randomUUID()}@example.com`,
+      password: "correct horse battery staple",
+    };
+    const ssoOnlyEmail = `sso-only-${crypto.randomUUID()}@example.com`;
+    await identity("signup", credentials);
+    const fixture = await SELF.fetch(
+      "https://fog.test/acceptance/fixture/sso-only",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: ssoOnlyEmail }),
+      },
+    );
+    expect(fixture.status).toBe(200);
+    const attempts = [
+      {
+        email: `unknown-${crypto.randomUUID()}@example.com`,
+        password: credentials.password,
+      },
+      { email: credentials.email, password: "definitely-the-wrong-password" },
+      { email: ssoOnlyEmail, password: credentials.password },
+      { email: "not-an-email", password: credentials.password },
+    ];
+    const responses = await Promise.all(
+      attempts.map((input) => identity("login", input)),
+    );
+    const bodies = await Promise.all(
+      responses.map((response) => response.json()),
+    );
+    expect(responses.map(({ status }) => status)).toEqual([422, 422, 422, 422]);
+    expect(
+      bodies.map((body) => {
+        const error = (body as { error: unknown }).error;
+        return error;
+      }),
+    ).toEqual([
+      {
+        kind: "validation",
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password",
+        retryable: false,
+      },
+      {
+        kind: "validation",
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password",
+        retryable: false,
+      },
+      {
+        kind: "validation",
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password",
+        retryable: false,
+      },
+      {
+        kind: "validation",
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password",
+        retryable: false,
+      },
+    ]);
   });
 });

@@ -9,10 +9,8 @@ import { DurableJobStore } from "@repo/core/adapters/cloudflare/user-data/jobs";
 import type { ConflictError } from "@repo/core/application/errors";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  shouldMoveAlarm,
-  type UserDataDurableObject,
-} from "../UserDataDurableObject";
+import type { LocalUserDataDurableObject as UserDataDurableObject } from "../../testing/LocalUserDataDurableObject";
+import { shouldMoveAlarm } from "../UserDataDurableObject";
 
 type TestEnv = {
   USER_DATA: DurableObjectNamespace<UserDataDurableObject>;
@@ -258,7 +256,6 @@ describe("User Data persistent jobs", () => {
             "UPDATE jobs SET next_run_at = ? WHERE id = 'unsupported'",
             due,
           );
-          await state.storage.setAlarm(Date.now() + 1_000);
         }
       });
     }
@@ -333,6 +330,138 @@ describe("User Data persistent jobs", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBe(trashedAt + 60 * 86_400_000);
+    });
+  });
+
+  it("updates leased retention jobs and defers them without poisoning", async () => {
+    const stub = await initialized("leased-retention");
+    const trashedAt = Date.now() - 31 * 86_400_000;
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "create",
+        type: "create-memo",
+        memo: { id: "memo", body: "leased", timestamp: trashedAt - 1 },
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "trash",
+        type: "trash-memo",
+        memoId: "memo",
+        trashedAt,
+      }),
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        new DurableJobStore(state.storage).claim({
+          now: Date.now(),
+          leaseMs: 60_000,
+          ownerToken: "retention-owner",
+          limit: 1,
+        }),
+      ).toHaveLength(1);
+    });
+    value(
+      await stub.updateTrashRetention({
+        version: 1,
+        operationId: "extend",
+        retentionDays: 60,
+        updatedAt: Date.now(),
+      }),
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      const job = state.storage.sql
+        .exec<{ status: string; next_run_at: number }>(
+          "SELECT status, next_run_at FROM jobs WHERE kind = 'purge-trash'",
+        )
+        .one();
+      expect(job).toEqual({
+        status: "leased",
+        next_run_at: trashedAt + 60 * 86_400_000,
+      });
+      state.storage.sql.exec(
+        "UPDATE jobs SET lease_until = ? WHERE kind = 'purge-trash'",
+        Date.now() - 1,
+      );
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ status: string; attempt: number }>(
+            "SELECT status, attempt FROM jobs WHERE kind = 'purge-trash'",
+          )
+          .one(),
+      ).toEqual({ status: "pending", attempt: 1 });
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM content WHERE id = 'memo'",
+          )
+          .one().count,
+      ).toBe(1);
+    });
+  });
+
+  it("purges a maximum-size topic in bounded alarm chunks", async () => {
+    const stub = await initialized("topic-chunks");
+    const expiredAt = Date.now() - 31 * 86_400_000;
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "topic",
+        type: "create-topic",
+        topic: { id: "topic", name: "Chunked", timestamp: expiredAt - 2 },
+      }),
+    );
+    for (let index = 0; index < 100; index += 1) {
+      value(
+        await stub.commit({
+          version: 1,
+          operationId: `document-${index}`,
+          type: "create-document",
+          document: {
+            id: `document-${index.toString().padStart(3, "0")}`,
+            title: "Chunk",
+            body: "bounded purge",
+            topicId: "topic",
+            sourceMemoIds: [],
+            timestamp: expiredAt - 1,
+          },
+        }),
+      );
+    }
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "trash-topic",
+        type: "trash-topic",
+        topicId: "topic",
+        trashedAt: expiredAt,
+      }),
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM content
+             WHERE trashed_with_topic_id = 'topic'`,
+          )
+          .one().count,
+      ).toBe(50);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM topics WHERE id = 'topic'",
+          )
+          .one().count,
+      ).toBe(0);
     });
   });
 

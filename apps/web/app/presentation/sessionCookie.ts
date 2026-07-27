@@ -1,3 +1,4 @@
+import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 
 /**
@@ -43,6 +44,20 @@ export function buildSessionCookie(
   ];
   if (options.secure) parts.push("Secure");
   return parts.join("; ");
+}
+
+export async function issueSessionCookie(
+  container: RequestContainer,
+  userId: string,
+  sessionEpoch: number,
+  options: SessionCookieOptions,
+): Promise<string> {
+  const token = await container.sessionCodec.issue(
+    userId,
+    sessionEpoch,
+    container.clock.now(),
+  );
+  return buildSessionCookie(token, options);
 }
 
 /**

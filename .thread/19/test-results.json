@@ -1,23 +1,29 @@
 {
-  "recordedAt": "2026-07-27T18:27:53Z",
-  "baseCommit": "1e716a3d38e6c7384c31a652cb24d233ddae48b5",
+  "recordedAt": "2026-07-27T19:15:39Z",
+  "source": "working-tree",
+  "baseCommit": "502776e5a797fd042636164314755f1f5aa137d4",
   "workingTree": true,
   "branch": "issue/19/cloudflare-do-fts",
   "automated": [
     {
       "command": "pnpm test:unit",
       "result": "passed",
-      "evidence": "30 files, 413 tests"
+      "evidence": "31 files, 407 tests"
     },
     {
       "command": "pnpm test:integration",
       "result": "passed",
-      "evidence": "request boundary 1 file/4 tests; state 6 files/32 tests"
+      "evidence": "request boundary 1 file/5 tests; state 6 files/66 tests"
     },
     {
       "command": "pnpm test:lifecycle:cli",
       "result": "passed",
       "evidence": "13 lifecycle operations with step-specific search assertions"
+    },
+    {
+      "command": "pnpm --filter @repo/web operator:cli:smoke",
+      "result": "passed",
+      "evidence": "PITR and identity maintenance CLIs both resolve their direct tsx dependency"
     },
     {
       "command": "pnpm typecheck",
@@ -37,20 +43,35 @@
       "evidence": "offline Pulumi fixture render; state then request Wrangler dry-run"
     },
     {
-      "command": "pnpm audit:legacy && pnpm audit:test-traceability",
+      "command": "pnpm audit:legacy",
       "result": "passed",
-      "evidence": "265 active files; 34 TEST IDs with executable evidence"
+      "evidence": "271 active files; production artifact inputs clean"
+    },
+    {
+      "command": "pnpm audit:test-traceability",
+      "result": "passed",
+      "evidence": "34 TEST IDs; source, CI inclusion, recorded suite results checked; pending release/manual evidence reported without claiming verification"
     }
   ],
+  "committedCi": {
+    "result": "pending",
+    "reason": "The reviewed fixes are not committed; no CI run can represent this working tree yet"
+  },
   "releaseGates": [
     {
       "name": "staging PITR bookmark/restore/verify/undo",
       "result": "pending",
-      "reason": "Cloudflare credentials and disposable remote objects are not available in the local environment"
+      "stage": "staging",
+      "namespace": null,
+      "verifiedAt": null,
+      "expiresAt": null,
+      "reason": "Cloudflare credentials and a disposable remote namespace are not available in the local environment"
     },
     {
       "name": "staging secret inventory",
       "result": "pending",
+      "stage": "staging",
+      "verifiedAt": null,
       "reason": "Cloudflare credentials are not available in the local environment"
     }
   ]

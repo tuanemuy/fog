@@ -74,6 +74,11 @@ export type DirectoryShardAuthorityStatus = Readonly<{
   restoredSessionVerifiedAt: number | null;
 }>;
 
+export type DirectoryReconcileJob = Readonly<{
+  attempt: number;
+  nextRunAt: number;
+}>;
+
 export class IdentityDirectoryStore {
   constructor(private readonly storage: DurableSqlStorage) {}
 
@@ -81,6 +86,22 @@ export class IdentityDirectoryStore {
     return this.storage.transactionSync(() => {
       const existing = this.find(input.locator.opaqueKey);
       if (existing) {
+        if (
+          input.operationId.startsWith("rotate:") &&
+          existing.state === "active" &&
+          existing.user_id === input.userId &&
+          existing.account_epoch === input.accountEpoch &&
+          this.sameCredential(existing, input.credential)
+        ) {
+          this.storage.sql.exec(
+            `UPDATE credential_mappings SET operation_id = ?, updated_at = ?
+             WHERE opaque_key = ?`,
+            input.operationId,
+            input.now,
+            input.locator.opaqueKey,
+          );
+          return input.userId;
+        }
         if (
           existing.operation_id === input.operationId &&
           existing.user_id === input.userId &&
@@ -150,10 +171,16 @@ export class IdentityDirectoryStore {
     userId: UserId;
     email: Email;
     passwordHash: PasswordHash;
+    preparedAt: number;
   } | null {
     const row = this.storage.sql
-      .exec<{ user_id: string; email: string; password_hash: string }>(
-        `SELECT user_id, email, password_hash FROM signup_operations
+      .exec<{
+        user_id: string;
+        email: string;
+        password_hash: string;
+        prepared_at: number;
+      }>(
+        `SELECT user_id, email, password_hash, prepared_at FROM signup_operations
          WHERE opaque_operation_key = ?`,
         opaqueOperationKey,
       )
@@ -163,6 +190,7 @@ export class IdentityDirectoryStore {
           userId: UserId.create(row.user_id),
           email: Email.create(row.email),
           passwordHash: PasswordHash.create(row.password_hash),
+          preparedAt: row.prepared_at,
         }
       : null;
   }
@@ -176,6 +204,7 @@ export class IdentityDirectoryStore {
   }): {
     userId: UserId;
     passwordHash: PasswordHash;
+    preparedAt: number;
     replayed: boolean;
   } {
     return this.storage.transactionSync(() => {
@@ -187,26 +216,77 @@ export class IdentityDirectoryStore {
         return {
           userId: existing.userId,
           passwordHash: existing.passwordHash,
+          preparedAt: existing.preparedAt,
           replayed: true,
         };
       }
       this.storage.sql.exec(
         `INSERT INTO signup_operations(
            opaque_operation_key, user_id, email, password_hash,
-           created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
+           prepared_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         input.opaqueOperationKey,
         input.proposedUserId,
         input.email,
         input.passwordHash,
         input.now,
         input.now,
+        input.now,
       );
       return {
         userId: input.proposedUserId,
         passwordHash: input.passwordHash,
+        preparedAt: input.now,
         replayed: false,
       };
+    });
+  }
+
+  prepareSsoCreate(input: {
+    opaqueOperationKey: string;
+    proposedUserId: UserId;
+    provider: SsoProvider;
+    subject: string;
+    email: Email;
+    now: number;
+  }): { userId: UserId; replayed: boolean } {
+    return this.storage.transactionSync(() => {
+      const existing = this.storage.sql
+        .exec<{
+          user_id: string;
+          provider: string;
+          subject: string;
+          email: string;
+        }>(
+          `SELECT user_id, provider, subject, email
+           FROM sso_create_operations WHERE opaque_operation_key = ?`,
+          input.opaqueOperationKey,
+        )
+        .toArray()[0];
+      if (existing) {
+        if (
+          existing.provider !== input.provider ||
+          existing.subject !== input.subject ||
+          existing.email !== input.email
+        ) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return { userId: UserId.create(existing.user_id), replayed: true };
+      }
+      this.storage.sql.exec(
+        `INSERT INTO sso_create_operations(
+           opaque_operation_key, user_id, provider, subject, email,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        input.opaqueOperationKey,
+        input.proposedUserId,
+        input.provider,
+        input.subject,
+        input.email,
+        input.now,
+        input.now,
+      );
+      return { userId: input.proposedUserId, replayed: false };
     });
   }
 
@@ -400,6 +480,55 @@ export class IdentityDirectoryStore {
     });
   }
 
+  enqueuePasswordResetMail(input: {
+    operationId: OperationId;
+    userId: UserId;
+    email: Email;
+    tokenHash: string;
+    providerIdempotencyKey: string;
+    now: number;
+  }): void {
+    this.storage.transactionSync(() => {
+      const existing = this.storage.sql
+        .exec<{
+          user_id: string;
+          email: string;
+          token_hash: string;
+          provider_idempotency_key: string;
+        }>(
+          `SELECT user_id, email, token_hash, provider_idempotency_key
+           FROM identity_mail_jobs WHERE operation_id = ?`,
+          input.operationId,
+        )
+        .toArray()[0];
+      if (existing) {
+        if (
+          existing.user_id !== input.userId ||
+          existing.email !== input.email ||
+          existing.token_hash !== input.tokenHash ||
+          existing.provider_idempotency_key !== input.providerIdempotencyKey
+        ) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return;
+      }
+      this.storage.sql.exec(
+        `INSERT INTO identity_mail_jobs(
+           operation_id, user_id, email, token_hash,
+           provider_idempotency_key, state, next_run_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        input.operationId,
+        input.userId,
+        input.email,
+        input.tokenHash,
+        input.providerIdempotencyKey,
+        input.now,
+        input.now,
+        input.now,
+      );
+    });
+  }
+
   lookupPasswordReset(input: {
     operationId: OperationId;
     tokenHash: string;
@@ -533,6 +662,7 @@ export class IdentityDirectoryStore {
   }
 
   saveRotationCheckpoint(input: {
+    operationId: OperationId;
     generation: string;
     bucket: number;
     cursor: string | null;
@@ -542,6 +672,37 @@ export class IdentityDirectoryStore {
     completedAt: number | null;
   }): void {
     this.storage.transactionSync(() => {
+      const payload = JSON.stringify({
+        generation: input.generation,
+        bucket: input.bucket,
+        cursor: input.cursor,
+        scanned: input.scanned,
+        moved: input.moved,
+        conflicts: input.conflicts,
+        completedAt: input.completedAt,
+      });
+      const existing = this.storage.sql
+        .exec<{ payload_json: string }>(
+          `SELECT payload_json FROM rotation_checkpoint_mutations
+           WHERE operation_id = ?`,
+          input.operationId,
+        )
+        .toArray()[0];
+      if (existing) {
+        if (existing.payload_json !== payload) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return;
+      }
+      this.storage.sql.exec(
+        `INSERT INTO rotation_checkpoint_mutations(
+           operation_id, generation, bucket, payload_json
+         ) VALUES (?, ?, ?, ?)`,
+        input.operationId,
+        input.generation,
+        input.bucket,
+        payload,
+      );
       this.storage.sql.exec(
         `INSERT INTO rotation_checkpoints(
            generation, bucket, cursor_key, scanned_count, moved_count,
@@ -683,6 +844,84 @@ export class IdentityDirectoryStore {
       }));
   }
 
+  enqueueReconcile(nextRunAt: number, now: number): void {
+    this.storage.sql.exec(
+      `INSERT INTO directory_reconcile_jobs(
+         singleton, phase, attempt, next_run_at, last_error_code, updated_at
+       ) VALUES (1, 'pending', 0, ?, NULL, ?)
+       ON CONFLICT(singleton) DO UPDATE SET
+         phase = 'pending',
+         next_run_at = MIN(directory_reconcile_jobs.next_run_at, excluded.next_run_at),
+         updated_at = excluded.updated_at`,
+      nextRunAt,
+      now,
+    );
+  }
+
+  claimReconcile(now: number): DirectoryReconcileJob | null {
+    return this.storage.transactionSync(() => {
+      const row = this.storage.sql
+        .exec<{ attempt: number; next_run_at: number }>(
+          `SELECT attempt, next_run_at FROM directory_reconcile_jobs
+           WHERE singleton = 1 AND next_run_at <= ?`,
+          now,
+        )
+        .toArray()[0];
+      if (!row) return null;
+      this.storage.sql.exec(
+        `UPDATE directory_reconcile_jobs SET phase = 'running',
+           attempt = attempt + 1, updated_at = ? WHERE singleton = 1`,
+        now,
+      );
+      return { attempt: row.attempt + 1, nextRunAt: row.next_run_at };
+    });
+  }
+
+  finishReconcile(now: number): number | null {
+    return this.storage.transactionSync(() => {
+      const next = this.storage.sql
+        .exec<{ next_run_at: number | null }>(
+          `SELECT MIN(reservation_expires_at) AS next_run_at
+           FROM credential_mappings
+           WHERE state IN ('reserved', 'initialized')
+             AND reservation_expires_at IS NOT NULL`,
+        )
+        .one().next_run_at;
+      if (next === null) {
+        this.storage.sql.exec(
+          "DELETE FROM directory_reconcile_jobs WHERE singleton = 1",
+        );
+        return null;
+      }
+      this.storage.sql.exec(
+        `UPDATE directory_reconcile_jobs SET phase = 'pending', attempt = 0,
+           next_run_at = ?, last_error_code = NULL, updated_at = ?
+         WHERE singleton = 1`,
+        Math.max(next, now),
+        now,
+      );
+      return Math.max(next, now);
+    });
+  }
+
+  failReconcile(errorCode: string, now: number): number {
+    const job = this.storage.sql
+      .exec<{ attempt: number }>(
+        "SELECT attempt FROM directory_reconcile_jobs WHERE singleton = 1",
+      )
+      .one();
+    const nextRunAt = now + Math.min(60_000, 1_000 * 2 ** job.attempt);
+    this.storage.sql.exec(
+      `UPDATE directory_reconcile_jobs SET phase = 'pending',
+         next_run_at = ?, last_error_code = ?, updated_at = ?
+       WHERE singleton = 1`,
+      nextRunAt,
+      errorCode.slice(0, 128),
+      now,
+    );
+    return nextRunAt;
+  }
+
   private requireOwned(input: {
     locator: CredentialLocator;
     operationId: OperationId;
@@ -727,6 +966,19 @@ export class IdentityDirectoryStore {
     ) {
       throw new Error("SSO_PROVIDER_AND_EMAIL_REQUIRED");
     }
+  }
+
+  private sameCredential(row: MappingRow, credential: CredentialRef): boolean {
+    if (
+      row.kind !== credential.kind ||
+      row.canonical_value !== credential.canonicalValue
+    ) {
+      return false;
+    }
+    return credential.kind === "password"
+      ? row.password_hash === credential.passwordHash
+      : row.provider === credential.provider &&
+          row.verified_email === credential.verifiedEmail;
   }
 
   private toLocator(row: MappingRow): CredentialLocator {

@@ -20,4 +20,29 @@ describe("validateSecretInventory", () => {
       }),
     ).toEqual(["forbidden request-only secret is present: SESSION_SECRET"]);
   });
+
+  it("rejects a retired previous routing secret outside a rotation window", () => {
+    expect(
+      validateSecretInventory({
+        required: [
+          "SESSION_SECRET",
+          "DIRECTORY_ROUTING_SECRET_ACTIVE",
+          "PITR_OPERATOR_TOKEN",
+        ],
+        configured: [
+          { name: "SESSION_SECRET" },
+          { name: "DIRECTORY_ROUTING_SECRET_ACTIVE" },
+          { name: "DIRECTORY_ROUTING_SECRET_PREVIOUS" },
+          { name: "PITR_OPERATOR_TOKEN" },
+        ],
+        allowed: new Set([
+          "SESSION_SECRET",
+          "DIRECTORY_ROUTING_SECRET_ACTIVE",
+          "PITR_OPERATOR_TOKEN",
+        ]),
+      }),
+    ).toEqual([
+      "unexpected secret is present: DIRECTORY_ROUTING_SECRET_PREVIOUS",
+    ]);
+  });
 });

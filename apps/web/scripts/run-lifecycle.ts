@@ -68,8 +68,6 @@ const child = spawn(
     "dev",
     "--config",
     "wrangler.lifecycle.toml",
-    "--config",
-    "wrangler.state.toml",
     "--port",
     String(port),
     "--persist-to",

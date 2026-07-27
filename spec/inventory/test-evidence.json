@@ -3,7 +3,22 @@
     {
       "suite": "unit",
       "file": "packages/core/src/domain/identity/__tests__/entity.test.ts",
-      "test": "emits a single identity.userRegistered draft aggregated on the user"
+      "test": "supports multiple logical credentials and keeps physical routing out"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/domain/identity/__tests__/entity.test.ts",
+      "test": "rejects a primary email that is not backed by an active credential"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/domain/identity/__tests__/entity.test.ts",
+      "test": "changes a password and invalidates prior sessions"
+    },
+    {
+      "suite": "unit",
+      "file": "packages/core/src/domain/identity/__tests__/entity.test.ts",
+      "test": "minimizes identity data after deletion"
     }
   ],
   "TEST-DOM-002": [
@@ -16,6 +31,11 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
       "test": "covers document update, trash, restore, and trash-only hard delete"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "enforces OCC while no-op updates and restores preserve revision history"
     }
   ],
   "TEST-DOM-003": [
@@ -23,6 +43,11 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
       "test": "returns original NFKC snippets and typed validation errors"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "honors literal short queries and deterministic ranking boundaries"
     }
   ],
   "TEST-APP-001": [
@@ -46,6 +71,11 @@
   ],
   "TEST-APP-003": [
     {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "uses the production login handler and public error projection for enumeration-resistant failures"
+    },
+    {
       "suite": "unit",
       "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
       "test": "reports an unreadable dummy hash, naming the failure's type only"
@@ -63,6 +93,11 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
       "test": "reclaims expired leases and enforces owner CAS, poison, and batch bounds"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "updates leased retention jobs and defers them without poisoning"
     }
   ],
   "TEST-DO-001": [
@@ -75,6 +110,11 @@
       "suite": "unit",
       "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
       "test": "keeps request/state bindings and secrets separated"
+    },
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps raw semantic commits out of the production state artifact"
     }
   ],
   "TEST-DO-002": [
@@ -103,13 +143,33 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/durableObjects.integration.test.ts",
       "test": "rolls back the main write when the FTS projection fails"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/durableObjects.integration.test.ts",
+      "test": "rolls back trash and its retention job when projection removal fails"
     }
   ],
   "TEST-DO-006": [
     {
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
-      "test": "respects the 100-bind ceiling, deterministic ties, and snapshot quota"
+      "test": "returns original NFKC snippets and typed validation errors"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "honors literal short queries and deterministic ranking boundaries"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "uses a stable snapshot cursor across intervening mutations"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "bounds candidate materialization before loading multi-megabyte bodies"
     }
   ],
   "TEST-DO-007": [
@@ -122,8 +182,8 @@
   "TEST-DO-008": [
     {
       "suite": "integration-state",
-      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
-      "test": "detects ID/provider payload conflicts and accepts exact replays"
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "commits typed memo/document lifecycle, revisions, sources, and digest idempotency"
     }
   ],
   "TEST-DO-009": [
@@ -148,6 +208,11 @@
       "suite": "integration-state",
       "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
       "test": "recomputes existing trash and jobs when retention changes"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "purges a maximum-size topic in bounded alarm chunks"
     }
   ],
   "TEST-DO-011": [
@@ -194,7 +259,7 @@
     {
       "suite": "unit",
       "file": "packages/core/src/adapters/cloudflare/__tests__/pitrPolicy.test.ts",
-      "test": "reconciles every restored Directory shard before reporting verification"
+      "test": "refuses Account Home restores"
     }
   ],
   "TEST-ID-006": [
@@ -215,7 +280,7 @@
     {
       "suite": "integration-request",
       "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
-      "test": "rejects version mismatches and public routing overrides before RPC"
+      "test": "rejects version mismatches and ignores public routing overrides"
     }
   ],
   "TEST-PRES-003": [
@@ -246,14 +311,16 @@
     {
       "suite": "manual",
       "file": "spec/manual-tests/search.md",
-      "marker": "#"
+      "marker": "# 検索 テスト",
+      "result": "pending"
     }
   ],
   "TEST-OPS-001": [
     {
       "suite": "release-gate",
       "file": ".thread/19/progress.md",
-      "marker": "staging の実bookmark取得・restore・undo restore"
+      "marker": "staging の実bookmark取得・restore・verify・undo restore",
+      "gate": "staging PITR bookmark/restore/verify/undo"
     }
   ],
   "TEST-OPS-002": [
@@ -265,7 +332,8 @@
     {
       "suite": "release-gate",
       "file": ".thread/19/progress.md",
-      "marker": "staging の実bookmark取得・restore・undo restore"
+      "marker": "staging の実bookmark取得・restore・verify・undo restore",
+      "gate": "staging PITR bookmark/restore/verify/undo"
     }
   ],
   "TEST-OPS-003": [
@@ -281,7 +349,8 @@
     {
       "suite": "release-gate",
       "file": ".thread/19/progress.md",
-      "marker": "staging secret inventory gate"
+      "marker": "staging secret inventory gate",
+      "gate": "staging secret inventory"
     }
   ]
 }

@@ -1,22 +1,26 @@
 import { DurableObject } from "cloudflare:workers";
+import type { PitrRestoreProof } from "@repo/core/adapters/cloudflare/pitrOperator";
+import { sqliteErrorCode } from "@repo/core/adapters/cloudflare/sql";
 import { payloadDigest } from "@repo/core/adapters/cloudflare/user-data/canonical";
 import { DurableJobStore } from "@repo/core/adapters/cloudflare/user-data/jobs";
 import { migrateUserData } from "@repo/core/adapters/cloudflare/user-data/schema";
 import { Fts5SearchAdapter } from "@repo/core/adapters/cloudflare/user-data/searchIndex";
-import { UserDataSemanticCommit } from "@repo/core/adapters/cloudflare/user-data/semanticCommit";
 import {
   ConflictError,
   NotFoundError,
   SystemError,
+  SystemErrorCode,
   ValidationError,
 } from "@repo/core/application/errors";
-import type { RpcResult } from "@repo/core/application/identity/contracts";
+import type {
+  IdentityRpcMutation,
+  IdentityRpcQuery,
+  RpcResult,
+} from "@repo/core/application/identity/contracts";
 import type {
   SearchContentKind,
   SearchPage,
-  SearchQuery,
-  SemanticCommand,
-  SemanticCommitResult,
+  SearchRpcQuery,
 } from "@repo/core/application/search/contracts";
 import {
   SEARCH_RPC_VERSION,
@@ -30,8 +34,6 @@ type UserDataProfile = Readonly<{
   userId: string;
   trashRetentionDays: number;
 }>;
-
-type RetentionKind = SearchContentKind | "topic";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -61,51 +63,6 @@ function isTimestamp(value: unknown): value is number {
   );
 }
 
-function isMemo(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ["id", "body", "timestamp"]) &&
-    isId(value.id) &&
-    typeof value.body === "string" &&
-    isTimestamp(value.timestamp)
-  );
-}
-
-function isDocument(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, [
-      "id",
-      "title",
-      "body",
-      "timestamp",
-      "topicId",
-      "sourceMemoIds",
-    ]) &&
-    isId(value.id) &&
-    typeof value.title === "string" &&
-    typeof value.body === "string" &&
-    isTimestamp(value.timestamp) &&
-    isId(value.topicId) &&
-    Array.isArray(value.sourceMemoIds) &&
-    value.sourceMemoIds.length <= 100 &&
-    value.sourceMemoIds.every(isId)
-  );
-}
-
-function isTopic(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ["id", "name", "timestamp"], ["sourceMemoId"]) &&
-    isId(value.id) &&
-    typeof value.name === "string" &&
-    value.name.length > 0 &&
-    new TextEncoder().encode(value.name).byteLength <= 1_024 &&
-    isTimestamp(value.timestamp) &&
-    (value.sourceMemoId === undefined || isId(value.sourceMemoId))
-  );
-}
-
 export function shouldMoveAlarm(
   current: number | null,
   target: number,
@@ -114,6 +71,8 @@ export function shouldMoveAlarm(
 }
 
 export class UserDataDurableObject extends DurableObject<StateEnv> {
+  private readonly pitrSessionId = crypto.randomUUID();
+
   constructor(ctx: DurableObjectState, env: StateEnv) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
@@ -122,17 +81,27 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  async initialize(input: {
-    operationId: string;
-    userId: string;
-    now: number;
-  }): Promise<RpcResult<UserDataProfile>> {
+  async identityInitializeV1(
+    input: IdentityRpcMutation<{ userId: string; now: number }>,
+  ): Promise<RpcResult<UserDataProfile>> {
     return this.rpc(async () => {
+      this.assertIdentityMutation(input);
       this.ctx.storage.transactionSync(() => {
         const digest = payloadDigest({
-          userId: input.userId,
-          now: input.now,
+          userId: input.payload.userId,
+          now: input.payload.now,
         });
+        const deleted = this.ctx.storage.sql
+          .exec<{ operation_id: string }>(
+            "SELECT operation_id FROM user_data_delete_markers LIMIT 1",
+          )
+          .toArray()[0];
+        if (deleted) {
+          throw new ConflictError(
+            "USER_DATA_DELETED",
+            "Deleted User Data cannot be initialized again",
+          );
+        }
         const operation = this.ctx.storage.sql
           .exec<{ payload_digest: string }>(
             `SELECT payload_digest FROM idempotency
@@ -151,22 +120,25 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
             "SELECT user_id FROM profile WHERE singleton = 1",
           )
           .toArray()[0];
-        if (existing && existing.user_id !== input.userId) {
-          throw new Error("USER_DATA_OWNER_MISMATCH");
+        if (existing && existing.user_id !== input.payload.userId) {
+          throw new ConflictError(
+            "USER_DATA_OWNER_MISMATCH",
+            "User data owner did not match",
+          );
         }
         this.ctx.storage.sql.exec(
           `INSERT OR IGNORE INTO profile(
            singleton, user_id, created_at, updated_at
          ) VALUES (1, ?, ?, ?)`,
-          input.userId,
-          input.now,
-          input.now,
+          input.payload.userId,
+          input.payload.now,
+          input.payload.now,
         );
         this.ctx.storage.sql.exec(
           `INSERT OR IGNORE INTO settings(
            singleton, trash_retention_days, version, updated_at
          ) VALUES (1, 30, 1, ?)`,
-          input.now,
+          input.payload.now,
         );
         this.ctx.storage.sql.exec(
           `INSERT OR IGNORE INTO idempotency(
@@ -175,7 +147,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
          ) VALUES ('initialize', ?, 'initialize', ?, '{"ok":true}', ?)`,
           input.operationId,
           digest,
-          input.now,
+          input.payload.now,
         );
       });
       await this.ensureAlarm();
@@ -183,58 +155,101 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  async getProfile(): Promise<RpcResult<UserDataProfile>> {
-    await this.ensureAlarm();
-    const row = this.ctx.storage.sql
-      .exec<{ user_id: string; trash_retention_days: number }>(
-        `SELECT p.user_id, s.trash_retention_days
-         FROM profile p JOIN settings s ON s.singleton = 1
-         WHERE p.singleton = 1`,
-      )
-      .toArray()[0];
-    if (!row) {
+  async identityGetProfileV1(
+    input: IdentityRpcQuery<{ userId: string }>,
+  ): Promise<RpcResult<UserDataProfile>> {
+    return this.rpc(async () => {
+      if (
+        input.version !== 1 ||
+        !isRecord(input.payload) ||
+        !hasOnlyKeys(input.payload, ["userId"]) ||
+        !isId(input.payload.userId)
+      ) {
+        throw new ValidationError(
+          "IDENTITY_RPC_INVALID",
+          "Identity query is invalid",
+        );
+      }
+      await this.ensureAlarm();
+      const row = this.ctx.storage.sql
+        .exec<{ user_id: string; trash_retention_days: number }>(
+          `SELECT p.user_id, s.trash_retention_days
+           FROM profile p JOIN settings s ON s.singleton = 1
+           WHERE p.singleton = 1`,
+        )
+        .toArray()[0];
+      if (!row) {
+        throw new NotFoundError(
+          "USER_DATA_NOT_FOUND",
+          "User data was not found",
+        );
+      }
+      if (row.user_id !== input.payload.userId) {
+        throw new ConflictError(
+          "USER_DATA_OWNER_MISMATCH",
+          "User data owner did not match",
+        );
+      }
       return {
-        ok: false,
-        error: {
-          kind: "not-found",
-          code: "USER_DATA_NOT_FOUND",
-          message: "User data was not found",
-          retryable: false,
-        },
-      };
-    }
-    return {
-      ok: true,
-      value: {
         userId: row.user_id,
         trashRetentionDays: row.trash_retention_days,
-      },
-    };
-  }
-
-  async commit(
-    command: SemanticCommand,
-  ): Promise<RpcResult<SemanticCommitResult>> {
-    return this.rpc(async () => {
-      this.assertSemanticCommand(command);
-      const commit = new UserDataSemanticCommit(
-        this.ctx.storage,
-        () => this.profile().trashRetentionDays,
-      );
-      const result = commit.commit(command);
-      this.scheduleRetention(command);
-      await this.ensureAlarm();
-      return result;
+      };
     });
   }
 
-  async search(query: SearchQuery): Promise<RpcResult<SearchPage>> {
+  async identityGetStatusV1(
+    input: IdentityRpcQuery<{ userId: string }>,
+  ): Promise<RpcResult<{ initialized: boolean; deleted: boolean }>> {
+    return this.rpc(() => {
+      if (
+        input.version !== 1 ||
+        !isRecord(input.payload) ||
+        !hasOnlyKeys(input.payload, ["userId"]) ||
+        !isId(input.payload.userId)
+      ) {
+        throw new ValidationError(
+          "IDENTITY_RPC_INVALID",
+          "Identity query is invalid",
+        );
+      }
+      const deleted = this.ctx.storage.sql
+        .exec<{ expected_user_id: string }>(
+          "SELECT expected_user_id FROM user_data_delete_markers LIMIT 1",
+        )
+        .toArray()[0];
+      if (deleted) {
+        return {
+          initialized: false,
+          deleted: deleted.expected_user_id === input.payload.userId,
+        };
+      }
+      const profile = this.ctx.storage.sql
+        .exec<{ user_id: string }>(
+          "SELECT user_id FROM profile WHERE singleton = 1",
+        )
+        .toArray()[0];
+      return {
+        initialized: profile?.user_id === input.payload.userId,
+        deleted: false,
+      };
+    });
+  }
+
+  async search(query: SearchRpcQuery): Promise<RpcResult<SearchPage>> {
     return this.rpc(async () => {
       await this.ensureAlarm();
       this.assertSearchQuery(query);
       const page = this.ctx.storage.transactionSync(() => {
         const adapter = new Fts5SearchAdapter(this.ctx.storage.sql);
-        return adapter.query(query);
+        return adapter.querySync({
+          keyword: query.keyword,
+          ...(query.topicId === undefined ? {} : { topicId: query.topicId }),
+          pagination: {
+            ...(query.page === undefined ? {} : { page: query.page }),
+            ...(query.limit === undefined ? {} : { limit: query.limit }),
+            ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+          },
+        });
       });
       return page;
     });
@@ -302,7 +317,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
            SET next_run_at =
              CAST(json_extract(payload_json, '$.trashedAt') AS INTEGER) + ?,
              updated_at = ?
-           WHERE status = 'pending'
+           WHERE status IN ('pending', 'leased')
              AND kind IN ('purge-trash', 'purge-topic')`,
           retentionMs,
           input.updatedAt,
@@ -322,34 +337,69 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  async deleteAll(input: {
-    expectedUserId: string;
-  }): Promise<RpcResult<{ deleted: true }>> {
-    let profile: UserDataProfile;
-    try {
-      profile = this.profile();
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes("no such table: profile")
-      ) {
-        return { ok: true, value: { deleted: true } };
-      }
-      throw error;
-    }
-    if (profile.userId !== input.expectedUserId) {
-      return {
-        ok: false,
-        error: {
-          kind: "conflict",
-          code: "USER_DATA_OWNER_MISMATCH",
-          message: "User data owner did not match",
-          retryable: false,
-        },
-      };
-    }
-    await this.ctx.storage.deleteAll();
-    return { ok: true, value: { deleted: true } };
+  async identityDeleteAllV1(
+    input: IdentityRpcMutation<{ userId: string }>,
+  ): Promise<RpcResult<{ deleted: true }>> {
+    return this.rpc(async () => {
+      this.assertIdentityMutation(input, false);
+      const digest = payloadDigest(input.payload);
+      this.ctx.storage.transactionSync(() => {
+        const marker = this.ctx.storage.sql
+          .exec<{
+            expected_user_id: string;
+            payload_digest: string;
+          }>(
+            `SELECT expected_user_id, payload_digest
+             FROM user_data_delete_markers WHERE operation_id = ?`,
+            input.operationId,
+          )
+          .toArray()[0];
+        if (marker) {
+          if (
+            marker.expected_user_id !== input.payload.userId ||
+            marker.payload_digest !== digest
+          ) {
+            throw new ConflictError(
+              SearchErrorCode.IdempotencyConflict,
+              "Deletion operation has a different payload",
+            );
+          }
+          return;
+        }
+        const owner = this.ctx.storage.sql
+          .exec<{ user_id: string }>(
+            "SELECT user_id FROM profile WHERE singleton = 1",
+          )
+          .toArray()[0];
+        const deletedOwner = this.ctx.storage.sql
+          .exec<{ expected_user_id: string }>(
+            "SELECT expected_user_id FROM user_data_delete_markers LIMIT 1",
+          )
+          .toArray()[0];
+        if (
+          (owner && owner.user_id !== input.payload.userId) ||
+          (deletedOwner &&
+            deletedOwner.expected_user_id !== input.payload.userId)
+        ) {
+          throw new ConflictError(
+            "USER_DATA_OWNER_MISMATCH",
+            "User data owner did not match",
+          );
+        }
+        this.clearUserDataInTransaction();
+        this.ctx.storage.sql.exec(
+          `INSERT INTO user_data_delete_markers(
+             operation_id, expected_user_id, payload_digest, completed_at
+           ) VALUES (?, ?, ?, ?)`,
+          input.operationId,
+          input.payload.userId,
+          digest,
+          Date.now(),
+        );
+      });
+      await this.ctx.storage.deleteAlarm();
+      return { deleted: true };
+    });
   }
 
   async exportPage(input: { cursor?: string; limit?: number }): Promise<
@@ -391,55 +441,93 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     return this.ctx.storage.getCurrentBookmark();
   }
 
+  async operatorPrepareRestoreProof(
+    proofId: string,
+  ): Promise<{ sessionId: string }> {
+    if (proofId.length === 0 || proofId.length > 128) {
+      throw new TypeError("PITR_PROOF_ID_INVALID");
+    }
+    await this.ctx.storage.put(`pitr-proof:${proofId}`, this.pitrSessionId);
+    return { sessionId: this.pitrSessionId };
+  }
+
   async operatorRestoreBookmark(bookmark: string): Promise<string> {
     return this.ctx.storage.onNextSessionRestoreBookmark(bookmark);
   }
 
   async operatorRestartSession(): Promise<void> {
-    setTimeout(() => this.ctx.abort("PITR_SESSION_RESTART"), 0);
+    this.ctx.abort("PITR_RESTART_REQUESTED");
   }
 
-  async operatorVerifyRestoredSession(bookmark: string): Promise<string> {
-    if (bookmark.length === 0) throw new Error("PITR_BOOKMARK_REQUIRED");
+  async operatorVerifyRestoredSession(
+    bookmark: string,
+    proof: PitrRestoreProof,
+  ): Promise<string> {
+    if (
+      bookmark.length === 0 ||
+      proof.id.length === 0 ||
+      proof.previousSessionId.length === 0 ||
+      proof.undoBookmark.length === 0
+    ) {
+      throw new Error("PITR_PROOF_REQUIRED");
+    }
+    if (proof.previousSessionId === this.pitrSessionId) {
+      throw new Error("PITR_SESSION_NOT_RESTARTED");
+    }
+    const sentinel = await this.ctx.storage.get(`pitr-proof:${proof.id}`);
+    if (sentinel !== undefined) {
+      throw new Error("PITR_RESTORE_SENTINEL_PRESENT");
+    }
     const current = await this.ctx.storage.getCurrentBookmark();
-    if (current < bookmark) throw new Error("PITR_RESTORE_NOT_APPLIED");
+    if (current < proof.undoBookmark || current < bookmark) {
+      throw new Error("PITR_RESTORE_NOT_APPLIED");
+    }
     return current;
   }
 
   async alarm(): Promise<void> {
-    const startedAt = Date.now();
-    const ownerToken = crypto.randomUUID();
-    const store = new DurableJobStore(this.ctx.storage);
-    let processed = 0;
-    while (processed < 25 && Date.now() - startedAt < 10_000) {
-      const claimedAt = Date.now();
-      const job = store.claim({
-        now: claimedAt,
-        leaseMs: 60_000,
-        ownerToken,
-        limit: 1,
-      })[0];
-      if (!job) break;
-      processed += 1;
-      try {
-        this.executeJob(job.kind, job.payload, Date.now());
-        store.complete(job.id, ownerToken, Date.now());
-      } catch (error) {
-        const failedAt = Date.now();
-        store.retryOrPoison({
-          id: job.id,
+    try {
+      const startedAt = Date.now();
+      const ownerToken = crypto.randomUUID();
+      const store = new DurableJobStore(this.ctx.storage);
+      let processed = 0;
+      while (processed < 25 && Date.now() - startedAt < 10_000) {
+        const claimedAt = Date.now();
+        const job = store.claim({
+          now: claimedAt,
+          leaseMs: 60_000,
           ownerToken,
-          now: failedAt,
-          maxAttempts: 5,
-          retryAt: failedAt + Math.min(2 ** job.attempt * 1_000, 300_000),
-          reason: error instanceof Error ? error.message : "UNKNOWN_JOB_ERROR",
-        });
+          limit: 1,
+        })[0];
+        if (!job) break;
+        processed += 1;
+        try {
+          const execution = this.executeJob(job.kind, job.payload, Date.now());
+          if (execution.deferUntil === undefined) {
+            store.complete(job.id, ownerToken, Date.now());
+          } else {
+            store.defer(job.id, ownerToken, Date.now(), execution.deferUntil);
+            break;
+          }
+        } catch (error) {
+          const failedAt = Date.now();
+          store.retryOrPoison({
+            id: job.id,
+            ownerToken,
+            now: failedAt,
+            maxAttempts: 5,
+            retryAt: failedAt + Math.min(2 ** job.attempt * 1_000, 300_000),
+            reason:
+              error instanceof Error ? error.message : "UNKNOWN_JOB_ERROR",
+          });
+        }
       }
+    } finally {
+      await this.ensureAlarm();
     }
-    await this.ensureAlarm();
   }
 
-  private profile(): UserDataProfile {
+  protected profile(): UserDataProfile {
     const row = this.ctx.storage.sql
       .exec<{ user_id: string; trash_retention_days: number }>(
         `SELECT p.user_id, s.trash_retention_days
@@ -453,42 +541,11 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     };
   }
 
-  private scheduleRetention(command: SemanticCommand): void {
-    let id: string;
-    let kind: RetentionKind;
-    let trashedAt: number;
-    switch (command.type) {
-      case "trash-memo":
-        id = command.memoId;
-        kind = "memo";
-        trashedAt = command.trashedAt;
-        break;
-      case "trash-document":
-        id = command.documentId;
-        kind = "document";
-        trashedAt = command.trashedAt;
-        break;
-      case "trash-topic":
-        id = command.topicId;
-        trashedAt = command.trashedAt;
-        kind = "topic";
-        break;
-      default:
-        return;
-    }
-    const nextRunAt =
-      trashedAt + this.profile().trashRetentionDays * 86_400_000;
-    new DurableJobStore(this.ctx.storage).enqueue({
-      id: `purge-${kind === "topic" ? "topic" : "trash"}:${kind}:${id}:${trashedAt}`,
-      kind: kind === "topic" ? "purge-topic" : "purge-trash",
-      payload: { id, kind, trashedAt },
-      nextRunAt,
-      providerIdempotencyKey: `purge-${kind === "topic" ? "topic" : "trash"}:${kind}:${id}:${trashedAt}`,
-      now: trashedAt,
-    });
-  }
-
-  private executeJob(kind: string, payload: unknown, now: number): void {
+  private executeJob(
+    kind: string,
+    payload: unknown,
+    now: number,
+  ): Readonly<{ deferUntil?: number }> {
     if (
       (kind !== "purge-trash" && kind !== "purge-topic") ||
       typeof payload !== "object" ||
@@ -506,64 +563,68 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
       throw new Error("UNSUPPORTED_JOB");
     }
     const contentId = payload.id;
-    this.ctx.storage.transactionSync(() => {
+    return this.ctx.storage.transactionSync(() => {
       if (payload.kind === "topic") {
-        const due = this.ctx.storage.sql
-          .exec<{ id: string }>(
-            `SELECT id FROM topics
-             WHERE id = ? AND trashed_at IS NOT NULL AND purge_after <= ?`,
+        const topic = this.ctx.storage.sql
+          .exec<{ purge_after: number }>(
+            `SELECT purge_after FROM topics
+             WHERE id = ? AND trashed_at IS NOT NULL`,
             contentId,
-            now,
           )
           .toArray()[0];
-        if (!due) return;
+        if (!topic) return {};
+        if (topic.purge_after > now) return { deferUntil: topic.purge_after };
         const setDocuments = this.ctx.storage.sql
           .exec<{ id: string }>(
             `SELECT id FROM content
-             WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+             WHERE kind = 'document' AND trashed_with_topic_id = ?
+             ORDER BY id LIMIT 50`,
             contentId,
           )
           .toArray();
         const projection = new Fts5SearchAdapter(this.ctx.storage.sql);
         for (const document of setDocuments) {
-          projection.apply({
-            type: "remove",
-            entityType: "document",
-            id: document.id,
-          });
+          projection.remove("document", document.id);
+          this.ctx.storage.sql.exec(
+            "DELETE FROM content WHERE id = ?",
+            document.id,
+          );
         }
-        this.ctx.storage.sql.exec(
-          `DELETE FROM content
-           WHERE kind = 'document' AND trashed_with_topic_id = ?`,
-          contentId,
-        );
+        const remaining = this.ctx.storage.sql
+          .exec<{ id: string }>(
+            `SELECT id FROM content
+             WHERE kind = 'document' AND trashed_with_topic_id = ? LIMIT 1`,
+            contentId,
+          )
+          .toArray()[0];
+        if (remaining) return { deferUntil: now + 1 };
         this.ctx.storage.sql.exec(
           `UPDATE content SET topic_id = NULL
            WHERE kind = 'document' AND topic_id = ?`,
           contentId,
         );
         this.ctx.storage.sql.exec("DELETE FROM topics WHERE id = ?", contentId);
-        return;
+        return {};
       }
-      const due = this.ctx.storage.sql
-        .exec<{ content_kind: SearchContentKind }>(
-          `SELECT content_kind FROM trash
-           WHERE content_id = ? AND purge_after <= ?`,
+      const trash = this.ctx.storage.sql
+        .exec<{ content_kind: SearchContentKind; purge_after: number }>(
+          `SELECT content_kind, purge_after FROM trash
+           WHERE content_id = ?`,
           contentId,
-          now,
         )
         .toArray()[0];
-      if (!due) return;
-      new Fts5SearchAdapter(this.ctx.storage.sql).apply({
-        type: "remove",
-        entityType: due.content_kind,
-        id: contentId,
-      });
+      if (!trash) return {};
+      if (trash.purge_after > now) return { deferUntil: trash.purge_after };
+      new Fts5SearchAdapter(this.ctx.storage.sql).remove(
+        trash.content_kind,
+        contentId,
+      );
       this.ctx.storage.sql.exec("DELETE FROM content WHERE id = ?", contentId);
+      return {};
     });
   }
 
-  private async ensureAlarm(): Promise<void> {
+  protected async ensureAlarm(): Promise<void> {
     const next = new DurableJobStore(this.ctx.storage).nextRunAt();
     if (next === null) return;
     const target = Math.max(next, Date.now() + 1_000);
@@ -573,108 +634,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     }
   }
 
-  private assertSemanticCommand(
-    command: unknown,
-  ): asserts command is SemanticCommand {
-    const invalid = () => {
-      throw new ValidationError(
-        "SEMANTIC_COMMAND_INVALID",
-        "Semantic command is invalid",
-      );
-    };
-    if (
-      !isRecord(command) ||
-      command.version !== SEARCH_RPC_VERSION ||
-      !isId(command.operationId) ||
-      typeof command.type !== "string"
-    ) {
-      throw new ValidationError(
-        "SEMANTIC_COMMAND_INVALID",
-        "Semantic command is invalid",
-      );
-    }
-    const base = ["version", "operationId", "type"] as const;
-    let valid = false;
-    switch (command.type) {
-      case "create-memo":
-      case "update-memo":
-      case "restore-memo":
-        valid = hasOnlyKeys(command, [...base, "memo"]) && isMemo(command.memo);
-        break;
-      case "trash-memo":
-        valid =
-          hasOnlyKeys(command, [...base, "memoId", "trashedAt"]) &&
-          isId(command.memoId) &&
-          isTimestamp(command.trashedAt);
-        break;
-      case "remove-memo":
-        valid =
-          hasOnlyKeys(command, [...base, "memoId", "removedAt"]) &&
-          isId(command.memoId) &&
-          isTimestamp(command.removedAt);
-        break;
-      case "create-document":
-      case "update-document":
-      case "restore-document":
-        valid =
-          hasOnlyKeys(command, [...base, "document"]) &&
-          isDocument(command.document);
-        break;
-      case "trash-document":
-        valid =
-          hasOnlyKeys(command, [...base, "documentId", "trashedAt"]) &&
-          isId(command.documentId) &&
-          isTimestamp(command.trashedAt);
-        break;
-      case "remove-document":
-        valid =
-          hasOnlyKeys(command, [...base, "documentId", "removedAt"]) &&
-          isId(command.documentId) &&
-          isTimestamp(command.removedAt);
-        break;
-      case "create-topic":
-        valid =
-          hasOnlyKeys(command, [...base, "topic"]) && isTopic(command.topic);
-        break;
-      case "set-topic-archived":
-        valid =
-          hasOnlyKeys(command, [
-            ...base,
-            "topicId",
-            "archivedAt",
-            "updatedAt",
-          ]) &&
-          isId(command.topicId) &&
-          (command.archivedAt === null || isTimestamp(command.archivedAt)) &&
-          isTimestamp(command.updatedAt);
-        break;
-      case "trash-topic":
-        valid =
-          hasOnlyKeys(command, [...base, "topicId", "trashedAt"]) &&
-          isId(command.topicId) &&
-          isTimestamp(command.trashedAt);
-        break;
-      case "restore-topic":
-        valid =
-          hasOnlyKeys(command, [...base, "topicId", "restoredAt"]) &&
-          isId(command.topicId) &&
-          isTimestamp(command.restoredAt);
-        break;
-      case "remove-topic":
-        valid =
-          hasOnlyKeys(command, [...base, "topicId", "removedAt"]) &&
-          isId(command.topicId) &&
-          isTimestamp(command.removedAt);
-        break;
-      default:
-        invalid();
-    }
-    if (!valid) {
-      invalid();
-    }
-  }
-
-  private assertSearchQuery(query: unknown): asserts query is SearchQuery {
+  private assertSearchQuery(query: unknown): asserts query is SearchRpcQuery {
     if (
       !isRecord(query) ||
       !hasOnlyKeys(
@@ -696,7 +656,54 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     }
   }
 
-  private async rpc<T>(operation: () => Promise<T>): Promise<RpcResult<T>> {
+  private assertIdentityMutation(
+    input: IdentityRpcMutation<{ userId: string; now?: number }>,
+    requireNow = true,
+  ): void {
+    if (
+      input.version !== 1 ||
+      !isId(input.operationId) ||
+      !isRecord(input.payload) ||
+      !hasOnlyKeys(
+        input.payload,
+        requireNow ? ["userId", "now"] : ["userId"],
+      ) ||
+      !isId(input.payload.userId) ||
+      (requireNow && !isTimestamp(input.payload.now))
+    ) {
+      throw new ValidationError(
+        "IDENTITY_RPC_INVALID",
+        "Identity mutation is invalid",
+      );
+    }
+  }
+
+  private clearUserDataInTransaction(): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO search_fts(search_fts) VALUES ('delete-all')",
+    );
+    for (const table of [
+      "search_snapshot_items",
+      "search_snapshots",
+      "search_entries",
+      "content_sources",
+      "trash",
+      "content_revisions",
+      "content",
+      "topics",
+      "ai_client_connections",
+      "jobs",
+      "idempotency",
+      "settings",
+      "profile",
+    ]) {
+      this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
+    }
+  }
+
+  protected async rpc<T>(
+    operation: () => T | Promise<T>,
+  ): Promise<RpcResult<T>> {
     try {
       return { ok: true, value: await operation() };
     } catch (error) {
@@ -755,7 +762,27 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
           },
         };
       }
-      throw error;
+      const systemError =
+        sqliteErrorCode(error) === "SQLITE_FULL"
+          ? new SystemError(
+              SystemErrorCode.StorageCapacityExceeded,
+              "User data storage capacity was exceeded",
+              error,
+            )
+          : new SystemError(
+              SystemErrorCode.DatabaseError,
+              "User data operation failed",
+              error,
+            );
+      return {
+        ok: false,
+        error: {
+          kind: "infrastructure",
+          code: systemError.code,
+          message: systemError.message,
+          retryable: systemError.retryable,
+        },
+      };
     }
   }
 }

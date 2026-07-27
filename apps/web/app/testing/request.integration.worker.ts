@@ -1,14 +1,32 @@
+import { CloudflareIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
 import {
   createRequestContainer,
   readRequestServerConfig,
   routeAuthenticatedUserData,
   type ServerEnv,
 } from "@repo/core/application/di/serverCloudflare";
-import { getCurrentUser } from "@repo/core/application/identity/getCurrentUser";
-import { loginWithPassword } from "@repo/core/application/identity/loginWithPassword";
-import { logout } from "@repo/core/application/identity/logout";
-import { registerWithPassword } from "@repo/core/application/identity/registerWithPassword";
+import { operationId } from "@repo/core/application/identity/contracts";
+import { Email, SsoProvider } from "@repo/core/domain/identity/valueObject";
+import { loginSchema, signupSchema } from "../components/auth/schema";
 import type { UserDataDurableObject } from "../durable-objects/UserDataDurableObject";
+import { resolveAuthenticatedUserId } from "../presentation/authenticatedSession";
+import {
+  httpStatusFor,
+  isAppServerError,
+  redactForClient,
+  serializeError,
+} from "../presentation/errorResponse";
+import {
+  currentUserAction,
+  loginPasswordAction,
+  logoutAction,
+  registerPasswordAction,
+} from "../presentation/identityActionHandlers";
+import {
+  buildSessionCookie,
+  issueSessionCookie,
+} from "../presentation/sessionCookie";
+import { validateInput } from "../presentation/validator";
 
 type IntegrationEnv = Omit<
   ServerEnv,
@@ -21,12 +39,6 @@ type IntegrationEnv = Omit<
   }>;
 
 const contractVersion = 1;
-const forbiddenRoutingKeys = new Set([
-  "userId",
-  "durableObjectId",
-  "partition",
-  "routingKey",
-]);
 
 function json(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, init);
@@ -39,11 +51,7 @@ async function readPublicPayload(
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new TypeError("INVALID_REQUEST_PAYLOAD");
   }
-  const payload = input as Record<string, unknown>;
-  if (Object.keys(payload).some((key) => forbiddenRoutingKeys.has(key))) {
-    throw new TypeError("ROUTING_OVERRIDE_FORBIDDEN");
-  }
-  return payload;
+  return input as Record<string, unknown>;
 }
 
 function sessionToken(request: Request): string | null {
@@ -55,15 +63,20 @@ function sessionToken(request: Request): string | null {
   return value?.slice("fog_session=".length) || null;
 }
 
-function withSession(value: unknown, token: string | null): Response {
+function withSession(value: unknown, cookie: string): Response {
   const response = json(value);
-  response.headers.set(
-    "set-cookie",
-    token === null
-      ? "fog_session=; Path=/; HttpOnly; Max-Age=0"
-      : `fog_session=${token}; Path=/; HttpOnly; SameSite=Lax`,
-  );
+  response.headers.set("set-cookie", cookie);
   return response;
+}
+
+function publicError(error: unknown): Response {
+  const serialized = isAppServerError(error)
+    ? redactForClient(error.serialized)
+    : redactForClient(serializeError(error));
+  return json(
+    { ok: false, error: serialized },
+    { status: httpStatusFor(serialized) },
+  );
 }
 
 async function identityFlow(
@@ -87,55 +100,45 @@ async function identityFlow(
     readRequestServerConfig(env as unknown as ServerEnv),
   );
   if (payload.action === "signup" || payload.action === "login") {
-    if (
-      typeof payload.email !== "string" ||
-      typeof payload.password !== "string"
-    ) {
-      throw new TypeError("INVALID_REQUEST_PAYLOAD");
-    }
     const result =
       payload.action === "signup"
-        ? await registerWithPassword({
+        ? await registerPasswordAction(
             container,
-            input: {
-              operationId: crypto.randomUUID(),
-              email: payload.email,
-              password: payload.password,
-            },
-          })
-        : await loginWithPassword({
+            validateInput(signupSchema)(payload),
+          )
+        : await loginPasswordAction(
             container,
-            input: { email: payload.email, password: payload.password },
-          });
-    const token = await container.sessionCodec.issue(
+            validateInput(loginSchema)(payload),
+          );
+    const cookie = await issueSessionCookie(
+      container,
       result.userId,
       result.sessionEpoch,
-      container.clock.now(),
+      { secure: true },
     );
-    return withSession({ ok: true, value: { userId: result.userId } }, token);
+    return withSession({ ok: true, value: { userId: result.userId } }, cookie);
   }
-  const token = sessionToken(request);
-  const session =
-    token === null
-      ? null
-      : await container.sessionCodec.verify(token, container.clock.now());
-  if (session === null) {
+  const userId = await resolveAuthenticatedUserId(
+    container,
+    sessionToken(request),
+  );
+  if (userId === null) {
     return json(
       { ok: false, error: { code: "UNAUTHENTICATED" } },
       { status: 401 },
     );
   }
   if (payload.action === "logout") {
-    await logout({ container, input: { userId: session.userId } });
-    return withSession({ ok: true, value: null }, null);
+    await logoutAction(container, userId);
+    return withSession(
+      { ok: true, value: null },
+      buildSessionCookie(null, { secure: true }),
+    );
   }
   if (payload.action === "current") {
     return json({
       ok: true,
-      value: await getCurrentUser({
-        container,
-        input: { userId: session.userId },
-      }),
+      value: await currentUserAction(container, userId),
     });
   }
   throw new TypeError("INVALID_REQUEST_PAYLOAD");
@@ -156,21 +159,31 @@ export default {
       try {
         return await identityFlow(request, env);
       } catch (error) {
-        return json(
-          {
-            ok: false,
-            error: {
-              code:
-                error instanceof Error
-                  ? "code" in error && typeof error.code === "string"
-                    ? error.code
-                    : error.message
-                  : "IDENTITY_REQUEST_FAILED",
-            },
-          },
-          { status: 400 },
-        );
+        return publicError(error);
       }
+    }
+    if (
+      url.pathname === "/acceptance/fixture/sso-only" &&
+      request.method === "POST"
+    ) {
+      const payload = await readPublicPayload(request);
+      const email = Email.create(String(payload.email));
+      const config = readRequestServerConfig(env as unknown as ServerEnv);
+      const identity = new CloudflareIdentityGateway(
+        config.identityDirectory,
+        config.accountHome,
+        config.userData,
+        config.directoryRouting,
+      );
+      const container = createRequestContainer(config);
+      await identity.lookupOrCreateSso({
+        operationId: operationId(crypto.randomUUID()),
+        provider: SsoProvider.create("google"),
+        subject: crypto.randomUUID(),
+        email,
+        now: container.clock.now().getTime(),
+      });
+      return json({ ok: true });
     }
     if (
       url.pathname === "/acceptance/user-data/profile" &&
@@ -194,36 +207,21 @@ export default {
         const container = createRequestContainer(
           readRequestServerConfig(env as unknown as ServerEnv),
         );
-        const session =
-          token === null
-            ? null
-            : await container.sessionCodec.verify(token, container.clock.now());
-        if (session === null) {
+        const userId = await resolveAuthenticatedUserId(container, token);
+        if (userId === null) {
           return json(
             { ok: false, error: { code: "UNAUTHENTICATED" } },
             { status: 401 },
           );
         }
-        const object = routeAuthenticatedUserData(
-          env.USER_DATA,
-          session.userId,
-        );
-        const profile = await object.getProfile();
+        const object = routeAuthenticatedUserData(env.USER_DATA, userId);
+        const profile = await object.identityGetProfileV1({
+          version: 1,
+          payload: { userId },
+        });
         return json(profile, { status: profile.ok ? 200 : 503 });
       } catch (error) {
-        return json(
-          {
-            ok: false,
-            error: {
-              code:
-                error instanceof Error
-                  ? error.message
-                  : "INVALID_REQUEST_PAYLOAD",
-              retryable: false,
-            },
-          },
-          { status: 400 },
-        );
+        return publicError(error);
       }
     }
     return new Response("Not found", { status: 404 });

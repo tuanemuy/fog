@@ -23,6 +23,7 @@ type IdentityMaintenance = Readonly<{
 }>;
 
 export type IdentityMaintenanceEnv = ServerEnv & PitrOperatorEnv;
+const DIRECTORY_BUCKET_COUNT = 64;
 
 function isInput(value: unknown): value is MaintenanceInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -41,6 +42,22 @@ function isInput(value: unknown): value is MaintenanceInput {
       (Number.isInteger(input.limit) &&
         Number(input.limit) >= 1 &&
         Number(input.limit) <= 100))
+  );
+}
+
+function isConfiguredTarget(
+  input: MaintenanceInput,
+  env: IdentityMaintenanceEnv,
+): boolean {
+  const generations = new Set([
+    env.DIRECTORY_ROUTING_GENERATION_ACTIVE ?? "generation-1",
+    ...(env.DIRECTORY_ROUTING_GENERATION_PREVIOUS !== undefined &&
+    env.DIRECTORY_ROUTING_SECRET_PREVIOUS !== undefined
+      ? [env.DIRECTORY_ROUTING_GENERATION_PREVIOUS]
+      : []),
+  ]);
+  return (
+    generations.has(input.generation) && input.bucket < DIRECTORY_BUCKET_COUNT
   );
 }
 
@@ -92,7 +109,7 @@ export async function handleIdentityMaintenanceRequest(
       { status: 400 },
     );
   }
-  if (!isInput(input)) {
+  if (!isInput(input) || !isConfiguredTarget(input, env)) {
     return operatorResponse(
       { error: "INVALID_OPERATOR_INPUT" },
       { status: 400 },

@@ -1,5 +1,5 @@
 config:
   fog-cf-routes:accountId: REPLACE_WITH_CF_ACCOUNT_ID
-  fog-cf-routes:zoneId: REPLACE_WITH_CF_ZONE_ID
+  fog-cf-routes:zoneId: REPLACE_WITH_SHARED_CF_ZONE_ID
   fog-cf-routes:appHostname: staging.example.com
   fog-cf-routes:requestWorkerName: fog-staging-request
