@@ -29,8 +29,10 @@ const initialSchema = [
     source_memo_id TEXT,
     archived_at INTEGER,
     trashed_at INTEGER,
+    purge_after INTEGER,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(source_memo_id) REFERENCES content(id) ON DELETE SET NULL
   )`,
   `CREATE TABLE IF NOT EXISTS content (
     id TEXT PRIMARY KEY,
@@ -40,9 +42,11 @@ const initialSchema = [
     topic_id TEXT,
     topic_archived INTEGER NOT NULL DEFAULT 0,
     trashed_at INTEGER,
+    trashed_with_topic_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    FOREIGN KEY(topic_id) REFERENCES topics(id)
+    FOREIGN KEY(topic_id) REFERENCES topics(id),
+    FOREIGN KEY(trashed_with_topic_id) REFERENCES topics(id)
   )`,
   `CREATE TABLE IF NOT EXISTS content_revisions (
     content_id TEXT NOT NULL,

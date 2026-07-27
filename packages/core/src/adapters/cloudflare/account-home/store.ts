@@ -56,6 +56,19 @@ export class AccountHomeStore {
       if (account?.status === "deleted") {
         throw new Error("ACCOUNT_DELETED");
       }
+      if (account?.status === "active" && input.kind === "signup") {
+        throw new Error("ACCOUNT_ALREADY_ACTIVE");
+      }
+      if (input.kind === "password-reset") {
+        const inProgress = this.storage.sql
+          .exec<{ operation_id: string }>(
+            `SELECT operation_id FROM identity_operations
+             WHERE kind = 'password-reset' AND state != 'completed'
+             LIMIT 1`,
+          )
+          .toArray()[0];
+        if (inProgress) throw new Error("PASSWORD_RESET_IN_PROGRESS");
+      }
       this.storage.sql.exec(
         `INSERT OR IGNORE INTO account(
            singleton, user_id, status, primary_email, auth_method,
@@ -95,6 +108,7 @@ export class AccountHomeStore {
     expectedState: IdentityOperationState;
     nextState: IdentityOperationState;
     locator?: CredentialLocator;
+    credentialId?: string;
     credentialKind?: CredentialKind;
     primaryEmail?: Email;
     bumpSessionEpoch?: boolean;
@@ -115,6 +129,7 @@ export class AccountHomeStore {
       if (input.locator && input.credentialKind) {
         this.upsertLocator(
           input.locator,
+          input.credentialId ?? input.locator.opaqueKey,
           input.credentialKind,
           input.nextState === "completed" ? "active" : "reserved",
           input.now,
@@ -144,8 +159,11 @@ export class AccountHomeStore {
         );
         this.storage.sql.exec(
           `UPDATE credential_locators SET state = 'active', updated_at = ?
-           WHERE state = 'reserved'`,
+           WHERE state = 'reserved'
+             AND (? IS NULL OR logical_credential_id = ?)`,
           input.now,
+          input.credentialId ?? null,
+          input.credentialId ?? null,
         );
       }
       return this.operation(input.operationId) as IdentityOperation;
@@ -160,6 +178,7 @@ export class AccountHomeStore {
     operationId: OperationId;
     userId: UserId;
     locator: CredentialLocator;
+    credentialId: string;
     kind: CredentialKind;
     primaryEmail?: Email;
     bumpSessionEpoch: boolean;
@@ -167,15 +186,26 @@ export class AccountHomeStore {
   }): AccountAuthSummary {
     return this.storage.transactionSync(() => {
       const existing = this.storage.sql
-        .exec<{ state: string }>(
-          "SELECT state FROM identity_operations WHERE operation_id = ?",
+        .exec<{ state: string; kind: IdentityOperationKind }>(
+          `SELECT state, kind FROM identity_operations
+           WHERE operation_id = ?`,
           input.operationId,
         )
         .toArray()[0];
+      if (
+        existing &&
+        !["signup", "sso-create", "sso-link"].includes(existing.kind)
+      ) {
+        throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+      }
       this.upsertLocator(
         input.locator,
+        input.credentialId,
         input.kind,
-        this.accountStatus() === "active" ? "active" : "reserved",
+        existing?.state === "completed" ||
+          (!existing && this.accountStatus() === "active")
+          ? "active"
+          : "reserved",
         input.now,
       );
       if (!existing) {
@@ -216,37 +246,42 @@ export class AccountHomeStore {
   removeCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    credentialId: string;
     bumpSessionEpoch: boolean;
     now: number;
   }): AccountAuthSummary {
     return this.storage.transactionSync(() => {
-      const activeKindCount = this.storage.sql
+      const activeCredentialCount = this.storage.sql
         .exec<{ count: number }>(
-          `SELECT COUNT(DISTINCT kind) AS count
+          `SELECT COUNT(DISTINCT logical_credential_id) AS count
            FROM credential_locators WHERE state = 'active'`,
         )
         .one().count;
       const target = this.storage.sql
         .exec<{ state: string; kind: CredentialKind }>(
-          "SELECT state, kind FROM credential_locators WHERE opaque_key = ?",
-          input.locator.opaqueKey,
+          `SELECT state, kind FROM credential_locators
+           WHERE logical_credential_id = ? LIMIT 1`,
+          input.credentialId,
         )
         .toArray()[0];
-      if (target?.state === "active" && activeKindCount <= 1) {
+      if (target?.state === "active" && activeCredentialCount <= 1) {
         throw new Error("LAST_CREDENTIAL_UNLINK_FORBIDDEN");
       }
       const existing = this.storage.sql
-        .exec<{ operation_id: string }>(
-          "SELECT operation_id FROM identity_operations WHERE operation_id = ?",
+        .exec<{ operation_id: string; kind: IdentityOperationKind }>(
+          `SELECT operation_id, kind FROM identity_operations
+           WHERE operation_id = ?`,
           input.operationId,
         )
         .toArray()[0];
+      if (existing && existing.kind !== "sso-unlink") {
+        throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+      }
       this.storage.sql.exec(
         `UPDATE credential_locators SET state = 'tombstoned', updated_at = ?
-         WHERE opaque_key = ?`,
+         WHERE logical_credential_id = ?`,
         input.now,
-        input.locator.opaqueKey,
+        input.credentialId,
       );
       if (!existing) {
         this.storage.sql.exec(
@@ -266,6 +301,24 @@ export class AccountHomeStore {
           input.now,
           input.userId,
         );
+      } else {
+        const operation = this.operation(input.operationId);
+        if (operation?.state === "directory-active") {
+          this.storage.sql.exec(
+            `UPDATE identity_operations SET state = 'completed', updated_at = ?
+             WHERE operation_id = ? AND state = 'directory-active'`,
+            input.now,
+            input.operationId,
+          );
+          this.storage.sql.exec(
+            `UPDATE account SET session_epoch = session_epoch + ?,
+               updated_at = ?
+             WHERE singleton = 1 AND user_id = ?`,
+            input.bumpSessionEpoch ? 1 : 0,
+            input.now,
+            input.userId,
+          );
+        }
       }
       const summary = this.authSummary();
       if (!summary) throw new Error("ACCOUNT_NOT_FOUND");
@@ -290,7 +343,20 @@ export class AccountHomeStore {
       ) {
         throw new Error("ACCOUNT_AUTHORITY_MISMATCH");
       }
-      this.upsertLocator(input.active, input.kind, "active", input.now);
+      const previousCredential = this.storage.sql
+        .exec<{ logical_credential_id: string }>(
+          `SELECT logical_credential_id FROM credential_locators
+           WHERE opaque_key = ?`,
+          input.previous.opaqueKey,
+        )
+        .toArray()[0];
+      this.upsertLocator(
+        input.active,
+        previousCredential?.logical_credential_id ?? input.previous.opaqueKey,
+        input.kind,
+        "active",
+        input.now,
+      );
       this.storage.sql.exec(
         `UPDATE credential_locators SET state = 'tombstoned', updated_at = ?
          WHERE opaque_key = ?`,
@@ -385,6 +451,11 @@ export class AccountHomeStore {
         input.operationId,
         input.epoch,
       );
+      this.storage.sql.exec("DELETE FROM credential_locators");
+      this.storage.sql.exec(
+        "DELETE FROM identity_operations WHERE operation_id != ?",
+        input.operationId,
+      );
       return cursor.rowsWritten > 0 || this.accountStatus() === "deleted";
     });
   }
@@ -403,20 +474,46 @@ export class AccountHomeStore {
       )
       .toArray()[0];
     if (!row) return null;
-    const activeKinds = this.storage.sql
-      .exec<{ kind: CredentialKind }>(
-        `SELECT DISTINCT kind FROM credential_locators
-         WHERE state = 'active' ORDER BY kind`,
+    const credentialRows = this.storage.sql
+      .exec<{
+        logical_credential_id: string;
+        kind: CredentialKind;
+        opaque_key: string;
+        generation: string;
+        bucket: number;
+      }>(
+        `SELECT logical_credential_id, kind, opaque_key, generation, bucket
+         FROM credential_locators
+         WHERE state = 'active'
+         ORDER BY logical_credential_id, generation, bucket, opaque_key`,
       )
-      .toArray()
-      .map((item) => item.kind);
+      .toArray();
+    const credentials = [
+      ...new Set(credentialRows.map((row) => row.logical_credential_id)),
+    ].map((credentialId) => {
+      const rows = credentialRows.filter(
+        (row) => row.logical_credential_id === credentialId,
+      );
+      return {
+        credentialId,
+        kind: rows[0]?.kind ?? "password",
+        locators: rows.map((row) => ({
+          opaqueKey: opaqueCredentialKey(row.opaque_key),
+          generation: row.generation,
+          bucket: row.bucket,
+        })),
+      };
+    });
+    const activeKinds = [...new Set(credentials.map((item) => item.kind))];
     return {
       userId: UserId.create(row.user_id),
+      userDataObjectName: row.user_id,
       status: row.status,
       primaryEmail:
         row.primary_email === null ? null : Email.create(row.primary_email),
       authMethods: activeKinds,
       locators: this.locators("active"),
+      credentials,
       sessionEpoch: row.session_epoch,
       operationEpoch: row.operation_epoch,
     };
@@ -446,21 +543,25 @@ export class AccountHomeStore {
 
   private upsertLocator(
     locator: CredentialLocator,
+    logicalCredentialId: string,
     kind: CredentialKind,
     state: "reserved" | "active" | "tombstoned",
     now: number,
   ): void {
     this.storage.sql.exec(
       `INSERT INTO credential_locators(
-         opaque_key, generation, bucket, kind, state, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         opaque_key, generation, bucket, logical_credential_id, kind, state,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(opaque_key) DO UPDATE SET
          generation = excluded.generation, bucket = excluded.bucket,
+         logical_credential_id = excluded.logical_credential_id,
          kind = excluded.kind, state = excluded.state,
          updated_at = excluded.updated_at`,
       locator.opaqueKey,
       locator.generation,
       locator.bucket,
+      logicalCredentialId,
       kind,
       state,
       now,

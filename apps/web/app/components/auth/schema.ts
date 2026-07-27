@@ -28,7 +28,7 @@ export const loginSchema = z.object({
 });
 
 export const signupSchema = z.object({
-  operationId: z.uuid().default(() => crypto.randomUUID()),
+  operationId: z.uuid(),
   email: emailField,
   password: passwordField,
 });

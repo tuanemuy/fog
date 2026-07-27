@@ -64,6 +64,9 @@ jobs:
       - name: Integration tests
         run: pnpm test:integration
 
+      - name: Local lifecycle acceptance
+        run: pnpm test:lifecycle:cli
+
   build:
     name: Cloudflare build and configuration audit
     runs-on: ubuntu-latest
@@ -90,4 +93,9 @@ jobs:
         run: pnpm deploy:staging:dry
 
       - name: Legacy runtime and production artifact audit
-        run: pnpm audit:legacy && pnpm audit:test-traceability
+        if: always()
+        run: pnpm audit:legacy
+
+      - name: Executable test traceability audit
+        if: always()
+        run: pnpm audit:test-traceability

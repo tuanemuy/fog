@@ -10,6 +10,12 @@ const trackedFiles = execFileSync("git", ["ls-files"], {
 
 const failures = [];
 const fail = (message) => failures.push(message);
+function filesBelow(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = `${directory}/${entry.name}`;
+    return entry.isDirectory() ? filesBelow(path) : [path];
+  });
+}
 
 const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
 const webPackage = JSON.parse(readFileSync("apps/web/package.json", "utf8"));
@@ -48,6 +54,13 @@ for (const prefix of [
   if (trackedFiles.some((file) => file.startsWith(prefix))) {
     fail(`removed runtime path is tracked: ${prefix}`);
   }
+  if (
+    prefix.endsWith("/") &&
+    existsSync(prefix) &&
+    filesBelow(prefix).length > 0
+  ) {
+    fail(`removed runtime path exists on filesystem: ${prefix}`);
+  }
 }
 
 const dependencyNames = [
@@ -80,7 +93,7 @@ const activeFiles = trackedFiles.filter(
     !contentAuditAllowlist.has(file),
 );
 const forbiddenArchitecture =
-  /\b(?:libsql|vectorize|embedding|rrf|hybrid|pendingbatch|_occ_guard)\b|transport\s+outbox|outbox\s+consumer|cloudflare\s+d1/iu;
+  /\b(?:libsql|vectorize|embedding|rrf|hybrid|pendingbatch|_occ_guard|LegacySemanticCommand|LegacySearchQuery|LegacySearchResult|LegacySearchPage)\b|transport\s+outbox|outbox\s+consumer|cloudflare\s+d1|["']upsert-content["']/iu;
 for (const file of activeFiles) {
   if (forbiddenArchitecture.test(readFileSync(file, "utf8"))) {
     fail(`active path contains a removed architecture term: ${file}`);
@@ -101,12 +114,6 @@ if (trackedFiles.some((file) => file.startsWith("apps/web/dist/"))) {
 const productionInputs = productionFiles
   .map((file) => `${file}\n${readFileSync(file, "utf8")}`)
   .join("\n");
-function filesBelow(directory) {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = `${directory}/${entry.name}`;
-    return entry.isDirectory() ? filesBelow(path) : [path];
-  });
-}
 const builtArtifactInputs = existsSync("apps/web/dist/server")
   ? filesBelow("apps/web/dist/server")
       .filter((file) => statSync(file).isFile())
@@ -123,6 +130,22 @@ for (const localOnly of [
     builtArtifactInputs.includes(localOnly)
   ) {
     fail(`local-only lifecycle tooling leaked into production inputs: ${localOnly}`);
+  }
+}
+
+for (const file of [
+  "apps/web/app/durable-objects/IdentityDirectoryDurableObject.ts",
+  "apps/web/app/durable-objects/AccountHomeDurableObject.ts",
+  "apps/web/app/durable-objects/UserDataDurableObject.ts",
+  "apps/web/app/server.state.ts",
+]) {
+  const source = readFileSync(file, "utf8");
+  if (
+    /Cloudflare\.Env|SESSION_SECRET|DIRECTORY_ROUTING_SECRET|PITR_OPERATOR_TOKEN/u.test(
+      source,
+    )
+  ) {
+    fail(`state entry graph can reference a request-only secret: ${file}`);
   }
 }
 

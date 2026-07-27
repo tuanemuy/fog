@@ -5,6 +5,7 @@ import { IdentityErrorCode } from "./errorCode";
 const EMAIL_MAX_LENGTH = 320;
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 128;
+const PASSWORD_HASH_MAX_BYTES = 2048;
 const CLIENT_NAME_MAX_LENGTH = 100;
 const DEFAULT_TRASH_RETENTION_DAYS = 30;
 
@@ -99,10 +100,13 @@ export type PasswordHash = string & { readonly [passwordHashBrand]: true };
 
 export const PasswordHash = {
   create: (raw: string): PasswordHash => {
-    if (raw.length === 0) {
+    if (
+      raw.length === 0 ||
+      new TextEncoder().encode(raw).byteLength > PASSWORD_HASH_MAX_BYTES
+    ) {
       throw new BusinessRuleError(
         IdentityErrorCode.InvalidPasswordHash,
-        "Password hash cannot be empty",
+        "Password hash is malformed",
       );
     }
     return raw as PasswordHash;
@@ -128,7 +132,10 @@ export type SsoSubject = string & { readonly [ssoSubjectBrand]: true };
 export const SsoSubject = {
   create: (raw: string): SsoSubject => {
     const normalized = raw.normalize("NFKC").trim();
-    if (normalized.length === 0 || normalized.length > 512) {
+    if (
+      normalized.length === 0 ||
+      new TextEncoder().encode(normalized).byteLength > 512
+    ) {
       throw new BusinessRuleError(
         IdentityErrorCode.InvalidSsoProviderSubject,
         "Invalid SSO subject",

@@ -19,7 +19,7 @@ describe("request Worker to state auxiliary Worker boundary", () => {
       body: JSON.stringify({ version: 1, action, ...body }),
     });
 
-  it("uses request-only secrets and calls User Data through script_name", async () => {
+  it("keeps request-only secrets on request and requires authentication for User Data", async () => {
     const config = await SELF.fetch("https://fog.test/acceptance/config");
     expect(await config.json()).toEqual({
       contractVersion: 1,
@@ -34,13 +34,10 @@ describe("request Worker to state auxiliary Worker boundary", () => {
         body: JSON.stringify({ version: 1 }),
       },
     );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      value: {
-        userId: "acceptance-session-user",
-        trashRetentionDays: 30,
-      },
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: "UNAUTHENTICATED" },
     });
   });
 
@@ -106,5 +103,41 @@ describe("request Worker to state auxiliary Worker boundary", () => {
       ok: false,
       error: { code: "ROUTING_OVERRIDE_FORBIDDEN", retryable: false },
     });
+  });
+
+  it("routes two authenticated accounts only to their canonical User Data objects", async () => {
+    const signups = await Promise.all(
+      ["first", "second"].map((label) =>
+        identity("signup", {
+          email: `${label}-${crypto.randomUUID()}@example.com`,
+          password: "correct horse battery staple",
+        }),
+      ),
+    );
+    const sessions = await Promise.all(
+      signups.map(async (response) => ({
+        cookie: response.headers.get("set-cookie") ?? "",
+        userId: ((await response.json()) as { value: { userId: string } }).value
+          .userId,
+      })),
+    );
+    const profiles = await Promise.all(
+      sessions.map(({ cookie }) =>
+        SELF.fetch("https://fog.test/acceptance/user-data/profile", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie,
+          },
+          body: JSON.stringify({ version: 1 }),
+        }).then((response) => response.json()),
+      ),
+    );
+    expect(
+      profiles.map(
+        (profile) => (profile as { value: { userId: string } }).value.userId,
+      ),
+    ).toEqual(sessions.map(({ userId }) => userId));
+    expect(new Set(sessions.map(({ userId }) => userId)).size).toBe(2);
   });
 });

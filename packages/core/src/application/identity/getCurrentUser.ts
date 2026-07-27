@@ -1,5 +1,5 @@
 import { UserId } from "@repo/core/domain/identity/valueObject";
-import { NotFoundError } from "../errors";
+import { NotFoundError, SystemError, SystemErrorCode } from "../errors";
 import type { ServiceArgs } from "../types";
 import type { CurrentUserView } from "./view";
 
@@ -28,10 +28,16 @@ export async function getCurrentUser({
   if (!account) {
     throw new NotFoundError("USER_NOT_FOUND", `User not found: ${userId}`);
   }
+  if (account.auth.primaryEmail === null) {
+    throw new SystemError(
+      SystemErrorCode.DataIntegrityError,
+      "Active account has no primary email authority",
+    );
+  }
 
   return {
     userId: account.auth.userId,
-    email: account.auth.primaryEmail ?? "",
+    email: account.auth.primaryEmail,
     authMethods: account.auth.authMethods,
     displayName: account.profile.displayName,
     trashRetentionDays: account.profile.trashRetentionDays,

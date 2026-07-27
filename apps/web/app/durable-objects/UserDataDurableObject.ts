@@ -12,8 +12,6 @@ import {
 } from "@repo/core/application/errors";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import type {
-  LegacySearchPage,
-  LegacySearchQuery,
   SearchContentKind,
   SearchPage,
   SearchQuery,
@@ -32,6 +30,88 @@ type UserDataProfile = Readonly<{
   userId: string;
   trashRetentionDays: number;
 }>;
+
+type RetentionKind = SearchContentKind | "topic";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    required.every((key) => key in value) &&
+    keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
+function isId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
+}
+
+function isTimestamp(value: unknown): value is number {
+  return (
+    Number.isSafeInteger(value) &&
+    (value as number) >= 0 &&
+    (value as number) <= 8_640_000_000_000_000
+  );
+}
+
+function isMemo(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["id", "body", "timestamp"]) &&
+    isId(value.id) &&
+    typeof value.body === "string" &&
+    isTimestamp(value.timestamp)
+  );
+}
+
+function isDocument(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "id",
+      "title",
+      "body",
+      "timestamp",
+      "topicId",
+      "sourceMemoIds",
+    ]) &&
+    isId(value.id) &&
+    typeof value.title === "string" &&
+    typeof value.body === "string" &&
+    isTimestamp(value.timestamp) &&
+    isId(value.topicId) &&
+    Array.isArray(value.sourceMemoIds) &&
+    value.sourceMemoIds.length <= 100 &&
+    value.sourceMemoIds.every(isId)
+  );
+}
+
+function isTopic(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["id", "name", "timestamp"], ["sourceMemoId"]) &&
+    isId(value.id) &&
+    typeof value.name === "string" &&
+    value.name.length > 0 &&
+    new TextEncoder().encode(value.name).byteLength <= 1_024 &&
+    isTimestamp(value.timestamp) &&
+    (value.sourceMemoId === undefined || isId(value.sourceMemoId))
+  );
+}
+
+export function shouldMoveAlarm(
+  current: number | null,
+  target: number,
+): boolean {
+  return current === null || target < current;
+}
 
 export class UserDataDurableObject extends DurableObject<StateEnv> {
   constructor(ctx: DurableObjectState, env: StateEnv) {
@@ -148,28 +228,115 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  async search<TQuery extends SearchQuery | LegacySearchQuery>(
-    query: TQuery,
-  ): Promise<
-    RpcResult<TQuery extends SearchQuery ? SearchPage : LegacySearchPage>
-  > {
+  async search(query: SearchQuery): Promise<RpcResult<SearchPage>> {
     return this.rpc(async () => {
       await this.ensureAlarm();
       this.assertSearchQuery(query);
       const page = this.ctx.storage.transactionSync(() => {
         const adapter = new Fts5SearchAdapter(this.ctx.storage.sql);
-        return "keyword" in query
-          ? adapter.query(query)
-          : adapter.search(query);
+        return adapter.query(query);
       });
-      return page as TQuery extends SearchQuery ? SearchPage : LegacySearchPage;
+      return page;
+    });
+  }
+
+  async updateTrashRetention(input: {
+    version: typeof SEARCH_RPC_VERSION;
+    operationId: string;
+    retentionDays: number;
+    updatedAt: number;
+  }): Promise<RpcResult<UserDataProfile>> {
+    return this.rpc(async () => {
+      if (
+        input.version !== SEARCH_RPC_VERSION ||
+        !isId(input.operationId) ||
+        !Number.isSafeInteger(input.retentionDays) ||
+        input.retentionDays < 1 ||
+        input.retentionDays > 36_500 ||
+        !isTimestamp(input.updatedAt)
+      ) {
+        throw new ValidationError(
+          "TRASH_RETENTION_INVALID",
+          "Trash retention update is invalid",
+        );
+      }
+      this.ctx.storage.transactionSync(() => {
+        const digest = payloadDigest({
+          version: input.version,
+          retentionDays: input.retentionDays,
+          updatedAt: input.updatedAt,
+        });
+        const existing = this.ctx.storage.sql
+          .exec<{ payload_digest: string }>(
+            `SELECT payload_digest FROM idempotency
+             WHERE namespace = 'settings' AND operation_id = ?`,
+            input.operationId,
+          )
+          .toArray()[0];
+        if (existing && existing.payload_digest !== digest) {
+          throw new ConflictError(
+            SearchErrorCode.IdempotencyConflict,
+            "Settings operation has a different payload",
+          );
+        }
+        if (existing) return;
+        const retentionMs = input.retentionDays * 86_400_000;
+        this.ctx.storage.sql.exec(
+          `UPDATE settings
+           SET trash_retention_days = ?, version = version + 1, updated_at = ?
+           WHERE singleton = 1`,
+          input.retentionDays,
+          input.updatedAt,
+        );
+        this.ctx.storage.sql.exec(
+          "UPDATE trash SET purge_after = trashed_at + ?",
+          retentionMs,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE topics SET purge_after = trashed_at + ?
+           WHERE trashed_at IS NOT NULL`,
+          retentionMs,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE jobs
+           SET next_run_at =
+             CAST(json_extract(payload_json, '$.trashedAt') AS INTEGER) + ?,
+             updated_at = ?
+           WHERE status = 'pending'
+             AND kind IN ('purge-trash', 'purge-topic')`,
+          retentionMs,
+          input.updatedAt,
+        );
+        this.ctx.storage.sql.exec(
+          `INSERT INTO idempotency(
+             namespace, operation_id, command_kind, payload_digest,
+             result_json, completed_at
+           ) VALUES ('settings', ?, 'update-trash-retention', ?, '{"ok":true}', ?)`,
+          input.operationId,
+          digest,
+          input.updatedAt,
+        );
+      });
+      await this.ensureAlarm();
+      return this.profile();
     });
   }
 
   async deleteAll(input: {
     expectedUserId: string;
   }): Promise<RpcResult<{ deleted: true }>> {
-    const profile = this.profile();
+    let profile: UserDataProfile;
+    try {
+      profile = this.profile();
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("no such table: profile")
+      ) {
+        return { ok: true, value: { deleted: true } };
+      }
+      throw error;
+    }
     if (profile.userId !== input.expectedUserId) {
       return {
         ok: false,
@@ -228,6 +395,17 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     return this.ctx.storage.onNextSessionRestoreBookmark(bookmark);
   }
 
+  async operatorRestartSession(): Promise<void> {
+    setTimeout(() => this.ctx.abort("PITR_SESSION_RESTART"), 0);
+  }
+
+  async operatorVerifyRestoredSession(bookmark: string): Promise<string> {
+    if (bookmark.length === 0) throw new Error("PITR_BOOKMARK_REQUIRED");
+    const current = await this.ctx.storage.getCurrentBookmark();
+    if (current < bookmark) throw new Error("PITR_RESTORE_NOT_APPLIED");
+    return current;
+  }
+
   async alarm(): Promise<void> {
     const startedAt = Date.now();
     const ownerToken = crypto.randomUUID();
@@ -277,7 +455,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
 
   private scheduleRetention(command: SemanticCommand): void {
     let id: string;
-    let kind: SearchContentKind;
+    let kind: RetentionKind;
     let trashedAt: number;
     switch (command.type) {
       case "trash-memo":
@@ -290,46 +468,83 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
         kind = "document";
         trashedAt = command.trashedAt;
         break;
-      case "trash-content": {
-        id = command.id;
+      case "trash-topic":
+        id = command.topicId;
         trashedAt = command.trashedAt;
-        kind = this.ctx.storage.sql
-          .exec<{ kind: SearchContentKind }>(
-            "SELECT kind FROM content WHERE id = ?",
-            id,
-          )
-          .one().kind;
+        kind = "topic";
         break;
-      }
       default:
         return;
     }
     const nextRunAt =
       trashedAt + this.profile().trashRetentionDays * 86_400_000;
     new DurableJobStore(this.ctx.storage).enqueue({
-      id: `purge-trash:${kind}:${id}:${trashedAt}`,
-      kind: "purge-trash",
+      id: `purge-${kind === "topic" ? "topic" : "trash"}:${kind}:${id}:${trashedAt}`,
+      kind: kind === "topic" ? "purge-topic" : "purge-trash",
       payload: { id, kind, trashedAt },
       nextRunAt,
-      providerIdempotencyKey: `purge-trash:${kind}:${id}:${trashedAt}`,
+      providerIdempotencyKey: `purge-${kind === "topic" ? "topic" : "trash"}:${kind}:${id}:${trashedAt}`,
       now: trashedAt,
     });
   }
 
   private executeJob(kind: string, payload: unknown, now: number): void {
     if (
-      kind !== "purge-trash" ||
+      (kind !== "purge-trash" && kind !== "purge-topic") ||
       typeof payload !== "object" ||
       payload === null ||
       !("id" in payload) ||
       typeof payload.id !== "string" ||
       !("kind" in payload) ||
-      (payload.kind !== "memo" && payload.kind !== "document")
+      (payload.kind !== "memo" &&
+        payload.kind !== "document" &&
+        payload.kind !== "topic")
     ) {
+      throw new Error("UNSUPPORTED_JOB");
+    }
+    if ((kind === "purge-topic") !== (payload.kind === "topic")) {
       throw new Error("UNSUPPORTED_JOB");
     }
     const contentId = payload.id;
     this.ctx.storage.transactionSync(() => {
+      if (payload.kind === "topic") {
+        const due = this.ctx.storage.sql
+          .exec<{ id: string }>(
+            `SELECT id FROM topics
+             WHERE id = ? AND trashed_at IS NOT NULL AND purge_after <= ?`,
+            contentId,
+            now,
+          )
+          .toArray()[0];
+        if (!due) return;
+        const setDocuments = this.ctx.storage.sql
+          .exec<{ id: string }>(
+            `SELECT id FROM content
+             WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+            contentId,
+          )
+          .toArray();
+        const projection = new Fts5SearchAdapter(this.ctx.storage.sql);
+        for (const document of setDocuments) {
+          projection.apply({
+            type: "remove",
+            entityType: "document",
+            id: document.id,
+          });
+        }
+        this.ctx.storage.sql.exec(
+          `DELETE FROM content
+           WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+          contentId,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE content SET topic_id = NULL
+           WHERE kind = 'document' AND topic_id = ?`,
+          contentId,
+        );
+        this.ctx.storage.sql.exec("DELETE FROM topics WHERE id = ?", contentId);
+        return;
+      }
       const due = this.ctx.storage.sql
         .exec<{ content_kind: SearchContentKind }>(
           `SELECT content_kind FROM trash
@@ -353,43 +568,130 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     if (next === null) return;
     const target = Math.max(next, Date.now() + 1_000);
     const current = await this.ctx.storage.getAlarm();
-    if (current === null || current <= Date.now() || target < current) {
+    if (shouldMoveAlarm(current, target)) {
       await this.ctx.storage.setAlarm(target);
     }
   }
 
-  private assertSemanticCommand(command: SemanticCommand): void {
+  private assertSemanticCommand(
+    command: unknown,
+  ): asserts command is SemanticCommand {
+    const invalid = () => {
+      throw new ValidationError(
+        "SEMANTIC_COMMAND_INVALID",
+        "Semantic command is invalid",
+      );
+    };
     if (
-      typeof command !== "object" ||
-      command === null ||
-      typeof command.operationId !== "string" ||
-      command.operationId.length === 0 ||
-      typeof command.type !== "string" ||
-      ("version" in command &&
-        command.version !== undefined &&
-        command.version !== SEARCH_RPC_VERSION)
+      !isRecord(command) ||
+      command.version !== SEARCH_RPC_VERSION ||
+      !isId(command.operationId) ||
+      typeof command.type !== "string"
     ) {
       throw new ValidationError(
         "SEMANTIC_COMMAND_INVALID",
-        "Semantic command envelope is invalid",
+        "Semantic command is invalid",
       );
+    }
+    const base = ["version", "operationId", "type"] as const;
+    let valid = false;
+    switch (command.type) {
+      case "create-memo":
+      case "update-memo":
+      case "restore-memo":
+        valid = hasOnlyKeys(command, [...base, "memo"]) && isMemo(command.memo);
+        break;
+      case "trash-memo":
+        valid =
+          hasOnlyKeys(command, [...base, "memoId", "trashedAt"]) &&
+          isId(command.memoId) &&
+          isTimestamp(command.trashedAt);
+        break;
+      case "remove-memo":
+        valid =
+          hasOnlyKeys(command, [...base, "memoId", "removedAt"]) &&
+          isId(command.memoId) &&
+          isTimestamp(command.removedAt);
+        break;
+      case "create-document":
+      case "update-document":
+      case "restore-document":
+        valid =
+          hasOnlyKeys(command, [...base, "document"]) &&
+          isDocument(command.document);
+        break;
+      case "trash-document":
+        valid =
+          hasOnlyKeys(command, [...base, "documentId", "trashedAt"]) &&
+          isId(command.documentId) &&
+          isTimestamp(command.trashedAt);
+        break;
+      case "remove-document":
+        valid =
+          hasOnlyKeys(command, [...base, "documentId", "removedAt"]) &&
+          isId(command.documentId) &&
+          isTimestamp(command.removedAt);
+        break;
+      case "create-topic":
+        valid =
+          hasOnlyKeys(command, [...base, "topic"]) && isTopic(command.topic);
+        break;
+      case "set-topic-archived":
+        valid =
+          hasOnlyKeys(command, [
+            ...base,
+            "topicId",
+            "archivedAt",
+            "updatedAt",
+          ]) &&
+          isId(command.topicId) &&
+          (command.archivedAt === null || isTimestamp(command.archivedAt)) &&
+          isTimestamp(command.updatedAt);
+        break;
+      case "trash-topic":
+        valid =
+          hasOnlyKeys(command, [...base, "topicId", "trashedAt"]) &&
+          isId(command.topicId) &&
+          isTimestamp(command.trashedAt);
+        break;
+      case "restore-topic":
+        valid =
+          hasOnlyKeys(command, [...base, "topicId", "restoredAt"]) &&
+          isId(command.topicId) &&
+          isTimestamp(command.restoredAt);
+        break;
+      case "remove-topic":
+        valid =
+          hasOnlyKeys(command, [...base, "topicId", "removedAt"]) &&
+          isId(command.topicId) &&
+          isTimestamp(command.removedAt);
+        break;
+      default:
+        invalid();
+    }
+    if (!valid) {
+      invalid();
     }
   }
 
-  private assertSearchQuery(
-    query: SearchQuery | LegacySearchQuery,
-  ): asserts query is SearchQuery | LegacySearchQuery {
-    if (typeof query !== "object" || query === null) {
+  private assertSearchQuery(query: unknown): asserts query is SearchQuery {
+    if (
+      !isRecord(query) ||
+      !hasOnlyKeys(
+        query,
+        ["version", "keyword"],
+        ["topicId", "page", "limit", "cursor"],
+      ) ||
+      query.version !== SEARCH_RPC_VERSION ||
+      typeof query.keyword !== "string" ||
+      (query.topicId !== undefined && !isId(query.topicId)) ||
+      (query.page !== undefined && typeof query.page !== "number") ||
+      (query.limit !== undefined && typeof query.limit !== "number") ||
+      (query.cursor !== undefined && typeof query.cursor !== "string")
+    ) {
       throw new ValidationError(
         "SEARCH_QUERY_INVALID",
         "Search query is invalid",
-      );
-    }
-    const keyword = "keyword" in query ? query.keyword : query.text;
-    if (typeof keyword !== "string") {
-      throw new ValidationError(
-        "SEARCH_QUERY_INVALID",
-        "Search keyword must be a string",
       );
     }
   }

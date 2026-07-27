@@ -62,9 +62,30 @@ const V2 = [
    ON credential_mappings(state, reservation_expires_at)`,
 ] as const;
 
+const V3 = [
+  `CREATE TABLE IF NOT EXISTS signup_operations (
+    opaque_operation_key TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+] as const;
+
+const V4 = [
+  `CREATE TABLE IF NOT EXISTS restore_verification (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    marker TEXT NOT NULL,
+    verified_at INTEGER NOT NULL
+  )`,
+] as const;
+
 export const identityDirectoryMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
+  { version: 3, up: V3 },
+  { version: 4, up: V4 },
 ];
 
 export function migrateIdentityDirectory(

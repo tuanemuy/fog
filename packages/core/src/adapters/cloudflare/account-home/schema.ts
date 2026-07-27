@@ -39,9 +39,50 @@ const V2 = [
   "ALTER TABLE identity_operations ADD COLUMN operation_epoch INTEGER NOT NULL DEFAULT 0",
 ] as const;
 
+const V3 = [
+  "ALTER TABLE credential_locators ADD COLUMN logical_credential_id TEXT NOT NULL DEFAULT ''",
+  `UPDATE credential_locators
+   SET logical_credential_id = opaque_key
+   WHERE logical_credential_id = ''`,
+] as const;
+
+const V4 = [
+  `CREATE TRIGGER IF NOT EXISTS identity_operation_kind_insert_guard
+   BEFORE INSERT ON identity_operations
+   WHEN NEW.kind NOT IN (
+     'signup', 'password-change', 'password-reset', 'sso-create', 'sso-link',
+     'sso-unlink', 'delete-account', 'credential-rotation', 'export'
+   )
+   BEGIN
+     SELECT RAISE(ABORT, 'IDENTITY_OPERATION_KIND_INVALID');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS identity_operation_state_insert_guard
+   BEFORE INSERT ON identity_operations
+   WHEN NEW.state NOT IN (
+     'pending', 'credential-reserved', 'user-data-initialized',
+     'directory-active', 'active', 'tombstoning', 'user-data-deleted',
+     'purging', 'compensating', 'completed', 'failed'
+   )
+   BEGIN
+     SELECT RAISE(ABORT, 'IDENTITY_OPERATION_STATE_INVALID');
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS identity_operation_state_update_guard
+   BEFORE UPDATE OF state ON identity_operations
+   WHEN NEW.state NOT IN (
+     'pending', 'credential-reserved', 'user-data-initialized',
+     'directory-active', 'active', 'tombstoning', 'user-data-deleted',
+     'purging', 'compensating', 'completed', 'failed'
+   )
+   BEGIN
+     SELECT RAISE(ABORT, 'IDENTITY_OPERATION_STATE_INVALID');
+   END`,
+] as const;
+
 export const accountHomeMigrations: readonly OrderedMigration[] = [
   { version: 1, up: V1 },
   { version: 2, up: V2 },
+  { version: 3, up: V3 },
+  { version: 4, up: V4 },
 ];
 
 export function migrateAccountHome(

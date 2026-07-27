@@ -25,6 +25,7 @@ function trippingContainer(): {
     container: {
       config: { ...content, appUrl: "http://localhost:3000" },
       identity: {
+        preparePasswordSignup: async () => trip("identity.prepareSignup"),
         registerWithPassword: async () => trip("identity.register"),
         findPasswordCredential: async () => trip("identity.findCredential"),
         getAccountAuthority: async () => trip("identity.getAuthority"),

@@ -274,9 +274,16 @@ export class DurableJobStore {
     return this.storage.sql
       .exec<{ next_run_at: number | null }>(
         `SELECT MIN(
-           CASE WHEN status = 'leased' THEN lease_until ELSE next_run_at END
+           CASE
+             WHEN status = 'leased' THEN lease_until
+             WHEN status = 'pending' THEN next_run_at
+             WHEN status = 'completed' THEN terminal_at + ?
+             WHEN status = 'poison' THEN terminal_at + ?
+           END
          ) AS next_run_at
-         FROM jobs WHERE status IN ('pending', 'leased')`,
+         FROM jobs`,
+        COMPLETED_RETENTION_MS,
+        POISON_RETENTION_MS,
       )
       .one().next_run_at;
   }

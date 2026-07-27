@@ -29,24 +29,32 @@ it("supports workerd FTS5 trigram, short fallback, snippets, and stable pages", 
     ["c", "京都駅の周辺を歩く"],
   ] as const) {
     await object.commit({
-      type: "upsert-content",
+      version: 1,
+      type: "create-memo",
       operationId: `create-${id}`,
-      entry: {
+      memo: {
         id,
-        kind: "memo",
-        title: id,
         body,
-        topicArchived: false,
-        sourceLinks: [],
-        updatedAt: 1,
+        timestamp: 1,
       },
     });
   }
-  expect(value(await object.search({ text: "東京駅" })).items).toHaveLength(2);
-  expect(value(await object.search({ text: "東京" })).items).toHaveLength(2);
-  const first = value(await object.search({ text: "周辺", limit: 1 }));
+  expect(
+    value(await object.search({ version: 1, keyword: "東京駅" })).items,
+  ).toHaveLength(2);
+  expect(
+    value(await object.search({ version: 1, keyword: "東京" })).items,
+  ).toHaveLength(2);
+  const first = value(
+    await object.search({ version: 1, keyword: "周辺", limit: 1 }),
+  );
   const second = value(
-    await object.search({ text: "周辺", limit: 1, offset: first.nextOffset }),
+    await object.search({
+      version: 1,
+      keyword: "周辺",
+      limit: 1,
+      ...(first.nextCursor === null ? {} : { cursor: first.nextCursor }),
+    }),
   );
   expect(first.items[0]?.id).not.toBe(second.items[0]?.id);
   expect(first.items[0]?.snippet).toContain("<mark>");

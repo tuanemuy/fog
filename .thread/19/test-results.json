@@ -1,0 +1,57 @@
+{
+  "recordedAt": "2026-07-27T18:27:53Z",
+  "baseCommit": "1e716a3d38e6c7384c31a652cb24d233ddae48b5",
+  "workingTree": true,
+  "branch": "issue/19/cloudflare-do-fts",
+  "automated": [
+    {
+      "command": "pnpm test:unit",
+      "result": "passed",
+      "evidence": "30 files, 413 tests"
+    },
+    {
+      "command": "pnpm test:integration",
+      "result": "passed",
+      "evidence": "request boundary 1 file/4 tests; state 6 files/32 tests"
+    },
+    {
+      "command": "pnpm test:lifecycle:cli",
+      "result": "passed",
+      "evidence": "13 lifecycle operations with step-specific search assertions"
+    },
+    {
+      "command": "pnpm typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm lint && pnpm format:check",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm build",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm deploy:staging:dry",
+      "result": "passed",
+      "evidence": "offline Pulumi fixture render; state then request Wrangler dry-run"
+    },
+    {
+      "command": "pnpm audit:legacy && pnpm audit:test-traceability",
+      "result": "passed",
+      "evidence": "265 active files; 34 TEST IDs with executable evidence"
+    }
+  ],
+  "releaseGates": [
+    {
+      "name": "staging PITR bookmark/restore/verify/undo",
+      "result": "pending",
+      "reason": "Cloudflare credentials and disposable remote objects are not available in the local environment"
+    },
+    {
+      "name": "staging secret inventory",
+      "result": "pending",
+      "reason": "Cloudflare credentials are not available in the local environment"
+    }
+  ]
+}

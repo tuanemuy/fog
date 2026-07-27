@@ -11,6 +11,7 @@ import {
 } from "@repo/core/application/di/serverCloudflare";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { default as defaultEntry } from "@tanstack/react-start/server-entry";
+import { handleIdentityMaintenanceRequest } from "./operator/identity-maintenance";
 import { handlePitrOperatorRequest } from "./operator/pitr";
 
 // SSR and RSC are separate module graphs in the same isolate; pin the
@@ -44,6 +45,11 @@ export default {
   ): Promise<Response> {
     const operatorResponse = await handlePitrOperatorRequest(request, env);
     if (operatorResponse !== undefined) return operatorResponse;
+    const maintenanceResponse = await handleIdentityMaintenanceRequest(
+      request,
+      env,
+    );
+    if (maintenanceResponse !== undefined) return maintenanceResponse;
     const container = createRequestContainer(readRequestServerConfig(env));
     return storage.run(container, async () => defaultEntry.fetch(request));
   },

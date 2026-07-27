@@ -6,6 +6,7 @@ import type {
 } from "@repo/core/domain/identity/valueObject";
 
 export const IDENTITY_RPC_VERSION = 1 as const;
+export const IDENTITY_OPERATION_ID_MAX_BYTES = 128;
 
 declare const operationIdBrand: unique symbol;
 declare const opaqueCredentialKeyBrand: unique symbol;
@@ -17,7 +18,10 @@ export type OpaqueCredentialKey = string & {
 
 export function operationId(raw: string): OperationId {
   const value = raw.trim();
-  if (value.length === 0) throw new TypeError("operationId must not be empty");
+  const bytes = new TextEncoder().encode(value).byteLength;
+  if (bytes === 0 || bytes > IDENTITY_OPERATION_ID_MAX_BYTES) {
+    throw new TypeError("operationId is malformed");
+  }
   return value as OperationId;
 }
 
@@ -63,6 +67,12 @@ export type CredentialLocator = Readonly<{
   opaqueKey: OpaqueCredentialKey;
 }>;
 
+export type LogicalCredentialAuthority = Readonly<{
+  credentialId: string;
+  kind: CredentialKind;
+  locators: readonly CredentialLocator[];
+}>;
+
 export type CredentialRef =
   | Readonly<{
       kind: "password";
@@ -78,6 +88,7 @@ export type CredentialRef =
 
 export type DirectoryCredential = Readonly<{
   userId: UserId;
+  operationId: OperationId;
   locator: CredentialLocator;
   state: CredentialState;
   accountEpoch: number;
@@ -99,14 +110,24 @@ export type PasswordCredential = Readonly<{
   accountEpoch: number;
 }>;
 
+export type DirectoryAuthorityRow = Readonly<{
+  userId: UserId;
+  operationId: OperationId;
+  locator: CredentialLocator;
+  state: CredentialState;
+  accountEpoch: number;
+}>;
+
 export type AccountStatus = "pending" | "active" | "deleting" | "deleted";
 
 export type AccountAuthSummary = Readonly<{
   userId: UserId;
+  userDataObjectName: string;
   status: AccountStatus;
   primaryEmail: Email | null;
   authMethods: readonly CredentialKind[];
   locators: readonly CredentialLocator[];
+  credentials: readonly LogicalCredentialAuthority[];
   sessionEpoch: number;
   operationEpoch: number;
 }>;
@@ -123,6 +144,17 @@ export type CurrentAccount = Readonly<{
 }>;
 
 export interface IdentityApplicationPort {
+  preparePasswordSignup(input: {
+    operationId: OperationId;
+    proposedUserId: UserId;
+    email: Email;
+    passwordHash: PasswordHash;
+    now: number;
+  }): Promise<{
+    userId: UserId;
+    passwordHash: PasswordHash;
+    replayed: boolean;
+  }>;
   registerWithPassword(input: IdentityRegistration): Promise<{
     sessionEpoch: number;
   }>;
@@ -169,6 +201,17 @@ export interface CredentialDirectoryPort {
   lookupCredential(
     canonicalCredential: string,
   ): Promise<readonly (DirectoryCredential | null)[]>;
+  preparePasswordSignup(input: {
+    operationId: OperationId;
+    proposedUserId: UserId;
+    email: Email;
+    passwordHash: PasswordHash;
+    now: number;
+  }): Promise<{
+    userId: UserId;
+    passwordHash: PasswordHash;
+    replayed: boolean;
+  }>;
   reserve(input: {
     operationId: OperationId;
     userId: UserId;
@@ -201,12 +244,14 @@ export interface CredentialDirectoryPort {
   tombstone(input: {
     operationId: OperationId;
     locator: CredentialLocator;
+    userId: UserId;
     accountEpoch: number;
     now: number;
   }): Promise<void>;
   purge(input: {
     operationId: OperationId;
     locator: CredentialLocator;
+    userId: UserId;
     accountEpoch: number;
   }): Promise<void>;
   storePasswordReset(input: {
@@ -216,12 +261,27 @@ export interface CredentialDirectoryPort {
     tokenHash: string;
     expiresAt: number;
   }): Promise<void>;
+  lookupPasswordReset(input: {
+    operationId: OperationId;
+    locator: CredentialLocator;
+    tokenHash: string;
+    now: number;
+  }): Promise<{ userId: UserId } | null>;
   consumePasswordReset(input: {
     operationId: OperationId;
     locator: CredentialLocator;
     tokenHash: string;
     now: number;
   }): Promise<{ userId: UserId } | null>;
+  scanForAuthorityReconcile(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit: number;
+  }): Promise<{
+    rows: readonly DirectoryAuthorityRow[];
+    nextCursor: string | null;
+  }>;
   scanForRotation(input: {
     generation: string;
     bucket: number;
@@ -277,6 +337,7 @@ export interface AccountHomePort {
     expectedState: IdentityOperationState;
     nextState: IdentityOperationState;
     locator?: CredentialLocator;
+    credentialId?: string;
     credentialKind?: CredentialKind;
     primaryEmail?: Email;
     bumpSessionEpoch?: boolean;
@@ -291,6 +352,7 @@ export interface AccountHomePort {
     operationId: OperationId;
     userId: UserId;
     locator: CredentialLocator;
+    credentialId: string;
     kind: CredentialKind;
     primaryEmail?: Email;
     bumpSessionEpoch: boolean;
@@ -299,7 +361,7 @@ export interface AccountHomePort {
   removeCredentialLocator(input: {
     operationId: OperationId;
     userId: UserId;
-    locator: CredentialLocator;
+    credentialId: string;
     bumpSessionEpoch: boolean;
     now: number;
   }): Promise<AccountAuthSummary>;
@@ -385,5 +447,6 @@ export interface IdentityPrimitivePort {
 export interface AuthenticatedUserDataRouter {
   forAuthenticatedUser(userId: UserId): {
     readonly userId: UserId;
+    readonly objectName: string;
   };
 }

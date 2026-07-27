@@ -2,6 +2,10 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { CloudflareIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
 import type { DirectoryKeyring } from "@repo/core/adapters/cloudflare/identityRouting";
+import type {
+  IdentitySagaFaultHook,
+  IdentitySagaFaultPoint,
+} from "@repo/core/application/identity/coordinator";
 import {
   operationId,
   type RpcResult,
@@ -40,13 +44,25 @@ afterEach(() => reset());
 
 function gateway(
   routing: DirectoryKeyring = keyring,
+  faultHook?: IdentitySagaFaultHook,
 ): CloudflareIdentityGateway {
   return new CloudflareIdentityGateway(
     bindings.IDENTITY_DIRECTORY as never,
     bindings.ACCOUNT_HOME as never,
     bindings.USER_DATA as never,
     routing,
+    faultHook,
   );
+}
+
+function failOnceAt(expected: IdentitySagaFaultPoint): IdentitySagaFaultHook {
+  let armed = true;
+  return (actual) => {
+    if (armed && actual === expected) {
+      armed = false;
+      throw new Error(`INJECTED_FAULT:${actual}`);
+    }
+  };
 }
 
 function value<T>(result: RpcResult<T>): T {
@@ -55,6 +71,54 @@ function value<T>(result: RpcResult<T>): T {
 }
 
 describe("identity Durable Object contract", () => {
+  it.each([
+    "signup-after-reserve",
+    "signup-after-initialize",
+    "signup-after-finalize",
+  ] as const)("resumes signup after %s", async (point) => {
+    const identity = gateway(keyring, failOnceAt(point));
+    const input = {
+      operationId: operationId(`fault-${point}`),
+      userId: UserId.create(`user-${point}`),
+      email: Email.create(`${point}@example.com`),
+      passwordHash: PasswordHash.create(`hash-${point}`),
+      now: 1,
+    };
+    await expect(identity.registerWithPassword(input)).rejects.toThrow(
+      `INJECTED_FAULT:${point}`,
+    );
+    await expect(identity.registerWithPassword(input)).resolves.toEqual({
+      sessionEpoch: 0,
+    });
+    await expect(
+      identity.getAccountAuthority(input.userId),
+    ).resolves.toMatchObject({ status: "active" });
+  });
+
+  it.each([
+    "sso-after-provider-reserve",
+    "sso-after-email-reserve",
+    "sso-after-provider-activate",
+    "sso-after-email-activate",
+  ] as const)("resumes SSO create after %s", async (point) => {
+    const identity = gateway(keyring, failOnceAt(point));
+    const input = {
+      operationId: operationId(`fault-${point}`),
+      provider: SsoProvider.create("google"),
+      subject: `subject-${point}`,
+      email: Email.create(`${point}@example.com`),
+      proposedUserId: UserId.create(`user-${point}`),
+      now: 1,
+    };
+    await expect(identity.lookupOrCreateSso(input)).rejects.toThrow(
+      `INJECTED_FAULT:${point}`,
+    );
+    await expect(identity.lookupOrCreateSso(input)).resolves.toMatchObject({
+      userId: input.proposedUserId,
+      sessionEpoch: 0,
+    });
+  });
+
   it("resumes the same signup operation and preserves one authority", async () => {
     const identity = gateway();
     const input = {
@@ -111,6 +175,57 @@ describe("identity Durable Object contract", () => {
       },
     });
     expect(value(lookup)).toBeNull();
+  });
+
+  it("reconciles every restored mapping against Account Home authority", async () => {
+    const object = bindings.IDENTITY_DIRECTORY.getByName("generation-2:0");
+    const locator = {
+      generation: "generation-2",
+      bucket: 0,
+      opaqueKey: "orphan-restored-mapping" as never,
+    };
+    expect(
+      value(
+        await object.reserve({
+          version: 1,
+          operationId: "orphan-restore-operation",
+          payload: {
+            locator,
+            credential: {
+              kind: "password",
+              canonicalValue: "email:orphan@example.com",
+              passwordHash: PasswordHash.create("orphan-password-hash"),
+            },
+            userId: "orphan-restored-user",
+            accountEpoch: 0,
+            now: 1,
+            reservationExpiresAt: 100,
+          },
+        }),
+      ),
+    ).toEqual({ userId: "orphan-restored-user" });
+
+    await expect(
+      object.operatorReconcileRestoredPage({
+        generation: "generation-2",
+        bucket: 0,
+        limit: 100,
+        now: 2,
+      }),
+    ).resolves.toEqual({
+      scanned: 1,
+      tombstoned: 1,
+      conflicts: 0,
+      nextCursor: null,
+      complete: true,
+    });
+    const status = value(
+      await object.operatorGetShardAuthorityStatus({
+        version: 1,
+        payload: {},
+      }),
+    );
+    expect(status).toMatchObject({ mappings: 1, tombstoned: 1, active: 0 });
   });
 
   it("keeps SSO provider boundaries and blocks verified-email auto-link", async () => {
@@ -211,6 +326,209 @@ describe("identity Durable Object contract", () => {
     );
   });
 
+  it("links and unlinks every generation of one logical SSO credential", async () => {
+    const identity = gateway();
+    const userId = UserId.create("logical-credential-operation");
+    const email = Email.create("logical@example.com");
+    await identity.registerWithPassword({
+      operationId: operationId("logical-password-signup"),
+      userId,
+      email,
+      passwordHash: PasswordHash.create("logical-password-hash"),
+      now: 1,
+    });
+    const link = {
+      operationId: operationId("logical-sso-link"),
+      userId,
+      proposedUserId: userId,
+      provider: SsoProvider.create("google"),
+      subject: "logical-subject",
+      email,
+      now: 2,
+    };
+    await identity.linkSso(link);
+    await identity.linkSso(link);
+
+    const linked = await identity.getAccountAuthority(userId);
+    const sso = linked?.credentials.find((item) => item.kind === "sso");
+    expect(sso?.locators).toHaveLength(2);
+    expect(linked).toMatchObject({ sessionEpoch: 1 });
+    if (!sso?.locators[0]) throw new Error("SSO authority missing");
+
+    await identity.unlinkCredential({
+      operationId: operationId("logical-sso-unlink"),
+      userId,
+      locator: sso.locators[0],
+      now: 3,
+    });
+    await identity.unlinkCredential({
+      operationId: operationId("logical-sso-unlink"),
+      userId,
+      locator: sso.locators[0],
+      now: 3,
+    });
+
+    const unlinked = await identity.getAccountAuthority(userId);
+    expect(unlinked?.credentials).toHaveLength(1);
+    expect(unlinked?.credentials[0]?.kind).toBe("password");
+    expect(unlinked?.sessionEpoch).toBe(2);
+  });
+
+  it.each([
+    "link-after-reserve",
+    "link-after-activate",
+    "link-after-finalize",
+  ] as const)("resumes SSO link after %s", async (point) => {
+    const userId = UserId.create(`user-${point}`);
+    const email = Email.create(`${point}@example.com`);
+    await gateway().registerWithPassword({
+      operationId: operationId(`signup-${point}`),
+      userId,
+      email,
+      passwordHash: PasswordHash.create(`hash-${point}`),
+      now: 1,
+    });
+    const identity = gateway(keyring, failOnceAt(point));
+    const input = {
+      operationId: operationId(`fault-${point}`),
+      userId,
+      proposedUserId: userId,
+      provider: SsoProvider.create("google"),
+      subject: `subject-${point}`,
+      email,
+      now: 2,
+    };
+    await expect(identity.linkSso(input)).rejects.toThrow(
+      `INJECTED_FAULT:${point}`,
+    );
+    await expect(identity.linkSso(input)).resolves.toBeUndefined();
+    const authority = await identity.getAccountAuthority(userId);
+    expect(authority?.credentials.map((item) => item.kind).sort()).toEqual([
+      "password",
+      "sso",
+    ]);
+    expect(authority?.sessionEpoch).toBe(1);
+  });
+
+  it.each(["unlink-after-directory", "unlink-after-authority"] as const)(
+    "resumes SSO unlink after %s",
+    async (point) => {
+      const userId = UserId.create(`user-${point}`);
+      const email = Email.create(`${point}@example.com`);
+      const setup = gateway();
+      await setup.registerWithPassword({
+        operationId: operationId(`signup-${point}`),
+        userId,
+        email,
+        passwordHash: PasswordHash.create(`hash-${point}`),
+        now: 1,
+      });
+      await setup.linkSso({
+        operationId: operationId(`link-${point}`),
+        userId,
+        proposedUserId: userId,
+        provider: SsoProvider.create("google"),
+        subject: `subject-${point}`,
+        email,
+        now: 2,
+      });
+      const sso = (await setup.getAccountAuthority(userId))?.credentials.find(
+        (item) => item.kind === "sso",
+      );
+      if (!sso?.locators[0]) throw new Error("SSO authority missing");
+      const identity = gateway(keyring, failOnceAt(point));
+      const input = {
+        operationId: operationId(`fault-${point}`),
+        userId,
+        locator: sso.locators[0],
+        now: 3,
+      };
+      await expect(identity.unlinkCredential(input)).rejects.toThrow(
+        `INJECTED_FAULT:${point}`,
+      );
+      await expect(identity.unlinkCredential(input)).resolves.toBeUndefined();
+      const authority = await identity.getAccountAuthority(userId);
+      expect(authority?.credentials.map((item) => item.kind)).toEqual([
+        "password",
+      ]);
+      expect(authority?.sessionEpoch).toBe(2);
+    },
+  );
+
+  it.each([
+    "reset-after-consume",
+    "reset-after-hash",
+    "reset-after-epoch",
+  ] as const)("resumes password reset after %s", async (point) => {
+    const userId = UserId.create(`user-${point}`);
+    const email = Email.create(`${point}@example.com`);
+    const setup = gateway();
+    await setup.registerWithPassword({
+      operationId: operationId(`signup-${point}`),
+      userId,
+      email,
+      passwordHash: PasswordHash.create(`old-hash-${point}`),
+      now: 1,
+    });
+    await setup.storePasswordReset({
+      operationId: operationId(`store-${point}`),
+      userId,
+      email,
+      tokenHash: `token-${point}`,
+      expiresAt: 100,
+    });
+    const identity = gateway(keyring, failOnceAt(point));
+    const input = {
+      operationId: operationId(`fault-${point}`),
+      tokenHash: `token-${point}`,
+      email,
+      passwordHash: PasswordHash.create(`new-hash-${point}`),
+      now: 2,
+    };
+    await expect(identity.consumePasswordReset(input)).rejects.toThrow(
+      `INJECTED_FAULT:${point}`,
+    );
+    await expect(identity.consumePasswordReset(input)).resolves.toEqual({
+      userId,
+      sessionEpoch: 1,
+    });
+    await expect(identity.findPasswordCredential(email)).resolves.toMatchObject(
+      { passwordHash: `new-hash-${point}` },
+    );
+  });
+
+  it.each([
+    "delete-after-user-data",
+    "delete-after-directory",
+    "delete-after-finish",
+  ] as const)("resumes account deletion after %s", async (point) => {
+    const userId = UserId.create(`user-${point}`);
+    const email = Email.create(`${point}@example.com`);
+    await gateway().registerWithPassword({
+      operationId: operationId(`signup-${point}`),
+      userId,
+      email,
+      passwordHash: PasswordHash.create(`hash-${point}`),
+      now: 1,
+    });
+    const identity = gateway(keyring, failOnceAt(point));
+    const input = {
+      operationId: operationId(`fault-${point}`),
+      userId,
+      now: 2,
+    };
+    await expect(identity.deleteAccount(input)).rejects.toThrow(
+      `INJECTED_FAULT:${point}`,
+    );
+    await expect(identity.deleteAccount(input)).resolves.toBeUndefined();
+    await expect(identity.getAccountAuthority(userId)).resolves.toMatchObject({
+      status: "deleted",
+      sessionEpoch: 1,
+      operationEpoch: 1,
+    });
+    await expect(identity.findPasswordCredential(email)).resolves.toBeNull();
+  });
+
   it("checkpoints two consecutive routing-key rotations", async () => {
     const v1 = {
       active: {
@@ -272,6 +590,48 @@ describe("identity Durable Object contract", () => {
       currentOnly.findPasswordCredential(email),
     ).resolves.toMatchObject({
       userId,
+    });
+  });
+
+  it("keeps signup replay identity stable across routing-key removal", async () => {
+    const first = gateway({
+      active: {
+        generation: "signup-generation-1",
+        secret: "signup-routing-secret-generation-one",
+      },
+      buckets: 4,
+    });
+    const input = {
+      operationId: operationId("signup-key-independent-operation"),
+      proposedUserId: UserId.create("signup-key-independent-user"),
+      email: Email.create("key-independent@example.com"),
+      passwordHash: PasswordHash.create("first-signup-hash"),
+      now: 1,
+    };
+    await expect(first.preparePasswordSignup(input)).resolves.toMatchObject({
+      userId: input.proposedUserId,
+      passwordHash: input.passwordHash,
+      replayed: false,
+    });
+
+    const afterRemoval = gateway({
+      active: {
+        generation: "signup-generation-3",
+        secret: "signup-routing-secret-generation-three",
+      },
+      buckets: 4,
+    });
+    await expect(
+      afterRemoval.preparePasswordSignup({
+        ...input,
+        proposedUserId: UserId.create("must-not-replace-original-user"),
+        passwordHash: PasswordHash.create("new-random-salt-hash"),
+        now: 2,
+      }),
+    ).resolves.toMatchObject({
+      userId: input.proposedUserId,
+      passwordHash: input.passwordHash,
+      replayed: true,
     });
   });
 });

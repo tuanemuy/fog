@@ -7,8 +7,6 @@ import {
 } from "@repo/core/application/errors";
 import type {
   DocumentSearchResultItem,
-  LegacySearchPage,
-  LegacySearchQuery,
   MemoSearchResultItem,
   SearchIndexPort,
   SearchPage,
@@ -27,6 +25,11 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const MAX_MATCHES_PER_SNAPSHOT = 5_000;
 const SNAPSHOT_TTL_MS = 15 * 60_000;
+const SNAPSHOT_INSERT_BATCH = 33;
+const SOURCE_QUERY_BATCH = 50;
+const MAX_ACTIVE_SNAPSHOTS = 8;
+const MAX_SNAPSHOT_ITEMS = 5_000;
+const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 
 function normalizeText(value: string): string {
   return value.normalize("NFKC").trim();
@@ -51,7 +54,11 @@ function escapeHtml(value: string): string {
 
 function originalSnippet(title: string, body: string, keyword: string): string {
   const source = normalizeText(title).includes(keyword) ? title : body;
-  const characters = [...source];
+  const characters = [
+    ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+      source,
+    ),
+  ].map(({ segment }) => segment);
   const normalizedCharacters: string[] = [];
   const sourceIndex: number[] = [];
   for (let index = 0; index < characters.length; index += 1) {
@@ -119,25 +126,38 @@ type SearchRow = {
 type SnapshotCursor = Readonly<{
   snapshotId: string;
   offset: number;
+  limit: number;
   queryDigest: string;
 }>;
 
 function encodeCursor(value: SnapshotCursor): string {
-  return `${value.snapshotId}.${value.offset}.${value.queryDigest}`;
+  return `${value.snapshotId}.${value.offset}.${value.limit}.${value.queryDigest}`;
 }
 
 function decodeCursor(value: string): SnapshotCursor {
-  const match = /^([0-9a-f-]{36})\.([0-9]+)\.(fnv1a64:[0-9a-f]{16})$/u.exec(
-    value,
-  );
+  const match =
+    /^([0-9a-f-]{36})\.([0-9]+)\.([0-9]+)\.(sha256:[0-9a-f]{64})$/u.exec(value);
   const offset = match ? Number(match[2]) : Number.NaN;
-  if (!match || !Number.isSafeInteger(offset) || offset < 0) {
+  const limit = match ? Number(match[3]) : Number.NaN;
+  if (
+    !match ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_LIMIT
+  ) {
     throw new ValidationError(
       SearchErrorCode.InvalidCursor,
       "Search cursor is invalid",
     );
   }
-  return { snapshotId: match[1], offset, queryDigest: match[3] };
+  return {
+    snapshotId: match[1],
+    offset,
+    limit,
+    queryDigest: match[4],
+  };
 }
 
 export class Fts5SearchAdapter
@@ -210,47 +230,6 @@ export class Fts5SearchAdapter
     }
   }
 
-  search(query: LegacySearchQuery): LegacySearchPage {
-    const page = this.query({
-      keyword: query.text,
-      ...(query.topicId === undefined ? {} : { topicId: query.topicId }),
-      ...(query.limit === undefined ? {} : { limit: query.limit }),
-      page:
-        query.offset === undefined || query.limit === undefined
-          ? 1
-          : Math.floor(query.offset / query.limit) + 1,
-    });
-    return {
-      items: page.items.map((item) =>
-        item.type === "memo"
-          ? {
-              id: item.id,
-              kind: "memo" as const,
-              title: "",
-              snippet: item.snippet,
-              score: 0,
-              topicArchived: false,
-              sourceLinks: [],
-            }
-          : {
-              id: item.id,
-              kind: "document" as const,
-              title: item.title,
-              snippet: item.snippet,
-              score: 0,
-              topicId: item.topic.id,
-              topicArchived: item.topic.archived,
-              sourceLinks: this.legacySourceLinks(item.id),
-            },
-      ),
-      ...(page.nextCursor === null
-        ? {}
-        : {
-            nextOffset: (query.offset ?? 0) + (query.limit ?? DEFAULT_LIMIT),
-          }),
-    };
-  }
-
   private queryUnchecked(query: SearchQuery): SearchPage {
     const keyword = normalizeText(query.keyword);
     if (keyword.length === 0) {
@@ -283,17 +262,18 @@ export class Fts5SearchAdapter
     const digest = payloadDigest({
       keyword,
       topicId: query.topicId ?? null,
+      limit,
     });
     this.pruneSnapshots(Date.now());
     if (query.cursor !== undefined) {
       const cursor = decodeCursor(query.cursor);
-      if (cursor.queryDigest !== digest) {
+      if (cursor.queryDigest !== digest || cursor.limit !== limit) {
         throw new ValidationError(
           SearchErrorCode.InvalidCursor,
           "Search cursor does not match the query",
         );
       }
-      return this.readSnapshot(cursor, limit);
+      return this.readSnapshot(cursor);
     }
     const rows = this.findRows(keyword, query.topicId);
     if (rows.length > MAX_MATCHES_PER_SNAPSHOT) {
@@ -304,8 +284,24 @@ export class Fts5SearchAdapter
     }
     const items = this.toItems(rows, keyword);
     const offset = (page - 1) * limit;
+    const pageItems = items.slice(offset, offset + limit);
+    if (offset + pageItems.length >= items.length) {
+      return {
+        items: pageItems,
+        page,
+        limit,
+        totalCount: items.length,
+        nextCursor: null,
+      };
+    }
     const snapshotId = crypto.randomUUID();
     const now = Date.now();
+    const itemJson = items.map((item) => JSON.stringify(item));
+    const snapshotBytes = itemJson.reduce(
+      (total, item) => total + queryBytes(item),
+      0,
+    );
+    this.pruneSnapshotQuota(items.length, snapshotBytes);
     this.sql.exec(
       `INSERT INTO search_snapshots(
          id, query_digest, total_count, created_at, expires_at
@@ -316,13 +312,17 @@ export class Fts5SearchAdapter
       now,
       now + SNAPSHOT_TTL_MS,
     );
-    for (let start = 0; start < items.length; start += 100) {
-      const batch = items.slice(start, start + 100);
+    for (
+      let start = 0;
+      start < itemJson.length;
+      start += SNAPSHOT_INSERT_BATCH
+    ) {
+      const batch = itemJson.slice(start, start + SNAPSHOT_INSERT_BATCH);
       const values = batch.map(() => "(?, ?, ?)").join(", ");
       const bindings = batch.flatMap((item, index) => [
         snapshotId,
         start + index,
-        JSON.stringify(item),
+        item,
       ]);
       this.sql.exec(
         `INSERT INTO search_snapshot_items(snapshot_id, ordinal, item_json)
@@ -331,19 +331,6 @@ export class Fts5SearchAdapter
       );
     }
     return this.snapshotPage(snapshotId, digest, offset, limit, items.length);
-  }
-
-  private legacySourceLinks(
-    contentId: string,
-  ): readonly Readonly<{ memoId: string; label: string }>[] {
-    return this.sql
-      .exec<{ memo_id: string; label: string }>(
-        `SELECT memo_id, label FROM content_sources
-         WHERE content_id = ? ORDER BY memo_id`,
-        contentId,
-      )
-      .toArray()
-      .map((row) => ({ memoId: row.memo_id, label: row.label }));
   }
 
   private assertTopic(topicId: string): void {
@@ -388,6 +375,7 @@ export class Fts5SearchAdapter
          LEFT JOIN topics t ON t.id = c.topic_id
          WHERE ${predicate}
            AND c.trashed_at IS NULL
+           AND c.trashed_with_topic_id IS NULL
            AND (c.kind = 'memo' OR (t.id IS NOT NULL AND t.trashed_at IS NULL))
            AND (
              ? IS NULL
@@ -399,7 +387,9 @@ export class Fts5SearchAdapter
                  JOIN content d ON d.id = cs.content_id
                  JOIN topics dt ON dt.id = d.topic_id
                  WHERE cs.memo_id = c.id AND d.topic_id = ?
-                   AND d.trashed_at IS NULL AND dt.trashed_at IS NULL
+                   AND d.trashed_at IS NULL
+                   AND d.trashed_with_topic_id IS NULL
+                   AND dt.trashed_at IS NULL
                )
              )
              OR (
@@ -424,28 +414,37 @@ export class Fts5SearchAdapter
   ): readonly SearchResultItem[] {
     if (rows.length === 0) return [];
     const ids = rows.map((row) => row.id);
-    const placeholders = ids.map(() => "?").join(", ");
-    const links = this.sql
-      .exec<{ content_id: string; memo_id: string }>(
-        `SELECT cs.content_id, cs.memo_id
-         FROM content_sources cs
-         JOIN content d ON d.id = cs.content_id AND d.trashed_at IS NULL
-         JOIN content m ON m.id = cs.memo_id AND m.trashed_at IS NULL
-         WHERE cs.content_id IN (${placeholders})
-            OR cs.memo_id IN (${placeholders})
-         ORDER BY cs.content_id, cs.memo_id`,
-        ...ids,
-        ...ids,
-      )
-      .toArray();
-    const documentSources = new Map<string, string[]>();
-    const memoDocuments = new Map<string, string[]>();
+    const links: Array<{ content_id: string; memo_id: string }> = [];
+    for (let start = 0; start < ids.length; start += SOURCE_QUERY_BATCH) {
+      const batch = ids.slice(start, start + SOURCE_QUERY_BATCH);
+      const placeholders = batch.map(() => "?").join(", ");
+      links.push(
+        ...this.sql
+          .exec<{ content_id: string; memo_id: string }>(
+            `SELECT cs.content_id, cs.memo_id
+             FROM content_sources cs
+             JOIN content d ON d.id = cs.content_id
+               AND d.trashed_at IS NULL
+               AND d.trashed_with_topic_id IS NULL
+             JOIN topics t ON t.id = d.topic_id AND t.trashed_at IS NULL
+             JOIN content m ON m.id = cs.memo_id AND m.trashed_at IS NULL
+             WHERE cs.content_id IN (${placeholders})
+                OR cs.memo_id IN (${placeholders})
+             ORDER BY cs.content_id, cs.memo_id`,
+            ...batch,
+            ...batch,
+          )
+          .toArray(),
+      );
+    }
+    const documentSources = new Map<string, Set<string>>();
+    const memoDocuments = new Map<string, Set<string>>();
     for (const link of links) {
-      const sourceIds = documentSources.get(link.content_id) ?? [];
-      sourceIds.push(link.memo_id);
+      const sourceIds = documentSources.get(link.content_id) ?? new Set();
+      sourceIds.add(link.memo_id);
       documentSources.set(link.content_id, sourceIds);
-      const documentIds = memoDocuments.get(link.memo_id) ?? [];
-      documentIds.push(link.content_id);
+      const documentIds = memoDocuments.get(link.memo_id) ?? new Set();
+      documentIds.add(link.content_id);
       memoDocuments.set(link.memo_id, documentIds);
     }
     return rows.map((row): SearchResultItem => {
@@ -457,7 +456,7 @@ export class Fts5SearchAdapter
           id: row.id,
           snippet,
           timestamp,
-          sourceOfDocumentIds: memoDocuments.get(row.id) ?? [],
+          sourceOfDocumentIds: [...(memoDocuments.get(row.id) ?? [])].sort(),
         } satisfies MemoSearchResultItem;
       }
       if (row.topic_id === null || row.topic_name === null) {
@@ -477,12 +476,12 @@ export class Fts5SearchAdapter
           name: row.topic_name,
           archived: row.topic_archived === 1,
         },
-        sourceMemoIds: documentSources.get(row.id) ?? [],
+        sourceMemoIds: [...(documentSources.get(row.id) ?? [])].sort(),
       } satisfies DocumentSearchResultItem;
     });
   }
 
-  private readSnapshot(cursor: SnapshotCursor, limit: number): SearchPage {
+  private readSnapshot(cursor: SnapshotCursor): SearchPage {
     const row = this.sql
       .exec<{ total_count: number; expires_at: number }>(
         `SELECT total_count, expires_at FROM search_snapshots
@@ -501,7 +500,7 @@ export class Fts5SearchAdapter
       cursor.snapshotId,
       cursor.queryDigest,
       cursor.offset,
-      limit,
+      cursor.limit,
       row.total_count,
     );
   }
@@ -535,6 +534,7 @@ export class Fts5SearchAdapter
           ? encodeCursor({
               snapshotId,
               offset: nextOffset,
+              limit,
               queryDigest: digest,
             })
           : null,
@@ -543,5 +543,43 @@ export class Fts5SearchAdapter
 
   private pruneSnapshots(now: number): void {
     this.sql.exec("DELETE FROM search_snapshots WHERE expires_at <= ?", now);
+  }
+
+  private pruneSnapshotQuota(itemCount: number, byteCount: number): void {
+    if (itemCount > MAX_SNAPSHOT_ITEMS || byteCount > MAX_SNAPSHOT_BYTES) {
+      throw new BusinessRuleError(
+        SearchErrorCode.QueryTooComplex,
+        "Search snapshot exceeds the storage quota",
+      );
+    }
+    while (true) {
+      const usage = this.sql
+        .exec<{
+          snapshot_count: number;
+          item_count: number;
+          byte_count: number;
+        }>(
+          `SELECT COUNT(DISTINCT s.id) AS snapshot_count,
+                  COUNT(i.ordinal) AS item_count,
+                  COALESCE(SUM(length(CAST(i.item_json AS BLOB))), 0) AS byte_count
+           FROM search_snapshots s
+           LEFT JOIN search_snapshot_items i ON i.snapshot_id = s.id`,
+        )
+        .one();
+      if (
+        usage.snapshot_count < MAX_ACTIVE_SNAPSHOTS &&
+        usage.item_count + itemCount <= MAX_SNAPSHOT_ITEMS &&
+        usage.byte_count + byteCount <= MAX_SNAPSHOT_BYTES
+      ) {
+        return;
+      }
+      const oldest = this.sql
+        .exec<{ id: string }>(
+          "SELECT id FROM search_snapshots ORDER BY created_at, id LIMIT 1",
+        )
+        .toArray()[0];
+      if (!oldest) return;
+      this.sql.exec("DELETE FROM search_snapshots WHERE id = ?", oldest.id);
+    }
   }
 }

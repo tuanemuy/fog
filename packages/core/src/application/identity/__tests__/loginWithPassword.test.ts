@@ -37,6 +37,9 @@ function container(
   return {
     config: { ...content, appUrl: "http://localhost:3000" },
     identity: {
+      preparePasswordSignup: async () => {
+        throw new Error("login must not prepare signup");
+      },
       registerWithPassword: async () => {
         throw new Error("login must not register");
       },

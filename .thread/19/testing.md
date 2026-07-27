@@ -3,7 +3,16 @@
 **Issue:** #19
 **作成日:** 2026-07-28
 
----
+## 実施結果
+
+自動検証の実測値、基準commit、未実施のremote release gateは
+[`test-results.json`](./test-results.json) を正本とする。working tree上の
+検証であるため、commit/push後はCI runを同ファイルへ追記する。
+
+PITRの実staging smokeとsecret inventoryだけはCloudflare資格情報と
+disposable objectが必要なrelease gateとして未実施。ローカルでは
+User Data canonical target、Directory全authority cursor reconcile、
+schedule→restart→verify→undo protocolまでを自動検証した。
 
 ## 確認環境
 

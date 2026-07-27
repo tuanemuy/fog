@@ -1,10 +1,18 @@
-import { reset, runInDurableObject } from "cloudflare:test";
+import {
+  evictDurableObject,
+  reset,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { DurableJobStore } from "@repo/core/adapters/cloudflare/user-data/jobs";
 import type { ConflictError } from "@repo/core/application/errors";
 import type { RpcResult } from "@repo/core/application/identity/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import type { UserDataDurableObject } from "../UserDataDurableObject";
+import {
+  shouldMoveAlarm,
+  type UserDataDurableObject,
+} from "../UserDataDurableObject";
 
 type TestEnv = {
   USER_DATA: DurableObjectNamespace<UserDataDurableObject>;
@@ -172,6 +180,162 @@ describe("User Data persistent jobs", () => {
     });
   });
 
+  it("automatically schedules final terminal cleanup", async () => {
+    const stub = await initialized("terminal-alarm");
+    const now = Date.now();
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO jobs(
+           id, kind, payload_json, payload_digest, status, attempt,
+           next_run_at, provider_idempotency_key, terminal_at,
+           created_at, updated_at
+         ) VALUES ('completed-old', 'x', '{}', 'sha256:a', 'completed', 1,
+                   1, 'terminal-provider', ?, 1, 1)`,
+        now - 8 * 86_400_000,
+      );
+    });
+    value(await stub.getProfile());
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM jobs WHERE id = 'completed-old'",
+          )
+          .one().count,
+      ).toBe(0);
+    });
+  });
+
+  it("does not postpone an overdue or imminent alarm from a normal RPC", async () => {
+    const stub = await initialized("overdue");
+    const now = Date.now();
+    await runInDurableObject(stub, async (instance, state) => {
+      new DurableJobStore(state.storage).enqueue({
+        id: "future",
+        kind: "purge-trash",
+        payload: { id: "memo", kind: "memo", trashedAt: now },
+        nextRunAt: now + 60_000,
+        providerIdempotencyKey: "future",
+        now,
+      });
+      const imminent = Date.now() + 5_000;
+      await state.storage.setAlarm(imminent);
+      value(await (instance as unknown as UserDataDurableObject).getProfile());
+      expect(await state.storage.getAlarm()).toBe(imminent);
+    });
+    expect(shouldMoveAlarm(now - 1, now + 60_000)).toBe(false);
+  });
+
+  it("retries the real alarm handler and poisons after the attempt limit", async () => {
+    const stub = await initialized("alarm-retry");
+    await runInDurableObject(stub, async (_instance, state) => {
+      const now = Date.now();
+      new DurableJobStore(state.storage).enqueue({
+        id: "unsupported",
+        kind: "unsupported",
+        payload: {},
+        nextRunAt: now - 1,
+        providerIdempotencyKey: "unsupported",
+        now,
+      });
+      await state.storage.setAlarm(now + 1_000);
+    });
+    await evictDurableObject(stub);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      expect(await runDurableObjectAlarm(stub)).toBe(true);
+      await runInDurableObject(stub, async (_instance, state) => {
+        const row = state.storage.sql
+          .exec<{ status: string; attempt: number }>(
+            "SELECT status, attempt FROM jobs WHERE id = 'unsupported'",
+          )
+          .one();
+        expect(row.attempt).toBe(attempt);
+        expect(row.status).toBe(attempt === 5 ? "poison" : "pending");
+        if (attempt < 5) {
+          const due = Date.now() - 1;
+          state.storage.sql.exec(
+            "UPDATE jobs SET next_run_at = ? WHERE id = 'unsupported'",
+            due,
+          );
+          await state.storage.setAlarm(Date.now() + 1_000);
+        }
+      });
+    }
+  });
+
+  it("recomputes existing trash and jobs when retention changes", async () => {
+    const stub = await initialized("dynamic-retention");
+    const trashedAt = Date.now();
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "create",
+        type: "create-memo",
+        memo: { id: "memo", body: "memo", timestamp: trashedAt - 1 },
+      }),
+    );
+    value(
+      await stub.commit({
+        version: 1,
+        operationId: "trash",
+        type: "trash-memo",
+        memoId: "memo",
+        trashedAt,
+      }),
+    );
+    expect(
+      value(
+        await stub.updateTrashRetention({
+          version: 1,
+          operationId: "retention-short",
+          retentionDays: 1,
+          updatedAt: trashedAt + 1,
+        }),
+      ).trashRetentionDays,
+    ).toBe(1);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ purge_after: number }>(
+            "SELECT purge_after FROM trash WHERE content_id = 'memo'",
+          )
+          .one().purge_after,
+      ).toBe(trashedAt + 86_400_000);
+      expect(
+        state.storage.sql
+          .exec<{ next_run_at: number }>(
+            "SELECT next_run_at FROM jobs WHERE status = 'pending'",
+          )
+          .one().next_run_at,
+      ).toBe(trashedAt + 86_400_000);
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(trashedAt + 86_400_000);
+    });
+    value(
+      await stub.updateTrashRetention({
+        version: 1,
+        operationId: "retention-long",
+        retentionDays: 60,
+        updatedAt: trashedAt + 2,
+      }),
+    );
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ purge_after: number }>(
+            "SELECT purge_after FROM trash WHERE content_id = 'memo'",
+          )
+          .one().purge_after,
+      ).toBe(trashedAt + 60 * 86_400_000);
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(trashedAt + 60 * 86_400_000);
+    });
+  });
+
   it("only moves an existing alarm earlier", async () => {
     const stub = await initialized("alarm");
     const now = Date.now();
@@ -181,6 +345,7 @@ describe("User Data persistent jobs", () => {
     ] as const) {
       value(
         await stub.commit({
+          version: 1,
           operationId: `create-${id}`,
           type: "create-memo",
           memo: { id, body: id, timestamp: now - 1 },
@@ -188,6 +353,7 @@ describe("User Data persistent jobs", () => {
       );
       value(
         await stub.commit({
+          version: 1,
           operationId: `trash-${id}`,
           type: "trash-memo",
           memoId: id,

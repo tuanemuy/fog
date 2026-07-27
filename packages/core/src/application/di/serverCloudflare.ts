@@ -107,3 +107,13 @@ export function createRequestContainer(
     sessionCodec: createHmacSessionCodec({ secret: sessionSecret }),
   };
 }
+
+export function routeAuthenticatedUserData<T>(
+  namespace: Readonly<{ getByName(name: string): T }>,
+  authenticatedUserId: string,
+): T {
+  if (authenticatedUserId.trim().length === 0) {
+    throw new Error("AUTHENTICATED_USER_ID_REQUIRED");
+  }
+  return namespace.getByName(authenticatedUserId);
+}

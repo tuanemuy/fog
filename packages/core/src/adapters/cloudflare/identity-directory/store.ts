@@ -1,6 +1,7 @@
 import type {
   CredentialLocator,
   CredentialRef,
+  DirectoryAuthorityRow,
   DirectoryCredential,
   OperationId,
   PasswordCredential,
@@ -51,6 +52,28 @@ export type RotationRow = Readonly<{
   accountEpoch: number;
 }>;
 
+export type RotationCheckpoint = Readonly<{
+  generation: string;
+  bucket: number;
+  cursor: string | null;
+  scanned: number;
+  moved: number;
+  conflicts: number;
+  completedAt: number | null;
+}>;
+
+export type DirectoryShardAuthorityStatus = Readonly<{
+  mappings: number;
+  reserved: number;
+  initialized: number;
+  active: number;
+  tombstoned: number;
+  minimumAccountEpoch: number | null;
+  maximumAccountEpoch: number | null;
+  restoredSessionMarker: string | null;
+  restoredSessionVerifiedAt: number | null;
+}>;
+
 export class IdentityDirectoryStore {
   constructor(private readonly storage: DurableSqlStorage) {}
 
@@ -58,6 +81,33 @@ export class IdentityDirectoryStore {
     return this.storage.transactionSync(() => {
       const existing = this.find(input.locator.opaqueKey);
       if (existing) {
+        if (
+          existing.operation_id === input.operationId &&
+          existing.user_id === input.userId &&
+          existing.state === "tombstoned"
+        ) {
+          this.validateCredential(input.credential);
+          this.storage.sql.exec(
+            `UPDATE credential_mappings SET canonical_value = ?, kind = ?,
+               provider = ?, verified_email = ?, state = 'reserved',
+               password_hash = ?, reservation_expires_at = ?,
+               account_epoch = ?, updated_at = ? WHERE opaque_key = ?`,
+            input.credential.canonicalValue,
+            input.credential.kind,
+            input.credential.kind === "sso" ? input.credential.provider : null,
+            input.credential.kind === "sso"
+              ? input.credential.verifiedEmail
+              : null,
+            input.credential.kind === "password"
+              ? input.credential.passwordHash
+              : null,
+            input.reservationExpiresAt,
+            input.accountEpoch,
+            input.now,
+            input.locator.opaqueKey,
+          );
+          return input.userId;
+        }
         if (
           existing.operation_id === input.operationId &&
           existing.user_id === input.userId &&
@@ -93,6 +143,70 @@ export class IdentityDirectoryStore {
         input.now,
       );
       return input.userId;
+    });
+  }
+
+  lookupPasswordSignup(opaqueOperationKey: string): {
+    userId: UserId;
+    email: Email;
+    passwordHash: PasswordHash;
+  } | null {
+    const row = this.storage.sql
+      .exec<{ user_id: string; email: string; password_hash: string }>(
+        `SELECT user_id, email, password_hash FROM signup_operations
+         WHERE opaque_operation_key = ?`,
+        opaqueOperationKey,
+      )
+      .toArray()[0];
+    return row
+      ? {
+          userId: UserId.create(row.user_id),
+          email: Email.create(row.email),
+          passwordHash: PasswordHash.create(row.password_hash),
+        }
+      : null;
+  }
+
+  preparePasswordSignup(input: {
+    opaqueOperationKey: string;
+    proposedUserId: UserId;
+    email: Email;
+    passwordHash: PasswordHash;
+    now: number;
+  }): {
+    userId: UserId;
+    passwordHash: PasswordHash;
+    replayed: boolean;
+  } {
+    return this.storage.transactionSync(() => {
+      const existing = this.lookupPasswordSignup(input.opaqueOperationKey);
+      if (existing) {
+        if (existing.email !== input.email) {
+          throw new Error("IDENTITY_OPERATION_PAYLOAD_CONFLICT");
+        }
+        return {
+          userId: existing.userId,
+          passwordHash: existing.passwordHash,
+          replayed: true,
+        };
+      }
+      this.storage.sql.exec(
+        `INSERT INTO signup_operations(
+           opaque_operation_key, user_id, email, password_hash,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+        input.opaqueOperationKey,
+        input.proposedUserId,
+        input.email,
+        input.passwordHash,
+        input.now,
+        input.now,
+      );
+      return {
+        userId: input.proposedUserId,
+        passwordHash: input.passwordHash,
+        replayed: false,
+      };
     });
   }
 
@@ -163,7 +277,7 @@ export class IdentityDirectoryStore {
 
   lookup(locator: CredentialLocator): DirectoryCredential | null {
     const row = this.find(locator.opaqueKey);
-    return row?.state === "active" ? this.toCredential(row) : null;
+    return row && row.state !== "tombstoned" ? this.toCredential(row) : null;
   }
 
   replacePassword(input: {
@@ -180,13 +294,13 @@ export class IdentityDirectoryStore {
         !row ||
         row.user_id !== input.userId ||
         row.state !== "active" ||
+        row.kind !== "password" ||
         row.account_epoch !== input.accountEpoch
       ) {
         throw new Error("ACCOUNT_AUTHORITY_MISMATCH");
       }
       this.storage.sql.exec(
-        `UPDATE credential_mappings SET kind = 'password', provider = NULL,
-           verified_email = NULL, password_hash = ?, operation_id = ?,
+        `UPDATE credential_mappings SET password_hash = ?, operation_id = ?,
            updated_at = ? WHERE opaque_key = ?`,
         input.passwordHash,
         input.operationId,
@@ -198,6 +312,7 @@ export class IdentityDirectoryStore {
 
   tombstone(input: {
     locator: CredentialLocator;
+    userId: UserId;
     accountEpoch: number;
     now: number;
   }): void {
@@ -206,25 +321,32 @@ export class IdentityDirectoryStore {
         `UPDATE credential_mappings SET state = 'tombstoned',
            password_hash = NULL, canonical_value = '', verified_email = NULL,
            account_epoch = ?, updated_at = ?
-         WHERE opaque_key = ? AND account_epoch <= ?`,
+         WHERE opaque_key = ? AND user_id = ? AND account_epoch <= ?`,
         input.accountEpoch,
         input.now,
         input.locator.opaqueKey,
+        input.userId,
         input.accountEpoch,
       );
     });
   }
 
-  purge(locator: CredentialLocator, accountEpoch: number): void {
+  purge(
+    locator: CredentialLocator,
+    userId: UserId,
+    accountEpoch: number,
+  ): void {
     this.storage.transactionSync(() => {
       const mapping = this.find(locator.opaqueKey);
       this.storage.sql.exec(
         `DELETE FROM credential_mappings
-         WHERE opaque_key = ? AND state = 'tombstoned' AND account_epoch = ?`,
+         WHERE opaque_key = ? AND user_id = ?
+           AND state = 'tombstoned' AND account_epoch = ?`,
         locator.opaqueKey,
+        userId,
         accountEpoch,
       );
-      if (mapping) {
+      if (mapping?.user_id === userId) {
         this.storage.sql.exec(
           "DELETE FROM reset_tokens WHERE user_id = ?",
           mapping.user_id,
@@ -234,12 +356,21 @@ export class IdentityDirectoryStore {
   }
 
   storePasswordReset(input: {
+    locator: CredentialLocator;
     tokenHash: string;
     userId: UserId;
     operationId: OperationId;
     expiresAt: number;
   }): void {
     this.storage.transactionSync(() => {
+      const mapping = this.find(input.locator.opaqueKey);
+      if (
+        mapping?.state !== "active" ||
+        mapping.kind !== "password" ||
+        mapping.user_id !== input.userId
+      ) {
+        throw new Error("ACCOUNT_AUTHORITY_MISMATCH");
+      }
       const existing = this.storage.sql
         .exec<{ token_hash: string; user_id: string; expires_at: number }>(
           `SELECT token_hash, user_id, expires_at FROM reset_tokens
@@ -269,6 +400,33 @@ export class IdentityDirectoryStore {
     });
   }
 
+  lookupPasswordReset(input: {
+    operationId: OperationId;
+    tokenHash: string;
+    now: number;
+  }): { userId: UserId } | null {
+    const row = this.storage.sql
+      .exec<{
+        user_id: string;
+        expires_at: number;
+        consumed_at: number | null;
+        consumed_operation_id: string | null;
+      }>(
+        `SELECT user_id, expires_at, consumed_at, consumed_operation_id
+         FROM reset_tokens WHERE token_hash = ?`,
+        input.tokenHash,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    if (row.consumed_at !== null) {
+      return row.consumed_operation_id === input.operationId
+        ? { userId: UserId.create(row.user_id) }
+        : null;
+    }
+    if (row.expires_at <= input.now) return null;
+    return { userId: UserId.create(row.user_id) };
+  }
+
   consumePasswordReset(input: {
     operationId: OperationId;
     tokenHash: string;
@@ -287,12 +445,13 @@ export class IdentityDirectoryStore {
           input.tokenHash,
         )
         .toArray()[0];
-      if (!row || row.expires_at <= input.now) return null;
+      if (!row) return null;
       if (row.consumed_at !== null) {
         return row.consumed_operation_id === input.operationId
           ? { userId: UserId.create(row.user_id) }
           : null;
       }
+      if (row.expires_at <= input.now) return null;
       this.storage.sql.exec(
         `UPDATE reset_tokens SET consumed_at = ?, consumed_operation_id = ?
          WHERE token_hash = ? AND consumed_at IS NULL`,
@@ -302,6 +461,43 @@ export class IdentityDirectoryStore {
       );
       return { userId: UserId.create(row.user_id) };
     });
+  }
+
+  scanForAuthorityReconcile(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit: number;
+  }): {
+    rows: readonly DirectoryAuthorityRow[];
+    nextCursor: string | null;
+  } {
+    const rows = this.storage.sql
+      .exec<MappingRow>(
+        `SELECT opaque_key, generation, bucket, canonical_value, kind, provider,
+                verified_email, user_id, operation_id, state, password_hash,
+                account_epoch, reservation_expires_at
+         FROM credential_mappings
+         WHERE generation = ? AND bucket = ? AND opaque_key > ?
+         ORDER BY opaque_key LIMIT ?`,
+        input.generation,
+        input.bucket,
+        input.cursor ?? "",
+        input.limit + 1,
+      )
+      .toArray();
+    const page = rows.slice(0, input.limit);
+    return {
+      rows: page.map((row) => ({
+        locator: this.toLocator(row),
+        userId: UserId.create(row.user_id),
+        operationId: operationId(row.operation_id),
+        state: row.state,
+        accountEpoch: row.account_epoch,
+      })),
+      nextCursor:
+        rows.length > input.limit ? (page.at(-1)?.opaque_key ?? null) : null,
+    };
   }
 
   scanForRotation(input: {
@@ -366,6 +562,102 @@ export class IdentityDirectoryStore {
         input.completedAt,
       );
     });
+  }
+
+  rotationCheckpoint(
+    generation: string,
+    bucket: number,
+  ): RotationCheckpoint | null {
+    const row = this.storage.sql
+      .exec<{
+        generation: string;
+        bucket: number;
+        cursor_key: string | null;
+        scanned_count: number;
+        moved_count: number;
+        conflict_count: number;
+        completed_at: number | null;
+      }>(
+        `SELECT generation, bucket, cursor_key, scanned_count, moved_count,
+                conflict_count, completed_at
+         FROM rotation_checkpoints
+         WHERE generation = ? AND bucket = ?`,
+        generation,
+        bucket,
+      )
+      .toArray()[0];
+    return row
+      ? {
+          generation: row.generation,
+          bucket: row.bucket,
+          cursor: row.cursor_key,
+          scanned: row.scanned_count,
+          moved: row.moved_count,
+          conflicts: row.conflict_count,
+          completedAt: row.completed_at,
+        }
+      : null;
+  }
+
+  markRestoredSession(marker: string, now: number): void {
+    if (
+      marker.length === 0 ||
+      new TextEncoder().encode(marker).byteLength > 256
+    ) {
+      throw new Error("RESTORE_MARKER_INVALID");
+    }
+    this.storage.sql.exec(
+      `INSERT INTO restore_verification(singleton, marker, verified_at)
+       VALUES (1, ?, ?)
+       ON CONFLICT(singleton) DO UPDATE SET
+         marker = excluded.marker, verified_at = excluded.verified_at`,
+      marker,
+      now,
+    );
+  }
+
+  authorityStatus(): DirectoryShardAuthorityStatus {
+    const counts = this.storage.sql
+      .exec<{
+        mappings: number;
+        reserved: number;
+        initialized: number;
+        active: number;
+        tombstoned: number;
+        minimum_epoch: number | null;
+        maximum_epoch: number | null;
+      }>(
+        `SELECT
+           COUNT(*) AS mappings,
+           COALESCE(SUM(CASE WHEN state = 'reserved' THEN 1 ELSE 0 END), 0)
+             AS reserved,
+           COALESCE(SUM(CASE WHEN state = 'initialized' THEN 1 ELSE 0 END), 0)
+             AS initialized,
+           COALESCE(SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END), 0)
+             AS active,
+           COALESCE(SUM(CASE WHEN state = 'tombstoned' THEN 1 ELSE 0 END), 0)
+             AS tombstoned,
+           MIN(account_epoch) AS minimum_epoch,
+           MAX(account_epoch) AS maximum_epoch
+         FROM credential_mappings`,
+      )
+      .one();
+    const marker = this.storage.sql
+      .exec<{ marker: string; verified_at: number }>(
+        "SELECT marker, verified_at FROM restore_verification WHERE singleton = 1",
+      )
+      .toArray()[0];
+    return {
+      mappings: counts.mappings,
+      reserved: counts.reserved,
+      initialized: counts.initialized,
+      active: counts.active,
+      tombstoned: counts.tombstoned,
+      minimumAccountEpoch: counts.minimum_epoch,
+      maximumAccountEpoch: counts.maximum_epoch,
+      restoredSessionMarker: marker?.marker ?? null,
+      restoredSessionVerifiedAt: marker?.verified_at ?? null,
+    };
   }
 
   expiredReservations(now: number, limit: number): readonly RotationRow[] {
@@ -461,6 +753,7 @@ export class IdentityDirectoryStore {
           };
     return {
       userId: UserId.create(row.user_id),
+      operationId: operationId(row.operation_id),
       locator: this.toLocator(row),
       state: row.state,
       accountEpoch: row.account_epoch,

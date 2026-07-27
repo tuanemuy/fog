@@ -9,12 +9,14 @@ import {
 import type {
   AccountAuthSummary,
   AccountHomePort,
+  AuthenticatedUserDataRouter,
   CredentialDirectoryPort,
   CredentialKind,
   CredentialLocator,
   CredentialRef,
   CurrentAccount,
   DirectoryCredential,
+  DirectoryAuthorityRow,
   IdentityApplicationPort,
   IdentityOperation,
   IdentityPrimitivePort,
@@ -30,6 +32,8 @@ import type {
 } from "@repo/core/application/identity/contracts";
 import { operationId } from "@repo/core/application/identity/contracts";
 import { IdentityCoordinator } from "@repo/core/application/identity/coordinator";
+import type { IdentitySagaFaultHook } from "@repo/core/application/identity/coordinator";
+import { CanonicalAuthenticatedUserDataRouter } from "@repo/core/application/identity/authenticatedUserDataRouter";
 import { rpcMutation, rpcQuery } from "@repo/core/application/identity/rpc";
 import type { Email, UserId } from "@repo/core/domain/identity/valueObject";
 import {
@@ -51,7 +55,53 @@ type RotationRow = Readonly<{
   accountEpoch: number;
 }>;
 
+function sameCredentialLocator(
+  left: CredentialLocator,
+  right: CredentialLocator,
+): boolean {
+  return (
+    left.generation === right.generation &&
+    left.bucket === right.bucket &&
+    left.opaqueKey === right.opaqueKey
+  );
+}
+
+function errorChainIncludes(error: unknown, fragment: string): boolean {
+  let current = error;
+  const seen = new Set<unknown>();
+  while (current instanceof Error && !seen.has(current)) {
+    if (current.message.includes(fragment)) return true;
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
+}
+
 type DirectoryStub = {
+  lookupPasswordSignup(
+    input: IdentityRpcQuery<{ opaqueOperationKey: string }>,
+  ): Promise<
+    RpcResult<{
+      userId: string;
+      email: string;
+      passwordHash: string;
+    } | null>
+  >;
+  preparePasswordSignup(
+    input: IdentityRpcMutation<{
+      opaqueOperationKey: string;
+      proposedUserId: string;
+      email: string;
+      passwordHash: string;
+      now: number;
+    }>,
+  ): Promise<
+    RpcResult<{
+      userId: string;
+      passwordHash: string;
+      replayed: boolean;
+    }>
+  >;
   reserve(
     input: IdentityRpcMutation<{
       locator: CredentialLocator;
@@ -95,6 +145,7 @@ type DirectoryStub = {
   tombstone(
     input: IdentityRpcMutation<{
       locator: CredentialLocator;
+      userId: string;
       accountEpoch: number;
       now: number;
     }>,
@@ -102,19 +153,41 @@ type DirectoryStub = {
   purge(
     input: IdentityRpcMutation<{
       locator: CredentialLocator;
+      userId: string;
       accountEpoch: number;
     }>,
   ): Promise<RpcResult<null>>;
   storePasswordReset(
     input: IdentityRpcMutation<{
+      locator: CredentialLocator;
       userId: string;
       tokenHash: string;
       expiresAt: number;
     }>,
   ): Promise<RpcResult<null>>;
+  lookupPasswordReset(
+    input: IdentityRpcMutation<{
+      locator: CredentialLocator;
+      tokenHash: string;
+      now: number;
+    }>,
+  ): Promise<RpcResult<{ userId: UserId } | null>>;
   consumePasswordReset(
     input: IdentityRpcMutation<{ tokenHash: string; now: number }>,
   ): Promise<RpcResult<{ userId: UserId } | null>>;
+  scanForAuthorityReconcile(
+    input: IdentityRpcQuery<{
+      generation: string;
+      bucket: number;
+      cursor?: string;
+      limit: number;
+    }>,
+  ): Promise<
+    RpcResult<{
+      rows: readonly DirectoryAuthorityRow[];
+      nextCursor: string | null;
+    }>
+  >;
   scanForRotation(
     input: IdentityRpcQuery<{
       generation: string;
@@ -134,6 +207,37 @@ type DirectoryStub = {
       conflicts: number;
       completedAt: number | null;
     }>,
+  ): Promise<RpcResult<null>>;
+  getRotationCheckpoint(
+    input: IdentityRpcQuery<{ generation: string; bucket: number }>,
+  ): Promise<
+    RpcResult<{
+      generation: string;
+      bucket: number;
+      cursor: string | null;
+      scanned: number;
+      moved: number;
+      conflicts: number;
+      completedAt: number | null;
+    } | null>
+  >;
+  operatorGetShardAuthorityStatus(
+    input: IdentityRpcQuery<Record<string, never>>,
+  ): Promise<
+    RpcResult<{
+      mappings: number;
+      reserved: number;
+      initialized: number;
+      active: number;
+      tombstoned: number;
+      minimumAccountEpoch: number | null;
+      maximumAccountEpoch: number | null;
+      restoredSessionMarker: string | null;
+      restoredSessionVerifiedAt: number | null;
+    }>
+  >;
+  operatorMarkRestoredSession(
+    input: IdentityRpcMutation<{ marker: string; now: number }>,
   ): Promise<RpcResult<null>>;
   expiredReservations(
     input: IdentityRpcQuery<{ now: number; limit: number }>,
@@ -160,6 +264,7 @@ type AccountHomeStub = {
         AccountHomePort["advanceOperation"]
       >[0]["nextState"];
       locator?: CredentialLocator;
+      credentialId?: string;
       credentialKind?: CredentialKind;
       primaryEmail?: string;
       bumpSessionEpoch?: boolean;
@@ -176,6 +281,7 @@ type AccountHomeStub = {
     input: IdentityRpcMutation<{
       userId: string;
       locator: CredentialLocator;
+      credentialId: string;
       kind: CredentialKind;
       primaryEmail?: string;
       bumpSessionEpoch: boolean;
@@ -185,7 +291,7 @@ type AccountHomeStub = {
   removeCredentialLocator(
     input: IdentityRpcMutation<{
       userId: string;
-      locator: CredentialLocator;
+      credentialId: string;
       bumpSessionEpoch: boolean;
       now: number;
     }>,
@@ -264,12 +370,14 @@ async function retryRpc<T>(operation: () => Promise<RpcResult<T>>): Promise<T> {
     try {
       return unwrap(await operation());
     } catch (error) {
-      if (
-        !(error instanceof RemoteIdentityError) ||
-        error.overloaded ||
-        !error.retryable ||
-        attempt >= 2
-      ) {
+      const retryable =
+        error instanceof RemoteIdentityError
+          ? error.retryable && !error.overloaded
+          : error instanceof Error &&
+            "retryable" in error &&
+            error.retryable === true &&
+            !("overloaded" in error && error.overloaded === true);
+      if (!retryable || attempt >= 2) {
         throw translate(error);
       }
       attempt += 1;
@@ -280,9 +388,11 @@ async function retryRpc<T>(operation: () => Promise<RpcResult<T>>): Promise<T> {
 
 function translate(error: unknown): Error {
   if (!(error instanceof RemoteIdentityError)) {
-    return error instanceof Error
-      ? error
-      : new SystemError(SystemErrorCode.NetworkError, "Identity RPC failed");
+    return new SystemError(
+      SystemErrorCode.NetworkError,
+      "Identity RPC failed",
+      error,
+    );
   }
   switch (error.detail.kind) {
     case "conflict":
@@ -339,6 +449,60 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         retryRpc(() => this.forLocator(locator).lookup(rpcQuery({ locator }))),
       ),
     );
+  }
+
+  async preparePasswordSignup(
+    input: Parameters<CredentialDirectoryPort["preparePasswordSignup"]>[0],
+  ): ReturnType<CredentialDirectoryPort["preparePasswordSignup"]> {
+    const operationDigest = [
+      ...new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(input.operationId),
+        ),
+      ),
+    ]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const operationRegistry = stub<DirectoryStub>(
+      this.namespace,
+      `signup-operation:${operationDigest}`,
+    );
+    const existing = await retryRpc(() =>
+      operationRegistry.lookupPasswordSignup(
+        rpcQuery({ opaqueOperationKey: operationDigest }),
+      ),
+    );
+    if (existing) {
+      if (EmailValue.create(existing.email) !== input.email) {
+        throw new ConflictError(
+          "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+          "Signup operation does not match its original email",
+        );
+      }
+      return {
+        userId: UserIdValue.create(existing.userId),
+        passwordHash:
+          existing.passwordHash as PasswordCredential["passwordHash"],
+        replayed: true,
+      };
+    }
+    const prepared = await retryRpc(() =>
+      operationRegistry.preparePasswordSignup(
+        rpcMutation(input.operationId, {
+          opaqueOperationKey: operationDigest,
+          proposedUserId: input.proposedUserId,
+          email: input.email,
+          passwordHash: input.passwordHash,
+          now: input.now,
+        }),
+      ),
+    );
+    return {
+      userId: UserIdValue.create(prepared.userId),
+      passwordHash: prepared.passwordHash as PasswordCredential["passwordHash"],
+      replayed: prepared.replayed,
+    };
   }
 
   async reserve(
@@ -410,6 +574,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
       this.forLocator(input.locator).tombstone(
         rpcMutation(input.operationId, {
           locator: input.locator,
+          userId: input.userId,
           accountEpoch: input.accountEpoch,
           now: input.now,
         }),
@@ -424,6 +589,7 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
       this.forLocator(input.locator).purge(
         rpcMutation(input.operationId, {
           locator: input.locator,
+          userId: input.userId,
           accountEpoch: input.accountEpoch,
         }),
       ),
@@ -436,9 +602,24 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     await retryRpc(() =>
       this.forLocator(input.locator).storePasswordReset(
         rpcMutation(input.operationId, {
+          locator: input.locator,
           userId: input.userId,
           tokenHash: input.tokenHash,
           expiresAt: input.expiresAt,
+        }),
+      ),
+    );
+  }
+
+  lookupPasswordReset(
+    input: Parameters<CredentialDirectoryPort["lookupPasswordReset"]>[0],
+  ): Promise<{ userId: UserId } | null> {
+    return retryRpc(() =>
+      this.forLocator(input.locator).lookupPasswordReset(
+        rpcMutation(input.operationId, {
+          locator: input.locator,
+          tokenHash: input.tokenHash,
+          now: input.now,
         }),
       ),
     );
@@ -452,6 +633,24 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
         rpcMutation(input.operationId, {
           tokenHash: input.tokenHash,
           now: input.now,
+        }),
+      ),
+    );
+  }
+
+  scanForAuthorityReconcile(
+    input: Parameters<CredentialDirectoryPort["scanForAuthorityReconcile"]>[0],
+  ): Promise<{
+    rows: readonly DirectoryAuthorityRow[];
+    nextCursor: string | null;
+  }> {
+    return retryRpc(() =>
+      this.forBucket(input.generation, input.bucket).scanForAuthorityReconcile(
+        rpcQuery({
+          generation: input.generation,
+          bucket: input.bucket,
+          ...(input.cursor ? { cursor: input.cursor } : {}),
+          limit: input.limit,
         }),
       ),
     );
@@ -497,6 +696,38 @@ class CloudflareCredentialDirectoryAdapter implements CredentialDirectoryPort {
     );
   }
 
+  rotationCheckpoint(generation: string, bucket: number) {
+    return retryRpc(() =>
+      this.forBucket(generation, bucket).getRotationCheckpoint(
+        rpcQuery({ generation, bucket }),
+      ),
+    );
+  }
+
+  shardAuthorityStatus(generation: string, bucket: number) {
+    return retryRpc(() =>
+      this.forBucket(generation, bucket).operatorGetShardAuthorityStatus(
+        rpcQuery({}),
+      ),
+    );
+  }
+
+  async markRestoredSession(
+    generation: string,
+    bucket: number,
+    marker: string,
+    now: number,
+  ): Promise<void> {
+    await retryRpc(() =>
+      this.forBucket(generation, bucket).operatorMarkRestoredSession(
+        rpcMutation(operationId(`restore-verify:${generation}:${bucket}`), {
+          marker,
+          now,
+        }),
+      ),
+    );
+  }
+
   private forLocator(locator: CredentialLocator): DirectoryStub {
     return this.forBucket(locator.generation, locator.bucket);
   }
@@ -535,6 +766,7 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
           expectedState: input.expectedState,
           nextState: input.nextState,
           ...(input.locator ? { locator: input.locator } : {}),
+          ...(input.credentialId ? { credentialId: input.credentialId } : {}),
           ...(input.credentialKind
             ? { credentialKind: input.credentialKind }
             : {}),
@@ -569,6 +801,7 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
         rpcMutation(input.operationId, {
           userId: input.userId,
           locator: input.locator,
+          credentialId: input.credentialId,
           kind: input.kind,
           ...(input.primaryEmail ? { primaryEmail: input.primaryEmail } : {}),
           bumpSessionEpoch: input.bumpSessionEpoch,
@@ -585,7 +818,7 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
       this.forUser(input.userId).removeCredentialLocator(
         rpcMutation(input.operationId, {
           userId: input.userId,
-          locator: input.locator,
+          credentialId: input.credentialId,
           bumpSessionEpoch: input.bumpSessionEpoch,
           now: input.now,
         }),
@@ -644,7 +877,10 @@ class CloudflareAccountHomeAdapter implements AccountHomePort {
 }
 
 class CloudflareUserDataIdentityAdapter implements UserDataIdentityPort {
-  constructor(private readonly namespace: DurableObjectNamespace) {}
+  constructor(
+    private readonly namespace: DurableObjectNamespace,
+    private readonly router: AuthenticatedUserDataRouter = CanonicalAuthenticatedUserDataRouter,
+  ) {}
 
   async initialize(
     input: Parameters<UserDataIdentityPort["initialize"]>[0],
@@ -681,8 +917,8 @@ class CloudflareUserDataIdentityAdapter implements UserDataIdentityPort {
       );
     } catch (error) {
       if (
-        error instanceof Error &&
-        error.message.includes("no such table: profile")
+        error instanceof NotFoundError ||
+        errorChainIncludes(error, "no such table: profile")
       ) {
         return;
       }
@@ -691,7 +927,10 @@ class CloudflareUserDataIdentityAdapter implements UserDataIdentityPort {
   }
 
   private forUser(userId: UserId): UserDataStub {
-    return stub<UserDataStub>(this.namespace, userId);
+    return stub<UserDataStub>(
+      this.namespace,
+      this.router.forAuthenticatedUser(userId).objectName,
+    );
   }
 }
 
@@ -708,6 +947,7 @@ export class CloudflareIdentityGateway
     accountHomes: DurableObjectNamespace,
     userData: DurableObjectNamespace,
     keyring: DirectoryKeyring,
+    faultHook?: IdentitySagaFaultHook,
   ) {
     this.keyring = validateDirectoryKeyring(keyring);
     this.directoryPort = new CloudflareCredentialDirectoryAdapter(
@@ -715,11 +955,14 @@ export class CloudflareIdentityGateway
       this.keyring,
     );
     this.accountHomePort = new CloudflareAccountHomeAdapter(accountHomes);
-    this.coordinator = new IdentityCoordinator({
-      directory: this.directoryPort,
-      accountHome: this.accountHomePort,
-      userData: new CloudflareUserDataIdentityAdapter(userData),
-    });
+    this.coordinator = new IdentityCoordinator(
+      {
+        directory: this.directoryPort,
+        accountHome: this.accountHomePort,
+        userData: new CloudflareUserDataIdentityAdapter(userData),
+      },
+      faultHook,
+    );
   }
 
   registerWithPassword(
@@ -737,6 +980,12 @@ export class CloudflareIdentityGateway
       userId: UserIdValue.create(input.userId),
       email: EmailValue.create(input.email),
     });
+  }
+
+  preparePasswordSignup(
+    input: Parameters<IdentityApplicationPort["preparePasswordSignup"]>[0],
+  ): ReturnType<IdentityApplicationPort["preparePasswordSignup"]> {
+    return this.directoryPort.preparePasswordSignup(input);
   }
 
   findPasswordCredential(
@@ -854,6 +1103,7 @@ export class CloudflareIdentityGateway
             await this.directoryPort.tombstone({
               operationId: rotationOperation,
               locator: row.locator,
+              userId: row.userId,
               accountEpoch: row.accountEpoch,
               now: input.now,
             });
@@ -922,12 +1172,15 @@ export class CloudflareIdentityGateway
             activated += 1;
           } else if (
             authority?.status === "deleting" ||
-            authority?.status === "deleted"
+            authority?.status === "deleted" ||
+            (operation !== null &&
+              ["pending", "credential-reserved"].includes(operation.state))
           ) {
             await this.directoryPort.tombstone({
               operationId: row.operationId,
               locator: row.locator,
-              accountEpoch: authority.operationEpoch,
+              userId: row.userId,
+              accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
               now: input.now,
             });
             tombstoned += 1;
@@ -936,5 +1189,294 @@ export class CloudflareIdentityGateway
       }
     }
     return { activated, tombstoned };
+  }
+
+  async operatorRotatePage(input: {
+    generation: string;
+    bucket: number;
+    now: number;
+    limit?: number;
+  }): Promise<{
+    scanned: number;
+    moved: number;
+    conflicts: number;
+    nextCursor: string | null;
+    completed: boolean;
+  }> {
+    const previous = this.keyring.previous;
+    if (!previous || input.generation !== previous.generation) {
+      throw new ValidationError(
+        "IDENTITY_ROTATION_GENERATION_INVALID",
+        "Rotation must target the configured previous generation",
+      );
+    }
+    const bucketCount = this.keyring.buckets ?? 64;
+    if (
+      !Number.isInteger(input.bucket) ||
+      input.bucket < 0 ||
+      input.bucket >= bucketCount
+    ) {
+      throw new ValidationError(
+        "IDENTITY_ROTATION_BUCKET_INVALID",
+        "Rotation bucket is invalid",
+      );
+    }
+    const checkpoint = await this.directoryPort.rotationCheckpoint(
+      input.generation,
+      input.bucket,
+    );
+    if (checkpoint?.completedAt !== null && checkpoint !== null) {
+      return {
+        scanned: 0,
+        moved: 0,
+        conflicts: 0,
+        nextCursor: null,
+        completed: true,
+      };
+    }
+    const page = await this.directoryPort.scanForRotation({
+      generation: input.generation,
+      bucket: input.bucket,
+      ...(checkpoint?.cursor ? { cursor: checkpoint.cursor } : {}),
+      limit: Math.min(Math.max(input.limit ?? 100, 1), 100),
+    });
+    let moved = 0;
+    let conflicts = 0;
+    for (const row of page.rows) {
+      try {
+        await this.rotateRow(row, input.now);
+        moved += 1;
+      } catch (error) {
+        if (!(error instanceof ConflictError)) throw error;
+        conflicts += 1;
+      }
+    }
+    await this.directoryPort.saveRotationCheckpoint({
+      generation: input.generation,
+      bucket: input.bucket,
+      cursor: page.nextCursor,
+      scanned: page.rows.length,
+      moved,
+      conflicts,
+      completedAt: page.nextCursor === null ? input.now : null,
+    });
+    return {
+      scanned: page.rows.length,
+      moved,
+      conflicts,
+      nextCursor: page.nextCursor,
+      completed: page.nextCursor === null,
+    };
+  }
+
+  async operatorReconcilePage(input: {
+    generation: string;
+    bucket: number;
+    now: number;
+    limit?: number;
+  }): Promise<{ examined: number; activated: number; tombstoned: number }> {
+    const allowedGenerations = new Set([
+      this.keyring.active.generation,
+      ...(this.keyring.previous ? [this.keyring.previous.generation] : []),
+    ]);
+    if (!allowedGenerations.has(input.generation)) {
+      throw new ValidationError(
+        "IDENTITY_RECONCILE_GENERATION_INVALID",
+        "Reconcile generation is not configured",
+      );
+    }
+    const rows = await this.directoryPort.expiredReservations({
+      generation: input.generation,
+      bucket: input.bucket,
+      now: input.now,
+      limit: Math.min(Math.max(input.limit ?? 100, 1), 100),
+    });
+    let activated = 0;
+    let tombstoned = 0;
+    for (const row of rows) {
+      const [authority, operation] = await Promise.all([
+        this.accountHomePort.getAuthSummary(row.userId),
+        this.accountHomePort.getOperation(row.userId, row.operationId),
+      ]);
+      if (
+        authority?.status === "active" &&
+        operation &&
+        ["user-data-initialized", "directory-active", "completed"].includes(
+          operation.state,
+        )
+      ) {
+        await this.directoryPort.activate({
+          operationId: row.operationId,
+          userId: row.userId,
+          locator: row.locator,
+          accountEpoch: authority.operationEpoch,
+          now: input.now,
+        });
+        activated += 1;
+      } else if (
+        authority?.status === "deleting" ||
+        authority?.status === "deleted" ||
+        (operation !== null &&
+          ["pending", "credential-reserved"].includes(operation.state))
+      ) {
+        await this.directoryPort.tombstone({
+          operationId: row.operationId,
+          locator: row.locator,
+          userId: row.userId,
+          accountEpoch: authority?.operationEpoch ?? row.accountEpoch,
+          now: input.now,
+        });
+        tombstoned += 1;
+      }
+    }
+    return { examined: rows.length, activated, tombstoned };
+  }
+
+  async operatorReconcileRestoredPage(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit?: number;
+    now: number;
+  }): Promise<{
+    scanned: number;
+    tombstoned: number;
+    conflicts: number;
+    nextCursor: string | null;
+    complete: boolean;
+  }> {
+    const allowedGenerations = new Set([
+      this.keyring.active.generation,
+      ...(this.keyring.previous ? [this.keyring.previous.generation] : []),
+    ]);
+    const bucketCount = this.keyring.buckets ?? 64;
+    if (
+      !allowedGenerations.has(input.generation) ||
+      !Number.isInteger(input.bucket) ||
+      input.bucket < 0 ||
+      input.bucket >= bucketCount
+    ) {
+      throw new ValidationError(
+        "IDENTITY_RECONCILE_SHARD_INVALID",
+        "Reconcile shard is not configured",
+      );
+    }
+    const page = await this.directoryPort.scanForAuthorityReconcile({
+      generation: input.generation,
+      bucket: input.bucket,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: Math.min(Math.max(input.limit ?? 100, 1), 100),
+    });
+    let tombstoned = 0;
+    let conflicts = 0;
+    for (const row of page.rows) {
+      if (row.state === "tombstoned") continue;
+      try {
+        const authority = await this.accountHomePort.getAuthSummary(row.userId);
+        const authoritative =
+          authority?.status === "active" &&
+          authority.operationEpoch === row.accountEpoch &&
+          authority.locators.some((locator) =>
+            sameCredentialLocator(locator, row.locator),
+          );
+        if (authoritative) continue;
+        await this.directoryPort.tombstone({
+          operationId: row.operationId,
+          locator: row.locator,
+          userId: row.userId,
+          accountEpoch: row.accountEpoch,
+          now: input.now,
+        });
+        tombstoned += 1;
+      } catch (error) {
+        if (!(error instanceof ConflictError)) throw error;
+        conflicts += 1;
+      }
+    }
+    return {
+      scanned: page.rows.length,
+      tombstoned,
+      conflicts,
+      nextCursor: page.nextCursor,
+      complete: page.nextCursor === null,
+    };
+  }
+
+  async getDirectoryShardAuthorityStatus(input: {
+    generation: string;
+    bucket: number;
+  }): Promise<
+    Awaited<
+      ReturnType<DirectoryStub["operatorGetShardAuthorityStatus"]>
+    > extends RpcResult<infer T>
+      ? T
+      : never
+  > {
+    return this.directoryPort.shardAuthorityStatus(
+      input.generation,
+      input.bucket,
+    );
+  }
+
+  async markDirectoryRestoredSession(input: {
+    generation: string;
+    bucket: number;
+    marker: string;
+    now: number;
+  }): Promise<void> {
+    await this.directoryPort.markRestoredSession(
+      input.generation,
+      input.bucket,
+      input.marker,
+      input.now,
+    );
+  }
+
+  private async rotateRow(row: RotationRow, now: number): Promise<void> {
+    const active = (
+      await this.directoryPort.locators(row.credential.canonicalValue)
+    ).find(
+      (candidate) => candidate.generation === this.keyring.active.generation,
+    );
+    if (!active) throw new Error("ACTIVE_LOCATOR_MISSING");
+    const rotationOperation = operationId(
+      `rotate:${active.generation}:${row.locator.opaqueKey}`,
+    );
+    await this.directoryPort.reserve({
+      operationId: rotationOperation,
+      userId: row.userId,
+      locator: active,
+      credential: row.credential,
+      accountEpoch: row.accountEpoch,
+      now,
+    });
+    await this.directoryPort.markInitialized({
+      operationId: rotationOperation,
+      userId: row.userId,
+      locator: active,
+      now,
+    });
+    await this.directoryPort.activate({
+      operationId: rotationOperation,
+      userId: row.userId,
+      locator: active,
+      accountEpoch: row.accountEpoch,
+      now,
+    });
+    await this.accountHomePort.replaceCredentialLocator({
+      operationId: rotationOperation,
+      userId: row.userId,
+      previous: row.locator,
+      active,
+      kind: row.credential.kind,
+      now,
+    });
+    await this.directoryPort.tombstone({
+      operationId: rotationOperation,
+      locator: row.locator,
+      userId: row.userId,
+      accountEpoch: row.accountEpoch,
+      now,
+    });
   }
 }

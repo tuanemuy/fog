@@ -25,6 +25,9 @@ function container(
   return {
     config: { ...content, appUrl: "https://example.com" },
     identity: {
+      preparePasswordSignup: async () => {
+        throw new Error("login must not prepare signup");
+      },
       registerWithPassword: async () => ({ sessionEpoch: 0 }),
       findPasswordCredential: async () => ({
         userId,
@@ -34,10 +37,18 @@ function container(
       }),
       getAccountAuthority: async () => ({
         userId,
+        userDataObjectName: userId,
         status,
         primaryEmail: Email.create("person@example.com"),
         authMethods: ["password"],
         locators: [locator],
+        credentials: [
+          {
+            credentialId: locator.opaqueKey,
+            kind: "password",
+            locators: [locator],
+          },
+        ],
         sessionEpoch: 4,
         operationEpoch: 2,
       }),

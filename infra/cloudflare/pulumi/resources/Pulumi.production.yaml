@@ -1,6 +1,6 @@
 config:
   fog-cf-resources:accountId: REPLACE_WITH_CF_ACCOUNT_ID
-  fog-cf-resources:zoneName: example.com
+  fog-cf-resources:zoneId: REPLACE_WITH_SHARED_CF_ZONE_ID
   fog-cf-resources:appHostname: app.example.com
   fog-cf-resources:appUrl: https://app.example.com
   fog-cf-resources:resourcePrefix: fog-production

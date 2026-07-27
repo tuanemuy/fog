@@ -69,6 +69,7 @@ export type SearchProjectionOperation =
   | Readonly<{ type: "remove"; entityType: SearchContentKind; id: string }>;
 
 export type SearchQuery = Readonly<{
+  version: typeof SEARCH_RPC_VERSION;
   keyword: string;
   topicId?: string;
   page?: number;
@@ -113,7 +114,7 @@ export interface SearchProjectionPort {
 }
 
 type SemanticCommandBase = Readonly<{
-  version?: typeof SEARCH_RPC_VERSION;
+  version: typeof SEARCH_RPC_VERSION;
   operationId: string;
 }>;
 
@@ -160,44 +161,7 @@ export type SemanticCommand =
   | (SemanticCommandBase &
       Readonly<{ type: "restore-topic"; topicId: string; restoredAt: number }>)
   | (SemanticCommandBase &
-      Readonly<{ type: "remove-topic"; topicId: string; removedAt: number }>)
-  | LegacySemanticCommand;
-
-export type LegacySearchProjectionEntry = Readonly<{
-  id: string;
-  kind: SearchContentKind;
-  title: string;
-  body: string;
-  topicId?: string;
-  topicArchived: boolean;
-  sourceLinks: readonly Readonly<{ memoId: string; label: string }>[];
-  trashedAt?: number;
-  updatedAt: number;
-}>;
-
-type LegacySemanticCommand =
-  | Readonly<{
-      type: "upsert-content";
-      operationId: string;
-      entry: LegacySearchProjectionEntry;
-    }>
-  | Readonly<{
-      type: "trash-content";
-      operationId: string;
-      id: string;
-      trashedAt: number;
-    }>
-  | Readonly<{
-      type: "restore-content";
-      operationId: string;
-      id: string;
-      restoredAt: number;
-    }>
-  | Readonly<{
-      type: "remove-content";
-      operationId: string;
-      id: string;
-    }>;
+      Readonly<{ type: "remove-topic"; topicId: string; removedAt: number }>);
 
 export type SemanticCommitResult = Readonly<{
   operationId: string;
@@ -207,26 +171,3 @@ export type SemanticCommitResult = Readonly<{
 export interface SemanticCommitPort {
   commit(command: SemanticCommand): SemanticCommitResult;
 }
-
-export type LegacySearchQuery = Readonly<{
-  text: string;
-  topicId?: string;
-  limit?: number;
-  offset?: number;
-}>;
-
-export type LegacySearchResult = Readonly<{
-  id: string;
-  kind: SearchContentKind;
-  title: string;
-  snippet: string;
-  score: number;
-  topicId?: string;
-  topicArchived: boolean;
-  sourceLinks: readonly Readonly<{ memoId: string; label: string }>[];
-}>;
-
-export type LegacySearchPage = Readonly<{
-  items: readonly LegacySearchResult[];
-  nextOffset?: number;
-}>;

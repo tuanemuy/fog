@@ -41,6 +41,9 @@ function installContainer(
   const container = {
     config: { ...content, appUrl: "https://app.example" },
     identity: {
+      preparePasswordSignup: async () => {
+        throw new Error("reading the session must not prepare signup");
+      },
       registerWithPassword: async () => {
         throw new Error("reading the session must not register");
       },
@@ -49,10 +52,12 @@ function installContainer(
         verified
           ? {
               userId: verified.userId as never,
+              userDataObjectName: verified.userId,
               status: "active" as const,
               primaryEmail: null,
               authMethods: ["password" as const],
               locators: [],
+              credentials: [],
               sessionEpoch: authorityEpoch,
               operationEpoch: 0,
             }

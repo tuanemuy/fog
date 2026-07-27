@@ -43,7 +43,7 @@ export async function registerWithPassword({
 }: ServiceArgs<RegisterWithPasswordInput>): Promise<RegisterWithPasswordOutput> {
   const now = container.clock.now();
   const stableOperationId = operationId(input.operationId);
-  const id = UserId.create(stableOperationId);
+  const proposedUserId = UserId.create(container.idGenerator.next());
   const email = Email.create(input.email);
   const plainPassword = PlainPassword.create(input.password);
 
@@ -52,14 +52,33 @@ export async function registerWithPassword({
   try {
     if (!container.identity)
       throw new Error("Identity gateway is not configured");
-    const result = await container.identity.registerWithPassword({
+    const prepared = await container.identity.preparePasswordSignup({
       operationId: stableOperationId,
-      userId: id,
+      proposedUserId,
       email,
       passwordHash,
       now: now.getTime(),
     });
-    return { userId: id, sessionEpoch: result.sessionEpoch };
+    if (
+      prepared.replayed &&
+      !(await container.passwordHasher.verify(
+        plainPassword,
+        prepared.passwordHash,
+      ))
+    ) {
+      throw new ConflictError(
+        "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
+        "Signup operation does not match its original password",
+      );
+    }
+    const result = await container.identity.registerWithPassword({
+      operationId: stableOperationId,
+      userId: prepared.userId,
+      email,
+      passwordHash: prepared.passwordHash,
+      now: now.getTime(),
+    });
+    return { userId: prepared.userId, sessionEpoch: result.sessionEpoch };
   } catch (error) {
     if (
       error instanceof ConflictError &&

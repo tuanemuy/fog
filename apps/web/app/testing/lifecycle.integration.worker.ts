@@ -12,6 +12,7 @@ type LifecycleEnv = Readonly<{
 
 type SearchCapableStub = Readonly<{
   search(query: {
+    version: 1;
     keyword: string;
     limit?: number;
   }): Promise<RpcResult<SearchPage>>;
@@ -69,7 +70,20 @@ async function executeLifecycle(
       version: 1,
       type: "update-memo",
       operationId: `${runId}:update-memo`,
-      memo: { id: "memo-1", body: "東京駅の復旧メモ", timestamp: 5 },
+      memo: { id: "memo-1", body: "東京駅の復旧メモ", timestamp: 6 },
+    },
+    {
+      version: 1,
+      type: "update-document",
+      operationId: `${runId}:update-document`,
+      document: {
+        id: "document-1",
+        title: "耐障害性の復旧",
+        body: "東京駅から始める復旧運用",
+        timestamp: 5,
+        topicId: "topic-1",
+        sourceMemoIds: ["memo-1"],
+      },
     },
     {
       version: 1,
@@ -106,30 +120,72 @@ async function executeLifecycle(
     },
     {
       version: 1,
+      type: "trash-document",
+      operationId: `${runId}:trash-document-before-remove`,
+      documentId: "document-1",
+      trashedAt: 10,
+    },
+    {
+      version: 1,
       type: "remove-document",
       operationId: `${runId}:remove-document`,
       documentId: "document-1",
-      removedAt: 10,
+      removedAt: 11,
+    },
+    {
+      version: 1,
+      type: "trash-memo",
+      operationId: `${runId}:trash-memo-before-remove`,
+      memoId: "memo-1",
+      trashedAt: 12,
     },
     {
       version: 1,
       type: "remove-memo",
       operationId: `${runId}:remove-memo`,
       memoId: "memo-1",
-      removedAt: 11,
+      removedAt: 13,
     },
   ];
+  const expectedIds = new Map<string, readonly string[]>([
+    ["create-memo", ["memo-1"]],
+    ["create-topic", ["memo-1"]],
+    ["create-document", ["memo-1", "document-1"]],
+    ["update-document", ["memo-1", "document-1"]],
+    ["update-memo", ["memo-1", "document-1"]],
+    ["trash-document", ["memo-1"]],
+    ["restore-document", ["memo-1", "document-1"]],
+    ["trash-memo", ["document-1"]],
+    ["restore-memo", ["memo-1", "document-1"]],
+    ["trash-document-before-remove", ["memo-1"]],
+    ["remove-document", ["memo-1"]],
+    ["trash-memo-before-remove", []],
+    ["remove-memo", []],
+  ]);
   const observations: Array<Readonly<{ step: string; page: SearchPage }>> = [];
   for (const command of commands) {
     value(await object.commit(command));
+    const step = command.operationId.slice(`${runId}:`.length);
+    const page = value(
+      await (object as unknown as SearchCapableStub).search({
+        version: 1,
+        keyword: "東京駅",
+        limit: 20,
+      }),
+    );
+    const actualIds = page.items.map(({ id }) => id);
+    const expected = expectedIds.get(step);
+    if (
+      expected === undefined ||
+      JSON.stringify(actualIds) !== JSON.stringify(expected)
+    ) {
+      throw new Error(
+        `LIFECYCLE_ASSERTION_FAILED:${step}:${JSON.stringify(actualIds)}`,
+      );
+    }
     observations.push({
-      step: command.type,
-      page: value(
-        await (object as unknown as SearchCapableStub).search({
-          keyword: "東京駅",
-          limit: 20,
-        }),
-      ),
+      step,
+      page,
     });
   }
   return {
@@ -139,6 +195,7 @@ async function executeLifecycle(
       operationId,
     })),
     observations,
+    assertionsPassed: true,
   };
 }
 

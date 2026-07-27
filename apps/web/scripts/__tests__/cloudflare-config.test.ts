@@ -46,4 +46,26 @@ describe("Cloudflare two-Worker configuration", () => {
     expect(vite).toContain('staging: "./wrangler.request.staging.toml"');
     expect(vite).toContain('production: "./wrangler.request.production.toml"');
   });
+
+  it("treats the DNS zone as shared existing infrastructure", () => {
+    const resources = readFileSync(
+      "infra/cloudflare/pulumi/resources/index.ts",
+      "utf8",
+    );
+    expect(resources).toContain('config.require("zoneId")');
+    expect(resources).not.toMatch(/new\s+cloudflare\.Zone/u);
+    const zoneIds = [".staging", ".production"].map(
+      (stage) =>
+        /fog-cf-resources:zoneId:\s*(\S+)/u.exec(
+          readFileSync(
+            `infra/cloudflare/pulumi/resources/Pulumi${stage}.yaml`,
+            "utf8",
+          ),
+        )?.[1],
+    );
+    expect(zoneIds).toEqual([
+      "REPLACE_WITH_SHARED_CF_ZONE_ID",
+      "REPLACE_WITH_SHARED_CF_ZONE_ID",
+    ]);
+  });
 });

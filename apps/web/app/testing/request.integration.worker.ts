@@ -1,6 +1,7 @@
 import {
   createRequestContainer,
   readRequestServerConfig,
+  routeAuthenticatedUserData,
   type ServerEnv,
 } from "@repo/core/application/di/serverCloudflare";
 import { getCurrentUser } from "@repo/core/application/identity/getCurrentUser";
@@ -189,13 +190,24 @@ export default {
             { status: 409 },
           );
         }
-        const object = env.USER_DATA.getByName("acceptance-session-user");
-        const initialized = await object.initialize({
-          operationId: "acceptance-init-v1",
-          userId: "acceptance-session-user",
-          now: 1,
-        });
-        if (!initialized.ok) return json(initialized, { status: 503 });
+        const token = sessionToken(request);
+        const container = createRequestContainer(
+          readRequestServerConfig(env as unknown as ServerEnv),
+        );
+        const session =
+          token === null
+            ? null
+            : await container.sessionCodec.verify(token, container.clock.now());
+        if (session === null) {
+          return json(
+            { ok: false, error: { code: "UNAUTHENTICATED" } },
+            { status: 401 },
+          );
+        }
+        const object = routeAuthenticatedUserData(
+          env.USER_DATA,
+          session.userId,
+        );
         const profile = await object.getProfile();
         return json(profile, { status: profile.ok ? 200 : 503 });
       } catch (error) {

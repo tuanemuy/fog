@@ -24,6 +24,8 @@ import {
 } from "@repo/core/application/identity/rpc";
 import { Email, UserId } from "@repo/core/domain/identity/valueObject";
 
+type StateEnv = Record<string, never>;
+
 type BeginOperationPayload = {
   userId: string;
   kind: IdentityOperationKind;
@@ -37,15 +39,43 @@ type AdvanceOperationPayload = {
   expectedState: IdentityOperationState;
   nextState: IdentityOperationState;
   locator?: CredentialLocator;
+  credentialId?: string;
   credentialKind?: CredentialKind;
   primaryEmail?: string;
   bumpSessionEpoch?: boolean;
   now: number;
 };
 
+const operationKinds = new Set<IdentityOperationKind>([
+  "signup",
+  "password-change",
+  "password-reset",
+  "sso-create",
+  "sso-link",
+  "sso-unlink",
+  "delete-account",
+  "credential-rotation",
+  "export",
+]);
+const operationStates = new Set<IdentityOperationState>([
+  "pending",
+  "credential-reserved",
+  "user-data-initialized",
+  "directory-active",
+  "active",
+  "tombstoning",
+  "user-data-deleted",
+  "purging",
+  "compensating",
+  "completed",
+  "failed",
+]);
+
 const conflictCodes = new Set([
   "ACCOUNT_OWNER_MISMATCH",
   "ACCOUNT_DELETED",
+  "ACCOUNT_ALREADY_ACTIVE",
+  "PASSWORD_RESET_IN_PROGRESS",
   "ACCOUNT_AUTHORITY_MISMATCH",
   "IDENTITY_OPERATION_PAYLOAD_CONFLICT",
   "IDENTITY_OPERATION_PHASE_CONFLICT",
@@ -74,7 +104,9 @@ function locator(input: CredentialLocator): CredentialLocator {
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
     input.bucket > 1023 ||
-    input.generation.trim().length === 0
+    input.generation.trim().length === 0 ||
+    input.generation.length > 64 ||
+    input.opaqueKey.length > 256
   ) {
     throw new Error("IDENTITY_RPC_LOCATOR_INVALID");
   }
@@ -85,8 +117,8 @@ function locator(input: CredentialLocator): CredentialLocator {
   };
 }
 
-export class AccountHomeDurableObject extends DurableObject {
-  constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+export class AccountHomeDurableObject extends DurableObject<StateEnv> {
+  constructor(ctx: DurableObjectState, env: StateEnv) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       migrateAccountHome(ctx.storage, Date.now());
@@ -102,8 +134,12 @@ export class AccountHomeDurableObject extends DurableObject {
     if (
       typeof payload.userId !== "string" ||
       typeof payload.kind !== "string" ||
+      !operationKinds.has(payload.kind as IdentityOperationKind) ||
       typeof payload.payloadDigest !== "string" ||
-      typeof payload.now !== "number"
+      payload.payloadDigest.length === 0 ||
+      payload.payloadDigest.length > 128 ||
+      !Number.isFinite(payload.now) ||
+      payload.now < 0
     ) {
       return Promise.resolve(
         rpcFailure(
@@ -134,15 +170,39 @@ export class AccountHomeDurableObject extends DurableObject {
   ): Promise<RpcResult<IdentityOperation>> {
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
+    const payload = request.payload;
+    if (
+      typeof payload.userId !== "string" ||
+      !operationStates.has(payload.expectedState) ||
+      !operationStates.has(payload.nextState) ||
+      (payload.credentialKind !== undefined &&
+        payload.credentialKind !== "password" &&
+        payload.credentialKind !== "sso") ||
+      (payload.credentialId !== undefined &&
+        (payload.credentialId.length === 0 ||
+          payload.credentialId.length > 256)) ||
+      !Number.isFinite(payload.now) ||
+      payload.now < 0
+    ) {
+      return Promise.resolve(
+        rpcFailure(
+          "validation",
+          "IDENTITY_RPC_PAYLOAD_INVALID",
+          "Invalid identity payload",
+        ),
+      );
+    }
     return Promise.resolve(
       execute(() => {
-        const payload = request.payload;
         return new AccountHomeStore(this.ctx.storage).advanceOperation({
           operationId: operationId(request.operationId),
           userId: UserId.create(payload.userId),
           expectedState: payload.expectedState,
           nextState: payload.nextState,
           ...(payload.locator ? { locator: locator(payload.locator) } : {}),
+          ...(payload.credentialId
+            ? { credentialId: payload.credentialId }
+            : {}),
           ...(payload.credentialKind
             ? { credentialKind: payload.credentialKind }
             : {}),
@@ -184,6 +244,7 @@ export class AccountHomeDurableObject extends DurableObject {
     request: IdentityRpcMutation<{
       userId: string;
       locator: CredentialLocator;
+      credentialId: string;
       kind: CredentialKind;
       primaryEmail?: string;
       bumpSessionEpoch: boolean;
@@ -198,6 +259,7 @@ export class AccountHomeDurableObject extends DurableObject {
           operationId: operationId(request.operationId),
           userId: UserId.create(request.payload.userId),
           locator: locator(request.payload.locator),
+          credentialId: request.payload.credentialId,
           kind: request.payload.kind,
           ...(request.payload.primaryEmail
             ? { primaryEmail: Email.create(request.payload.primaryEmail) }
@@ -212,7 +274,7 @@ export class AccountHomeDurableObject extends DurableObject {
   removeCredentialLocator(
     request: IdentityRpcMutation<{
       userId: string;
-      locator: CredentialLocator;
+      credentialId: string;
       bumpSessionEpoch: boolean;
       now: number;
     }>,
@@ -224,7 +286,7 @@ export class AccountHomeDurableObject extends DurableObject {
         new AccountHomeStore(this.ctx.storage).removeCredentialLocator({
           operationId: operationId(request.operationId),
           userId: UserId.create(request.payload.userId),
-          locator: locator(request.payload.locator),
+          credentialId: request.payload.credentialId,
           bumpSessionEpoch: request.payload.bumpSessionEpoch,
           now: request.payload.now,
         }),
@@ -298,100 +360,6 @@ export class AccountHomeDurableObject extends DurableObject {
           now: request.payload.now,
         }),
       })),
-    );
-  }
-
-  beginSignup(input: {
-    operationId: string;
-    userId: string;
-    email: string;
-    opaqueKey: string;
-    generation: string;
-    now: number;
-  }): Promise<RpcResult<{ state: string }>> {
-    return this.beginOperation({
-      version: 1,
-      operationId: input.operationId,
-      payload: {
-        userId: input.userId,
-        kind: "signup",
-        payloadDigest: `legacy:${input.opaqueKey}`,
-        primaryEmail: input.email,
-        now: input.now,
-      },
-    }).then(async (result) => {
-      if (!result.ok) return result;
-      const added = await this.addCredentialLocator({
-        version: 1,
-        operationId: input.operationId,
-        payload: {
-          userId: input.userId,
-          locator: {
-            opaqueKey: opaqueCredentialKey(input.opaqueKey),
-            generation: input.generation,
-            bucket: 0,
-          },
-          kind: "password",
-          primaryEmail: input.email,
-          bumpSessionEpoch: false,
-          now: input.now,
-        },
-      });
-      return added.ok ? rpcOk({ state: result.value.state }) : added;
-    });
-  }
-
-  async beginDeletion(
-    now: number,
-  ): Promise<RpcResult<{ epoch: number; locators: readonly string[] }>> {
-    const authority = new AccountHomeStore(this.ctx.storage).authSummary();
-    if (!authority) {
-      return rpcFailure(
-        "not-found",
-        "ACCOUNT_NOT_FOUND",
-        "Account was not found",
-      );
-    }
-    const result = await this.beginDeletionV1({
-      version: 1,
-      operationId: `legacy-delete:${now}`,
-      payload: { userId: authority.userId, now },
-    });
-    return result.ok
-      ? rpcOk({
-          epoch: result.value.epoch,
-          locators: result.value.locators.map((item) => item.opaqueKey),
-        })
-      : result;
-  }
-
-  async finishDeletion(
-    epoch: number,
-    now: number,
-  ): Promise<RpcResult<{ completed: boolean }>> {
-    const authority = new AccountHomeStore(this.ctx.storage).authSummary();
-    if (!authority) {
-      return rpcFailure(
-        "not-found",
-        "ACCOUNT_NOT_FOUND",
-        "Account was not found",
-      );
-    }
-    return this.finishDeletionV1({
-      version: 1,
-      operationId: `legacy-delete:${now - 1}`,
-      payload: { userId: authority.userId, epoch, now },
-    });
-  }
-
-  authority(): Promise<RpcResult<{ status: string; epoch: number } | null>> {
-    return Promise.resolve(
-      execute(() => {
-        const authority = new AccountHomeStore(this.ctx.storage).authSummary();
-        return authority
-          ? { status: authority.status, epoch: authority.operationEpoch }
-          : null;
-      }),
     );
   }
 

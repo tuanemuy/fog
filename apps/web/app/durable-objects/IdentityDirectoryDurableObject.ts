@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { migrateIdentityDirectory } from "@repo/core/adapters/cloudflare/identity-directory/schema";
 import { IdentityDirectoryStore } from "@repo/core/adapters/cloudflare/identity-directory/store";
 import type {
@@ -17,7 +18,6 @@ import {
 import {
   rpcFailure,
   rpcOk,
-  rpcQuery,
   validateRpcMutation,
   validateRpcQuery,
 } from "@repo/core/application/identity/rpc";
@@ -27,6 +27,11 @@ import {
   SsoProvider,
   UserId,
 } from "@repo/core/domain/identity/valueObject";
+import type { AccountHomeDurableObject } from "./AccountHomeDurableObject";
+
+type StateEnv = {
+  ACCOUNT_HOME: DurableObjectNamespace<AccountHomeDurableObject>;
+};
 
 const conflictCodes = new Set([
   "CREDENTIAL_ALREADY_REGISTERED",
@@ -62,7 +67,9 @@ function parseLocator(input: CredentialLocator): CredentialLocator {
     !Number.isInteger(input.bucket) ||
     input.bucket < 0 ||
     input.bucket > 1023 ||
-    typeof input.opaqueKey !== "string"
+    typeof input.opaqueKey !== "string" ||
+    input.generation.length > 64 ||
+    input.opaqueKey.length > 256
   ) {
     throw new Error("IDENTITY_RPC_LOCATOR_INVALID");
   }
@@ -74,6 +81,14 @@ function parseLocator(input: CredentialLocator): CredentialLocator {
 }
 
 function parseCredential(input: CredentialRef): CredentialRef {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    typeof input.canonicalValue !== "string" ||
+    new TextEncoder().encode(input.canonicalValue).byteLength > 1024
+  ) {
+    throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
+  }
   if (input.kind === "password") {
     return {
       kind: "password",
@@ -92,9 +107,12 @@ function parseCredential(input: CredentialRef): CredentialRef {
   throw new Error("IDENTITY_RPC_CREDENTIAL_INVALID");
 }
 
-export class IdentityDirectoryDurableObject extends DurableObject {
-  constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
-    super(ctx, env);
+export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
+  constructor(
+    ctx: DurableObjectState,
+    private readonly stateEnv: StateEnv,
+  ) {
+    super(ctx, stateEnv);
     ctx.blockConcurrencyWhile(async () => {
       migrateIdentityDirectory(ctx.storage, Date.now());
     });
@@ -109,74 +127,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
       now: number;
       reservationExpiresAt: number;
     }>,
-  ): Promise<RpcResult<{ userId: string }>>;
-  reserve(request: {
-    opaqueKey: string;
-    generation: string;
-    canonicalValue: string;
-    kind: "password" | "sso";
-    provider?: string;
-    userId: string;
-    operationId: string;
-    passwordHash?: string;
-    now: number;
-    reservationExpiresAt: number;
-  }): Promise<RpcResult<{ userId: string }>>;
-  reserve(
-    request:
-      | IdentityRpcMutation<{
-          locator: CredentialLocator;
-          credential: CredentialRef;
-          userId: string;
-          accountEpoch: number;
-          now: number;
-          reservationExpiresAt: number;
-        }>
-      | {
-          opaqueKey: string;
-          generation: string;
-          canonicalValue: string;
-          kind: "password" | "sso";
-          provider?: string;
-          userId: string;
-          operationId: string;
-          passwordHash?: string;
-          now: number;
-          reservationExpiresAt: number;
-        },
   ): Promise<RpcResult<{ userId: string }>> {
-    if (!("version" in request)) {
-      const legacy = request;
-      const converted = {
-        version: 1,
-        operationId: legacy.operationId,
-        payload: {
-          locator: {
-            opaqueKey: opaqueCredentialKey(legacy.opaqueKey),
-            generation: legacy.generation,
-            bucket: 0,
-          },
-          credential:
-            legacy.kind === "password"
-              ? {
-                  kind: "password" as const,
-                  canonicalValue: legacy.canonicalValue,
-                  passwordHash: PasswordHash.create(legacy.passwordHash ?? ""),
-                }
-              : {
-                  kind: "sso" as const,
-                  canonicalValue: legacy.canonicalValue,
-                  provider: SsoProvider.create(legacy.provider ?? ""),
-                  verifiedEmail: Email.create("legacy@example.invalid"),
-                },
-          userId: legacy.userId,
-          accountEpoch: 0,
-          now: legacy.now,
-          reservationExpiresAt: legacy.reservationExpiresAt,
-        },
-      } as const;
-      return this.reserve(converted);
-    }
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     return Promise.resolve(
@@ -191,6 +142,65 @@ export class IdentityDirectoryDurableObject extends DurableObject {
           reservationExpiresAt: request.payload.reservationExpiresAt,
         }),
       })),
+    );
+  }
+
+  lookupPasswordSignup(
+    request: IdentityRpcQuery<{ opaqueOperationKey: string }>,
+  ): Promise<
+    RpcResult<{
+      userId: string;
+      email: string;
+      passwordHash: string;
+    } | null>
+  > {
+    const validated = validateRpcQuery(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    if (typeof request.payload.opaqueOperationKey !== "string") {
+      return Promise.resolve(
+        rpcFailure(
+          "validation",
+          "IDENTITY_RPC_PAYLOAD_INVALID",
+          "Invalid identity payload",
+        ),
+      );
+    }
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).lookupPasswordSignup(
+          request.payload.opaqueOperationKey,
+        ),
+      ),
+    );
+  }
+
+  preparePasswordSignup(
+    request: IdentityRpcMutation<{
+      opaqueOperationKey: string;
+      proposedUserId: string;
+      email: string;
+      passwordHash: string;
+      now: number;
+    }>,
+  ): Promise<
+    RpcResult<{
+      userId: string;
+      passwordHash: string;
+      replayed: boolean;
+    }>
+  > {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).preparePasswordSignup({
+          opaqueOperationKey: request.payload.opaqueOperationKey,
+          proposedUserId: UserId.create(request.payload.proposedUserId),
+          email: Email.create(request.payload.email),
+          passwordHash: PasswordHash.create(request.payload.passwordHash),
+          now: request.payload.now,
+        }),
+      ),
     );
   }
 
@@ -223,44 +233,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
       accountEpoch: number;
       now: number;
     }>,
-  ): Promise<RpcResult<{ userId: string }>>;
-  activate(request: {
-    opaqueKey: string;
-    operationId: string;
-    userId: string;
-    now: number;
-  }): Promise<RpcResult<{ userId: string }>>;
-  activate(
-    request:
-      | IdentityRpcMutation<{
-          locator: CredentialLocator;
-          userId: string;
-          accountEpoch: number;
-          now: number;
-        }>
-      | {
-          opaqueKey: string;
-          operationId: string;
-          userId: string;
-          now: number;
-        },
   ): Promise<RpcResult<{ userId: string }>> {
-    if (!("version" in request)) {
-      return this.activate({
-        version: 1,
-        operationId: request.operationId,
-        payload: {
-          locator: {
-            opaqueKey: opaqueCredentialKey(request.opaqueKey),
-            generation: "generation-1",
-            bucket: 0,
-          },
-          userId: request.userId,
-          accountEpoch: 0,
-          now: request.now,
-        },
-      });
-    }
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     return Promise.resolve(
@@ -278,24 +251,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
 
   lookupPassword(
     request: IdentityRpcQuery<{ locator: CredentialLocator }>,
-  ): Promise<RpcResult<PasswordCredential | null>>;
-  lookupPassword(
-    request: string,
-  ): Promise<RpcResult<PasswordCredential | null>>;
-  lookupPassword(
-    request: IdentityRpcQuery<{ locator: CredentialLocator }> | string,
   ): Promise<RpcResult<PasswordCredential | null>> {
-    if (typeof request === "string") {
-      return this.lookupPassword(
-        rpcQuery({
-          locator: {
-            opaqueKey: opaqueCredentialKey(request),
-            generation: "generation-1",
-            bucket: 0,
-          },
-        }),
-      );
-    }
     const validated = validateRpcQuery(request);
     if (!validated.ok) return Promise.resolve(validated);
     return Promise.resolve(
@@ -350,6 +306,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
   tombstone(
     request: IdentityRpcMutation<{
       locator: CredentialLocator;
+      userId: string;
       accountEpoch: number;
       now: number;
     }>,
@@ -360,6 +317,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).tombstone({
           locator: parseLocator(request.payload.locator),
+          userId: UserId.create(request.payload.userId),
           accountEpoch: request.payload.accountEpoch,
           now: request.payload.now,
         });
@@ -371,6 +329,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
   purge(
     request: IdentityRpcMutation<{
       locator: CredentialLocator;
+      userId: string;
       accountEpoch: number;
     }>,
   ): Promise<RpcResult<null>> {
@@ -380,6 +339,7 @@ export class IdentityDirectoryDurableObject extends DurableObject {
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).purge(
           parseLocator(request.payload.locator),
+          UserId.create(request.payload.userId),
           request.payload.accountEpoch,
         );
         return null;
@@ -389,48 +349,19 @@ export class IdentityDirectoryDurableObject extends DurableObject {
 
   storePasswordReset(
     request: IdentityRpcMutation<{
+      locator: CredentialLocator;
       userId: string;
       tokenHash: string;
       expiresAt: number;
     }>,
-  ): Promise<RpcResult<null>>;
-  storePasswordReset(request: {
-    tokenHash: string;
-    userId: string;
-    operationId: string;
-    expiresAt: number;
-  }): Promise<RpcResult<null>>;
-  storePasswordReset(
-    request:
-      | IdentityRpcMutation<{
-          userId: string;
-          tokenHash: string;
-          expiresAt: number;
-        }>
-      | {
-          tokenHash: string;
-          userId: string;
-          operationId: string;
-          expiresAt: number;
-        },
   ): Promise<RpcResult<null>> {
-    if (!("version" in request)) {
-      return this.storePasswordReset({
-        version: 1,
-        operationId: request.operationId,
-        payload: {
-          userId: request.userId,
-          tokenHash: request.tokenHash,
-          expiresAt: request.expiresAt,
-        },
-      });
-    }
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     return Promise.resolve(
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).storePasswordReset({
           operationId: operationId(request.operationId),
+          locator: parseLocator(request.payload.locator),
           userId: UserId.create(request.payload.userId),
           tokenHash: request.payload.tokenHash,
           expiresAt: request.payload.expiresAt,
@@ -440,24 +371,29 @@ export class IdentityDirectoryDurableObject extends DurableObject {
     );
   }
 
+  lookupPasswordReset(
+    request: IdentityRpcMutation<{
+      locator: CredentialLocator;
+      tokenHash: string;
+      now: number;
+    }>,
+  ): Promise<RpcResult<{ userId: string } | null>> {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).lookupPasswordReset({
+          operationId: operationId(request.operationId),
+          tokenHash: request.payload.tokenHash,
+          now: request.payload.now,
+        }),
+      ),
+    );
+  }
+
   consumePasswordReset(
     request: IdentityRpcMutation<{ tokenHash: string; now: number }>,
-  ): Promise<RpcResult<{ userId: string } | null>>;
-  consumePasswordReset(
-    tokenHash: string,
-    now: number,
-  ): Promise<RpcResult<{ userId: string } | null>>;
-  consumePasswordReset(
-    request: IdentityRpcMutation<{ tokenHash: string; now: number }> | string,
-    legacyNow?: number,
   ): Promise<RpcResult<{ userId: string } | null>> {
-    if (typeof request === "string") {
-      return this.consumePasswordReset({
-        version: 1,
-        operationId: `legacy-reset-consume:${legacyNow ?? 0}`,
-        payload: { tokenHash: request, now: legacyNow ?? 0 },
-      });
-    }
     const validated = validateRpcMutation(request);
     if (!validated.ok) return Promise.resolve(validated);
     return Promise.resolve(
@@ -489,6 +425,27 @@ export class IdentityDirectoryDurableObject extends DurableObject {
     );
   }
 
+  scanForAuthorityReconcile(
+    request: IdentityRpcQuery<{
+      generation: string;
+      bucket: number;
+      cursor?: string;
+      limit: number;
+    }>,
+  ): Promise<
+    RpcResult<ReturnType<IdentityDirectoryStore["scanForAuthorityReconcile"]>>
+  > {
+    const validated = validateRpcQuery(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).scanForAuthorityReconcile(
+          request.payload,
+        ),
+      ),
+    );
+  }
+
   saveRotationCheckpoint(
     request: IdentityRpcMutation<{
       generation: string;
@@ -506,6 +463,51 @@ export class IdentityDirectoryDurableObject extends DurableObject {
       execute(() => {
         new IdentityDirectoryStore(this.ctx.storage).saveRotationCheckpoint(
           request.payload,
+        );
+        return null;
+      }),
+    );
+  }
+
+  getRotationCheckpoint(
+    request: IdentityRpcQuery<{ generation: string; bucket: number }>,
+  ): Promise<
+    RpcResult<ReturnType<IdentityDirectoryStore["rotationCheckpoint"]>>
+  > {
+    const validated = validateRpcQuery(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).rotationCheckpoint(
+          request.payload.generation,
+          request.payload.bucket,
+        ),
+      ),
+    );
+  }
+
+  operatorGetShardAuthorityStatus(
+    request: IdentityRpcQuery<Record<string, never>>,
+  ): Promise<RpcResult<ReturnType<IdentityDirectoryStore["authorityStatus"]>>> {
+    const validated = validateRpcQuery(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() =>
+        new IdentityDirectoryStore(this.ctx.storage).authorityStatus(),
+      ),
+    );
+  }
+
+  operatorMarkRestoredSession(
+    request: IdentityRpcMutation<{ marker: string; now: number }>,
+  ): Promise<RpcResult<null>> {
+    const validated = validateRpcMutation(request);
+    if (!validated.ok) return Promise.resolve(validated);
+    return Promise.resolve(
+      execute(() => {
+        new IdentityDirectoryStore(this.ctx.storage).markRestoredSession(
+          request.payload.marker,
+          request.payload.now,
         );
         return null;
       }),
@@ -535,5 +537,91 @@ export class IdentityDirectoryDurableObject extends DurableObject {
 
   operatorRestoreBookmark(bookmark: string): Promise<string> {
     return this.ctx.storage.onNextSessionRestoreBookmark(bookmark);
+  }
+
+  async operatorRestartSession(): Promise<void> {
+    this.ctx.abort("PITR_RESTART_REQUESTED");
+  }
+
+  async operatorVerifyRestoredSession(bookmark: string): Promise<string> {
+    new IdentityDirectoryStore(this.ctx.storage).markRestoredSession(
+      bookmark,
+      Date.now(),
+    );
+    return this.ctx.storage.getCurrentBookmark();
+  }
+
+  async operatorReconcileRestoredPage(input: {
+    generation: string;
+    bucket: number;
+    cursor?: string;
+    limit?: number;
+    now: number;
+  }): Promise<{
+    scanned: number;
+    tombstoned: number;
+    conflicts: number;
+    nextCursor: string | null;
+    complete: boolean;
+  }> {
+    const limit = Math.min(Math.max(input.limit ?? 100, 1), 100);
+    if (
+      input.generation.trim().length === 0 ||
+      input.generation.length > 64 ||
+      !Number.isInteger(input.bucket) ||
+      input.bucket < 0 ||
+      input.bucket > 1023 ||
+      (input.cursor !== undefined &&
+        new TextEncoder().encode(input.cursor).byteLength > 256) ||
+      !Number.isFinite(input.now)
+    ) {
+      throw new TypeError("IDENTITY_RECONCILE_INPUT_INVALID");
+    }
+    const store = new IdentityDirectoryStore(this.ctx.storage);
+    const page = store.scanForAuthorityReconcile({
+      generation: input.generation,
+      bucket: input.bucket,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit,
+    });
+    let tombstoned = 0;
+    let conflicts = 0;
+    for (const row of page.rows) {
+      if (row.state === "tombstoned") continue;
+      const authority = await this.stateEnv.ACCOUNT_HOME.getByName(
+        row.userId,
+      ).getAuthSummary({
+        version: 1,
+        payload: {},
+      });
+      if (!authority.ok) {
+        conflicts += 1;
+        continue;
+      }
+      const authoritative =
+        authority.value?.status === "active" &&
+        authority.value.operationEpoch === row.accountEpoch &&
+        authority.value.locators.some(
+          (candidate) =>
+            candidate.generation === row.locator.generation &&
+            candidate.bucket === row.locator.bucket &&
+            candidate.opaqueKey === row.locator.opaqueKey,
+        );
+      if (authoritative) continue;
+      store.tombstone({
+        locator: row.locator,
+        userId: row.userId,
+        accountEpoch: row.accountEpoch,
+        now: input.now,
+      });
+      tombstoned += 1;
+    }
+    return {
+      scanned: page.rows.length,
+      tombstoned,
+      conflicts,
+      nextCursor: page.nextCursor,
+      complete: page.nextCursor === null,
+    };
   }
 }

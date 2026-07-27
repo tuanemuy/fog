@@ -4,6 +4,62 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const port = 8799;
 const baseUrl = `http://127.0.0.1:${port}`;
+
+type LifecycleResult = Readonly<{
+  localOnly: boolean;
+  observations: readonly Readonly<{
+    step: string;
+    page: Readonly<{
+      items: readonly Readonly<{ type: string; id: string }>[];
+    }>;
+  }>[];
+}>;
+
+const expectedHits: Readonly<Record<string, readonly string[]>> = {
+  "create-memo": ["memo:memo-1"],
+  "create-topic": ["memo:memo-1"],
+  "create-document": ["document:document-1", "memo:memo-1"],
+  "update-memo": ["document:document-1", "memo:memo-1"],
+  "update-document": ["document:document-1", "memo:memo-1"],
+  "trash-document": ["memo:memo-1"],
+  "restore-document": ["document:document-1", "memo:memo-1"],
+  "trash-memo": ["document:document-1"],
+  "restore-memo": ["document:document-1", "memo:memo-1"],
+  "trash-document-before-remove": ["memo:memo-1"],
+  "remove-document": ["memo:memo-1"],
+  "trash-memo-before-remove": [],
+  "remove-memo": [],
+};
+
+function assertLifecycle(result: unknown): asserts result is LifecycleResult {
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("localOnly" in result) ||
+    result.localOnly !== true ||
+    !("observations" in result) ||
+    !Array.isArray(result.observations)
+  ) {
+    throw new Error("Lifecycle result has an invalid contract");
+  }
+  for (const observation of result.observations as LifecycleResult["observations"]) {
+    const expected = expectedHits[observation.step];
+    if (expected === undefined) {
+      throw new Error(`Unexpected lifecycle step ${observation.step}`);
+    }
+    const actual = observation.page.items
+      .map((item) => `${item.type}:${item.id}`)
+      .sort();
+    if (JSON.stringify(actual) !== JSON.stringify([...expected].sort())) {
+      throw new Error(
+        `Lifecycle search mismatch at ${observation.step}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      );
+    }
+  }
+  if (result.observations.length !== Object.keys(expectedHits).length) {
+    throw new Error("Lifecycle result omitted one or more required steps");
+  }
+}
 const child = spawn(
   "pnpm",
   [
@@ -58,6 +114,7 @@ try {
       `Lifecycle Worker failed (${response.status}): ${JSON.stringify(result)}`,
     );
   }
+  assertLifecycle(result);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 } finally {
   child.kill("SIGTERM");

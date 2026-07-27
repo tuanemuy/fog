@@ -1,5 +1,6 @@
 import {
   IDENTITY_RPC_VERSION,
+  IDENTITY_OPERATION_ID_MAX_BYTES,
   type IdentityRpcMutation,
   type IdentityRpcQuery,
   type RpcError,
@@ -61,7 +62,9 @@ export function validateRpcMutation(
   const value = input as Record<string, unknown>;
   if (
     typeof value.operationId !== "string" ||
-    value.operationId.trim().length === 0
+    value.operationId.trim().length === 0 ||
+    new TextEncoder().encode(value.operationId.trim()).byteLength >
+      IDENTITY_OPERATION_ID_MAX_BYTES
   ) {
     return rpcFailure(
       "validation",

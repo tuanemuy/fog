@@ -14,39 +14,47 @@ const schemas = [
 
 const email = (length: number) =>
   `${"a".repeat(length - "@example.com".length)}@example.com`;
+const operationId = "0197f160-76f5-7000-8000-000000000019";
 
 describe.each(schemas)("%s", (_name, schema) => {
   it("accepts an address at the domain's own 320-character limit", () => {
     const value = email(320);
     expect(value).toHaveLength(320);
     expect(
-      schema.safeParse({ email: value, password: "password123" }).success,
+      schema.safeParse({ operationId, email: value, password: "password123" })
+        .success,
     ).toBe(true);
   });
 
   it("accepts a password at the domain's own 128-character limit", () => {
     const password = "p".repeat(128);
     expect(
-      schema.safeParse({ email: "user@example.com", password }).success,
+      schema.safeParse({ operationId, email: "user@example.com", password })
+        .success,
     ).toBe(true);
   });
 
   it("lets a password past the domain limit through to the domain", () => {
     const password = "p".repeat(129);
     expect(
-      schema.safeParse({ email: "user@example.com", password }).success,
+      schema.safeParse({ operationId, email: "user@example.com", password })
+        .success,
     ).toBe(true);
   });
 
   it("lets a 321-character address through to the domain", () => {
     expect(
-      schema.safeParse({ email: email(321), password: "password123" }).success,
+      schema.safeParse({
+        operationId,
+        email: email(321),
+        password: "password123",
+      }).success,
     ).toBe(true);
   });
 
   it.each([
-    ["email", { email: "", password: "password123" }],
-    ["password", { email: "user@example.com", password: "" }],
+    ["email", { operationId, email: "", password: "password123" }],
+    ["password", { operationId, email: "user@example.com", password: "" }],
   ])("rejects an empty %s", (_field, input) => {
     expect(schema.safeParse(input).success).toBe(false);
   });
@@ -56,18 +64,32 @@ describe.each(schemas)("%s", (_name, schema) => {
   it.each([
     [
       "email",
-      { email: email(AUTH_FIELD_MAX_LENGTH + 1), password: "password123" },
+      {
+        operationId,
+        email: email(AUTH_FIELD_MAX_LENGTH + 1),
+        password: "password123",
+      },
     ],
     [
       "password",
       {
         email: "user@example.com",
+        operationId,
         password: "p".repeat(AUTH_FIELD_MAX_LENGTH + 1),
       },
     ],
   ])("rejects a %s over the DoS ceiling", (_field, input) => {
     expect(schema.safeParse(input).success).toBe(false);
   });
+});
+
+it("requires a caller-generated UUID operationId for signup replay", () => {
+  expect(
+    signupSchema.safeParse({
+      email: "user@example.com",
+      password: "password123",
+    }).success,
+  ).toBe(false);
 });
 
 it("keeps the DoS ceiling far above every domain limit", () => {

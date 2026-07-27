@@ -16,6 +16,7 @@ type TestEnv = Readonly<{
 
 type SearchStub = Readonly<{
   search(query: {
+    version: 1;
     keyword: string;
     limit?: number;
   }): Promise<RpcResult<SearchPage>>;
@@ -52,7 +53,11 @@ async function search(
   keyword: string,
 ): Promise<SearchPage> {
   return value(
-    await (object as unknown as SearchStub).search({ keyword, limit: 20 }),
+    await (object as unknown as SearchStub).search({
+      version: 1,
+      keyword,
+      limit: 20,
+    }),
   );
 }
 

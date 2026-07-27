@@ -69,14 +69,28 @@ pnpm cf:types
 
 ## Stage configuration and DNS
 
-Pulumi manages the zone/custom-domain metadata only. It does not create
-databases, Queues, or Durable Object namespaces.
+The resources stacks consume one pre-existing shared Cloudflare `zoneId`; they
+never create or own the DNS zone. Staging and production may use different
+hostnames in that same zone. The routes stacks own only each stage's Worker
+custom-domain binding. No stack creates databases, Queues, or Durable Object
+namespaces.
 
 ```bash
 pnpm --filter @repo/infra-cloudflare exec pulumi -C resources -s staging up
 pnpm cf:render:staging
 pnpm deploy:staging:dry
 ```
+
+CI and local dry-runs render from committed stage fixtures without Pulumi
+Service credentials:
+
+```bash
+pnpm --filter @repo/infra-cloudflare render:offline staging
+```
+
+Real deploy and secret-inventory commands deliberately use authenticated
+`pulumi stack output`; they never fall back based on whether the CLI happens to
+be installed.
 
 After both Workers have been deployed, apply the routes stack. Its config takes
 the zone ID, hostname, and request Worker name directly; it does not read a
@@ -128,7 +142,17 @@ Directory routing uses an active/previous keyring:
 2. Generate and set the new active secret and generation.
 3. Deploy the request Worker.
 4. Run the operator-only checkpoint scan across every fixed directory bucket.
-   Persist and resume the checkpoint; record scanned, moved, and conflict counts.
+   Each invocation processes at most one bounded page and resumes the persisted
+   cursor:
+
+   ```bash
+   pnpm --filter @repo/web identity:operator -- \
+     rotate-page "$PREVIOUS_GENERATION" "$BUCKET" 100
+   ```
+
+   Repeat only while `completed` is false. Record scanned, moved, conflict, and
+   `nextCursor` values. A retry reads the saved checkpoint; it does not restart
+   the bucket.
 5. Confirm both directory mappings and Account Home reverse locators have zero
    references to the previous generation.
 6. Remove the previous key/generation and deploy again.
@@ -190,6 +214,20 @@ Identity reservations are recovered by the Directory reconciler. Resume the
 stable operation ID from its persisted fault point; do not create a replacement
 operation or manually activate only one side of the saga.
 
+Run one bounded reconciliation page with:
+
+```bash
+pnpm --filter @repo/web identity:operator -- \
+  reconcile-page "$GENERATION" "$BUCKET" 100
+pnpm --filter @repo/web identity:operator -- \
+  status "$GENERATION" "$BUCKET"
+```
+
+Repeat `reconcile-page` until `examined` is zero; use `status` to record the
+final reserved/initialized/active/tombstoned counts. The endpoint is
+operator-authenticated, no-store, and never accepts an unbounded all-bucket
+scan.
+
 ## Export and deletion
 
 Export is intentionally sequential per user. Resolve the authenticated
@@ -215,43 +253,52 @@ authenticated disposable staging objects:
 
 | Class | Restore allowed | Required check |
 | --- | --- | --- |
-| User Data | Yes | Compare current Account Home tombstone/epoch before and after restore, then reconcile |
-| Identity Directory | Yes | Compare current Account Home tombstone/epoch before and after restore, then reconcile |
+| User Data | Yes | Derive the canonical User Data object from Account Home, then compare status/epoch after the restored session starts |
+| Identity Directory | Yes | Isolate one shard, then reconcile every restored mapping against its Account Home authority |
 | Account Home | No | Operator/admin tooling must reject the class before any restore call |
 
 For User Data or Identity Directory:
 
 1. Create a disposable staging account and record its current Account Home
-   tombstone/epoch.
+   status/epoch. For Directory, isolate a disposable shard; do not run the smoke
+   against a shard carrying non-disposable accounts.
 2. Set `PITR_OPERATOR_URL` to the staging request Worker URL and
    `PITR_OPERATOR_TOKEN` to the separately managed operator credential.
 3. Through the operator-only wrapper, record the current bookmark:
 
    ```bash
    pnpm --filter @repo/web pitr:operator -- \
-     bookmark UserDataDurableObject \
-     "$OPAQUE_OBJECT_NAME" "$OPAQUE_ACCOUNT_ID"
+     bookmark user-data "$OPAQUE_ACCOUNT_ID"
    ```
 
-   Use `IdentityDirectoryDurableObject` for a directory shard. Supplying
-   `AccountHomeDurableObject` is rejected before any Durable Object RPC.
+   For Directory use `bookmark identity-directory "$DIRECTORY_SHARD"`.
+   User Data accepts no caller-provided object name: the wrapper reads Account
+   Home and selects its canonical `userDataObjectName`.
 4. Write a recognizable disposable change and obtain a newer bookmark.
 5. Schedule the old bookmark through the same wrapper:
 
    ```bash
    pnpm --filter @repo/web pitr:operator -- \
-     restore UserDataDurableObject \
-     "$OPAQUE_OBJECT_NAME" "$OPAQUE_ACCOUNT_ID" "$OLD_BOOKMARK"
+     restore user-data "$OPAQUE_ACCOUNT_ID" "$OLD_BOOKMARK"
    ```
 
-   The wrapper enforces class allowlist, current Account Home authority,
-   restore scheduling, and a second authority read in that order. Restart the
-   disposable object session to apply the scheduled restore.
-6. Confirm only that object returned to the expected state. If current Account
-   Home changed or marks the
-   account deleted, do not expose the restored data; run reconciliation.
-7. Restore the returned `undoBookmark` to undo the smoke and repeat the Account Home
-   check.
+   The command executes schedule → explicit Durable Object session restart →
+   restored-session verification. It prints a versioned receipt containing the
+   undo bookmark. For Directory use `restore identity-directory
+   "$DIRECTORY_SHARD" "$OLD_BOOKMARK"`; verification is successful only after
+   the full shard authority scan completes with a null cursor.
+6. Confirm only the intended object returned to the expected state. User Data
+   verification fails closed if canonical ownership, status, or epoch changed.
+   Directory verification tombstones stale restored mappings and reports
+   scanned/tombstoned/conflict counts.
+7. Undo the smoke using the exact receipt printed by step 5. This performs the
+   same schedule → restart → verify protocol:
+
+   ```bash
+   pnpm --filter @repo/web pitr:operator -- undo "$PITR_RECEIPT_JSON"
+   ```
+
+   Do not mark the smoke complete until undo verification also succeeds.
 8. Record stage, class, opaque object identifier, bookmarks, timestamps, and
    outcome without PII.
 

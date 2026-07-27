@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
+import {
+  readPitrBookmark,
+  restartPitrTarget,
+  schedulePitrRestore,
+  schedulePitrUndo,
+  type DirectoryReconciliation,
+  type PitrObject,
+  verifyPitrRestore,
+} from "../pitrOperator";
 import { assertRestorableClass, assertRestoreAuthority } from "../pitrPolicy";
-import { readPitrBookmark, schedulePitrRestore } from "../pitrOperator";
 
 describe("PITR operator policy", () => {
   it("refuses Account Home restores", () => {
@@ -26,118 +34,169 @@ describe("PITR operator policy", () => {
 });
 
 describe("PITR operator workflow", () => {
-  it("rejects Account Home before resolving a target or reading authority", async () => {
-    let calls = 0;
-    const dependencies = {
-      async readAccountAuthority() {
-        calls += 1;
-        return { status: "active" as const, epoch: 1 };
+  function object(
+    sequence: string[],
+    reconciliation: DirectoryReconciliation = {
+      complete: true,
+      scanned: 3,
+      tombstoned: 1,
+      conflicts: 0,
+      cursor: null,
+    },
+  ): PitrObject {
+    return {
+      async getCurrentBookmark() {
+        sequence.push("bookmark");
+        return "current";
       },
-      resolveTarget() {
-        calls += 1;
+      async scheduleRestore(bookmark) {
+        sequence.push(`schedule:${bookmark}`);
+        return "undo";
+      },
+      async restartSession() {
+        sequence.push("restart");
+      },
+      async verifyRestoredSession(bookmark) {
+        sequence.push(`verify:${bookmark}`);
+        return "restored-current";
+      },
+      async reconcileDirectoryAuthority() {
+        sequence.push("reconcile-directory");
+        return reconciliation;
+      },
+    };
+  }
+
+  it("derives User Data object identity from Account Home and verifies after restart", async () => {
+    const sequence: string[] = [];
+    const targetObject = object(sequence);
+    const dependencies = {
+      async resolveUserData(accountId: string) {
+        sequence.push(`authority:${accountId}`);
         return {
-          async getCurrentBookmark() {
-            calls += 1;
-            return "bookmark";
-          },
-          async scheduleRestore() {
-            calls += 1;
-            return "undo";
-          },
+          objectName: "canonical-user-data",
+          authority: { status: "active" as const, epoch: 4 },
+          object: targetObject,
         };
+      },
+      resolveDirectory() {
+        throw new Error("not used");
       },
     };
     await expect(
-      schedulePitrRestore(
-        {
-          className: "AccountHomeDurableObject",
-          objectName: "opaque",
-          accountId: "account",
-          bookmark: "bookmark",
-        },
+      readPitrBookmark(
+        { kind: "user-data", accountId: "account" },
         dependencies,
       ),
-    ).rejects.toThrow("ACCOUNT_HOME_RESTORE_FORBIDDEN");
-    expect(calls).toBe(0);
-  });
-
-  it("checks authority before and after scheduling restore", async () => {
-    const sequence: string[] = [];
-    const authorities = [
-      { status: "active" as const, epoch: 4 },
-      { status: "active" as const, epoch: 4 },
-    ];
-    await expect(
-      schedulePitrRestore(
-        {
-          className: "UserDataDurableObject",
-          objectName: "opaque",
-          accountId: "account",
-          bookmark: "bookmark",
-        },
-        {
-          async readAccountAuthority() {
-            sequence.push("authority");
-            const authority = authorities.shift();
-            if (authority === undefined) throw new Error("missing authority");
-            return authority;
-          },
-          resolveTarget() {
-            sequence.push("resolve");
-            return {
-              async getCurrentBookmark() {
-                return "current";
-              },
-              async scheduleRestore(bookmark) {
-                sequence.push(`restore:${bookmark}`);
-                return "undo";
-              },
-            };
-          },
-        },
-      ),
-    ).resolves.toEqual({ undoBookmark: "undo" });
+    ).resolves.toBe("current");
+    const receipt = await schedulePitrRestore(
+      { kind: "user-data", accountId: "account" },
+      "old",
+      dependencies,
+    );
+    expect(receipt.target).toEqual({
+      kind: "user-data",
+      accountId: "account",
+      objectName: "canonical-user-data",
+    });
+    await restartPitrTarget(receipt, dependencies);
+    await expect(verifyPitrRestore(receipt, dependencies)).resolves.toEqual({
+      currentBookmark: "restored-current",
+    });
     expect(sequence).toEqual([
-      "authority",
-      "resolve",
-      "restore:bookmark",
-      "authority",
+      "authority:account",
+      "bookmark",
+      "authority:account",
+      "schedule:old",
+      "authority:account",
+      "restart",
+      "authority:account",
+      "verify:old",
     ]);
   });
 
-  it("fails closed when authority changes and supports bookmark reads", async () => {
-    const target = {
-      className: "IdentityDirectoryDurableObject",
-      objectName: "opaque",
-      accountId: "account",
-    };
-    const authorities = [
-      { status: "active" as const, epoch: 1 },
-      { status: "deleting" as const, epoch: 2 },
-    ];
+  it("fails closed when canonical User Data ownership changes", async () => {
+    const targetObject = object([]);
+    const names = ["canonical-user-data", "different-user-data"];
     const dependencies = {
-      async readAccountAuthority() {
-        const authority = authorities.shift();
-        if (authority === undefined)
-          return { status: "active" as const, epoch: 1 };
-        return authority;
-      },
-      resolveTarget() {
+      async resolveUserData() {
         return {
-          async getCurrentBookmark() {
-            return "current";
-          },
-          async scheduleRestore() {
-            return "undo";
-          },
+          objectName: names.shift() ?? "different-user-data",
+          authority: { status: "active" as const, epoch: 1 },
+          object: targetObject,
         };
       },
+      resolveDirectory() {
+        return targetObject;
+      },
     };
-    await expect(
-      schedulePitrRestore({ ...target, bookmark: "old" }, dependencies),
-    ).rejects.toThrow("ACCOUNT_AUTHORITY_CHANGED_DURING_RESTORE");
-    await expect(readPitrBookmark(target, dependencies)).resolves.toBe(
-      "current",
+    const receipt = await schedulePitrRestore(
+      { kind: "user-data", accountId: "account" },
+      "old",
+      dependencies,
     );
+    await expect(verifyPitrRestore(receipt, dependencies)).rejects.toThrow(
+      "USER_DATA_TARGET_AUTHORITY_CHANGED",
+    );
+  });
+
+  it("reconciles every restored Directory shard before reporting verification", async () => {
+    const sequence: string[] = [];
+    const targetObject = object(sequence);
+    const dependencies = {
+      async resolveUserData() {
+        throw new Error("not used");
+      },
+      resolveDirectory(shard: string) {
+        sequence.push(`directory:${shard}`);
+        return targetObject;
+      },
+    };
+    const receipt = await schedulePitrRestore(
+      { kind: "identity-directory", shard: "generation-1:bucket-7" },
+      "old",
+      dependencies,
+    );
+    await restartPitrTarget(receipt, dependencies);
+    const verified = await verifyPitrRestore(receipt, dependencies);
+    expect(verified.reconciliation).toMatchObject({
+      complete: true,
+      scanned: 3,
+      tombstoned: 1,
+      cursor: null,
+    });
+    const undo = await schedulePitrUndo(receipt, dependencies);
+    expect(undo.restoreBookmark).toBe("undo");
+    expect(sequence).toContain("reconcile-directory");
+    expect(sequence.at(-1)).toBe("schedule:undo");
+  });
+
+  it("returns an incomplete Directory cursor in the resumable receipt", async () => {
+    const targetObject = object([], {
+      complete: false,
+      scanned: 100,
+      tombstoned: 0,
+      conflicts: 0,
+      cursor: "opaque-next",
+    });
+    const dependencies = {
+      async resolveUserData() {
+        throw new Error("not used");
+      },
+      resolveDirectory() {
+        return targetObject;
+      },
+    };
+    const receipt = await schedulePitrRestore(
+      { kind: "identity-directory", shard: "generation-1:bucket-7" },
+      "old",
+      dependencies,
+    );
+    await expect(
+      verifyPitrRestore(receipt, dependencies),
+    ).resolves.toMatchObject({
+      reconciliation: { complete: false, cursor: "opaque-next" },
+      receipt: { reconcileCursor: "opaque-next" },
+    });
   });
 });

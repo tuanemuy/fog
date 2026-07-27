@@ -1,0 +1,287 @@
+{
+  "TEST-DOM-001": [
+    {
+      "suite": "unit",
+      "file": "packages/core/src/domain/identity/__tests__/entity.test.ts",
+      "test": "emits a single identity.userRegistered draft aggregated on the user"
+    }
+  ],
+  "TEST-DOM-002": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "commits typed memo/document lifecycle, revisions, sources, and digest idempotency"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "covers document update, trash, restore, and trash-only hard delete"
+    }
+  ],
+  "TEST-DOM-003": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "returns original NFKC snippets and typed validation errors"
+    }
+  ],
+  "TEST-APP-001": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "resumes the same signup operation and preserves one authority"
+    }
+  ],
+  "TEST-APP-002": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "consumes a reset once, updates the password mapping, and bumps one epoch"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "uses one deletion epoch for retries and leaves no active authority"
+    }
+  ],
+  "TEST-APP-003": [
+    {
+      "suite": "unit",
+      "file": "packages/core/src/application/identity/__tests__/loginWithPassword.test.ts",
+      "test": "reports an unreadable dummy hash, naming the failure's type only"
+    }
+  ],
+  "TEST-APP-004": [
+    {
+      "suite": "unit",
+      "file": "apps/web/app/presentation/__tests__/currentUser.test.ts",
+      "test": "reports nobody when Account Home has advanced the session epoch"
+    }
+  ],
+  "TEST-APP-005": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "reclaims expired leases and enforces owner CAS, poison, and batch bounds"
+    }
+  ],
+  "TEST-DO-001": [
+    {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "keeps request-only secrets on request and requires authentication for User Data"
+    },
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps request/state bindings and secrets separated"
+    }
+  ],
+  "TEST-DO-002": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/testing/__tests__/migrations.integration.test.ts",
+      "test": "upgrades a real v1 fixture lazily and survives eviction"
+    }
+  ],
+  "TEST-DO-003": [
+    {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "routes two authenticated accounts only to their canonical User Data objects"
+    }
+  ],
+  "TEST-DO-004": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "covers document update, trash, restore, and trash-only hard delete"
+    }
+  ],
+  "TEST-DO-005": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/durableObjects.integration.test.ts",
+      "test": "rolls back the main write when the FTS projection fails"
+    }
+  ],
+  "TEST-DO-006": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "respects the 100-bind ceiling, deterministic ties, and snapshot quota"
+    }
+  ],
+  "TEST-DO-007": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "uses topic authority for archive, trash, restore, and topic source scope"
+    }
+  ],
+  "TEST-DO-008": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "detects ID/provider payload conflicts and accepts exact replays"
+    }
+  ],
+  "TEST-DO-009": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "retries the real alarm handler and poisons after the attempt limit"
+    }
+  ],
+  "TEST-DO-010": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "does not postpone an overdue or imminent alarm from a normal RPC"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "automatically schedules final terminal cleanup"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataJobs.integration.test.ts",
+      "test": "recomputes existing trash and jobs when retention changes"
+    }
+  ],
+  "TEST-DO-011": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/userDataSearch.integration.test.ts",
+      "test": "respects the 100-bind ceiling, deterministic ties, and snapshot quota"
+    }
+  ],
+  "TEST-ID-001": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "resumes the same signup operation and preserves one authority"
+    }
+  ],
+  "TEST-ID-002": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "keeps SSO provider boundaries and blocks verified-email auto-link"
+    },
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "checkpoints two consecutive routing-key rotations"
+    }
+  ],
+  "TEST-ID-003": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "consumes a reset once, updates the password mapping, and bumps one epoch"
+    }
+  ],
+  "TEST-ID-004": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "uses one deletion epoch for retries and leaves no active authority"
+    }
+  ],
+  "TEST-ID-005": [
+    {
+      "suite": "unit",
+      "file": "packages/core/src/adapters/cloudflare/__tests__/pitrPolicy.test.ts",
+      "test": "reconciles every restored Directory shard before reporting verification"
+    }
+  ],
+  "TEST-ID-006": [
+    {
+      "suite": "unit",
+      "file": "packages/core/src/adapters/cloudflare/__tests__/identityRouting.test.ts",
+      "test": "is deterministic, secret keyed, and emits active and previous locators"
+    }
+  ],
+  "TEST-PRES-001": [
+    {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "runs signup, current-user, logout, and login across the two Workers"
+    }
+  ],
+  "TEST-PRES-002": [
+    {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "rejects version mismatches and public routing overrides before RPC"
+    }
+  ],
+  "TEST-PRES-003": [
+    {
+      "suite": "integration-state",
+      "file": "apps/web/app/durable-objects/__tests__/identity.integration.test.ts",
+      "test": "rejects an unknown RPC version before creating a mapping"
+    }
+  ],
+  "TEST-PRES-004": [
+    {
+      "suite": "integration-request",
+      "file": "apps/web/app/testing/__tests__/requestStateBoundary.integration.test.ts",
+      "test": "routes two authenticated accounts only to their canonical User Data objects"
+    }
+  ],
+  "TEST-MAN-001": [
+    {
+      "suite": "ci-command",
+      "command": "test:lifecycle:cli"
+    },
+    {
+      "suite": "ci-command",
+      "command": "audit:legacy"
+    }
+  ],
+  "TEST-MAN-002": [
+    {
+      "suite": "manual",
+      "file": "spec/manual-tests/search.md",
+      "marker": "#"
+    }
+  ],
+  "TEST-OPS-001": [
+    {
+      "suite": "release-gate",
+      "file": ".thread/19/progress.md",
+      "marker": "staging の実bookmark取得・restore・undo restore"
+    }
+  ],
+  "TEST-OPS-002": [
+    {
+      "suite": "unit",
+      "file": "packages/core/src/adapters/cloudflare/__tests__/pitrPolicy.test.ts",
+      "test": "derives User Data object identity from Account Home and verifies after restart"
+    },
+    {
+      "suite": "release-gate",
+      "file": ".thread/19/progress.md",
+      "marker": "staging の実bookmark取得・restore・undo restore"
+    }
+  ],
+  "TEST-OPS-003": [
+    {
+      "suite": "unit",
+      "file": "apps/web/scripts/__tests__/cloudflare-config.test.ts",
+      "test": "keeps request/state bindings and secrets separated"
+    },
+    {
+      "suite": "ci-command",
+      "command": "deploy:staging:dry"
+    },
+    {
+      "suite": "release-gate",
+      "file": ".thread/19/progress.md",
+      "marker": "staging secret inventory gate"
+    }
+  ]
+}

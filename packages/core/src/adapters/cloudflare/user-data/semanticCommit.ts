@@ -14,10 +14,7 @@ import type {
   SemanticCommitResult,
   TopicWriteDto,
 } from "@repo/core/application/search/contracts";
-import {
-  SEARCH_RPC_VERSION,
-  SearchErrorCode,
-} from "@repo/core/application/search/contracts";
+import { SearchErrorCode } from "@repo/core/application/search/contracts";
 import { type DurableSqlStorage, sqliteErrorCode } from "../sql";
 import { payloadDigest } from "./canonical";
 import { Fts5SearchAdapter } from "./searchIndex";
@@ -46,7 +43,6 @@ function commandTimestamp(command: SemanticCommand): number {
     case "trash-memo":
     case "trash-document":
     case "trash-topic":
-    case "trash-content":
       return command.trashedAt;
     case "remove-memo":
     case "remove-document":
@@ -56,24 +52,12 @@ function commandTimestamp(command: SemanticCommand): number {
       return command.restoredAt;
     case "set-topic-archived":
       return command.updatedAt;
-    case "upsert-content":
-      return command.entry.updatedAt;
-    case "restore-content":
-      return command.restoredAt;
-    case "remove-content":
-      return 0;
   }
-  throw new Error("Unsupported semantic command");
 }
 
 function commandPayload(command: SemanticCommand): unknown {
   const { operationId: _operationId, ...payload } = command;
-  return {
-    version:
-      ("version" in command ? command.version : undefined) ??
-      SEARCH_RPC_VERSION,
-    ...payload,
-  };
+  return payload;
 }
 
 export class UserDataSemanticCommit implements SemanticCommitPort {
@@ -205,20 +189,6 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         return;
       case "remove-topic":
         this.removeTopic(command.topicId);
-        return;
-      case "upsert-content":
-        this.legacyUpsert(command.entry);
-        return;
-      case "trash-content": {
-        const kind = this.contentKind(command.id);
-        this.trashContent(command.id, kind, command.trashedAt);
-        return;
-      }
-      case "restore-content":
-        this.legacyRestore(command.id, command.restoredAt);
-        return;
-      case "remove-content":
-        this.hardDelete(command.id, this.contentKind(command.id));
         return;
     }
   }
@@ -386,7 +356,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   }
 
   private hardDelete(id: string, expectedKind: SearchContentKind): void {
-    this.assertExists(id, expectedKind);
+    this.assertTrashed(id, expectedKind);
     this.projection().apply({
       type: "remove",
       entityType: expectedKind,
@@ -425,7 +395,7 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     archivedAt: number | null,
     updatedAt: number,
   ): void {
-    this.assertTopic(topicId, true);
+    this.assertTopic(topicId);
     this.storage.sql.exec(
       "UPDATE topics SET archived_at = ?, updated_at = ? WHERE id = ?",
       archivedAt,
@@ -439,52 +409,105 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     timestamp: number,
     trashed: boolean,
   ): void {
-    this.assertTopic(topicId, true);
-    const documents = this.storage.sql
-      .exec<{ id: string }>(
-        "SELECT id FROM content WHERE kind = 'document' AND topic_id = ?",
+    const state = this.storage.sql
+      .exec<{ trashed_at: number | null }>(
+        "SELECT trashed_at FROM topics WHERE id = ?",
         topicId,
       )
-      .toArray();
-    this.storage.sql.exec(
-      "UPDATE topics SET trashed_at = ?, updated_at = ? WHERE id = ?",
-      trashed ? timestamp : null,
-      timestamp,
-      topicId,
-    );
-    for (const document of documents) {
-      if (trashed) {
+      .toArray()[0];
+    if (
+      !state ||
+      (trashed ? state.trashed_at !== null : state.trashed_at === null)
+    ) {
+      throw new NotFoundError(
+        SearchErrorCode.TopicNotFound,
+        trashed ? "Active topic was not found" : "Trashed topic was not found",
+      );
+    }
+    if (trashed) {
+      const documents = this.storage.sql
+        .exec<{ id: string }>(
+          `SELECT id FROM content
+           WHERE kind = 'document' AND topic_id = ?
+             AND trashed_at IS NULL AND trashed_with_topic_id IS NULL`,
+          topicId,
+        )
+        .toArray();
+      this.storage.sql.exec(
+        `UPDATE topics
+         SET trashed_at = ?, purge_after = ?, updated_at = ? WHERE id = ?`,
+        timestamp,
+        timestamp + this.retentionDays() * DAY_MS,
+        timestamp,
+        topicId,
+      );
+      this.storage.sql.exec(
+        `UPDATE content
+         SET trashed_with_topic_id = ?, updated_at = ?
+         WHERE kind = 'document' AND topic_id = ?
+           AND trashed_at IS NULL AND trashed_with_topic_id IS NULL`,
+        topicId,
+        timestamp,
+        topicId,
+      );
+      for (const document of documents) {
         this.projection().apply({
           type: "remove",
           entityType: "document",
           id: document.id,
         });
-      } else {
-        const active = this.storage.sql
-          .exec<{ id: string }>(
-            "SELECT id FROM content WHERE id = ? AND trashed_at IS NULL",
-            document.id,
-          )
-          .toArray()[0];
-        if (active) {
-          this.projection().apply({
-            type: "upsert",
-            entry: this.readProjection(document.id),
-          });
-        }
       }
+      return;
+    }
+    const documents = this.storage.sql
+      .exec<{ id: string }>(
+        `SELECT id FROM content
+         WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+        topicId,
+      )
+      .toArray();
+    this.storage.sql.exec(
+      `UPDATE topics
+       SET trashed_at = NULL, purge_after = NULL, updated_at = ? WHERE id = ?`,
+      timestamp,
+      topicId,
+    );
+    this.storage.sql.exec(
+      `UPDATE content
+       SET trashed_with_topic_id = NULL, updated_at = ?
+       WHERE kind = 'document' AND trashed_with_topic_id = ?`,
+      timestamp,
+      topicId,
+    );
+    for (const document of documents) {
+      this.projection().apply({
+        type: "upsert",
+        entry: this.readProjection(document.id),
+      });
     }
   }
 
   private removeTopic(topicId: string): void {
-    this.assertTopic(topicId, true);
-    const documents = this.storage.sql
+    const topic = this.storage.sql
       .exec<{ id: string }>(
-        "SELECT id FROM content WHERE kind = 'document' AND topic_id = ?",
+        "SELECT id FROM topics WHERE id = ? AND trashed_at IS NOT NULL",
+        topicId,
+      )
+      .toArray()[0];
+    if (!topic) {
+      throw new NotFoundError(
+        SearchErrorCode.TopicNotFound,
+        "Trashed topic was not found",
+      );
+    }
+    const setDocuments = this.storage.sql
+      .exec<{ id: string }>(
+        `SELECT id FROM content
+         WHERE kind = 'document' AND trashed_with_topic_id = ?`,
         topicId,
       )
       .toArray();
-    for (const document of documents) {
+    for (const document of setDocuments) {
       this.projection().apply({
         type: "remove",
         entityType: "document",
@@ -492,135 +515,15 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       });
     }
     this.storage.sql.exec(
-      "DELETE FROM content WHERE kind = 'document' AND topic_id = ?",
+      "DELETE FROM content WHERE kind = 'document' AND trashed_with_topic_id = ?",
+      topicId,
+    );
+    this.storage.sql.exec(
+      `UPDATE content SET topic_id = NULL
+       WHERE kind = 'document' AND topic_id = ?`,
       topicId,
     );
     this.storage.sql.exec("DELETE FROM topics WHERE id = ?", topicId);
-  }
-
-  private legacyUpsert(
-    entry: Extract<SemanticCommand, { type: "upsert-content" }>["entry"],
-  ): void {
-    if (entry.kind === "document" && entry.topicId !== undefined) {
-      this.storage.sql.exec(
-        `INSERT OR IGNORE INTO topics(
-           id, name, archived_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?)`,
-        entry.topicId,
-        entry.topicId,
-        entry.topicArchived ? entry.updatedAt : null,
-        entry.updatedAt,
-        entry.updatedAt,
-      );
-    }
-    for (const source of entry.sourceLinks) {
-      this.storage.sql.exec(
-        `INSERT OR IGNORE INTO content(
-           id, kind, title, body, created_at, updated_at
-         ) VALUES (?, 'memo', '', '', ?, ?)`,
-        source.memoId,
-        entry.updatedAt,
-        entry.updatedAt,
-      );
-      const hasRevision = this.storage.sql
-        .exec<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM content_revisions WHERE content_id = ?",
-          source.memoId,
-        )
-        .one().count;
-      if (hasRevision === 0) {
-        this.addRevision(source.memoId, "", "", entry.updatedAt);
-        this.projection().apply({
-          type: "upsert",
-          entry: this.readProjection(source.memoId),
-        });
-      }
-    }
-    const existing = this.storage.sql
-      .exec<{ kind: SearchContentKind }>(
-        "SELECT kind FROM content WHERE id = ?",
-        entry.id,
-      )
-      .toArray()[0];
-    if (existing && existing.kind !== entry.kind) {
-      throw new ConflictError(
-        SearchErrorCode.ContentKindConflict,
-        "Content kind cannot be changed",
-      );
-    }
-    this.validateText(entry.title, entry.body);
-    this.storage.sql.exec(
-      `INSERT INTO content(
-         id, kind, title, body, topic_id, topic_archived, trashed_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         title = excluded.title,
-         body = excluded.body,
-         topic_id = excluded.topic_id,
-         topic_archived = excluded.topic_archived,
-         trashed_at = excluded.trashed_at,
-         updated_at = excluded.updated_at`,
-      entry.id,
-      entry.kind,
-      entry.title,
-      entry.body,
-      entry.topicId ?? null,
-      entry.topicArchived ? 1 : 0,
-      entry.trashedAt ?? null,
-      entry.updatedAt,
-      entry.updatedAt,
-    );
-    this.replaceSources(
-      entry.id,
-      entry.sourceLinks.map((source) => source.memoId),
-      entry.updatedAt,
-    );
-    for (const source of entry.sourceLinks) {
-      this.storage.sql.exec(
-        `UPDATE content_sources SET label = ?
-         WHERE content_id = ? AND memo_id = ?`,
-        source.label,
-        entry.id,
-        source.memoId,
-      );
-    }
-    this.addRevision(entry.id, entry.title, entry.body, entry.updatedAt);
-    if (entry.trashedAt === undefined) {
-      this.storage.sql.exec("DELETE FROM trash WHERE content_id = ?", entry.id);
-      this.projection().apply({
-        type: "upsert",
-        entry: this.readProjection(entry.id),
-      });
-    } else {
-      this.projection().apply({
-        type: "remove",
-        entityType: entry.kind,
-        id: entry.id,
-      });
-    }
-  }
-
-  private legacyRestore(id: string, restoredAt: number): void {
-    const kind = this.contentKind(id);
-    this.assertTrashed(id, kind);
-    this.storage.sql.exec(
-      "UPDATE content SET trashed_at = NULL, updated_at = ? WHERE id = ?",
-      restoredAt,
-      id,
-    );
-    this.storage.sql.exec("DELETE FROM trash WHERE content_id = ?", id);
-    const row = this.storage.sql
-      .exec<{ title: string; body: string }>(
-        "SELECT title, body FROM content WHERE id = ?",
-        id,
-      )
-      .one();
-    this.addRevision(id, row.title, row.body, restoredAt);
-    this.projection().apply({
-      type: "upsert",
-      entry: this.readProjection(id),
-    });
   }
 
   private projection(): Fts5SearchAdapter {
@@ -646,7 +549,9 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
       const documentIds = this.storage.sql
         .exec<{ content_id: string }>(
           `SELECT cs.content_id FROM content_sources cs
-           JOIN content d ON d.id = cs.content_id AND d.trashed_at IS NULL
+           JOIN content d ON d.id = cs.content_id
+             AND d.trashed_at IS NULL AND d.trashed_with_topic_id IS NULL
+           JOIN topics t ON t.id = d.topic_id AND t.trashed_at IS NULL
            WHERE cs.memo_id = ? ORDER BY cs.content_id`,
           id,
         )
@@ -737,8 +642,13 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
     mode: "create" | "update",
   ): void {
     const row = this.storage.sql
-      .exec<{ kind: SearchContentKind; trashed_at: number | null }>(
-        "SELECT kind, trashed_at FROM content WHERE id = ?",
+      .exec<{
+        kind: SearchContentKind;
+        trashed_at: number | null;
+        trashed_with_topic_id: string | null;
+      }>(
+        `SELECT kind, trashed_at, trashed_with_topic_id
+         FROM content WHERE id = ?`,
         id,
       )
       .toArray()[0];
@@ -760,7 +670,11 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         "Content kind cannot be changed",
       );
     }
-    if (mode === "update" && row?.trashed_at !== null) {
+    if (
+      mode === "update" &&
+      row &&
+      (row.trashed_at !== null || row.trashed_with_topic_id !== null)
+    ) {
       throw new ConflictError(
         SearchErrorCode.ContentNotFound,
         "Trashed content must be restored before updating",
@@ -792,12 +706,16 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
   private assertActive(id: string, kind: SearchContentKind): void {
     this.assertExists(id, kind);
     const row = this.storage.sql
-      .exec<{ trashed_at: number | null }>(
-        "SELECT trashed_at FROM content WHERE id = ?",
+      .exec<{
+        trashed_at: number | null;
+        trashed_with_topic_id: string | null;
+      }>(
+        `SELECT trashed_at, trashed_with_topic_id
+         FROM content WHERE id = ?`,
         id,
       )
       .one();
-    if (row.trashed_at !== null) {
+    if (row.trashed_at !== null || row.trashed_with_topic_id !== null) {
       throw new ConflictError(
         SearchErrorCode.ContentNotFound,
         "Content is already trashed",
@@ -819,22 +737,6 @@ export class UserDataSemanticCommit implements SemanticCommitPort {
         "Content is not in trash",
       );
     }
-  }
-
-  private contentKind(id: string): SearchContentKind {
-    const row = this.storage.sql
-      .exec<{ kind: SearchContentKind }>(
-        "SELECT kind FROM content WHERE id = ?",
-        id,
-      )
-      .toArray()[0];
-    if (!row) {
-      throw new NotFoundError(
-        SearchErrorCode.ContentNotFound,
-        "Content was not found",
-      );
-    }
-    return row.kind;
   }
 
   private assertTopic(topicId: string, includeTrash = false): void {
