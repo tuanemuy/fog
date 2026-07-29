@@ -71,6 +71,10 @@ export default defineConfig({
     // Allow-list — see the note at the top of this file.
     include: [
       "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
+      // Matches nothing today; listed so the first integration test for a
+      // Cloudflare-binding adapter (e.g. `ServiceBindingRelayTrigger`) runs
+      // instead of silently landing in neither suite.
+      "packages/core/src/adapters/cloudflare/**/*.integration.test.ts",
       "packages/core/src/adapters/d1/**/*.integration.test.ts",
       "packages/core/src/application/**/*.integration.test.ts",
     ],

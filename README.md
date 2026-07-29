@@ -76,7 +76,7 @@ For a production build:
 pnpm build
 ```
 
-The build output cannot be run locally yet — both `pnpm start` (`wrangler dev`) and `pnpm preview` fail to boot ([#40](https://github.com/tuanemuy/fog/issues/40)); see [Development commands](#development-commands) for the cause. Use `pnpm dev`, or deploy to a stage.
+The build output cannot be run locally yet — both `pnpm start` (`wrangler dev`) and `pnpm preview` fail to boot ([#40](https://github.com/tuanemuy/fog/issues/40)); see [Development commands](#development-commands) for the cause. `pnpm dev` is the only way to run the app locally; deploying to a stage is not a workaround either, since #40 expects the deployed top-level Worker to hit the same failure.
 
 See [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) for deployment, secrets, queues, and per-stage D1 management.
 

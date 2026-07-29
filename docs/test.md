@@ -8,15 +8,15 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 - **Targets**: domain-layer + application-layer logic (the pure parts).
 - **Dependencies**: the only fakes kept on hand are the three under `packages/core/src/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream), `FakeLogger` (a recording Logger), and `FakePasswordHasher` (a cheap deterministic digest). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
-- **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `retry()`.
+- **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of pure application-layer helpers like `outboxPrune`'s retention window.
 - **Speed**: a few to a dozen-or-so milliseconds. `vitest.config.ts` excludes `**/*.integration.test.ts`, so nothing here touches a DB.
-- **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `events.test.ts`, `retry.test.ts`).
+- **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `eventDecoders.test.ts`, `outboxPrune.test.ts`).
 
 ### Integration (`pnpm test:integration`)
 
 - **Targets**: the Drizzle SQLite adapter implementation, adapter × application integration, concurrent / OCC (optimistic concurrency control) scenarios, and outbox poll / dispatch behavior.
 - **Dependencies**: real SQLite through a single Workers pool — an in-memory Miniflare D1 binding.
-- **Aim**: realistically verify batch rollback, `OptimisticLockFailure` (raised from the `_occ_guard` CHECK when an OCC-guarded write matches zero rows), and the outbox's `claimPending` / `finalize`.
+- **Aim**: realistically verify batch rollback, `ConflictError("OPTIMISTIC_LOCK_FAILURE")` (raised from the `_occ_guard` CHECK when an OCC-guarded write matches zero rows), and the outbox's `claimPending` / `finalize`.
 - **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
 - **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `identity.integration.test.ts`, `userRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
 
@@ -38,7 +38,7 @@ Currently the following three are the only fakes kept under `packages/core/src/a
 
 The `FakePasswordHasher` case is the criterion for adding a fake at all: the port is a pure CPU-bound transform whose real implementation is separately unit-tested, and the fake preserves the one property the tests read off it. Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
-- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like the deferred batch flush, lock contention (`SQLITE_BUSY` / `SQLITE_LOCKED`), or `OptimisticLockFailure`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
+- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like the deferred batch flush, lock contention (`SQLITE_BUSY` / `SQLITE_LOCKED`), or `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
 - `Clock` is just a `() => Date`, so it's enough to construct a constant like `new Date(0)` within a test and pass it to the usecase / domain. There's no need to fake it as a port object.
 
 ## Real DB test (integration) policy
@@ -47,7 +47,7 @@ The `FakePasswordHasher` case is the criterion for adding a fake at all: the por
 - `setupTestContainer()` (`packages/core/src/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
 - File names are `*.integration.test.ts`. The unit `vitest.config.ts` excludes this pattern and runs only unit tests.
 - The suffix alone is not enough to get a file run: `vitest.config.integration.ts` selects integration tests through an explicit `include` allow-list of directories. A new `*.integration.test.ts` outside those directories is excluded from the unit suite by its suffix **and** skipped by the integration suite for not matching `include` — it silently runs nowhere. When you add integration tests under a new directory, add it to `include` in the same change.
-- When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `OptimisticLockFailure`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
+- When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
 
 ## Property-based policy
 
@@ -59,7 +59,7 @@ The `FakePasswordHasher` case is the criterion for adding a fake at all: the por
 
 - The configs currently use Vitest's default timeouts. Unit tests finish in a few hundred milliseconds; if an integration test needs a longer ceiling, set it in `vitest.config.integration.ts` rather than slowing the unit suite.
 - The D1 adapter has **no** built-in transient retry, so there is no retry backoff to tune. `SQLITE_BUSY` / `SQLITE_LOCKED` are connection-level conditions the D1 binding handles upstream of the adapter, and whatever still reaches the caller is a signal, not a retry candidate (`packages/core/src/adapters/d1/unitOfWork.ts`).
-- Concurrency tests are therefore the usual source of flakiness: a race between two `run` calls branches into two failure shapes (see "Real DB test (integration) policy" above), so assert loosely enough to accept both before reaching for per-test `test.extend` / `vi.useFakeTimers`.
+- Four integration tests run work concurrently today, and each pins a single deterministic outcome rather than a range: the registration race in `identity.integration.test.ts` (the loser always surfaces as a `UNIQUE_VIOLATION`, since D1 aborts its batch), two competing `claimPending` callers in `outboxRepository.integration.test.ts`, three competing `markProcessed` calls in `idempotencyStore.integration.test.ts`, and a pair of concurrent reads in `userRepository.integration.test.ts`. Nothing races two OCC-guarded writes yet — that is the one shape with two possible failures (see "Real DB test (integration) policy" above), so a new test of that kind should assert loosely enough to accept both before reaching for per-test `test.extend` / `vi.useFakeTimers`.
 
 ## Commands
 
