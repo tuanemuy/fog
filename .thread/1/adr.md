@@ -163,6 +163,8 @@ pbkdf2-sha256$<iterations>$<saltBase64>$<hashBase64>
 
 Proposed
 
+→ `.adr/002-cloudflare-workers-and-user-data-durable-objects.md` に supersede された。
+
 ### Context
 
 テンプレートは Node + libSQL / Cloudflare Workers + D1 + Queues / AWS Lambda + Turso + SQS / GCP Cloud Run + Pub/Sub の4ランタイムを同梱しており、CLAUDE.md は「ひとつ選んで他は消す」方針を示している。一方で spec/database/index.md は「SQLite 系ランタイム（libSQL / D1 / Turso）を前提」とし、特定ランタイムを指定していない。
