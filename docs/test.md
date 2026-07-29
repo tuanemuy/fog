@@ -38,7 +38,7 @@ Currently the following three are the only fakes kept under `packages/core/src/a
 
 The `FakePasswordHasher` case is the criterion for adding a fake at all: the port is a pure CPU-bound transform whose real implementation is separately unit-tested, and the fake preserves the one property the tests read off it. Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
-- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like the deferred batch flush, lock contention (`SQLITE_BUSY` / `SQLITE_LOCKED`), or `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
+- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like the deferred batch flush or `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
 - `Clock` is just a `() => Date`, so it's enough to construct a constant like `new Date(0)` within a test and pass it to the usecase / domain. There's no need to fake it as a port object.
 
 ## Real DB test (integration) policy
