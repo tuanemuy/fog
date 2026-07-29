@@ -2375,3 +2375,155 @@ Accepted
 
 - 良い点: 「Issue 本文が改訂対象と書いているのに本書の判定に現れないファイル」がゼロになる
 - トレードオフ: `spec/usecases/review/002.md` に旧前提の記述が残る。レビュー記録としては正しい状態なので害が無い
+
+## ADR-088: 世代非依存の `credentialId` を導入し、credential の同一性を `hmac` から切り離す
+
+### Status
+
+Accepted
+
+### Context
+
+locator の全長 HMAC は `HMAC-SHA-256(DIRECTORY_ROUTING_SECRET[generation], canonical)` の出力なので、**同じ canonical でも世代が違えば値が違う**。ところが設計は `(kind, hmac)` を「世代をまたいで安定な credential の同一性」として使っており、鍵ローテーション中の2世代並存下で次が同時に破れていた — (i) unlink の「最後のログイン手段」検査が distinct `(kind, hmac)` を2件と数えて発火せず**自己ロックアウト**、(ii) unlink / 退会の削除対象を「同じ credential の別世代の行」として突き合わせるキーが存在しない、(iii) `record-credential-locator` の冪等キーが第6.6節（`(kind, hmac)`）と第6.8節（世代違いの2行が必須）で自己矛盾し、前者で実装すると**移送済み全利用者が到達性検査で締め出される**、(iv) `encryptedCanonical` の AAD が `hmac` を束縛しているため移送で**全行が復号不能**になる。同じ箇所が R2・R3・R4 の3ラウンド連続で別角度から再指摘されたため、個別パッチではなく構造で直す。
+
+### Decision
+
+**世代非依存の `credentialId` を1本立て、credential の突き合わせキーをすべてこれにする。** 値は `IdGenerator` が採番する128ビットの不透明値で、canonical からも鍵からも導出しない（`callerToken` とまったく同じ扱い）。採番点は request Worker — signup は phase 0 で credential ごとに、SSO link は `operationId` と同時に採番する。**鍵ローテーションの移送は行ごと引き継ぎ再採番しない**。置き場所は `credential_mappings` / `credential_locators` / `password_reset_tokens` の3テーブルで、`credential_locators` の一意性は `(credentialId, generation)` になる。`hmac` は落とさず「その世代における locator の材料」として役割を分ける。UI へは `credentialId` / `kind` / `label`（provider 名まで）の3つ組を出し、unlink は `credentialId` を指定して発行する。
+
+### Consequences
+
+- 良い点: 到達性検査・ログイン手段の数え上げ・削除対象の選択・`credentialVersion` の更新範囲・冪等キー・AAD の6つが**1つのキーに揃う**。「世代を照合条件に含めるか」という問い自体が消える。canonical 化規則の変更（版番号を持つ移行）にも耐える
+- トレードオフ: 3テーブルに列が1つずつ増え、`credential_locators` に表示用の `label` も足した。`credentialId` は `userId` と同じく「不透明だが存在が登録済みを漏らす」値なので、未認証経路のログ非出力対象に加える必要がある
+
+## ADR-089: `record-credential-locator` の冪等キーを `(credentialId, generation)` に統一し、`credentialVersion` を単調非減少の upsert にする
+
+### Status
+
+Accepted
+
+### Context
+
+同じ1本の RPC を signup phase 4 / SSO link 手順4 / 鍵ローテーション手順2 の (1)(4) が共有しているのに、冪等キーの定義が節ごとに違っていた。`(kind, hmac)` にするとローテーションの (1) が常に no-op になり、(4) が旧世代行を消した時点で `credential_locators` が空になる（移送済み全利用者が到達性検査で締め出される）。加えて `credential_locators` の `credentialVersion` / `usableForLogin` の**更新**に世代規則が無く（削除だけが全世代規則を持っていた）、ローテーション中の credential 変更が片側の世代の行だけを進めて**恒久ログイン不能**になる経路が開いていた。
+
+### Decision
+
+**冪等キーを `(credentialId, generation)` に統一し、既存行があれば no-op ではなく upsert にする。** あわせて第6.1.1節へ **(R8)** を足す — `credentialVersion` / `usableForLogin` / `label` は `credentialId` 単位で管理し、更新は常に全世代の行へ同時に行う。`credentialVersion` は `credentialId` 単位で**単調非減少**で、`record-credential-locator` は「引数の値とその `credentialId` の既存行の最大値のうち大きいほう」を全世代の行へ書く。第6.5.1節 phase 2 の「当該行」も「`credentialId` が一致する全世代の行」に直し、login step 5 (iii) は「一致する active 行**すべて**が引数の値と一致すること」にした。鍵ローテーションの巻き戻しでは (1) がその走査で新規に追加した locator 行も破棄する。
+
+### Consequences
+
+- 良い点: 世代スキューが原理的に発生しなくなり、step 5 (iii) を「すべて一致」と fail closed で書ける。ローテーションのチャンクが古いスナップショットで再実行されても単調性が値の後退を防ぐ
+- トレードオフ: upsert は「同じ値の再書き込み」を1行分の rows written として計上する。ローテーション1周ぶんの増分なので第10.2節の見積りには影響しない
+
+## ADR-090: 鍵ローテーションの移送を `credentialVersion` の新旧比較で正本へ収束させる
+
+### Status
+
+Accepted
+
+### Context
+
+移送規則が「移送先に行があれば書かずに削除だけ行う」だったため、**移送先が陳腐化する方向**が無防備だった。(2) の後・(3) の前で中断し、その窓で旧世代 bucket 宛の発行済みトークンによるリセットが完走すると、再実行は「行があるから書かない」を選んで移送元（新しい値）を消す。終状態は active bucket に旧 `passwordVerifier` で、login step 5 の (ii)(iii) はどちらも通る — **リセットで設定した新パスワードが黙って捨てられ、旧パスワードでログインできる**。着地先が移送元になるのは偶然ではなく、リセット完了ではトークンが発行時の世代を運ぶので構造的に必然である。
+
+### Decision
+
+第6.1.1節へ **(R9)** を足す — **2世代に行が並存する状態では `credentialVersion` が大きい側が正本であり、移送は必ず正本の側へ収束させる。** 第6.8節 手順2 の (2) を4分岐にした（行が無ければ書く / `userId` 違いは `poison` / 移送元のほうが大きければ移送先を行ごと上書き / 移送先のほうが大きければ触らず移送元を消すだけ / 等しければ何も書かない）。**(R8) と (R9) は対で入れる** — 片方だけでは失敗モードが「旧パスワード復活」と「恒久ロックアウト」で入れ替わるだけである。
+
+### Consequences
+
+- 良い点: 中断からの再実行が自動的に正本へ収束するので、(3) の CAS 失敗時の「移送先の行を破棄する」は最適化として扱える（クラッシュで実行主体が消えても正しさが壊れない）
+- トレードオフ: (2) が読み取り1回ぶん重くなる。移送は保守作業なのでホットパスに影響しない
+
+## ADR-091: `encryptedCanonical` の AAD から `hmac` を外し、移送では再暗号化しない
+
+### Status
+
+Accepted
+
+### Context
+
+AAD が `(kind, hmac, encryptionGeneration)` を束縛する一方、鍵ローテーションの移送はその `hmac` を作り替える。移送手順に再暗号化の規定が無いので、**移送された全行の canonical が復号不能**になる。復号失敗は `SystemError(DataIntegrityError)` で fail closed に止める規則なので、(i) リセットメールの宛先組み立て、(ii) 設定画面の自メールアドレス表示、(iii) 次回ローテーションの再 HMAC が恒久的に壊れる。(iii) が壊れるので1回目の完了時点で2回目が原理的に実行不能になり、しかも移送直後は誰も復号しないため最初のリセット依頼まで顕在化しない。取りうる形は「移送時に再暗号化する」か「AAD から `hmac` を外す」の2つである。
+
+### Decision
+
+**AAD を `(kind, credentialId, encryptionGeneration)` にする。`hmac` は含めない。移送では暗号文系の3列（`encryptedCanonical` / `encryptionGeneration` / `encryptionNonce`）をそのまま運び、再暗号化しない。** 付け替え防止は維持される — `credentialId` は credential ごとに一意なので別 credential への付け替えは検出でき、検出できないのは「同じ credential の2世代の行のあいだで入れ替える」場合だけだが、その2行の平文は同じ canonical なので入れ替えても何も起きない。再暗号化する案を採らないのは、**再暗号化を `rotate-encryption` ジョブだけの仕事として定義した規則と、2つのローテーションを独立に走らせてよいという断定の両方を崩す**からである。
+
+### Consequences
+
+- 良い点: 規則が1つ減る（移送手順が暗号処理を持たない）。2つのローテーションの独立性が保たれる
+- トレードオフ: AAD が locator を束縛しなくなるので、「行を別の bucket へ丸ごと複製する」攻撃は AAD では検出できない。ただしそれは移送そのものと区別がつかない操作であり、検出責務は Directory 側の一意制約と `userId` 照合が負う
+
+## ADR-092: saga を新規に開始する3エントリを `callerToken` で束縛し、脅威モデルを実態へ書き直す
+
+### Status
+
+Accepted
+
+### Context
+
+「クラス (3) は CAS と phase 条件が守る」という一括の正当化が、**`operations` 行を新規に作る側のエントリには成立しない**。該当は `begin-credential-change` / `advance-credential-change` / ローテーション経路の `record-credential-locator` の3本で、いずれも無束縛のまま残っていた。結果として「同じ locator に対する**読み**は `callerToken` で束縛されているのに、より強い**書き**が無束縛」という非対称が生じ、乗っ取り原始関数・恒久ロックアウト原始関数・任意アカウントへのクレデンシャル注入が成立する。あわせて `callerToken` の脅威モデル（「request Worker のコード実行を得た攻撃者に効く2層目」）が、同トークンを request Worker へ返す設計（phase 0 の A-1）と食い違っていた。
+
+### Decision
+
+**3本とも `callerToken` で束縛する。** 材料は新しく増えない — 起点 A は A-1 が `account.callerToken` を返し、残り2本は Directory 側の mapping 行が同じ値を持つ。**唯一の例外は `begin-credential-change` の起点 B（未認証のリセット完了）**で、`consume-reset-token` が消費したトークン行へ `consumedByOperationId` を記録し、その `operationId` と `credentialId` の一致を条件にする。**ローテーション経路の `record-credential-locator` に `operations` 行を要求しない、と決め切る**（移送は認証状態の変更ではない）。第5.1節の群分けを3群から4群へ広げ、(3-d)「saga を新規に開始できる群」を立てた。**脅威モデルは書き直す** — `callerToken` が守るのは「binding には到達できるが `SESSION_SECRET` を持たない呼び出し元」だけであり、request Worker のコード実行を得た攻撃者にはセッション偽造 → A-1 の1回の追加 RPC で越えられる。この残余リスクは #38 の監査要件へ送る。
+
+### Consequences
+
+- 良い点: 「読みだけ束縛されて書きが無束縛」という自己矛盾が消える。`operations` 行の有無で守れないエントリが明示的な群として台帳に載る
+- トレードオフ: `password_reset_tokens` に `consumedByOperationId` 列が1つ増える。`callerToken` の防御範囲を正直に書いた結果、残余リスクの記述が1つ増える（機構は廃止しない）
+
+## ADR-093: 周期・反復ジョブの再武装をジョブ自身の責務にし、収束規則の適用範囲を外部再投入に限定する
+
+### Status
+
+Accepted
+
+### Context
+
+`operationKey` の収束規則は「`nextRunAt` を早める方向にのみ更新し、遅らせない」だったが、`trashRetentionDays` を**延長**すると `min(purge_after)` は後ろへ動くので、「`purge_after` の最小値を `nextRunAt` へ写す」「retention 設定変更時に Alarm を張り直す」という別々の断定と同時には成立しない。より重いのは**完走後の再武装が誰の責務か決まっていない**ことで、`purge-trash` が期限到達分を消して `done` になると、残る `pending` 行が無ければ `deleteAlarm()` が走り、dormant な User Data DO は次の期限が来ても二度と起きない — **ゴミ箱の保持期限が誰にも気づかれずに無期限へ伸びる**。`finally` を棄却し先頭再武装を導入してまで塞いだ失敗モードが、retention の本体経路で開いたままだった。同じ穴が `sweep-reservations` / `sweep-reset-tokens` にもあり、第6.4節の TTL 掃除（3段ガードの1段目）が1回きりで止まる。
+
+### Decision
+
+第7.4節に「**周期・反復ジョブの再武装規則**」を足し、第4.1節・第7.5節の断定をそこへ帰着させた。(1) `purge-trash` / `sweep-*` は完了トランザクションの中で自分の駆動源（`min(purge_after)` / `min(reservedUntil)` / `min(expiresAt)`）を読み直し、**残件があれば自分の `nextRunAt` をその値へ設定して `pending` へ戻し、残件が無いときだけ `done` にする**。(2) 収束規則「早める方向にのみ」は**外部からの再投入（`enqueueJob`）にだけ適用し、ジョブ自身の再スケジュールには適用しない**。(3) `purge-trash` / `sweep-*` の `operationKey` は定数（DO ごとに1行）にする。あわせて `done` / `poison` の行への再投入は「同じ行を `pending` へ戻して `attempt` を0にする（別行は作らない。`terminalReason` は残す）」と決めた。
+
+### Consequences
+
+- 良い点: 「早める方向にのみ」と「最小値を写す」が両立し、retention の前倒しと後ろ倒しの両方が動く。往復は増えない（正常完了時の張り直しと同じ `transactionSync` に入る）
+- トレードオフ: ジョブ実装が自分の駆動源を知る必要がある（種別ごとに読む列が違う）。ジョブ種別を足すときに再武装の有無を判断する項目が1つ増える
+
+## ADR-094: チャンク反復上限で中断したジョブは `status` を `pending` へ戻し lease を解放する
+
+### Status
+
+Accepted
+
+### Context
+
+claim は `UPDATE jobs SET status='running', leaseUntil=?, ownerToken=? WHERE ...` なので実行中のジョブは必ず `running` である。ところが (iii-b)（1回の Alarm 起動で同一ジョブについて回してよいチャンク反復回数の上限）の記述は「そのジョブを `pending` のまま残して次の Alarm へ回す」で、claim 済みのジョブを `pending` へ戻すのか `running` のまま残すのかが決まらなかった。`running` のまま残すと再 claim 述語 `(status='pending' OR leaseUntil < ?)` がリース満了まで一致せず、**そのジョブだけがリース期間ぶん進捗を止める**。`migrate-bulk` は外側の25件上限が発火しないぶん (iii-b) が唯一の中断点なので、影響が migration の所要時間に直接出る。
+
+### Decision
+
+**(iii-b) で中断するときは、進捗カーソルのコミットと同じ `transactionSync` で `status` を `pending` へ戻し、`ownerToken` と `leaseUntil` を解放する。** これで lease の用途を「実行中に DO がリセットされた場合の回収手段」だけに限定できる。
+
+### Consequences
+
+- 良い点: 中断と再開の状態遷移が claim の CAS と一致する。lease の意味が1つに絞られる
+- トレードオフ: 中断のたびに1行の更新が増える。チャンク境界では既にカーソルをコミットしているので同じトランザクションに畳める
+
+## ADR-095: 第2.1節 F-4b の裏付けを「記載の不在」から公式 FAQ の当該文へ差し替える
+
+### Status
+
+Accepted
+
+### Context
+
+F-4b は「Alarm / RPC が CPU リセットの契機に当たるか」を**記載の不在による推論**と分類していた。ところが同じ limits ページの FAQ に「By default, the maximum CPU time per Durable Objects invocation (HTTP request, WebSocket message, or Alarm) is set to 30 seconds」という一文があり、**Alarm は30秒の CPU 予算を持つ invocation として名指しで列挙されている**（公式ページを実地に取得して確認した）。一方でリセットの契機として footnote 4 が挙げるのは「incoming HTTP request」と「WebSocket message」の2つだけで、Alarm は含まれていない。事実表は「本節が設計の依拠する事実の正本である」と宣言し種別を落とさないと決めているので、分類の誤りは正本の正確さの問題になる。
+
+### Decision
+
+**出典欄を「記載の不在」から「FAQ の当該文と footnote 4」へ差し替え、種別は「未確認」のまま残す。** 未確認である理由も書き換えた — 「記載が無い」からではなく「公式内の2文が別々のことを述べており、Alarm ごとに30秒が与えられるのか着信間で共有される枠を消費するだけなのかが決まらない」からである。**設計の結論は一切変わらない** — 残り CPU を読む API が無いことと `Date.now()` の凍結（F-32）だけで、3階層とも件数で有界にする判断は独立に成立する。変わるのは #37 が着手時に走らせる spike の出発点で、第11.4節の該当行にもこの一文を引いた。
+
+### Consequences
+
+- 良い点: 事実表の種別分類が公式の記述と一致する。#37 の spike が「肯定も否定も無い」からではなく「一段細かい問い」から始められる
+- トレードオフ: 無い。結論は不変で、記述の正確さだけが上がる
