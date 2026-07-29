@@ -40,9 +40,9 @@ export const MIN_PBKDF2_ITERATIONS = 1_000;
 /**
  * Ceiling accepted when reading an iteration count back out of a stored
  * hash. A row carrying an absurd count would otherwise turn one login
- * into an unbounded CPU burn (a Worker killed by its CPU limit).
- * Reaching it requires database
- * write access, so this guards data corruption rather than an attacker.
+ * into an unbounded CPU burn (a Worker killed by its CPU limit). Reaching
+ * it requires database write access, so this guards data corruption
+ * rather than an attacker.
  */
 export const MAX_PBKDF2_ITERATIONS = 10_000_000;
 

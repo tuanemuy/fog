@@ -7,9 +7,9 @@ import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSes
 /**
  * Secrets a request container needs, held in their own nested object.
  *
- * The nesting is load-bearing. Every `createXxxRequestContainer` builds
+ * The nesting is load-bearing. `createRequestContainer` builds
  * `AppConfig` by rest-spreading its runtime config
- * (`const { db, relayTrigger, secrets, ...appConfig } = config`), and
+ * (`const { …, secrets, ...appConfig } = config`), and
  * `appConfig satisfies AppConfig` is a `satisfies` on a *variable*, which
  * does not run excess-property checking. A secret placed flat on
  * `RequestServerConfig` would therefore ride the spread into
