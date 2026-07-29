@@ -2793,3 +2793,136 @@ Accepted
 
 - 良い点: 改訂のたびに数え直す義務が1つ減る。名指しした必須入力は数ではなく役割で書かれているので古びない
 - トレードオフ: 「どれくらいの分量を辿ることになるか」の目安が読み手に伝わらなくなる。起点（第11.1節 / 第11.3節）が明示されているので実害は小さい
+
+## ADR-110: 「全数」を名乗る表の相互整合を、不変条件と機械検査として明文化する（構造的修正）
+
+### Status
+
+Accepted
+
+### Context
+
+design.md には「全数」を名乗る表が7つあり（第4.1.1節のテーブル・列 / 同 非集約ストア分類 / 第7.4節の `kind` 全数 / 同 駆動源クエリ / 第7.7節の非同期実行契約の正文 / 第8.2節の UoW 書き込み口 / 第5.1節の RPC エントリ）、互いを参照し合っている。ところが整合を確認する手段が人手の読み下ししかなく、**片方を直すともう片方が取り残される**という同じ形の破れが R3・R5・R6 の3ラウンドで繰り返し検出された（`jobs` の列の欠落 / 駆動源クエリ表の行の欠落 / 投入点の不在 / RPC エントリの分類漏れ / UoW 書き込み口が7ストア中3つ / 秘密の個数の不一致）。`.thread/34/review/triage.md` の運用規則（同じ箇所が3ラウンド以上別角度から再指摘されたら個別修正で追いかけず設計の問題として扱う）に該当する。
+
+### Decision
+
+**個別パッチをやめ、第1.4節を新設して (i) 全数表の一覧、(ii) 表どうしが満たすべき不変条件 I-1〜I-8、(iii) その機械的な検査手順の3つを1箇所に置く。** 検査は表のヘッダ行で行を抜き出す小さな shell（`tbl` / `cells1`）だけで完結し、目視の読み下しに依存しない。あわせて表の側も検査できる形へ寄せた — `kind` 全数表に「投入点」と「再武装分類」の列を足して空欄を検出可能にし、非集約ストアの分類を散文の箇条書きから7行の表へ変え、第7.7節 項2 に4類型 × `kind` の対応表を置き、第5.1節のクラス (3) の4群割り当てを本数つきの表にした。本書を改訂する担当者は改訂の最後に第1.4節の検査を全項目走らせる。
+
+### Consequences
+
+- 良い点: R6 の Blocker 4件と Warning 4件が同じ突き合わせで一括に解けた（`jobs.completedAt` の追加 / 駆動源表の2行 / `sweep-orphan-mapping` と `sweep-reservations` / `sweep-reset-tokens` の投入点 / UoW 書き込み口の射程 / ローテーション経路の分類 / 秘密の個数）。次の改訂で同じ形の破れが入っても、人手ではなく検査が落とす
+- トレードオフ: 表の書式（ヘッダ行の文言、第1セルがバックティック識別子であること、インデント）が検査手順の入力になるので、書式を変えると検査も直す必要がある。第1.4節にその依存を明記した
+
+## ADR-111: 周期・反復ジョブの再武装を「時刻駆動」と「残件駆動」の2群に分ける
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節は再武装規則の射程を `sweep-*` という接頭辞の glob で定め、駆動源を「作業述語から時刻条件だけを外したもの」と定義していた。ところが `sweep-orphan-mapping` の作業述語（未回収の孤児 mapping）と `rotate-encryption` の作業述語（active 世代でない暗号文）には**時刻条件が無い**ので、`min(...)` を書く形の規則が構造的に当てはまらない。結果としてこの2種は駆動源クエリ表に行を持たず、再武装が未定義のまま残っていた。加えて `sweep-orphan-mapping` は投入点も本文になく、unlink 手順3 が落ちたときの孤児 mapping が恒久的に回収されない（SSO 主体の永久ロック）状態だった。
+
+### Decision
+
+**接頭辞での分類をやめ、`kind` 全数表に「再武装分類」列を置いて3値 (A) 時刻駆動 / (B) 残件駆動 / (C) 一回性 で全12種を割る。** (A) は従来の駆動源クエリ表（時刻列の `min(...)`）を持ち、(B) は新設の残件条件表（残件があれば `now + 最小再開間隔`、無ければ `done`）を持ち、(C) はどちらの表にも行を持たない。`sweep-orphan-mapping` と `rotate-encryption` を (B) に置き、それぞれの残件条件と、残件を減らす手段（`operations.phase = 'done'` の書き込み / `encryptionGeneration` の前進）を明記した。あわせて全12種に投入点を与えた — `sweep-orphan-mapping` は unlink 手順2、`sweep-reservations` は signup phase 1a / 1b、`sweep-reset-tokens` はトークン行の発行、`rotate-encryption` は maintenance 経路である。
+
+### Consequences
+
+- 良い点: 「投入されるが二度と起きないジョブ」と「再武装の規則がどこにも書かれていないジョブ」が表の空欄として検出できるようになった。分類 (A)(B) はいずれも「集合が空なら `done`」なので、平常時に必ず `done` へ落ちる。投入点と再武装を対で要求することが正しさの条件だと本文に書けた
+- トレードオフ: 再武装の規則が1つから2つに増えた。(B) の「最小再開間隔で刻む」は (A) の `min(...)` に比べて空振りの起動が増えうるが、どちらも件数上限（(iii-a)）で有界であり、`setAlarm` 1回ぶんの書き込みに収まる
+
+## ADR-112: retention の延長で `nextRunAt` を後ろへ動かす経路を作らない
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節の収束規則は「再投入は `nextRunAt` を早める方向にのみ更新する」と定め、適用範囲を「外部からの再投入（`enqueueJob`）」に限っていた。ところが第7.5節の retention 設定変更時の Alarm 張り直しは**利用者操作の延長として RPC 経路のユースケースが行う**もので、ジョブ完了トランザクションではないため除外側に構造的に入らない。にもかかわらず同節は「延長方向もここに含まれるので『早める方向にのみ』を適用しない」と自分で例外を名乗り、第4.1節 行5 は逆に「遅らせる向きの更新はジョブ自身の再スケジュールに限る」と書いていた。3箇所が別々のことを述べ、しかも第8.2節の `enqueueJob(kind, operationKey, payload, nextRunAt): void` に「これは再武装だ」を表現する引数が無いので、どの読み方でも実装手段が存在しなかった。
+
+### Decision
+
+**規則を増やさず、延長を空振り1回で吸収する形に倒す。** retention 変更時は `purge_after` を一括再計算して新しい `min(purge_after)` で `enqueueJob` を発行し、**「早める方向にのみ」をそのまま適用する**。短縮は前倒しされ、延長は既存の早い `nextRunAt` が残る — ジョブはその時刻に1回起動し、作業対象0件で完了し、同じ完了トランザクションの中で再武装 (1-A) が新しい `min(purge_after)` を書く。**`enqueueJob` に `rearm` 相当の引数も第2のメソッドも足さない、と断定する。**
+
+### Consequences
+
+- 良い点: 第4.1節 行5・第7.4節の収束規則・第7.5節の3箇所が同じことを述べる状態になった。UoW 契約に口が増えないので、第8.2節の「書き込み口の全数」宣言も動かない。「遅らせる更新は再武装だけが行う」という1文で全経路を説明できる
+- トレードオフ: retention を延長するたびに空振りの起動が1回入る（`setAlarm` 1回ぶんの書き込み）。ゴミ箱に項目がある利用者だけに、しかも設定変更の頻度でしか起きない
+
+## ADR-113: `rotate-remap` の鍵注入に previous 世代の鍵の所持証明を課す
+
+### Status
+
+Accepted
+
+### Context
+
+鍵ローテーションの再写像は、平文 canonical を Worker 境界の外へ出さないために「maintenance 経路が active 世代の routing key を bucket へ一時注入し、bucket の中で再 HMAC する」形を採っている（第5.2.3節）。ところが bucket は `DIRECTORY_ROUTING_SECRET` を保持しない（第3.2節の非重複配布）ので、引数で渡された鍵と世代が本物かどうかを判定する材料を1つも持たなかった。帰結は、`callerToken` が「正しく塞げている」と断定した攻撃者クラス（binding には到達できるが `SESSION_SECRET` を持たない呼び出し元）に対して成立する — 任意の鍵と世代でチャンクを駆動すると行が攻撃者の計算できる bucket へ移送され、そこの `lookup-credential`（無条件に応答する）から `passwordVerifier` を取得できる。同時に移送元 bucket の全利用者が解決不能になる。加えてこのエントリはクラス (3) の4群分類からも漏れていた。
+
+### Decision
+
+**チャンク RPC に previous 世代の鍵も同時に注入させ、bucket が自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから active 鍵を受け入れる、を必須ガードにする。** あわせて自 DO 名の世代照合と `activeGeneration > gen` の CAS を課す。分類上は表の1行を2行（`rotate-remap` の1チャンク駆動 / `rotate-encryption` の起動）へ割り、両方を (3-c) に置いて `purge-user-mappings` と同格の実行前承認・監査記録を #38 へ送った。第6.9節の締め出し経路一覧にも行を足した。
+
+### Consequences
+
+- 良い点: `encryptedCanonical` と `hmac` はどちらも bucket が既に持っている値なので、**追加の秘密も新しい配布経路も要らず**第3.2節の非重複配布を崩さない。previous 鍵を提示できるのは routing keyring を持つ request Worker だけなので、実質的な呼び出し元束縛になる
+- トレードオフ: チャンクごとに復号と HMAC が1回増える（HMAC-SHA-256 は CPU 予算を圧迫しない。第5.2.3節）。行が0件の bucket では照合を空振りで通す例外が1つ要る
+
+## ADR-114: `cancel-reservation` に `callerToken` を課し、`operationId` を capability にしない
+
+### Status
+
+Accepted
+
+### Context
+
+`cancel-reservation` は第6.4節 3-i の終端規則が phase 3 の部分成功を回収できるよう、`status` を `reserved` / `active` を問わずに削除する設計になっている。ところが signup が完走した `active` な mapping 行も `operationId` を保持したままで（昇格時に消す規定は無い）、束縛が `operationId` の知識1つに縮退していた。一方で第5.2節 (c) は未認証経路のログに `operationId` を出してよいと明記しており、signup は未認証経路である。両者が同時に成立すると、binding 到達性とログ閲覧権限の組み合わせで任意の完了済みアカウントの mapping 行を消せる（どの回収ジョブの対象でもなく、利用者に自己回復手段が無い恒久ロックアウト）。
+
+### Decision
+
+**ガードに `callerToken` の定数時間比較を足す。** 呼び出し元のコーディネーター bucket は自分の予約行にこの値を持っている（phase 1a / 1b で載る）ので材料は増えず、`callerToken` は第5.2節 (c) の非露出対象なのでログには出ない。代替案（`status` を `reserved` に限る / phase 4 で mapping 行の `operationId` を `NULL` にする）は採らない — 前者は終端規則が回収したい行を取り逃がし、後者は全 bucket への RPC を1周増やしたうえでその RPC 自身の束縛が新しく要る。
+
+### Consequences
+
+- 良い点: 「`operationId` は capability ではない」が本文で成立し、第5.2節 (c) のログ出力許可が前提を持つようになった。第5.1節の (3-a) 群の正当化文（前進についての主張）が破壊的な補償には届かないことも明記できた
+- トレードオフ: (3-a) の守りが「CAS と phase 条件」一色ではなくなり、1本だけ `callerToken` を併用する例外ができた。4群分類の表に但し書きが1行増える
+
+## ADR-115: SSO 専用アカウントにはパスワードリセットメールを送らない
+
+### Status
+
+Accepted
+
+### Context
+
+第7.6節のダミージョブ行の規則は「mapping が**無い**場合の行は宛先を持たないため何も送らずに `done` へ落ちる」と書いていた。ところが SSO signup はメール一意性のためにメール canonical にも mapping 行を置き、その行は `encryptedCanonical` を持つ（第6.3節）。字義どおり読むと SSO 専用アカウントには宛先があり、メールが送られて `consume-reset-token` → `begin-credential-change`（起点 B）→ phase 2 が走り、一意性の予約として置かれただけの行がログイン手段へ昇格する。逆に「送らない」と読むと `usableForLogin` の false → true 遷移が本設計に1つも無くなる。どちらの読み方も内部的には整合するので、明示的な指示なしには #37 がどちらかへ倒してしまう。
+
+### Decision
+
+**送らない、と決め切る。判定は「mapping の有無」ではなく「`passwordVerifier` の有無」で行う。** `passwordVerifier` を持たない `kind = 'email'` 行に対してはトークンを発行せず、ジョブ行の中身も「宛先を持たない」側にする（処理経路は登録済み / 未登録 / SSO のみ / スロットル中の4ケースで完全に一致するので列挙オラクルにならない）。理由は、送る側に倒すと SSO 専用アカウントの奪取条件が「IdP の認証」から「メールボックスの到達性」へ下がるからである。第5.2.1節 (a) がメール所有確認の不在を受容したのはパスワードアカウントについての判断であって、IdP 認証で守られていたアカウントを同じ水準へ落とす判断ではない。あわせて第6.5.1節 phase 2 の `usableForLogin` 更新を「値が変わることは無い」と書き直し、`usableForLogin` の false → true 遷移が本設計に存在しないことを明示した。
+
+### Consequences
+
+- 良い点: 現行 spec（`spec/usecases/identity.md` / `spec/testcases/identity/requestPasswordReset.md`）の結論を維持したまま、処理経路の均一化だけを足す形になった。#35 への指示（「SSO のみ」の行の中身がどちらか）が1文で書ける
+- トレードオフ: SSO 専用の利用者は自分でパスワードを設定できず、IdP 側のアカウントを失うと本サービス側に復旧経路が無い。残余リスクとして #38 へ送った。解消するにはメール所有確認を持つ credential 追加 saga の新設が要り、それは #34 のスコープ外である
+
+## ADR-116: `rotate-remap` の競合分岐の記録先を `rotation_checkpoints` に置く
+
+### Status
+
+Accepted
+
+### Context
+
+第6.8節 手順2 (2) の第2分岐（移送先に行があって `userId` が異なる）は「移送せず `poison` にし、`terminalReason` を残して運用へエスカレーションする」と書いていた。ところが `poison` は `jobs.status` の値、`terminalReason` は `jobs` / `operations` の列であり、改稿で `rotate-remap` を Alarm ジョブから maintenance 経路が駆動する同期 RPC へ変えた結果、この経路は `jobs` 行も `operations` 行も持たなくなっている（ローテーション経路は `operations` 行を作らない、と第6.8節 手順3 が断定している）。`rotation_checkpoints` の列も `bucketIndex` / `generation` / `previousCount` / `scannedAt` の4つだけで、記録先が1つも存在しなかった。
+
+### Decision
+
+**`rotation_checkpoints` に `conflictCount` / `lastConflictAt` / `lastConflictCredentialId` の3列を足し、そこを記録先にする。** あわせてチャンク RPC が値エンベロープで衝突を返し、maintenance 経路（operator 側）のログにも残す。**この分岐から `poison` / `terminalReason` という語を外す** — どちらも `jobs` 専用の語彙だからである。衝突した credential は移送せずスキップするので `previousCount` に残り、退役条件（全 bucket で `previousCount = 0`）が満たされずローテーションが可視的に停止する。
+
+### Consequences
+
+- 良い点: 「自動で解決しない」ケースの運用受け口が定義され、#38 へ送る監査要件（`conflictCount` が増えたときのエスカレーション手順）が具体化した。停止が安全側に倒れることも明文になった
+- トレードオフ: `rotation_checkpoints` が3列増える。bucket 単位の集計なので、同じ bucket で複数の衝突が起きた場合に個別の credential を全部は追えない（直近1件と件数だけが残る）。全件が要るならチャンク RPC の戻り値と operator 側のログを見る

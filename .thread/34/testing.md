@@ -201,7 +201,7 @@
        | grep -vE '^\?\? (\.artifacts/|\.thread/36/|apps/web/wrangler\.(request|state)\.(production|staging)\.toml)$'
      ```
 - **期待結果:** 手順1・手順2・手順3 のいずれも**出力が空**（exit 1）
-- **確認ポイント:** 手順3 のホワイトリストは着手時点の実測（`.artifacts/` / `.thread/36/` / `apps/web/wrangler.{request,state}.{production,staging}.toml` の計6エントリ）に一致させてある。**`.thread/34/` は成果物として commit されるのでホワイトリストに入れていない** — 未 commit のものが残っていると `?? .thread/34/review/` や ` M .thread/34/design.md` として出る（`.thread/34/` 直下の4ファイルを先に commit したあとレビュー往復で `review/` が増えるため、`?? .thread/34/` 1行にはならない）。これは検査の失敗ではなく「まだ commit していない」のサインなので、commit してから再実行する。逆に `.thread/36/` や wrangler 4本が**差分側**（手順1）に現れたら、触らないはずのものを commit してしまっている
+- **確認ポイント:** 手順3 のホワイトリストは着手時点の実測（`.artifacts/` / `.thread/36/` / `apps/web/wrangler.{request,state}.{production,staging}.toml` の計6エントリ）に一致させてある。**成果物（`.thread/34/` / `.adr/002〜004`）は commit されるのでホワイトリストに入れていない** — 未 commit のものが残っていると `?? .thread/34/review/` / ` M .thread/34/design.md` / ` M .adr/004-*.md` として出る（`.thread/34/` 直下の4ファイルを先に commit したあとレビュー往復で `review/` が増えるため、`?? .thread/34/` 1行にはならない）。これは検査の失敗ではなく「まだ commit していない」のサインなので、commit してから再実行する。逆に `.thread/36/` や wrangler 4本が**差分側**（手順1）に現れたら、触らないはずのものを commit してしまっている
 
 ### 7. design.md の全節にラベルが付き、対象節が断定形で終わっている
 
@@ -233,7 +233,7 @@
      awk '/^## 4\./,/^## 7\./' .thread/34/design.md | grep -nE '暫定|見込み|次第'
      awk '/^## 4\./,/^## 7\./' .thread/34/design.md | grep -nE '従属'
      ```
-- **期待結果:** 手順1 の出力が**空**（`##` / `###` の節見出しは全件がラベル付き）。手順2 は3ラベルとも1以上で、3ラベルの合計が総数と一致する（実測: Issue 要求 36 / 派生 24 / 参考 5 = 65 = 総数）。手順3 の出力が**空**。手順4 は1本目が0でない値（走査時点の実測 924行。範囲抽出が壊れると0になり、以降の grep が空振りで通る）を返し、2本目が空。3本目（`従属`）は**未確定の前方依存を示す用法**（「第7章の結論に従属する」型）が0件であればよく、設計上の記述としての「従属」は許容する（実測1件 — `report-login-result` の成功報告が request Worker の照合結果に従属するという第5.1節の記述）
+- **期待結果:** 手順1 の出力が**空**（`##` / `###` の節見出しは全件がラベル付き）。手順2 は3ラベルとも1以上で、**3ラベルの合計が総数と一致する**（判定はこの一致であって個々の数ではない。design.md は改稿のたびに節が増減する。走査時点の実測は Issue 要求 36 / 派生 25 / 参考 5 = 66 = 総数）。手順3 の出力が**空**。手順4 は1本目が**0でない値**（範囲抽出が壊れると0になり、以降の grep が空振りで通る。走査時点の実測 969行）を返し、2本目が空。3本目（`従属`）は**未確定の前方依存を示す用法**（「第7章の結論に従属する」型）が0件であればよく、設計上の記述としての「従属」は許容する（実測1件 — `report-login-result` の成功報告が request Worker の照合結果に従属するという第5.1節の記述）
 - **確認ポイント:** ラベルは **`##`（章）と `###`（節）にだけ付ける運用**で、`####` の小見出しは親節のラベルを継承するため手順1 の射程から外してある（`^#{2,4}` にすると `#### コーディネーターの選び方と役割` のような番号なし小見出しが全件かかり、判定が成立しない）。手順3 の `未定[^義]` は「未**定義**」への誤ヒットを避けるためで、`未定` 単体にすると設計上正しい記述が2件かかる。手順3 でヒットが出た場合はファイル名だけでは判定できないので、必ず**その行がどの節に属するか**を見る — 許容できるのは `［参考］` ラベルの節と、第11.4節「未決事項」の表のうち**引き取り先 Issue が併記されている行**だけである。とくに次の7箇所は AC-5 が名指しで対象に含めているので、結論位置に未決語があってはいけない — 「FTS5 の同期更新」「Outbox / relay / consumer / DLQ の廃止範囲」「Alarm ジョブ」「trash retention の期限処理」「外部 I/O を永続ジョブに残す境界」「UoW 契約」章・「スキーマバージョン管理と lazy migration」章、加えて「FTS5 のみで日本語全文検索が成立する根拠」と「分割方式」（`.adr/003` と #37 の前提がここに懸かる）。意味レベルの断定判定は人間判断項目 H-5 で行う
 
 ### 8. User Data DO の保持データ範囲とドメイン対応
@@ -282,7 +282,7 @@
      ```bash
      grep -nE 'canonical 化の定義|locator 鍵の分離|ハッシュ衝突の扱い|canonical credential の保持と保護' .thread/34/design.md
      ```
-- **期待結果:** 手順1 で「ルーティング」章と 5.1〜5.5 相当の節が出る。手順2 で session / token → `userId` → DO locator の経路が追える。手順3 が0件でなく（実測15行）、(a)(b)(c) の3点が結論として書かれている。手順4 で4つの節タイトルがすべてヒットする（実測: `canonical 化の定義` / `locator 鍵の分離` / `ハッシュ衝突の扱い` / `canonical credential の保持と保護` の4見出し）
+- **期待結果:** 手順1 で「ルーティング」章と 5.1〜5.5 相当の節が出る。手順2 で session / token → `userId` → DO locator の経路が追える。手順3 が**0件でなく**（走査時点の実測16行。件数そのものは判定材料ではない）、(a)(b)(c) の3点が結論として書かれている。手順4 で4つの節タイトルがすべてヒットする（実測: `canonical 化の定義` / `locator 鍵の分離` / `ハッシュ衝突の扱い` / `canonical credential の保持と保護` の4見出し）
 - **確認ポイント:** AC-23 (b) は「鍵ローテーションの対象が credential 由来 locator に限られ、User Data DO の同一性に波及しない」ことが読み取れる必要がある。`userId` 由来 locator と credential 由来 locator を分けずに「世代付き secret で HMAC」とだけ書かれていたら不足（plan.md リスク節「鍵ローテーションがデータ本体の移送になる」）。また `ctx.id.name` は DO の内側から可読なので、生クレデンシャルを DO 名に使わない方針が PII 節と整合しているかも見る
 
 ### 10. Identity Directory DO の5論点と分散トランザクション非前提
@@ -401,12 +401,18 @@
 
      ```bash
      for p in 'adapters/d1/' 'application/workers/' 'application/execution/unitOfWork.ts' \
-              'application/ports/outboxRepository' 'application/ports/relayTrigger' 'application/ports/idempotencyStore' \
+              'application/ports/outboxRepository.ts' 'relayTrigger.ts' 'idempotencyStore.ts' \
               'di/serverCloudflare.ts' 'application/di/types.ts' 'application/di/containerStore.ts' \
               'WorkerContainer' 'apps/web/app/presentation/' 'infra/cloudflare/pulumi/resources/index.ts' \
               'scripts/render-wrangler.ts' 'wrangler.toml' 'vitest.config.integration.ts'; do
        grep -q "$p" .thread/34/design.md || echo "MISSING in design.md: $p"
      done
+     ```
+
+     `relayTrigger.ts` / `idempotencyStore.ts` だけファイル名で引くのは、design.md が3本を `packages/core/src/application/ports/outboxRepository.ts` / `relayTrigger.ts` / `idempotencyStore.ts` と**親パスを1回だけ書く記法**で列挙しているためである（`application/ports/relayTrigger` という連結文字列は存在しない）。ファイル名だけでは「削除対象として親パス付きで挙がっている」ことを保証できないので、次の1本で束ねて確認する
+
+     ```bash
+     grep -cE 'application/ports/outboxRepository\.ts` / `relayTrigger\.ts` / `idempotencyStore\.ts`' .thread/34/design.md
      ```
   2. `package.json` のスクリプト群への言及を確認する（`db:generate` 系を落とさない — D1 用 `drizzle.config.ts` に依存するので道連れになる）
 
@@ -428,18 +434,18 @@
        [ -e "$p" ] || echo "NOT FOUND: $p"
      done
      ```
-- **期待結果:** 手順1・手順3 の出力が空。手順2 で deploy 系（非 dry 12本 / dry を含め24本）と `db*` スクリプト **10本すべて**（`db:migrate` / `db:migrate:cf` / `db:generate` / `db:generate:cf` / `db:apply:{local,staging,production}` / `db:execute:{local,staging,production}`）への言及がある。件数は `node -e "const s=Object.keys(require('./apps/web/package.json').scripts); console.log(s.filter(k=>k.startsWith('db')).length, s.filter(k=>k.startsWith('deploy')).length)"` で裏を取る（実測 `10 24`）
+- **期待結果:** 手順1 の `MISSING in design.md:` が**0行**で、続く束ね確認が **1以上**（走査時点の実測2 — 第7.3節と第11.2節の2箇所）。手順3 の出力が空。手順2 で deploy 系（非 dry 12本 / dry を含め24本）と `db*` スクリプト **10本すべて**（`db:migrate` / `db:migrate:cf` / `db:generate` / `db:generate:cf` / `db:apply:{local,staging,production}` / `db:execute:{local,staging,production}`）への言及がある。件数は `node -e "const s=Object.keys(require('./apps/web/package.json').scripts); console.log(s.filter(k=>k.startsWith('db')).length, s.filter(k=>k.startsWith('deploy')).length)"` で裏を取る（実測 `10 24`）
 - **確認ポイント:** `WorkerContainer` は **indexer 専用と pruner 専用の2種類**が挙がっていること（片方だけだと AC-17 の失敗）。ローカル開発用 `apps/web/wrangler.toml`（DO バインディングが1つも無い）と、`.gitignore` によりレンダリング生成物である `wrangler.{staging,production}.toml` を直接編集できない点の両方が書かれていること。UoW 契約は「新旧対比」が読める形になっていること
 
 ### 15. 成果物の自己完結性（機械走査の部分）
 
 - **対応する受け入れ基準:** AC-19
-- **目的:** 先行ブランチ・`.thread/19/`・`.thread/1/adr.md` を開かないと読めない箇所が無いことを、まず機械的に洗い出す
+- **目的:** 先行ブランチ・`.thread/19/`・`.thread/1/adr.md`・`.thread/36/` を開かないと読めない箇所が無いことを、まず機械的に洗い出す
 - **手順:**
   1. 外部参照を列挙する
 
      ```bash
-     grep -nE 'issue/19/cloudflare-do-fts|\.thread/19/|git show|\.thread/1/adr\.md|spec/domains/search\.md' \
+     grep -nE 'issue/19/cloudflare-do-fts|\.thread/19/|\.thread/36/|git show|\.thread/1/adr\.md|spec/domains/search\.md' \
        .thread/34/design.md .adr/00[234]-*.md
      ```
   2. 「先行案との差分」の節が要旨を持つかを見る
@@ -447,8 +453,8 @@
      ```bash
      awk '/^### .*先行案.*との差分/,/^## 2\./' .thread/34/design.md
      ```
-- **期待結果:** 手順1 のヒットがすべて「出自の注記」の文脈（`... を採用した（出自: ...）`）に留まり、参照先を開かないと結論が分からない書き方になっていない。手順2 の表の各行が『採用 / 棄却 / 保留』のラベルだけでなく**採用した内容の要旨**を持つ
-- **確認ポイント:** `.thread/19/` は先行ブランチ上にしか存在せず（現ブランチでは `git show issue/19/cloudflare-do-fts:...` でしか読めない）、`spec/domains/search.md` は #35 で書き換わる。この2つを「読めば分かる」で済ませている箇所は AC-19 違反。最終判定は人間判断項目 H-3
+- **期待結果:** 手順1 のヒットがすべて「出自の注記」の文脈（`... を採用した（出自: ...）`）に留まり、参照先を開かないと結論が分からない書き方になっていない。とくに `.thread/36/` のヒットは、**そこが読めないことを本文自身が明示し、内容を本文側に再掲している**文脈に限る（走査時点の実測1件 — 第11.2節が「どのブランチにも commit されていない／本節が唯一の入力である／H-1〜H-8 は下表に全文を再掲」と断っている行）。手順2 の表の各行が『採用 / 棄却 / 保留』のラベルだけでなく**採用した内容の要旨**を持つ
+- **確認ポイント:** `.thread/19/` は先行ブランチ上にしか存在せず（現ブランチでは `git show issue/19/cloudflare-do-fts:...` でしか読めない）、`spec/domains/search.md` は #35 で書き換わる。この2つを「読めば分かる」で済ませている箇所は AC-19 違反。**`.thread/36/` を走査対象に入れているのは、`.thread/36/` が untracked で作業ツリーにしか存在しないため**である — 確認項目17 の手順1（パス実在チェック）はローカルでは通ってしまい、clone した #37 の担当者だけが読めない、という形の自己完結性の破れをここでしか捕まえられない（レビュー 006 の W-005）。最終判定は人間判断項目 H-3
 
 ### 16. `.thread/34/adr.md` へのメタ判断の追記
 
@@ -472,7 +478,7 @@
      for f in .adr/00[234]-*.md; do echo "--- $f"; head -1 "$f"; done
      grep -E '^## ADR-(0[2-9][0-9]|[1-9][0-9]{2})' .thread/34/adr.md
      ```
-- **期待結果:** 手順1 の件数が **着手時点の19件から増えている**（ADR-020 以降が存在する。実測 109件 / ADR-020〜ADR-109）。増えていない場合は手順2 で「昇格を見送った判断が無かった」旨が明記されている。手順3 で追記分の主題が `.adr/002〜004` の主題（ランタイム・データ配置 / 検索方式 / 非同期処理）と重複していない
+- **期待結果:** 手順1 の1本目の件数が **着手時点の19件から増えている**（＝2本目が ADR-020 以降を1件以上返す。判定は「19より大きい」であって特定の件数ではない。レビュー往復のたびに増える。走査時点の実測 116件 / うち ADR-020 以降 97件）。増えていない場合は手順2 で「昇格を見送った判断が無かった」旨が明記されている。手順3 で追記分の主題が `.adr/002〜004` の主題（ランタイム・データ配置 / 検索方式 / 非同期処理）と重複していない
 - **確認ポイント:** 存在チェックだけでは着手前の19件で空振りするので、**必ず件数の増加**を見る（着手時点の実測は19件）。番号の走査は `ADR-0(2|3)[0-9]` では ADR-040 以降を取りこぼすので、3桁全域（`0[2-9][0-9]` / `[1-9][0-9]{2}`）で見る
 
 ### 17. 文書間リンクと ADR 参照の整合
@@ -480,12 +486,19 @@
 - **対応する受け入れ基準:** 横断（AC-19 の補助 / plan.md ステップ10 の相互整合検証）
 - **目的:** design.md ↔ `.adr/` の相互参照が成立し、リンク切れと無修飾の ADR 参照が無いことを確認する
 - **手順:**
-  1. リポジトリ相対パスの実在チェック
+  1. リポジトリ相対パスの実在チェック。**既知の3分類（下の (i)(ii)(iii)）を除いた残りが空であること**で判定する — 分類の件数は design.md の改稿で動くので、件数ではなく「未分類の残りが無いこと」を見る
 
      ```bash
+     # (a) 候補一覧（分類を読むためのもの）
      grep -ohE '`(\.adr|\.thread|spec|docs|packages|apps|infra)/[^`]*`' .thread/34/design.md .adr/00[234]-*.md \
        | tr -d '`' | sed 's/[:#].*//' | grep -vE '[*{} 〜]' | sort -u \
        | while read -r p; do [ -e "$p" ] || echo "MISSING: $p"; done
+
+     # (b) 判定 — 既知3分類を除いた残り
+     grep -ohE '`(\.adr|\.thread|spec|docs|packages|apps|infra)/[^`]*`' .thread/34/design.md .adr/00[234]-*.md \
+       | tr -d '`' | sed 's/[:#].*//' | grep -vE '[*{} 〜]' | sort -u \
+       | while read -r p; do [ -e "$p" ] || echo "MISSING: $p"; done \
+       | grep -vE '^MISSING: (\.adr/00[234]|spec/adr/005|\.thread/19/.*|apps/web/app/server\.state\.ts)$'
      ```
   2. 無修飾の `ADR-NNN` を洗い出す
 
@@ -499,14 +512,24 @@
      grep -n 'design\.md' .adr/00[234]-*.md
      grep -nE '\.adr/00[234]' .thread/34/design.md | head
      ```
-- **期待結果:** 手順1 の `MISSING:` が次の3種類だけに収まる（実測6件） — (i) ADR 番号の短縮表記（`.adr/002` / `.adr/003` / `.adr/004` の拡張子なし言及）、(ii) 先行ブランチにしか存在しないパス（`.thread/19/adr.md` / `.thread/19/spike/fts5.integration.test.ts`）、(iii) **本文が「現ブランチに存在しない」と明示的に述べているパス**（`apps/web/app/server.state.ts`。未コミットの wrangler 4本が動かない理由として第2章が名指ししている）。手順2 のヒットは、見出し自身（`## ADR-004: ...` の形）か、**既存 spec 本文の逐語引用**（同じ行に引用元の `spec/**.md` パスがある）に限られる（実測1件 — `spec/usecases/knowledge.md:16` の「Outbox 経由。ADR-005」の引用）。それ以外の無修飾 `ADR-NNN` は不合格（`.thread/1/adr.md` / `spec/adr/` / `.adr/` の3文書を指しうるため、`.thread/1/adr.md` ADR-046 の規約でパス付きが必須）。手順3 で `.adr/` → design.md と design.md → `.adr/` の参照が両方向とも出る（実測: `.adr/` 3件すべてが design.md を参照 / design.md → `.adr/00[234]` が20行）
-- **確認ポイント:** 手順1 は候補一覧なので、上の (i)(ii)(iii) 以外が1件でも増えたらリンク切れとして扱う。とくに (iii) は「本文が不在を主張しているから正しい」のであって、不在のパスを注記なしに引いていたら不合格
+- **期待結果:** 手順1 の (b) の**出力が空**（exit 1）。すなわち (a) の `MISSING:` が次の3種類だけに収まっている（走査時点の実測7件） — (i) **ADR 番号の短縮表記**（`.adr/002` / `.adr/003` / `.adr/004` / `spec/adr/005` の拡張子なし言及。実体はいずれも `NNN-*.md` として実在するのでリンク切れではない）、(ii) 先行ブランチにしか存在しないパス（`.thread/19/adr.md` / `.thread/19/spike/fts5.integration.test.ts`）、(iii) **本文が「現ブランチに存在しない」と明示的に述べているパス**（`apps/web/app/server.state.ts`。未コミットの wrangler 4本が動かない理由として第1.3節・第2章が名指ししている）。手順2 のヒットは、見出し自身（`## ADR-004: ...` の形）か、**既存 spec 本文の逐語引用**（同じ行に引用元の `spec/**.md` パスがある）に限られる（実測1件 — `spec/usecases/knowledge.md:16` の「Outbox 経由。ADR-005」の引用）。それ以外の無修飾 `ADR-NNN` は不合格（`.thread/1/adr.md` / `spec/adr/` / `.adr/` の3文書を指しうるため、`.thread/1/adr.md` ADR-046 の規約でパス付きが必須）。手順3 で `.adr/` → design.md と design.md → `.adr/` の参照が両方向とも出る（`.adr/` は **3件すべて**が design.md を参照し、design.md → `.adr/00[234]` は**0行でない**。走査時点の実測26行）
+- **確認ポイント:** 手順1 の (a) は候補一覧、(b) が判定である。**(b) に1件でも出たらリンク切れとして扱う。** (b) の除外パターンを広げて黙らせてはいけない — 広げてよいのは「(i)(ii)(iii) と同じ性質であることを本文で確認できた」場合だけで、そのときは分類の説明文も一緒に更新する。とくに (iii) は「本文が不在を主張しているから正しい」のであって、不在のパスを注記なしに引いていたら不合格。**untracked なだけで作業ツリーには実在するパス（`.thread/36/`）はこの検査を素通りする** — clone した担当者から読めるかは確認項目15 の側で見る
+
+### 18. design.md 第1.4節の不変条件（「全数」を名乗る表の相互整合）
+
+- **対応する受け入れ基準:** 横断（AC-4 / AC-5 / AC-13 / AC-17 の基盤。design.md 第1.4節が正本）
+- **目的:** 「全数」を名乗る7つの表（E-1〜E-7）が互いに取り残されていないことを確認する。**片方を直してもう片方が残る**という形の破れがレビュー R3・R5・R6 で繰り返し検出されたため、design.md 第1.4節が不変条件 I-1〜I-8 と検査手順を正本として持つ
+- **手順:**
+  1. `.thread/34/design.md` の第1.4節「「全数」を名乗る表と、その相互整合の不変条件（正本）」を開き、**「検査手順」の冒頭に置かれた `tbl` / `cells1` の2関数を定義してから、検査1〜検査7 を上から順にすべて実行する。** 手順は同節にそのまま貼り付けられる形で書かれているので、**ここには再掲しない**（再掲すると本書と design.md のどちらが正本か分からなくなり、第1.4節が塞いだのと同じ形の二重管理が生まれる）
+  2. 検査7 だけは出力の読み下しを伴うので、同節末尾の「現在の期待値」の段落と突き合わせる
+- **期待結果:** 検査1〜検査6 が第1.4節に併記された期待値どおりに出る（走査時点の実測: 検査1 = `12` と `I-3 OK` と `rotate-remap` 0件 / 検査2 = 投入点なし0件・(A)3・(B)2・(C)7・`I-2(A) OK`・`I-2(B) OK` / 検査3 = 7ストア・`MISSING in 8.2:` なし・アダプター専用1件 / 検査4 = `12` と `I-7 OK` / 検査5 = 両方 `13` / 検査6 = `16` と `MISSING in 4.1.1:` なし）。検査7 のヒット行が、同節の「現在の期待値」（**新設する秘密は4つ** / **`jobs` は12列** / **`kind` は各クラス6種・合計12種**）と1件残らず一致する
+- **確認ポイント:** **数の一致だけでなく、`diff` 系の検査（検査1 / 検査2 / 検査4）が `OK` を出していることを見る。** 件数が偶然合っていて中身がずれている破れは、そこでしか捕まらない。数値そのものは design.md の改稿で動くので、**期待値の正本は本書ではなく第1.4節の側である** — 食い違ったら第1.4節を読み、そちらの期待値に従う。逆に第1.4節の期待値が現物と合わなくなっていたら、それは検査の失敗ではなく **I-8 の違反**（数を書いた箇所と表の行数の不一致）として design.md を直す。第1.4節が射程から外している4表（第2.1節の事実表 / 第4.3節 / 第6.4節 / 第6.9節）は本項目の対象外で、第4.3節は確認項目11 が別途見ている
 
 ---
 
 ## 人間による判断が必要な確認項目
 
-機械検証では成立を判定できず、読んで判断するしかない項目。上の確認項目17件をすべて通したあとに実施する。
+機械検証では成立を判定できず、読んで判断するしかない項目。上の確認項目18件をすべて通したあとに実施する。
 
 ### H-1. #35 の担当者になったつもりで design.md だけを読んで着手できるか
 
