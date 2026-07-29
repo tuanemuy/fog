@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 /**
  * Render `wrangler.<stage>.toml` from a `.tpl` template by substituting
  * placeholders with outputs from the Cloudflare resources Pulumi stack.

@@ -6,7 +6,18 @@ import {
 } from "../workers/eventRelayWorker";
 import { DEFAULT_OUTBOX_RETENTION_MS } from "../workers/outboxPrune";
 
-/** Worker-tuning env variables shared by both runtimes. */
+/**
+ * Worker-tuning env variables.
+ *
+ * They ride on the `ServerEnv` shape every Worker declares (it is
+ * structurally compatible with this type), but only two Workers actually
+ * read them: the relay through `readRelayTuning` and the pruner through
+ * `readPruneTuning` (`apps/web/app/worker/cloudflare/handlers.ts`).
+ * Accordingly the values are declared only under `[env.relay.vars]`
+ * (`OUTBOX_BATCH_SIZE` / `OUTBOX_LEASE_MS` / `OUTBOX_MAX_ATTEMPTS`) and
+ * `[env.pruner.vars]` (`OUTBOX_RETENTION_MS`) in `apps/web/wrangler.toml`
+ * — the top-level, consumer and DLQ Workers declare none of them.
+ */
 export type TuningEnv = Readonly<{
   OUTBOX_BATCH_SIZE?: string | undefined;
   OUTBOX_LEASE_MS?: string | undefined;

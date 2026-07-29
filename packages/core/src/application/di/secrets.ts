@@ -7,9 +7,9 @@ import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSes
 /**
  * Secrets a request container needs, held in their own nested object.
  *
- * The nesting is load-bearing. Every `createXxxRequestContainer` builds
+ * The nesting is load-bearing. `createRequestContainer` builds
  * `AppConfig` by rest-spreading its runtime config
- * (`const { db, relayTrigger, secrets, ...appConfig } = config`), and
+ * (`const { …, secrets, ...appConfig } = config`), and
  * `appConfig satisfies AppConfig` is a `satisfies` on a *variable*, which
  * does not run excess-property checking. A secret placed flat on
  * `RequestServerConfig` would therefore ride the spread into
@@ -40,18 +40,22 @@ export type SessionSecret = string & {
 /**
  * Asserts a usable `SESSION_SECRET` while the request config is built.
  *
- * The env schemas keep `SESSION_SECRET` optional on purpose: the AWS and
- * GCP env readers are shared with the relay / consumer / pruner / DLQ
- * entry points, which never touch a session, and a required key there
- * would stop those workers from booting. Requiring it in the
- * request-config readers instead means only the request path — the sole
- * consumer — demands the secret.
+ * `ServerEnv` keeps `SESSION_SECRET` optional on purpose: the same shape
+ * is read by the relay / consumer / pruner / DLQ Workers, which never
+ * touch a session and are deliberately not given the secret
+ * (`docs/runtime_cloudflare.md`). Marking it required there would not
+ * enforce anything — `ServerEnv` is a hand-written type with no runtime
+ * validation, and the worker entries only use it to annotate their
+ * handler parameter, so a required field would neither fail a boot nor
+ * fail `pnpm typecheck`; it would just claim a binding four Workers do
+ * not have. Optional keeps the type honest, and this function puts the
+ * actual guarantee where the secret is consumed: the request path, which
+ * cannot build its config without one.
  *
- * Node, AWS and GCP build that config once at boot / cold start, so a
- * missing or too-short secret fails the process rather than every request.
- * Cloudflare has no boot phase in which `env` exists, so its config is
- * necessarily per-request; there the check still runs before the isolate
- * does any work, and the message names only the variable, never a value.
+ * Cloudflare hands `env` to a handler and never to module scope, so
+ * there is no boot phase that could validate it and the request config
+ * is necessarily per-request. The check still runs before the container
+ * is built, and the message names only the variable, never a value.
  */
 export function requireSessionSecret(
   secret: string | undefined,

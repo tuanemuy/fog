@@ -56,18 +56,16 @@ export type RequestServerConfig = AppConfig &
   }>;
 
 /**
- * Cloudflare bindings shape. The `OUTBOX_*` vars are runtime-agnostic
- * (see {@link TuningEnv}); the D1/Fetcher bindings are CF-only. The
- * Node entry has its own env shape in `./serverNode`.
+ * Cloudflare bindings shape. See {@link TuningEnv} for the `OUTBOX_*`
+ * vars.
  */
 export type ServerEnv = Readonly<{
   DB: D1Database;
   APP_URL: string;
   RELAY?: Fetcher;
   // Delivered as a wrangler secret (`wrangler secret put` / `.dev.vars`),
-  // never as a `[vars]` entry. Optional here — like the zod-validated
-  // runtimes, the request path is what demands it (see
-  // `requireSessionSecret`), so workers boot without one.
+  // never as a `[vars]` entry. Optional here — the request path is what
+  // demands it (see `requireSessionSecret`), so workers boot without one.
   SESSION_SECRET?: string;
   // Worker tuning knobs. Wrangler `[vars]` deliver strings — parse +
   // default via `readRelayTuning` / `readPruneTuning` at the worker
@@ -81,10 +79,9 @@ export type ServerEnv = Readonly<{
 
 export type { PruneTuning, RelayTuning } from "./env";
 
-// Re-export the shared readers under the original names so wrangler
-// worker entries that import from this module keep working unchanged.
-// `ServerEnv` is structurally compatible with `TuningEnv`, so passing
-// it directly satisfies the shared reader's input contract.
+// Re-exported so the worker entries take their tuning readers from this
+// composition root alone. `ServerEnv` is structurally compatible with
+// `TuningEnv`, so the cast only re-labels the shape.
 export function readRelayTuning(env: ServerEnv): RelayTuning {
   return readRelayTuningShared(env as TuningEnv);
 }

@@ -16,10 +16,8 @@ Guidance for Claude Code working in this repository.
 pnpm monorepo. One lockfile at the root; packages resolve each other via package `exports` pointing straight at `.ts` sources (no build step for internal packages). `@repo/core` exposes a single flat rule — `"./*": "./src/*.ts"` — so every subpath maps 1:1 to a file and there is no barrel to import from.
 
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
-- `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, per-runtime server entries and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle / Dockerfile).
-- `infra/aws` (`@repo/infra-aws`) — CDK stack.
+- `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, the Cloudflare server entry and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle).
 - `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering.
-- `infra/gcp` — Terraform only; it is not an npm package and lives outside the workspace.
 - Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
 A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@repo/core": "workspace:*"` and owns its DI wiring or reuses one from `packages/core/src/application/di/`. No tsconfig `paths` mirror is needed.
@@ -28,7 +26,7 @@ A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@r
 
 Run from the repo root — root scripts delegate to `@repo/web` where relevant:
 
-- `pnpm dev` / `pnpm build` / `pnpm start`
+- `pnpm dev` / `pnpm build` / `pnpm start` / `pnpm preview` (`pnpm preview` serves the build output through `vite preview`; it and `pnpm start` currently fail to boot — see Reference runtime below; use `pnpm dev`)
 - `pnpm lint` / `pnpm lint:fix` / `pnpm format` / `pnpm format:check` (Biome, whole repo)
 - `pnpm typecheck` (root `tsgo` for the vitest configs + `pnpm -r typecheck` across packages)
 - `pnpm test` / `pnpm test:unit` / `pnpm test:integration` (vitest runs at the root, spanning `apps/web` and `packages/core`)
@@ -69,7 +67,7 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 
 - **Unit of Work** — every transactional usecase runs inside `UnitOfWorkProvider.run(fn)`; the context exposes the repositories the callback may touch and the only path to enqueue domain events.
 - **Outbox / domain events** — events collected during a UoW are persisted transactionally and dispatched out-of-band by a relay worker. Delivery is at-least-once with no ordering guarantee; consumers must be idempotent. The relay worker claims rows under a lease so multiple workers cannot dispatch the same row, and a crashed worker's claim is reclaimable once the lease lapses.
-- **Retry strategy** — driver-level transient errors are retried inside the adapter; application code never sees them. There is intentionally no application-level OCC retry decorator.
+- **Retry strategy** — the D1 adapter adds no retry of its own. Transient conditions (`SQLITE_BUSY` / `SQLITE_LOCKED`) are connection-level errors the D1 binding handles upstream of the adapter, and OCC mismatches are caller-visible signals rather than retry candidates (`packages/core/src/adapters/d1/unitOfWork.ts`). There is intentionally no application-level OCC retry decorator either — a `ConflictError("OPTIMISTIC_LOCK_FAILURE")` reaches the usecase and, from there, the transport boundary.
 - **Input validation** — validated at exactly two points: the transport boundary (shape / DoS) and value-object construction (business invariants). Usecases trust the static type in between. On the frontend the transport boundary is the route's `validateSearch` (URL params) or `serverAction`'s `inputValidator` (client-posted payloads); `serverData` is **internal-only** and intentionally schemaless — never feed unvalidated external input through it.
 
 ## Error handling
@@ -85,20 +83,19 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 - **application → presentation**: the server-function boundary catches and serializes any thrown error structurally via its `kind`-tagged form. Usecases themselves do not serialize.
 - **worker → root**: workers wrap per-row processing in `try / catch` for partial-failure tolerance. This is the only place a broad `catch` is expected in application-layer code.
 
-## Reference runtimes
+## Reference runtime
 
-The template ships four reference runtime wirings — Node.js + libSQL (single process), Cloudflare Workers + D1 + Queues, AWS Lambda + Turso + SQS, and GCP Cloud Run + Turso + Pub/Sub — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the others**, or keep multiple if you genuinely need multiple targets; the template does not assume you maintain a multi-runtime deployment.
+The template targets Cloudflare Workers + D1 + Queues. The adapter and entry-point layers are what a runtime swap touches; `domain` / `application` / `presentation` stay intact across such a swap.
 
-Entry points by runtime:
+Entry points:
 
-- **Cloudflare**: `apps/web/app/server.cloudflare.ts` (fetch), `apps/web/app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`.
-- **Node**: `apps/web/app/server.node.ts` (fetch handler + boot), `apps/web/app/worker/node/runner.ts` (single-process orchestrator of all four roles), `apps/web/scripts/listen.node.ts` (production launcher), `apps/web/scripts/migrate.node.ts` (libSQL migrator). Wired by `packages/core/src/application/di/serverNode.ts`.
-- **AWS**: `apps/web/app/server.aws.ts` (API Gateway → fetch), `apps/web/app/worker/aws/{relay,consumer,pruner,dlq}.ts` (thin role-typed wrappers over shared `handlers.ts`), `apps/web/scripts/migrate.aws.ts` (Turso migrator), `infra/aws/` (CDK stack). Wired by `packages/core/src/application/di/serverAws.ts`.
-- **GCP**: `apps/web/app/server.gcp.ts` (Cloud Run role dispatcher), `apps/web/app/worker/gcp/{relay,consumer,dlq}.ts`, `apps/web/scripts/migrate.gcp.ts` (Turso migrator), `infra/gcp/` (Terraform examples). Wired by `packages/core/src/application/di/serverGcp.ts`.
+- `apps/web/app/server.cloudflare.ts` (fetch), `apps/web/app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`.
 
-Per-runtime operational guidance lives in `docs/runtime_node.md`, `docs/runtime_cloudflare.md`, `docs/runtime_aws.md`, and `docs/runtime_gcp.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the other runtimes use the `:cf`, `:aws`, and `:gcp` suffixes.
+Operational guidance lives in `docs/runtime_cloudflare.md`. `pnpm dev` / `pnpm build` / `pnpm start` are aliases of their `:cf` counterparts.
 
-To target a different runtime (Cloud Run, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
+`pnpm start` (`wrangler dev`) and `pnpm preview` both fail to boot today ([#40](https://github.com/tuanemuy/fog/issues/40)). The bundle builds fine; workerd then rejects it because `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, which is disallowed outside a handler. The top-level Worker pulls that module in via `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts → application/workers/eventRelayWorker.ts` (`env.ts` value-imports the `DEFAULT_*` tuning constants from it). `pnpm dev` is unaffected — Vite evaluates modules inside the request handler — so it is the only way to run the app locally.
+
+To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put; the swap is the entry + DI wiring, not the whole stack.
 
 ## Examples
 

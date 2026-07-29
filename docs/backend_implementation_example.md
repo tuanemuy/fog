@@ -21,9 +21,8 @@ packages/core/src/
 │       └── ports/${domain}Repository.ts
 ├── application/
 │   ├── di/types.ts                SharedDeps, RequestContainer, WorkerContainer, AppConfig
-│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer (shared)
-│   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig (CF runtime)
-│   ├── di/serverNode.ts           createNodeRequestContainer, createNodeWorkerContainer, readNodeServerEnv (Node runtime)
+│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer
+│   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig
 │   ├── ports/
 │   │   ├── clock.ts
 │   │   ├── idGenerator.ts
@@ -346,7 +345,7 @@ Consolidate the path that reads request-side env into `readRequestServerConfig()
 
 The test-only `TestContainer = RequestContainer & WorkerContainer & { db }` flattens the fields of both scopes into a single fat shape — a convenience type for co-locating usecase invocation and worker-pipeline verification within a test. Production code never holds this intersection directly; it always receives either `RequestContainer` or `WorkerContainer`.
 
-Transient lock contention such as `SQLITE_BUSY` is retried internally by `DrizzleSqliteUnitOfWorkProvider` (a driver-level concern, so the application layer doesn't touch it).
+Transient lock contention such as `SQLITE_BUSY` / `SQLITE_LOCKED` is a driver-level concern the application layer doesn't touch: D1 handles it on the binding side, and `D1UnitOfWorkProvider` adds no retry of its own (see `packages/core/src/adapters/d1/unitOfWork.ts`).
 
 ## Adapter Layer
 

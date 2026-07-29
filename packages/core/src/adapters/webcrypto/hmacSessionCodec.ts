@@ -45,17 +45,15 @@ function parsePayload(raw: string): Payload | null {
  * `SessionCodec` backed by an HMAC-SHA256 signature over a `{ uid, exp }`
  * payload, encoded as `<payloadBase64url>.<signatureBase64url>`.
  *
- * Stateless by design: no session table, no read
- * on the request path, one implementation across all four runtimes. The
+ * Stateless by design: no session table, no read on the request path. The
  * cost is that a token cannot be revoked server-side before `exp` —
  * acceptable while the product has no "sign out everywhere" requirement,
  * and the reason `ttlMs` defaults to a week rather than months. Swapping in
  * a table-backed codec later stays inside the composition root: this file,
- * the four DI factories that call {@link createHmacSessionCodec}
- * (`application/di/server{Node,Cloudflare,Aws,Gcp}.ts`), the
- * `application/di/secrets.ts` check that reads
- * {@link MIN_SESSION_SECRET_LENGTH}, and the test harnesses that build a
- * codec directly — callers of the port see nothing.
+ * the DI factory that calls {@link createHmacSessionCodec}
+ * (`application/di/serverCloudflare.ts`), the `application/di/secrets.ts`
+ * check that reads {@link MIN_SESSION_SECRET_LENGTH}, and the test
+ * harnesses that build a codec directly — callers of the port see nothing.
  *
  * Verification goes through `crypto.subtle.verify`, which compares the
  * MAC in constant time. Every rejection path — malformed token, bad
@@ -77,7 +75,7 @@ export function createHmacSessionCodec(
   const encoder = new TextEncoder();
 
   // Shared by every call on this codec instance, which in the shipped
-  // wiring means the calls of a single request: the DI factories build a
+  // wiring means the calls of a single request: the DI factory builds a
   // container per request, so this collapses `issue` + `verify` within
   // one hit rather than amortising `importKey` across the process.
   let keyPromise: Promise<CryptoKey> | null = null;

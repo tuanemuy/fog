@@ -7,8 +7,14 @@ import { defineConfig } from "vitest/config";
 
 // Integration tests run inside a Workers isolate (Miniflare) with a
 // real `env.DB` D1 binding backed by an in-memory SQLite database.
-// Anything matching `*.integration.test.ts` is included; pure unit
-// tests run via the Node-pool `vitest.config.ts` instead.
+// Pure unit tests run via the Node-pool `vitest.config.ts` instead,
+// which excludes the `*.integration.test.ts` suffix.
+//
+// `include` below is an explicit allow-list of directories, not a bare
+// suffix match: a `*.integration.test.ts` placed outside them is
+// dropped from the unit suite by its suffix and never picked up here,
+// so it silently runs in neither suite. Add the directory to `include`
+// when you start putting integration tests in a new one.
 const migrationsPath = path.join(
   import.meta.dirname,
   "packages/core/src/adapters/d1/migrations",
@@ -62,25 +68,17 @@ export default defineConfig({
     }),
   ],
   test: {
+    // Allow-list — see the note at the top of this file.
     include: [
       "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
+      // Matches nothing today; listed so the first integration test for a
+      // Cloudflare-binding adapter (e.g. `ServiceBindingRelayTrigger`) runs
+      // instead of silently landing in neither suite.
+      "packages/core/src/adapters/cloudflare/**/*.integration.test.ts",
       "packages/core/src/adapters/d1/**/*.integration.test.ts",
       "packages/core/src/application/**/*.integration.test.ts",
     ],
-    // The libSQL adapter and the in-process worker runner have their
-    // own Node-pool integration tests (`vitest.config.integration.node.ts`).
-    // They share the `*.integration.test.ts` suffix with the D1 tests
-    // but cannot run inside Miniflare — `@libsql/client` requires the
-    // Node `libsql` native module, which is not available in the
-    // Workers pool. Exclude those subtrees here.
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/.direnv/**",
-      "packages/core/src/adapters/libsql/**",
-      "packages/core/src/adapters/node/**",
-      "apps/web/app/worker/node/**",
-    ],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
     setupFiles: ["packages/core/src/adapters/d1/__tests__/setup.ts"],
   },
 });

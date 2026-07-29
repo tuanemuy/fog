@@ -43,13 +43,9 @@ jobs:
         run: pnpm test:unit
 
   integration:
-    name: Integration tests (${{ matrix.runtime }})
+    name: Integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: [cf, node]
     steps:
       - uses: actions/checkout@v4
 
@@ -66,16 +62,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Integration tests
-        run: pnpm test:integration:${{ matrix.runtime }}
+        run: pnpm test:integration:cf
 
   build:
-    name: Build (${{ matrix.runtime }})
+    name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: [cf, node, aws, gcp]
     steps:
       - uses: actions/checkout@v4
 
@@ -92,4 +84,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm build:${{ matrix.runtime }}
+        run: pnpm build:cf

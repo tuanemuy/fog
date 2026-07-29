@@ -40,9 +40,9 @@ export const MIN_PBKDF2_ITERATIONS = 1_000;
 /**
  * Ceiling accepted when reading an iteration count back out of a stored
  * hash. A row carrying an absurd count would otherwise turn one login
- * into an unbounded CPU burn (a Worker killed by its CPU limit, a Node
- * worker thread pinned indefinitely). Reaching it requires database
- * write access, so this guards data corruption rather than an attacker.
+ * into an unbounded CPU burn (a Worker killed by its CPU limit). Reaching
+ * it requires database write access, so this guards data corruption
+ * rather than an attacker.
  */
 export const MAX_PBKDF2_ITERATIONS = 10_000_000;
 
@@ -135,10 +135,8 @@ function parse(stored: string): StoredHash {
 }
 
 /**
- * `PasswordHasher` backed by WebCrypto PBKDF2-HMAC-SHA256 — available
- * unchanged on Node 20+, Workers, Lambda and Cloud Run, so all four
- * reference runtimes share one implementation and `packages/core` gains
- * no crypto dependency.
+ * `PasswordHasher` backed by WebCrypto PBKDF2-HMAC-SHA256 — available on
+ * Workers, so `packages/core` gains no crypto dependency.
  *
  * The stored form is self-describing:
  *
