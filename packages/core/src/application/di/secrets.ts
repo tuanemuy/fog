@@ -42,10 +42,15 @@ export type SessionSecret = string & {
  *
  * `ServerEnv` keeps `SESSION_SECRET` optional on purpose: the same shape
  * is read by the relay / consumer / pruner / DLQ Workers, which never
- * touch a session, so making it required would force
- * `wrangler secret put SESSION_SECRET` onto Workers that must not
- * receive it. Requiring it in the request-config reader instead means
- * only the request path — the sole consumer — demands the secret.
+ * touch a session and are deliberately not given the secret
+ * (`docs/runtime_cloudflare.md`). Marking it required there would not
+ * enforce anything — `ServerEnv` is a hand-written type with no runtime
+ * validation, and the worker entries only use it to annotate their
+ * handler parameter, so a required field would neither fail a boot nor
+ * fail `pnpm typecheck`; it would just claim a binding four Workers do
+ * not have. Optional keeps the type honest, and this function puts the
+ * actual guarantee where the secret is consumed: the request path, which
+ * cannot build its config without one.
  *
  * Cloudflare hands `env` to a handler and never to module scope, so
  * there is no boot phase that could validate it and the request config

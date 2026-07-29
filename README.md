@@ -91,6 +91,7 @@ pnpm build:cf
 
 pnpm start                       # alias of pnpm start:cf
 pnpm start:cf                    # wrangler dev (top-level Worker) — currently fails to boot, see below
+pnpm preview                     # vite preview (serves the build output) — fails to boot for the same reason
 
 pnpm typecheck                   # tsgo (@typescript/native-preview)
 pnpm lint                        # Biome lint
@@ -103,7 +104,7 @@ pnpm test:unit                   # Vitest (unit)
 pnpm test:integration            # integration suites
 ```
 
-**`pnpm start` does not work today** ([#40](https://github.com/tuanemuy/fog/issues/40)). `wrangler dev` bundles the Worker successfully, but workerd refuses to start it: `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, and workerd disallows generating random values outside a handler. The top-level Worker reaches that module through `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts`. `pnpm preview` fails identically for the same reason, so **`pnpm dev` is the only way to run the app locally** — Vite evaluates modules inside the request handler, where the restriction does not apply. `pnpm build` itself is unaffected.
+**`pnpm start` does not work today** ([#40](https://github.com/tuanemuy/fog/issues/40)). `wrangler dev` bundles the Worker successfully, but workerd refuses to start it: `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, and workerd disallows generating random values outside a handler. The top-level Worker reaches that module through `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts → application/workers/eventRelayWorker.ts` (`env.ts` value-imports the `DEFAULT_*` tuning constants from it). `pnpm preview` fails identically for the same reason, so **`pnpm dev` is the only way to run the app locally** — Vite evaluates modules inside the request handler, where the restriction does not apply. `pnpm build` itself is unaffected.
 
 Recommended routine after changes:
 

@@ -26,7 +26,7 @@ A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@r
 
 Run from the repo root — root scripts delegate to `@repo/web` where relevant:
 
-- `pnpm dev` / `pnpm build` / `pnpm start` (`pnpm start` and `pnpm preview` currently fail to boot — see Reference runtime below; use `pnpm dev`)
+- `pnpm dev` / `pnpm build` / `pnpm start` / `pnpm preview` (`pnpm preview` serves the build output through `vite preview`; it and `pnpm start` currently fail to boot — see Reference runtime below; use `pnpm dev`)
 - `pnpm lint` / `pnpm lint:fix` / `pnpm format` / `pnpm format:check` (Biome, whole repo)
 - `pnpm typecheck` (root `tsgo` for the vitest configs + `pnpm -r typecheck` across packages)
 - `pnpm test` / `pnpm test:unit` / `pnpm test:integration` (vitest runs at the root, spanning `apps/web` and `packages/core`)
@@ -93,7 +93,7 @@ Entry points:
 
 Operational guidance lives in `docs/runtime_cloudflare.md`. `pnpm dev` / `pnpm build` / `pnpm start` are aliases of their `:cf` counterparts.
 
-`pnpm start` (`wrangler dev`) and `pnpm preview` both fail to boot today ([#40](https://github.com/tuanemuy/fog/issues/40)). The bundle builds fine; workerd then rejects it because `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, which is disallowed outside a handler. The top-level Worker pulls that module in via `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts`. `pnpm dev` is unaffected — Vite evaluates modules inside the request handler — so it is the only way to run the app locally.
+`pnpm start` (`wrangler dev`) and `pnpm preview` both fail to boot today ([#40](https://github.com/tuanemuy/fog/issues/40)). The bundle builds fine; workerd then rejects it because `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, which is disallowed outside a handler. The top-level Worker pulls that module in via `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts → application/workers/eventRelayWorker.ts` (`env.ts` value-imports the `DEFAULT_*` tuning constants from it). `pnpm dev` is unaffected — Vite evaluates modules inside the request handler — so it is the only way to run the app locally.
 
 To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put; the swap is the entry + DI wiring, not the whole stack.
 
