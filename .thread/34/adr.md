@@ -890,3 +890,556 @@ plan.md は design.md 第1.3節の差分表を「採用 / 棄却 / 保留」の3
 
 - 良い点: #35 / #37 が「これは誰が決めるのか」を探す時間がゼロになる
 - トレードオフ: 判断材料が薄いまま倒した行があれば、後で覆るコストを払う。#33 のレビュー指摘（B-IDDS6-001）のように、先行案のレビュー履歴まで読んで材料を厚くすることで緩和した
+
+---
+
+## ADR-028: signup の `operationId` と候補 `userId` をサーバー採番に固定し、リクエスト跨ぎの冪等性を Directory 予約行へ寄せる
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第6.3節 phase 0 と第6.5節は「`operationId` は request Worker が採番し、再送中は同じ値を保持する」「その値をそのまま候補 `userId` として使う」と書いていた。しかし request Worker はステートレスでリクエストを跨いで値を保持できない。保持を成立させる手段はクライアント供給（hidden field / `Idempotency-Key`）しか無く、それを採ると外部入力がそのまま `idFromName()` の引数になり、第5.2.2節 (a)(ii) と第5.5節 1 の「外部入力が locator の材料にならない」という中核の構造的保証が偽になる。攻撃者が被害者の `userId` を `operationId` として送れば、未認証のまま他人の User Data DO へ書き込める。
+
+### Decision
+
+**`operationId` と候補 `userId` を分離し、どちらも request Worker がリクエストごとに `IdGenerator` で新規採番する。クライアントからは受け取らない。**
+
+- ブラウザからの再 POST は毎回新しい値になる。**「リクエスト跨ぎの再送」という概念を signup に持ち込まない。**
+- 落ちた saga を前進させるのは Alarm による再開だけである（`resume-signup`）。
+- リクエスト跨ぎの冪等性は **Directory bucket の予約行**が担う。同じ canonical への予約は勝者決定規則で1本に収束するので、再 POST が2つ目のアカウントを作らない。
+- 二重の防波堤として、signup の RPC エントリに「対象 DO に `account` 行が既に存在するなら無条件で拒否する」ガードを置く。第5.5節 4（他ユーザーの行が存在しない）は**読み取りには効くが書き込みには効かない**ので、書き込み側のガードを別に立てる必要がある。
+- `HMAC(SIGNUP_SECRET, canonical)` による決定的導出は「どうしても跨リクエストの `operationId` が要る場合の唯一許される形」として design.md に書き残すが、本設計では採らない。`userId` には決して使わない（第5.2.2節 (a) の「鍵に依存しない locator」を壊すため）。
+
+### Consequences
+
+- 良い点: 第5.5節の構造的保証が signup を含めて成立する。#37 が冪等キーをクライアントに持たせる実装へ倒れる余地が消える
+- トレードオフ: 同じ canonical への同時 signup で敗北した候補 `userId` は捨てられる。ただし phase 順を入れ替えた（ADR-029）ので、敗北側は User Data DO を作る前に止まり、捨てられるのは予約の試行だけになる
+
+---
+
+## ADR-029: signup saga の phase 順を入れ替え、Directory 予約を User Data DO 生成より先にする
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第6.2節は「(iv) 未認証経路からの DO 生成」を独立した判断軸として立て、credential 1件 = DO 1個の案を「任意の未認証文字列が新しい DO 名を引く」「資源枯渇の攻撃面」として棄却していた。ところが**同じ軸を User Data DO に当てていなかった**。第6.3節の phase 順は「User Data DO に operation 行を書く → Directory 予約」であり、メールが既に登録済みかを判定する前に User Data DO が1個作られて書き込みが発生する。しかもこの順序は第3.1節で Account Home を採らない根拠の一部として意図的に選ばれていた。
+
+### Decision
+
+**phase 1 と phase 2 を入れ替える。「Directory 予約 → User Data DO 初期化 → mapping 昇格 → reverse locator 記録」の4 phase にする。**
+
+- saga のコーディネーター状態は予約行が持てるので、跨ぐ DO 数も補償の相手も増えない。
+- 前進の駆動も Directory bucket 側へ移す（`resume-signup` を bucket の job table に置く）。phase 1 が起点なので、落ちたときに操作を知っているのは予約行だけだからである。
+- 補償の境界規則は「phase 3 以降は前進」から「**User Data の初期化完了（phase 2 の成功）以降は前進**」へ言い直す。境界の意味（利用者から見てアカウントが存在し始める点）は変わらない。
+- 第3.1節の Account Home 比較の記述も新しい phase 順に合わせる。
+
+### Consequences
+
+- 良い点: 重複チェックに勝った signup だけが User Data DO を作る。判断軸 (iv) が両 namespace に一貫して適用される
+- トレードオフ: 「異なる canonical を大量に投げる」攻撃では依然として DO が増える。これは順序では解けないのでレート制限（ADR-034）へ送った。設計はその残余リスクを隠さず書く
+
+---
+
+## ADR-030: login に到達性検査と `credentialVersion` 照合を組み込む
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第6.6節・第6.7節は「fail closed で拒否する」根拠に login 時の「到達性検査」を置いていたが、第5.1節にも第5.3節にもその検査が定義されていなかった。epoch ガードは「トークンが持つ epoch と現在値の照合」であり、**login は新規にトークンを発行する側なので照合対象が存在しない**。しかもパスワード検証材料は残存 mapping 行そのものに載っているため、unlink 後の孤児 mapping で login 手順が全部通り、解除済みクレデンシャルでセッションが発行される。加えて、login の step 3（Directory から検証材料取得）と step 5（User Data DO から epoch 取得）の間に credential 変更が完走すると、旧パスワードでの照合が成功したまま新しい epoch を載せた有効なセッションが発行される TOCTOU があった。
+
+### Decision
+
+**login の step 5 を「1回の RPC で3つを確認する」形に確定する。** (i) `account.status` が `active`、(ii) **到達性検査** — bucket から得た locator が `credential_locators` に active 行として存在する、(iii) **`credentialVersion` の一致**。
+
+- `credentialVersion` は **credential ごとの単調増加カウンタ**で、Directory 側 `credential_mappings` と User Data 側 `credential_locators` の両方に持つ。アカウント単位にしない — SSO link で新しい credential を足したときに既存 credential のバージョンが取り残されてログインできなくなるためである。
+- 追加の往復は発生しない。step 5 は既に叩いている DO の中の2テーブルを読むだけである。
+- **この検査は Account Home を採らない設計の成立条件そのものである。** 「権威はすべて `userId` で引ける」（第3.1節）が成立するのは、到達性検査を login に組み込んだときだけである。
+
+### Consequences
+
+- 良い点: unlink 後の孤児 mapping・credential 変更の TOCTOU がどちらも fail closed で塞がる。Account Home 不採用の論証が完結する
+- トレードオフ: `credential_locators` が login のホットパスに入る。ユーザー1人あたり数行なので実コストは無視できる
+
+---
+
+## ADR-031: state Worker に両 DO binding を置き、第5.5節を「外部入力からの導出点は1箇所」へ言い直す
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第5.5節 1 は「`idFromName` を呼ぶのは request Worker の1モジュールだけにする」と断定していた。一方で第6.4節（saga の前進）・第6.6節（孤児 mapping の削除）・第6.7節（退会の mapping 削除）はいずれも DO の側から他 DO を操作することを要求しており、両立していなかった。第3.2節・第3.3節も state Worker 側の binding の有無を述べていなかったため、#37 は「binding を足すか、Alarm から request Worker へ折り返すか、Directory 側から pull させるか」で手が止まる。
+
+### Decision
+
+**state Worker に `USER_DATA` と `IDENTITY_DIRECTORY` の両方の binding を置き、DO 間の相互呼び出しを許す。** そのうえで第5.5節 1 を「**locator を外部入力から導出するのは request Worker だけ。DO 側は自分の SQLite に永続化済みの locator しか使わない**」へ言い直す。
+
+- User Data DO → Directory bucket は `credential_locators` に記録済みの locator、Directory bucket → User Data DO は `credential_mappings` 行が持つ `userId` を使う。どちらもサーバーが過去に採番・記録した値であり、その呼び出しの外部入力に由来しない。
+- state Worker は公開ルートを持たない。到達手段は binding 経由の RPC だけである。
+- input gate の再入は第6.9節に3制約（トランザクション外で呼ぶ / phase を永続化してから呼ぶ / 各 phase を冪等にして再入を吸収する）として書く。**ロックで止めるのではなく冪等性で吸収する** — 非同期区間の排他はそもそも取れないからである。
+
+### Consequences
+
+- 良い点: 第6章の全 saga が実装可能になり、wrangler 設定・DI・再入設計が確定する
+- トレードオフ: 「locator の導出点は1箇所」というスローガンが1文で言えなくなる。代わりに「外部入力からの導出点は1箇所」＋「DO 側は永続化済み locator のみ」の2文になる
+
+---
+
+## ADR-032: credential 変更 saga を Directory 起点で新設し、旧検証材料の即時無効化を先頭に置く
+
+### Status
+
+Accepted
+
+### Context
+
+パスワード変更とリセット完了は「新しい検証材料を Directory に書く」＋「User Data DO の `sessionEpoch` を進める」の2 DO をまたぐ操作なのに、design.md には順序も補償も無かった。Alarm の `kind` 一覧にも前進ジョブが無く、落ちたら誰も拾わない。Directory 先なら旧セッションが7日生き残り、epoch 先なら旧パスワードが通り続ける。
+
+### Decision
+
+**第6.5.1節として credential 変更 saga を新設し、4 phase（新検証材料の計算 → Directory で旧材料を即時無効化 → User Data で epoch と `credentialVersion` を前進 → Directory で昇格）にする。**
+
+- **phase 1 で `changeState: 'pending'` を立てた瞬間から旧検証材料での照合を拒否する。** 中間状態では旧も新も通らない（可用性は落ちるが認可は開かない）。
+- 前進の駆動は **Directory bucket の Alarm（`resume-credential-change`）**。phase 1 が起点なので、落ちたときに操作を知っているのは mapping 行だけである。
+- リクエスト跨ぎの冪等性は `changeState` + `operationId` が担う。別 `operationId` の変更依頼が `pending` 中に来たら後勝ちで差し替える（利用者がリセットをやり直すケースが自然に通る）。
+- TOCTOU は ADR-030 の `credentialVersion` 照合で塞ぐ。
+
+### Consequences
+
+- 良い点: 「パスワードを変えたのに攻撃者のセッションが残る」「epoch は進んだのに旧パスワードが通る」の両方が消える
+- トレードオフ: saga 中は当該クレデンシャルでログインできない期間ができる。可用性より認可を優先する判断であり、利用者にはリセットのやり直しを案内する
+
+---
+
+## ADR-033: 退会の削除順序を入れ替え、`credential_locators` を最後に消す
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第6.7節は「`account.status = 'deleted'` にする。`credential_locators` はこの時点で消す」→「Directory bucket の mapping 行を物理削除する」の順だった。`credential_locators` は「世代 + bucket index + 全長 HMAC」を持つ唯一の逆引き情報なので、これを先に消すと mapping 削除の前に落ちた場合に所在を知る手段が消える。HMAC は一方向で、canonical 原本は削除対象の行の中にしかない。結果、`encryptedCanonical`（PII）が無期限に孤児として残り、そのメールアドレスは永久に再登録できなくなる。Alarm の `kind` 一覧にも回収ジョブが無かった。
+
+### Decision
+
+**「tombstone 先行 → mapping 削除 → `credential_locators` 削除」の順にする。**
+
+- 削除対象は `credential_locators` に記録された**全世代分**とし、鍵ローテーション中に備えて「active / previous の両世代へ削除を発行し、無ければ成功」の冪等規則を置く。
+- 回収は `kind: 'finalize-withdrawal'` ジョブが担う。予約 TTL 掃除は `reserved` 行しか見ないので、`active` な孤児 mapping には専用ジョブが要る。
+- 最後の砦として「`userId` を指定して自 bucket 内の全 mapping 行を削除する」冪等 RPC を bucket に持たせ、256 bucket 走査による operator 復旧経路を #38 へ送る。
+
+### Consequences
+
+- 良い点: 第6.2.1節 (d)「bucket 側には何も残さない」が実際に守られる。永久ロックが消える
+- トレードオフ: mapping を先に消すので、`deleted` になる前の短い期間だけ「mapping は無いが User Data は残っている」状態が生じる。`account.status = 'deleting'` が既にゲートになっているので認可上の穴は開かない
+
+---
+
+## ADR-034: 未認証経路の濫用抑止を3層で置き、標的型 `overloaded` は DO の外で止める
+
+### Status
+
+Accepted
+
+### Context
+
+bucket 分割は一様分布を前提とした緩和策で、標的型攻撃には効かない。攻撃者は単一のメールアドレスを狙えるので任意の1 bucket を `overloaded` に追い込め、リトライ禁止（第2.1節 #19）と相まって約 1/256 のユーザーを締め出せる。パスワード総当たりに対する試行回数制限も設計に無かった。単一グローバル DO 案を棄却した理由が soft limit だったので、この論点は設計自身の判断軸に直結する。
+
+### Decision
+
+**第6.2.2節を新設し、3層で抑止する。**
+
+1. `credential_mappings` 行に `{ failedAttempts, nextAttemptAllowedAt }` を持たせ、指数バックオフでロックする。DO 化で「同じ canonical への試行が必ず同じ行に集まる」という**カウントに最適な構造**が手に入っているので使う。ロックアウト中の応答はダミー材料経路へ倒し、ロックの有無を列挙オラクルにしない。
+2. リセット依頼は canonical 単位でレート制限する。
+3. **標的型の `overloaded` は DO に届く前に止める** — Cloudflare の WAF / Rate Limiting Rules を未認証エンドポイントに当てる。**bucket 数を増やしても解決しない**（攻撃者は同じ canonical を狙う）。
+
+具体値（試行回数・バックオフ係数・依頼間隔・WAF の閾値）は #38 へ送るが、**「どのレイヤーで当てるか」は本 Issue で決着させる** — DO 側で受けてから数える設計は、数える前に `overloaded` になるという順序で破れるためである。
+
+### Consequences
+
+- 良い点: 判断軸 (iv) の残余リスクに具体的な受け皿ができる
+- トレードオフ: 認証の可用性が Cloudflare のエッジ機能に依存する。ロックイン（`.adr/002`）の一部として受け入れる
+
+---
+
+## ADR-035: メール暗号鍵に世代管理と AEAD を定め、再 HMAC を bucket の中で行う
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第6.2.1節 (b) は鍵分離の論拠として「routing secret はローテーションのたびに世代が増えるが**暗号化鍵はそうではない**」と書いており、`IDENTITY_MAIL_ENCRYPTION_KEY` にローテーション経路が無いことを宣言してしまっていた。暗号方式（AEAD かどうか、nonce 規則、AAD）も未定義で、AC-23 (c) の「保護方式」が未決だった。さらに第6.2.1節 (c) の復号経路2 は「このときだけ canonical が request Worker 側へ渡る」としており、**全ユーザーのメール平文が bulk で Worker 境界を越える**のに保護規定が無かった。
+
+### Decision
+
+**(a) 暗号化鍵も世代管理する。** `{ generation, key }` の keyring を state Worker に配り、`credential_mappings` 行に `encryptionGeneration` を記録する。再暗号化は `kind: 'rotate-encryption'` の bucket Alarm ジョブで、retirement 証明は第6.8節と同じ「bucket ごとの snapshot 置換」に乗せる。routing secret の世代とは独立した番号体系にする。
+
+**(b) 暗号方式を AES-256-GCM に確定する。** 行ごと・書き込みごとにランダム96ビット nonce、**AAD に `(kind, hmac, encryptionGeneration)` を束縛**する。束縛しないと bucket 内で暗号文を別の mapping 行へ付け替えられ、「リセットメールを別アドレスへ送らせる」経路が開く。復号失敗は `SystemError(DataIntegrityError)` で fail closed。
+
+**(c) 再 HMAC は bucket の中で行い、平文を Worker 境界の外へ出さない。** maintenance 経路が active 世代の routing key を RPC 引数として**一時注入**し、bucket が復号 → 再 HMAC をローカルに完結させる。第3.2節の配布境界が禁じているのは state Worker が routing secret を**バインディングとして保持する**ことであって、operator が明示的に起動した保守経路で鍵が一度だけ引数として渡ることではない。**鍵1本の一時的な越境と全 PII の bulk 越境を天秤にかけ、前者を選ぶ。**
+
+### Consequences
+
+- 良い点: AC-23 (c) が保持場所と保護方式の両方で決着する。鍵漏洩時の再暗号化経路ができる。ローテーション時の PII 越境が消える
+- トレードオフ: state Worker 側に「一時的に鍵を受け取る RPC」が生まれる。ログ・トレースの無効化と平文の非永続化を運用要件として #38 へ送ることで補う
+
+---
+
+## ADR-036: AI クライアントトークンを別鍵 + audience タグ + scope 突き合わせにし、credential 変更では失効させない
+
+### Status
+
+Accepted
+
+### Context
+
+design.md 第5.4節はトークンを「セッショントークンと同じ方式」とだけ書き、署名鍵が第3.2節の秘密配布表に無かった。`scope` はトークン内の自己完結値で、DO 側が保存値と突き合わせるとは書かれていなかった。さらに第6.7節が「`sessionEpoch` を進める ⇒ AI トークンも全部無効」と書いていたが、トークンに epoch が無いのでこれは事実と違う（実際に効いているのは `account.status` ガード）。
+
+### Decision
+
+1. **`AI_CLIENT_TOKEN_SECRET` を別鍵として立てる。** TTL も失効機構も発行契機も違う2種類を同じ鍵で署名しない。
+2. **audience タグ `typ` を両方のペイロードに必須で入れ、検証側で厳密一致を要求する（欠落は拒否）。** 鍵分離だけに頼らず構造でも弾く。現行 `parsePayload` が `uid` / `exp` の存在しか見ないため、型混同が実装依存で成立しうるからである。
+3. **`scope` はトークンを信頼せず、`ai_client_connections` の保存値との積を有効 scope とする。** トークン内 `scope` は早期拒否の最適化に留める。失効（`status`）は全否定にしか効かず、権限**縮小**には効かないためである。
+4. **credential 変更（パスワード変更・リセット・SSO 解除）で AI クライアント接続を一括失効させない。** AI 接続は利用者が接続ごとに管理する独立した認可であり、パスワード変更がその取り消し意思を意味しない。**帰結（侵害からの復旧には個別 revoke が必要）を隠さず書き、#38 の運用ドキュメントと設定画面の文言へ送る。**
+5. 第6.7節の因果説明を「セッションは epoch 不一致、AI トークンは `account.status` ガード」と機構別に書き分ける。
+
+### Consequences
+
+- 良い点: 型混同と scope 格上げが塞がる。#37 が epoch だけを実装して AI トークン側のガードを落とす危険が消える
+- トレードオフ: 「パスワードを変えれば全部切れる」という直感に反する挙動を、文言で補う必要がある
+
+---
+
+## ADR-037: リセットトークンに世代を含め、ローテーション時は移送せず無効化する
+
+### Status
+
+Accepted
+
+### Context
+
+トークン形式 `{bucketIndex}.{random}` は bucket index だけを埋め込むが、bucket の DO 名は `dir:g{generation}:b{index}` で世代が要る。第6.8節の移送対象も `credential_mappings` 行だけで、リセットトークン行は入っていなかった。結果、ローテーション中に発行済みのトークンはどの世代を引けばよいか決められず、引けても行が旧 bucket に取り残される。加えて、URL に bucket index を出すことが第5.2節 (c)「locator を URL に出さない」と矛盾していた。
+
+### Decision
+
+**トークン形式を `{generation}.{bucketIndex}.{random}` にする。ローテーション時にトークン行は移送せず、世代が previous へ落ちた時点で発行済みトークンを無効にする。**
+
+- TTL が時間オーダーなので利用者影響は「リセットをやり直す」だけであり、移送機構を1つ増やす価値が無い。旧 bucket に残った行は同 bucket の Alarm が TTL 掃除で消す。
+- **世代 + bucket index の URL 露出は第5.2節 (c) の明示的な例外として記録する。** 漏れるのは世代番号と約 8 ビットで、canonical との照合には routing secret が要る。残余リスク（複数リセット URL の弱い名寄せ）は受容する。独立ルーティングタグ案は、対応表の置き場所がまた「どの bucket にあるか分からない行」になるので採らない。
+
+### Consequences
+
+- 良い点: ローテーション中の到達不能が消え、(c) との矛盾が設計文に自覚される
+- トレードオフ: ローテーション開始直後のリセット依頼が失敗しうる。#38 の運用手順で告知する
+
+---
+
+## ADR-038: `ctx.storage.transaction()` を代替案 (c) として記録し、明示的に棄却する
+
+### Status
+
+Accepted
+
+### Context
+
+第8.2.1節は選択肢を (a) 同期化 / (b) `SemanticCommitPort` の2つに閉じていたが、公式には `ctx.storage.transaction(closure)` という **`Promise` を返し、コールバックを `async` にできる**トランザクション API が存在する。第2.1節の事実表にもこの API が載っていなかった。ドメインポートから `Promise` を剥がす決定は本 PR で最も高価で、`CLAUDE.md`「Reference runtime」の不変条件を破棄する唯一の理由なので、検討していない選択肢が残っていると #37 が着手直後に設計を再開させる。
+
+### Decision
+
+**第2.1節に fact #27 として `transaction()` を追加し（種別: 公式記載）、第8.2.1節の選択肢を (a)(b)(c) の3つにして (c) を棄却する。結論（同期 UoW）は維持する。**
+
+棄却理由は「`transaction()` が非同期でも原子性を保つことを意味しないから」である。同じ公式ページが「**明示的なトランザクションはもはや必要ない。`await` を挟まない書き込み列は自動的に原子的に提出される**」「SQLite-backed では `txn` は obsolete で、`ctx.storage` への操作がトランザクションの一部として扱われる」と述べており、原子性の条件は `await` の不在の側にある。`await` を挟めば input gate が開き、割り込んだ別ハンドラの `ctx.storage` 書き込みまで同じトランザクションに巻き込まれる。カーソルのスナップショット安定性も失われる（fact #9）。結局「コールバック内で `await` しない」を人手で守ることになるので、`async` を型で排除して**言語の規則として守らせる**ほうが強く、実行時コストも同じである。
+
+### Consequences
+
+- 良い点: 最重量の意思決定の根拠が完結する。#37 の再燃を防ぐ
+- トレードオフ: 事実表と第8.2.1節が長くなる。棄却の記録は残す価値があるので許容する
+
+---
+
+## ADR-039: Alarm の再武装をハンドラ先頭で行い、チェックポイント予算を固定値で近似する
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節は再武装を `finally` に置いていたが、同じ節が支配的な失敗モードとして自ら定義した「CPU 予算超過はエラーではなくエビクション / リセットとして現れる」条件では isolate ごと殺されるので `finally` は走らない。フォールバックの「次の DO 入力で再計算」は、未認証トラフィックが常時来る Directory bucket では機能するが、**dormant な利用者の User Data DO では次の入力が来ない** — その `purge-trash` は恒久的に停止し、誰も気づかない。加えて第7.4節は「判定基準は CPU 予算」と繰り返す一方、実行時に残り CPU を読む API が無く、具体値も消えていた。
+
+### Decision
+
+1. **`alarm()` の先頭で、仕事を始める前に `now + チェックポイント予算` へ `setAlarm` する。** 正常完了時に DB の最早 `nextRunAt` へ張り直す。`finally` での再設定は最適化として残すが、**正しさの拠り所にしない**。
+2. **`alarm()` から throw しない。** 公式のリトライ（2秒から最大6回）を使い切ると alarm が消えるので、ジョブランナーが個々の失敗を `try / catch` で吸収して `attempt` / `nextRunAt` を進める。公式の「別マシンで再インスタンス化され**うる**（may）」には寄りかからない。
+3. **チェックポイント予算は「ジョブ25件 または 累積経過時間10秒」の固定値で近似する。** 測っているのが CPU ではなく経過時間であることを承知の上で、CPU ≤ 経過時間を使って安全側に倒す。値は先行案（第1.3節で採用済み）から引き継いだ。見直しの契機は #38。
+
+### Consequences
+
+- 良い点: 自ら定義した失敗モードと設計が一致する。dormant DO の retention 停止が消える
+- トレードオフ: 予算が尽きなかった場合に無駄な alarm 発火が1回入りうる。`setAlarm` 1回は1行書き込み相当の課金（fact #24）なので許容範囲
+
+---
+
+## ADR-040: lazy migration のゲートと fail-closed を `alarm()` へ広げ、ゲートを同期関数にする
+
+### Status
+
+Accepted
+
+### Context
+
+第9.2節はゲートを「全 RPC エントリの先頭」に限定していたが、dormant な User Data DO が次に起きる契機は `purge-trash` の Alarm しか無い。ゲートが `alarm()` に掛かっていないと、未 migrate の DO に対して新コードのジョブ実行部が新スキーマ前提の SQL を投げる。第9.4節の fail-closed（コードより新しい version）も同じく alarm 経路に掛かっていなかった。また `blockConcurrencyWhile` を明示的に棄却した以上、代わりの排他条件が必要だが、それが書かれていなかった。
+
+### Decision
+
+1. **ゲートを「全 RPC エントリ**および** `alarm()` の先頭」に置く。** 第7.5節の「アクセスが無くても期限処理が走る」という主張は、このゲートが `alarm()` に掛かって初めて成立する。
+2. **第9.4節の fail-closed も `alarm()` に掛ける。** 止まった DO の `alarm()` はジョブを実行せずバックオフ付きで `setAlarm` を張り直して戻る。**poison にはしない** — 原因はデータではなくデプロイ状態であり、正しいコードが戻れば回復すべきだからである。
+3. **ゲート関数は同期関数とし、`schema_version` の読み取りから全 DDL ステップの適用まで `await` を挟まない。** これで input gate が排他を保証する。`await` が入るとステップ間に並行 RPC が割り込み、順序依存のある migration で途中の観測が壊れる。重い部分を `migrate-bulk` ジョブへ逃がす方針とは両立する（ジョブ投入は同期の1行書き込み）。
+
+### Consequences
+
+- 良い点: B-002 / W-005 が同じ「alarm 経路を RPC と同格に扱う」で同時に塞がる
+- トレードオフ: `alarm()` の先頭処理が増える。1行の `SELECT` なので無視できる
+
+---
+
+## ADR-041: 短語フォールバックの結論を実測に合わせて `instr()` に確定する
+
+### Status
+
+Accepted
+
+### Context
+
+第7.2節は「1〜2文字のクエリは `LIKE` / `GLOB` へフォールバックする」と結論し、そこから「LIKE / GLOB パターンの 50 バイト上限（fact #16）により実質16文字が上限」を導いていた。しかし裏付けとされている先行実装は `instr(title, ?) > 0 OR instr(body, ?) > 0` を使っており、LIKE も GLOB も使っていない。`instr()` に 50 バイト上限は掛からない。つまり**実測されていない機構を結論に採り、その機構にしか効かない制約から数字を導いていた**。`.adr/003` を支える根拠の一部がここに載っているので放置できない。あわせて「2文字の `東京` でも2件ヒット」を trigram の実測として挙げていたが、2文字クエリは trigram ではなく短語フォールバック側を通る。
+
+### Decision
+
+**結論を `instr()` に確定する。50 バイト上限からの導出は削除し、実測の帰属を付け替える。**
+
+- fact #16 の効き先を「短語フォールバックに LIKE / GLOB を**採らない**根拠」へ書き換える。
+- 機構に依らず正しい制約（`instr()` は索引を使えない全走査なので、対象列とページサイズを制限する）だけを残す。
+- `東京` の2件ヒットを短語フォールバックの実測として付け替え、trigram 側の実測は3文字の `東京駅` とページングに限る。
+
+### Consequences
+
+- 良い点: `.adr/003` の足元が実測と一致する。#37 が LIKE / GLOB で実装して 50 バイト制約に悩む経路が消える
+- トレードオフ: 入力長の上限根拠が1つ減る。長さ制限は transport 境界の DoS 対策として別に置く（`CLAUDE.md`「Input validation」）
+
+---
+
+## ADR-042: DO facade はブランド型を受け取らず、RPC 境界を3点目の検証点にしない
+
+### Status
+
+Accepted
+
+### Context
+
+第8.3節 (d) が扱っていたのは RPC の**戻り値**だけで、引数側の検証について記述が無かった。state Worker は独立した script で、その DO クラスは binding を持つ任意の Worker から呼べる。ドメインの値オブジェクトはすべてブランド付き `string` / `number` で、ブランドは型レベルにしか存在しない。RPC は構造化クローンで値を運ぶのでブランドは境界を越えた時点で失われ、生の `string` が `Email` 型として通る。facade が `Email` を受け取る形で書かれると、型システムが「検証済み」と嘘をつき、`CLAUDE.md` の「値オブジェクト構築で検証する」が構造的に無効化される。
+
+### Decision
+
+**第8.3節に (e) を追加し、「DO facade のメソッド署名はブランド型を取らない。プリミティブだけを受け取り、DO の内側で値オブジェクトを再構築する」を断定する。**
+
+- これで `CLAUDE.md`「validated at exactly two points」は「transport 境界（request Worker）」と「値オブジェクト構築（DO 内）」の2点として維持され、RPC 境界は3点目にならない。
+- **信頼境界は「script 分離 + binding」に置く**と明文化する。state Worker は公開ルートを持たない。将来ここに公開ルートを足すと前提が崩れる、と書き残す。
+- 戻り値側も同じ理由でブランド型を返さない（先行案から採用した「RPC は primitive DTO と値エンベロープだけ」を引数側へ対称に広げたもの）。
+
+### Consequences
+
+- 良い点: 第5.2.1節 (b)「`Email.create` を canonical 化の唯一の出所にする」が実際に保証される
+- トレードオフ: facade の署名とドメイン型の間に変換層が1つ要る。DO の内側で値オブジェクトを構築する処理がそのまま2点目の検証点になるので、余分な層ではない
+
+---
+
+## ADR-043: PITR 復旧手順に `sessionEpoch` の強制前進を必須ステップとして加える
+
+### Status
+
+Accepted
+
+### Context
+
+第10.1節は PITR の帰結を4点挙げていたが、**epoch そのものが巻き戻る**ケースが無かった。セッションはステートレス HMAC + TTL 7日で失効の唯一の手段が epoch 照合なので、User Data DO を N 日前（N ≤ 7）へ restore すると、その間にパスワード変更・リセット・SSO 解除で失効させたセッショントークンが**再び有効になる**。「侵害 → リセットで締め出す → 障害で PITR」という順序で現実に起こりうる。
+
+### Decision
+
+**PITR で User Data DO を戻した直後に、`sessionEpoch` を restore 前の最大値より大きい値へ強制的に進める。これを復旧手順の必須ステップにする。** restore 前の値は運用記録から拾えないので、**現在時刻由来の十分大きな単調値へ飛ばす**形にして、前の値を知らなくても必ず上回るようにする。
+
+`sessionEpoch` を Directory 側にも持たせる案は**採らない** — 第3.1節の「権威はすべて `userId` で引ける」を崩し、Account Home を畳んだ判断の前提を壊すからである。**運用手順側で閉じるほうが設計に整合する。**
+
+`credentialVersion` も同じく巻き戻るが、Directory 側との不一致で login が fail closed に倒れるので安全側である。
+
+### Consequences
+
+- 良い点: 復旧作業が「失効済みセッションの再有効化」を伴わなくなる
+- トレードオフ: restore のたびに当該ユーザーの再ログインが1回発生する。失効済みセッションの復活より軽い
+
+---
+
+## ADR-044: SSO canonical の区切り子を `U+0000` に確定し、本文に生の NUL バイトを埋め込まない
+
+### Status
+
+Accepted
+
+### Context
+
+design.md の2箇所（第5.2.1節 (c) / 第6.1節 (b)）に**生の NUL バイト**が埋め込まれており、`file` がこのファイルを `data` と判定し、`grep` が「Binary file matches」すら出さずに**無言で0件を返す**状態になっていた。実害は文字化けではなく検証と引き継ぎの破壊で、(i) `plan.md` の機械検証（結論位置に「今後検討」「TBD」が無いこと）が「何も無いから通る」vacuous な合格になっていた、(ii) #35 / #37 が本書を grep して改訂対象・引き継ぎ表を引く運用が壊れていた。さらに、レンダリングしても NUL は不可視なので、読み手には `provider + " " + subject`（空白区切り）または区切り無しに見え、**理由文と本文が食い違って見える**。canonical 規則は HMAC の入力そのもので、第5.2.1節 (d) が「規則の変更は鍵ローテーションと同格」と定めている以上、取り違えると後から直せない。
+
+### Decision
+
+**区切り子は単一の `U+0000`（NUL、UTF-8 で1バイト）と確定する。ただし本書の本文には生の NUL バイトを埋め込まず、`U+0000` というエスケープ表記で書く。**
+
+- `SsoProvider` は `"google" | "apple"` の閉じた列挙（`packages/core/src/domain/identity/valueObject.ts`）なので provider 名が `U+0000` を含みえず、区切りは一意に決まる。長さ前置きなどの重い符号化は要らない。
+- **「`.thread/` の成果物に制御文字を入れない」を作法として本 ADR に記録する。** 検証は `tr -dc '\000' < <file> | wc -c` が 0 であることで行う。
+
+### Consequences
+
+- 良い点: 機械検証が実際に機能する。#35 / #37 の grep 運用が回復する。canonical 規則が読み手に確定した形で伝わる
+- トレードオフ: 実装コードでは本書の `U+0000` 表記をエスケープシーケンスへ読み替える必要がある。区切り子の定義を1文で明示したので誤読の余地は無い
+
+---
+
+## ADR-045: 第4.1.1節を DO 内テーブルの全数の正本と定め、章をまたぐ不一致を構造で防ぐ
+
+### Status
+
+Accepted
+
+### Context
+
+第4.1節は「Issue 列挙7項目の対応表」として書かれており、7項目に現れない認証まわりのテーブルが構造的に落ちる。実際、`credential_locators`（第6.3節 phase 4 で導入し、第5.3節の到達性検査と第6.7節の退会順序の要になっている）と `migration_progress`（第9.3節）はどこの一覧にも無く、逆に第4.1節だけにある `trash_schedule` は第7.5節が `purge_after` 列 + `jobs.nextRunAt` に置き換えたので実体を失っていた。#37 は「どれが実テーブルか」を判断できない。
+
+### Decision
+
+**第4.1.1節「テーブルの全数」を新設し、第6〜9章が使うテーブルの正本にする。** 第4.1節の7項目対応表は Issue への回答として残すが、テーブルの権威ではないことを明記する。
+
+- `trash_schedule` を落とし、`purge_after` 列と `jobs.nextRunAt` の関係を第4.1節の該当行に書く。
+- `credential_locators` / `migration_progress` / `rotation_checkpoints` を全数表に加える。
+- 鍵ローテーションの retirement 証明で使う snapshot 置換の置き場に **`rotation_checkpoints`** という名前を与える（第6.8節は「`{ bucketIndex, generation, previousCount, scannedAt }` を置換で記録する」とだけ書いていて、テーブル名が無かった）。
+- **「第6〜9章で新しいテーブルを足したら第4.1.1節も同時に更新する」を規約として表の直前に置く。**
+
+### Consequences
+
+- 良い点: #35 の `spec/database/index.md` 改訂と #37 のスキーマ実装が同じ1つの表を参照する。章をまたぐ不一致が次に起きたときに、どちらが正本かで迷わない
+- トレードオフ: テーブルの一覧が2箇所（第4.1節と第4.1.1節）に見える。役割の違い（Issue への回答 / 実テーブルの正本）を明記して吸収した
+
+---
+
+## ADR-046: 第7.7節を「Outbox 廃止後の非同期実行契約」の正文とし、ジョブ間の順序保証が無いことを断定する
+
+### Status
+
+Accepted
+
+### Context
+
+第11.1節は `CLAUDE.md`「Key concepts」の Outbox / domain events / Retry strategy / Unit of Work を「本設計に合わせて書き直す」と #35 へ投げていたが、**何に書き直すのかが1箇所にまとまっていなかった**。断片は第7.3節・第7.4節・第7.6節・第8.4節に散っており、#35 はそれを自分で編み直すことになる。しかも**ジョブ間の順序保証**についてはどこにも記述が無かった。単一 Alarm + `nextRunAt` 順の逐次処理という機構上、種別の異なるジョブの相対順序は保証されず、それが第6.4節の「予約 TTL 掃除と saga 再開の競合」を生んでいる。「順序保証は無い」と明言するか「同一系列では保証する」とするかで #37 の実装が変わる。
+
+### Decision
+
+**第7章の末尾に第7.7節「Outbox 廃止後の非同期実行契約（正文）」を置き、7項目の断定を並べる。#35 はここを `CLAUDE.md` へ写すだけでよい。**
+
+とくに **(4) ジョブ間に順序保証は無い**を明示的な断定として置く。同一 DO 内では `nextRunAt` 順に取り出すが、失敗ジョブはバックオフで先送りされ、DO をまたぐジョブには共通の時計もキューも無いためである。**順序が必要な箇所は、ジョブ間の順序ではなく状態機械の phase と CAS 条件で表現する** — 第6.3節・第6.5.1節・第6.9節が既にその形になっている。
+
+### Consequences
+
+- 良い点: #35 の `CLAUDE.md` 改訂が転記作業になる。#37 が「ジョブの実行順に依存した実装」を書く余地が消える
+- トレードオフ: 第7.3節・第7.4節・第7.6節・第8.4節と内容が重複する。正文を第7.7節と明示し、他節はそこへ帰着すると書いて吸収した
+
+---
+
+## ADR-047: 引き継ぎ節の判定を「語彙 grep 1本」から「grep + ポート定義の目視 + 環境前提の目視」の3手段に変え、`spec/idea.md` を走査対象に含める
+
+### Status
+
+Accepted
+
+### Context
+
+第11.1節の網羅性は6語の grep（`Outbox|outbox|consumer|ベクトル|埋め込み|ハイブリッド`）だけに依っており、次の2つの穴があった。
+
+1. **語彙が足りない。** `collectEvents` / `pruner` / `D1` / `UnitOfWork` / `イベント` が入っておらず、pruner の並行実行を前提にした trash のテストケース4件、`collectEvents` を手順に持つ usecase 3ファイル、共有 DB への直接 SQL 更新を前提にした manual-test が漏れていた。
+2. **grep で拾えない前提がある。** ポート契約の変更（`Promise` の除去・`userId` 第一引数の除去）はシグネチャの形の問題なので語彙に現れない。マニュアルテストの「検索インデックス更新**ワーカー**が起動していること」も、`consumer` と書いていないので語彙走査に掛からない。
+
+さらに `spec/idea.md` を「履歴文書」として走査から除外していたが、**#35 の対応項目1の先頭が `spec/idea.md` の改訂を名指ししている**ので、除外すると本書と Issue 本文で指示が食い違い、#35 の担当者がどちらに従うか判断できない。
+
+### Decision
+
+**3つの手段を重ね、走査語彙と手順を第11.1節に記録して #35 が再実行できるようにする。**
+
+1. 語彙走査（20語へ拡張。除外は `spec/*/review/**` だけ）。
+2. `spec/domains/*.md` / `spec/usecases/*.md` のポート定義の目視。
+3. `spec/manual-tests/*.md` の「環境前提」節の目視。
+
+**`spec/idea.md` は除外しない。** 走査対象に入れて改訂指示（`:40` のハイブリッド検索 → 全文検索、`:48` の「Unit of Work + Outbox / ドメインイベント」→「Unit of Work（DO ローカルの同期トランザクション）+ Alarm ジョブ」）を書く。
+
+結果、判定対象は40件から**65件**（改訂63 / 影響なし2）になった。手段2 が `spec/domains/export.md` を、手段3 が `spec/manual-tests/document.md` と `spec/manual-tests/settings.md` を拾っている。
+
+### Consequences
+
+- 良い点: #35 が本書の一覧だけで着手でき、同じ走査を再実行して漏れを自分で確認できる
+- トレードオフ: `イベント` のような広い語を入れたのでヒットが増え、判定の手間が増えた。イベント期待の書き換え方を (A) projection の期待へ読み替え / (B) 落とす / (C) ケースごと削除 の3通りに固定して、1件ずつの判断を機械的にした
+
+---
+
+## ADR-048: 引き継ぎ表を「削除 / 作り直す / 改修」の区分つきにし、削除対象表に改修対象を混ぜない
+
+### Status
+
+Accepted
+
+### Context
+
+第11.2節の表題は「削除対象」だったが、中身には削除しない行が混在していた — `application/execution/unitOfWork.ts`（新契約に置き換える）、`apps/web/app/presentation/` の一部（「server-function エントリとエラー応答ミドルウェアは残る」）、`render-wrangler.ts` + `.tpl`（2系統に増やす）、ローカル `wrangler.toml`（構成を反映する）。#37 が表題だけを見て削除する事故が起こりうる。加えて、第4.7節が新規追加と断定した `SystemErrorCode` の2値、第5.1節が契約変更と断定した `SessionCodec` / `hmacSessionCodec`、第5.2.1節 (b) の `Email.create`、第8.5節の `registerWithPassword.ts` が、いずれも変更対象一覧に載っていなかった。
+
+### Decision
+
+**表題を「変更対象（区分つき）」に変え、各行に「削除 / 作り直す / 改修」の区分列を持たせる。** 本文が断定した変更をすべて行として起こす。とくに次を追加した。
+
+- `packages/core/src/application/errors.ts` — `SystemErrorCode` へ `ServiceOverloaded` / `StorageCapacityExceeded` の2値を追加（`RETRYABLE_SYSTEM_CODES` には入れない）。
+- `apps/web/app/presentation/errorResponse.ts` — **「変更しない」が結論である**ことを行として明示する。`kind` 単位の status 写像を維持し、追加2コードは 500 で返す。
+- `packages/core/src/application/ports/sessionCodec.ts` / `packages/core/src/adapters/webcrypto/hmacSessionCodec.ts` — `epoch` を運ぶ契約変更と、`ep` を持たない既存トークンを fail closed で拒否する移行方針。
+- 第4.1.1節の新設テーブル群を「新設対象」へ。
+
+### Consequences
+
+- 良い点: #37 が行ごとに作業の種類を判断できる。「変更しない」という決定も一覧に現れるので、後から蒸し返されない
+- トレードオフ: 表が長くなった。区分でソートして読めるようにした
+
+---
+
+## ADR-049: export 読み出し上限の決定を #37（根拠値）と #38（運用値）の2段に分ける
+
+### Status
+
+Accepted
+
+### Context
+
+第4.8節は「具体値は #38 で決める」と書き、第11.4節の未決事項表は「決める主体: #37」と書いていた。未決事項の表は「誰がいつ決めるか」を割り当てることが目的なので、本文と食い違うと割り当てそのものが機能しない。実態としては、上限の根拠になるのは第2.1節 #26（単一 SQL クエリの結果セット合計サイズ上限。公式に記載が無く未確認）であり、それを確かめられるのは spike を回す #37 だけである。一方で運用値としての最終決定は容量監視・利用者導線と一緒に決めるべきもので、それは #38 の領分である。
+
+### Decision
+
+**役割を分けて両方に同じ文を置く。** #37 が着手時の spike で上限の**根拠値**を出し、#38 が**運用値**として確定する。上限を設けること自体は本設計で決着済みで、残るのは値だけである。第4.8節と第11.4節の両方にこの分担を書き、第11.3節（#38 への引き継ぎ）にも「#37 が出した根拠値を入力にする」と明記した。
+
+### Consequences
+
+- 良い点: 未決事項表の割り当てが機能する。#37 と #38 のどちらも「相手が決めるはず」で止まらない
+- トレードオフ: 決定が2段になるぶん、確定までのリードタイムが伸びる。上限の存在自体は決着しているので実装は先行できる

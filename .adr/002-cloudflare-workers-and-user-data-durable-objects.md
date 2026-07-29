@@ -22,7 +22,7 @@ fog は公開サービスとしてマルチテナントだが、データは利�
 - 認証済みの UI / REST / MCP リクエストは、セッションまたはトークンから得た `userId` だけを材料に対象 Durable Object を選ぶ。公開入力から対象を選ばせない。
 - 利用者が確定していない経路（ログイン、サインアップ、パスワードリセット）の解決は、別の Durable Object が担う。その識別子には生のメールアドレスや SSO subject を使わず、正規化値を鍵付きハッシュした内部キーを使う。個人情報を識別子・ログ・URL へ露出させない。
 
-**Durable Object のトポロジー（何クラス構成にするか）、認証権威の所在、Worker を request / state に分けるかは `.thread/34/design.md` の第3章で確定する。**
+各 Durable Object の責務分界、認証権威の所在、Worker を request / state に分ける構成の具体は `.thread/34/design.md` の第3章にある。
 
 ## 検討した代替案
 
