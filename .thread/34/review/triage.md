@@ -190,3 +190,29 @@ Round 1 / 2 の Key と一致する既出指摘はゼロ。今ラウンドの指
 | `design.md:5.3/report-login-result のガードが実装不能` | R4 | fix | bucket 側に照合材料が無い（悪用可能な差は無し） | 0 |
 
 **Round 4 集計**: fix 15 / wont-fix 0 / defer 0（生指摘 B6 + W11 + Notes 由来1 = 18 件を 15 Key に正規化。うち1件は3ラウンド分の再指摘を集約した構造的修正）
+
+## Round 5
+
+R4 の構造的修正（`credentialId` 導入）は4層すべてが独立に「目的を達成」と確認。`design.md:6.x/hmac を世代非依存の credential 同一性に使っている（構造）` は**解決済み**として以降のラウンドで再審議しない。
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `design.md:6.4/signup phase 2 の無条件拒否と冪等性の矛盾` | R5 | fix | 応答喪失で正常なアカウントが `abandon-account` される | 0 |
+| `design.md:7.4/再武装の駆動源クエリが作業述語と一致しない` | R5 | fix | どちらの読み方でも収束しない（恒久ループ or 1回で停止） | 0 |
+| `design.md:6.8/巻き戻しが移送先行を無条件破棄する` | R5 | fix | (R7)「両側を CAS で守る」に反し、移送先に着地した中間状態を壊す | 0 |
+| `design.md:4.1.1/credential_mappings.credentialId の非一意根拠` | R5 | fix | DO 命名規則（世代ごとに別 DO）と矛盾。UNIQUE を付ける | 0 |
+| `design.md:6.6/unlink のガードが kind を見ない` | R5 | fix | `kind='email'` を解除でき、リセット経路を恒久的に失う | 0 |
+| `design.md:7.7/正文 項2 と kind 全数表の矛盾` | R5 | fix | 「外部 I/O だけ／1件だけ」が12種の実態と食い違う | 0 |
+| `design.md:9.x/CREATE INDEX がデータ量に依存しない は誤り` | R5 | fix | 単発適用の断定が大きな DO をブリックしうる | 0 |
+| `design.md:8.2/recordOperation で targetLocators を書けない` | R5 | fix | 署名と代替経路の禁止が噛み合っていない | 0 |
+| `design.md:11.2/ドメイン層イベント抽象が変更対象一覧に無い` | R5 | fix | Outbox 廃止で消えるのに #37 が拾えない | 0 |
+| `design.md:5.4/リセットトークン tokenId のエントロピー要件` | R5 | fix | 鍵単独漏えいでトークンを偽造できる | 0 |
+| `design.md:10.1/PITR restore が消費済みリセットトークンを復活させる` | R5 | fix | 乗っ取り復旧を巻き戻す。第6.9節の fail closed 宣言への反例 | 0 |
+| `design.md:1.1/実参照の節数が実測と不一致` | R5 | fix | 31/14 に対し実測 41/19 | 0 |
+| `testing.md/実測注記の乖離` | R5 | fix | 864行→906行、87件→95件（合否判定自体は通る） | 0 |
+| `design.md:11.1/spec-adr-005 の参照側更新が2/6箇所` | R5 | fix | #35 の対応項目4 を満たさない | 0 |
+| `design.md:5.1/read-own-canonical の選択キー` | R5 | fix | 認可は閉じているが実装が決まらない | 0 |
+| `design.md:5.1/exchange-authz-code のガード列挙` | R5 | fix | `redirect_uri` 検証が無いまま完結集合として宣言している | 0 |
+| `design.md:4.1.1/credential_locators.status の値域` | R5 | fix | 値域が未定義 | 0 |
+
+**Round 5 集計**: fix 17 / wont-fix 0 / defer 0（生指摘 B2 + W12 + Notes 由来3 = 17 件）

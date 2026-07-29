@@ -2527,3 +2527,269 @@ F-4b は「Alarm / RPC が CPU リセットの契機に当たるか」を**記�
 
 - 良い点: 事実表の種別分類が公式の記述と一致する。#37 の spike が「肯定も否定も無い」からではなく「一段細かい問い」から始められる
 - トレードオフ: 無い。結論は不変で、記述の正確さだけが上がる
+
+## ADR-096: signup phase 2 のガードを「`account` 行と `operations` 行の組」による条件付き述語にする
+
+### Status
+
+Accepted
+
+### Context
+
+`initialize-account`（signup phase 2）のガードを第5.1節・第5.5節・第6.3節の3箇所で「`account` 行が既に存在するなら**無条件で**拒否」と書いていた。ところが第6.4節は saga の前進規則の前提として「phase 2 は冪等（`account` 行があり同じ `operationId` なら成功として返す）」を要求している。両立しない。しかも無条件拒否が先に効くので、同じセルに並ぶ `operationId` / `payloadDigest` の CAS には到達しない。帰結は「到達不能アカウントが残る」ではなく**正常なアカウントの破棄**である — phase 2 が commit した後に応答が失われると（DO のリセット / `.overloaded` / `ctx.abort()`）コーディネーターは `sagaCommitted` 印を書けず `resume-signup` が phase 2 を再送し、無条件拒否で永久に前進できないまま再試行上限に達して第6.4節 3 の終端規則が `cancel-reservation` + `abandon-account` を実行する。
+
+### Decision
+
+**述語を条件付きに書き直し、4分岐で定義する。** (i) `account` 行が無ければ初期化する、(ii) `account` 行があり同じ `operationId` の `operations` 行（`kind = 'signup'`）が**存在しない**なら拒否する、(iii) 存在して `payloadDigest` が一致するなら成功として返す（no-op）、(iv) 一致しなければ `ConflictError`。第5.5節 5 が本当に欲しい保証は「**他人の**アカウントの DO に signup が書き込まない」ことであり、この形でも落ちない（他人の DO には自分の `operationId` の `operations` 行が存在しないので必ず (ii) で拒否される）。あわせて第5.5節 5 の「1 が成立している限り発火しない」を「1 が成立している限り**他人の DO に対しては**発火しない」へ訂正した。
+
+### Consequences
+
+- 良い点: 第6.4節の前進規則が成立し、応答喪失で正常なアカウントが破棄される経路が消える。`payloadDigest` の比較が到達可能になる
+- トレードオフ: ガードが1行の述語から4分岐になる。第6.9節 項3 の CAS 条件の列挙も「`account` 行の有無」から「`account` 行と `operations` 行の組」へ書き換えが要った
+
+## ADR-097: 周期・反復ジョブの駆動源クエリを「作業述語から時刻条件だけを外したもの」と定義する
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節の再武装規則 (1) は駆動源を「`purge-trash` は `min(purge_after)`、`sweep-reservations` は `min(reservedUntil)`、`sweep-reset-tokens` は `min(expiresAt)`」と**列の最小値**としか定義しておらず、作業述語（例: `WHERE status = 'reserved' AND reservedUntil < ? AND sagaCommitted IS NULL`）と一致していなかった。一致しないと「掃除されないのに時刻列が過去である行」が生じ、規則がどちらにも読めて**どちらの読み方でも収束しない** — 「残件 = まだ `reserved` な行」と読むと `sagaCommitted` 行や昇格済み行が `min(reservedUntil)` を恒久的に過去へ固定して即時再発火の恒久ループになり（`pending` 行が常にあるので `deleteAlarm()` も発火しない）、「残件 = いま処理対象の行」と読むと1回で `done` に落ちて TTL 掃除が止まる。`purge-trash` も、ゴミ箱からの復元時に `purge_after` を消す規定がどこにも無かったため同型の穴を持っていた。
+
+### Decision
+
+**駆動源クエリを「そのジョブの作業述語から時刻条件だけを外したもの」と定義し、`kind` ごとに述語を表で明記する。「残件がある」を「その集合が空でないこと」と定義し直し、時刻では判定しない。** 加えて **(a) 再計算値が現在時刻以前になり、かつその起動での作業対象が0件だったときは最小再開間隔でクランプする**（駆動源と述語がずれる将来の変更に対する安全弁。発火はメトリクスに出す）、**(b) ゴミ箱からの復元時に `purge_after` を `NULL` へ戻し、`trashed = 1` ⇔ `purge_after IS NOT NULL` を不変条件にする**、**(c) `sagaCommitted` 印のある `reserved` 行は作業述語からも駆動源からも外し、回収は第6.4節 3 の終端規則の担当とする**、の3点を足した。
+
+### Consequences
+
+- 良い点: 恒久ループと1回停止の両方が構造的に消える。駆動源と作業述語が同じ行集合を指すことが規則として書かれるので、#37 が片方だけを実装しても検証で捕まえられる
+- トレードオフ: `kind` ごとの述語表が1つ増える。新しい周期ジョブを足すたびに表へ行を足す必要がある
+
+## ADR-098: 移送の巻き戻しでも移送先への書き込みを CAS で守る
+
+### Status
+
+Accepted
+
+### Context
+
+第6.1.1節 (R7) は「移送は移送元・移送先の両側を CAS で守る」と掲げているのに、第6.8節 手順2 の巻き戻し（(3) の CAS が0行削除だったとき）は「(2) で書いた移送先 A の行を破棄する」「(1) が追加した `credential_locators` 行を破棄する」と**無条件**に書いていた。(2) が A に行を書いた時点で active 世代の lookup は A にヒットするので、以後 `changeState = 'pending'` / `pendingVerifier` / `failedAttempts` / `lastResetRequestedAt` は A に着地する。一方 (3) の CAS 失敗は移送元 P 側の変化で成立し、**(2) より前に login step 3 を終えた要求が (2) より後に step 7 を報告する**だけで足りる（step 4 の PBKDF2 210,000 回で数百 ms かかる）。両者が重なると無条件破棄が credential 変更の中間状態を消し、Directory 側 n / User Data 側 n+1 の恒久不一致で**ログイン不能**になる。(R9) の新旧比較は `credentialVersion` の大小しか見ないのでこれを救わない。(R6) も**読み出し時点**の判定なので、(2) 以後に pending が着地する窓を塞がない。
+
+### Decision
+
+**移送先 `credential_mappings` 行の破棄を CAS 化する** — 「(2) が書いたスナップショットと全列が一致する場合にだけ削除し、一致しなければ破棄せずそのまま残す」。残した行は次の走査の (R9) 新旧比較が正本の側へ収束させる。**`credential_locators` 側（(1) が追加した行）は「破棄しない」に倒す** — (R8) の単調非減少 upsert により値が正本以上に保たれ、到達性検査は `credentialId` だけを見るので余分な世代行は認可を緩めない。CAS を持てない破棄を残すより規則が1つ減る。あわせて (R7) の本文に「移送先への書き込みには巻き戻しの破棄も含む」と「(R6) はこの窓を塞がない」を明記した。
+
+### Consequences
+
+- 良い点: (R7) の宣言と手順が一致する。移送窓に着地した credential 変更が巻き戻らない
+- トレードオフ: 巻き戻しが「必ず元に戻す」ではなく「収束に任せる」形になり、中断直後に移送元・移送先の両方へ行が残る期間が伸びうる。(R9) がそれを吸収する
+
+## ADR-099: `credential_mappings.credentialId` に bucket 内 UNIQUE を張る
+
+### Status
+
+Accepted
+
+### Context
+
+第4.1.1節と第6.1.2節 (C3) は「`credentialId` 単独は一意ではない — 新旧2世代の locator が偶然同じ bucket index に落ちると、同じ bucket に同じ `credentialId` の行が2つ並ぶため」と書いていた。ところが Directory DO の名前は `dir:g{generation}:b{index}` で**世代を含む**（第6.1節 (d)・第6.2節）。世代が違えば bucket index が一致しても別の DO インスタンスであり、**1つの Directory DO の `credential_mappings` に載る行は常に同一世代である**。したがって根拠が自分の命名規則と矛盾していた。`delete-mapping` の「同じ bucket に2世代の行が落ちていれば両方消える」も同根の誤りで、第6.7節 手順3 の「両世代の bucket に対して削除を発行する」と食い違っていた。
+
+### Decision
+
+**`credential_mappings.credentialId` に bucket 内 UNIQUE を張り、根拠文を「DO 名が世代を含むので1 DO の行は常に同一世代である」へ差し替える。** `(credentialId, generation)` の UNIQUE は残してよいが、`generation` 列は DO 名と冗長なので実効は変わらない。`delete-mapping` の記述も「対象は最大1行。別世代の行は別 bucket にあるので呼び出し元が世代ごとに発行する」へ訂正した。**訂正の対象は Directory 側だけである** — `credential_locators`（User Data DO 側）は1 DO に両世代が同居するので `(credentialId, generation)` UNIQUE / `credentialId` 非一意で正しい。
+
+### Consequences
+
+- 良い点: #37 が本来張れる UNIQUE を落とさずに済む。`record-credential-locator` / `reserve-credential` / 移送の (2) が同一 bucket に同じ `credentialId` の行を2つ作るバグを DB 側が検出する。`read-own-canonical` / `consume-reset-token` の行選択が最大1行に定まる
+- トレードオフ: 無い。認可の強さは変わらず（`(kind, hmac)` UNIQUE が canonical 重複を捕まえる）、正本を名乗る2節の根拠が正しくなる
+
+## ADR-100: unlink を `kind = 'sso'` に限定する
+
+### Status
+
+Accepted
+
+### Context
+
+第6.6節 unlink 手順1 の検査は「`usableForLogin = true` かつ active な行の distinct な `credentialId` を数え、対象を除いた残りが0件なら拒否」だけで、`kind` を一切見ていなかった。パスワード + SSO のアカウントで `kind = 'email'` を対象に指定すると残りが SSO の1件になるので検査を通過する。通過すると手順2〜3 が忠実に実行され、メール行が全世代の `credential_locators` から消え、`credential_mappings` 行（`encryptedCanonical` を含む）と `password_reset_tokens` 行も消える。以後 (i) 自分のメールアドレスを表示できず、(ii) `request-password-reset` が空振り経路へ落ちて**リセットが恒久的に不能**になり、(iii) 起点 A のパスワード変更も成立しない。**メールクレデンシャルを追加するフローは本設計に存在しない**（link は SSO 専用）ので利用者にも復旧手段が無い。第5.2.1節 (a) は「所有の唯一の証明はパスワードリセット経路である」と断定しているので、その唯一の証明をセッションを握った攻撃者が1回の unlink で消せることになる。第5.1節と第6.6節の見出しはいずれも「SSO link・unlink」であり、**設計の意図は元から SSO 限定**で、食い違っていたのはガードの記述だけである。
+
+### Decision
+
+**unlink の検査を2段にする。(1-a) 対象 `credentialId` の `kind` が `'sso'` であること（`BusinessRuleError`）、(1-b) 従来の「最後のログイン手段」検査。** どちらも DO 側の権威であり UI の出し分けに委ねない（第6.6節自身が「ここが唯一のアカウント到達性の権威」と述べている）。(1-a) があっても (1-b) は要る（SSO を2つ持つ利用者が両方を外す経路が残るため）。第6.1.2節 (C5) には「一覧に `kind = 'email'` も出すが解除操作は `kind = 'sso'` のみ」を書き、#35 の画面仕様へ同じ制約を送った。**将来メールアドレスの変更・再登録を入れる場合は、unlink ではなく credential 変更 saga の一種として設計する** — 新 canonical の一意性予約と旧行の削除を1つの saga に収めないと到達性が0になる窓を塞げないためである。
+
+### Consequences
+
+- 良い点: 回復手段（リセットの宛先）を1回の unlink で失う経路が消える。第6.9節の締め出し経路一覧に行として登録され、以後の改訂で見落とされない
+- トレードオフ: メールアドレスの変更機能を将来入れるときに unlink を流用できない。流用できない理由は上に書いたとおり構造的なものである
+
+## ADR-101: 非同期実行契約の項2 を「外部 I/O は必ず載せる／`kind` の全数は第7.4節」へ書き換える
+
+### Status
+
+Accepted
+
+### Context
+
+第7.7節は「本節が正文であり、#35 は本節を `CLAUDE.md` へ写す」と自ら宣言している。その項2 が「永続ジョブに載るのは外部 I/O を伴う処理だけである。現時点で該当するのはメール送信の1件だけ」と書いていた一方、第7.4節の `kind` 全数表は12種のうち11種がローカル完結のジョブである。第7.6節も「外部 I/O を伴わない処理（FTS 更新、retention のハードデリート、saga の前進）は永続ジョブの transport は要らない」と `purge-trash` と `resume-*` を名指しで「永続ジョブ不要」の側へ置いていた。このまま `CLAUDE.md` へ写すと、中核概念と実装（12種の job kind）が最初から食い違う。`.adr/004` は「外部 I/O を伴う処理**と期限処理**だけを永続的なジョブとして残し」と正しく書いており、design 側の正文だけが期限処理・saga 前進を落としていた。
+
+### Decision
+
+**項2 を「外部 I/O を伴う処理は必ず永続ジョブに載せる（トランザクション内では実行できないため）。加えて、期限処理・チェックポイント分割を要する一括処理・cross-DO saga の前進も同じ `jobs` テーブルと Alarm で駆動する。`kind` の全数は第7.4節が正本」へ書き換える。** 外部 I/O は「必ず載る」側の条件であって載るものの全数ではない、を明記した。第7.6節も冒頭で「本節が決めるのは外部 I/O の置き場所の境界であって `kind` の全数ではない」と限定し、「永続ジョブの transport は要らない」を「外部 transport（Queue / relay / consumer）を要さない — ただしいずれも `jobs` 行を持つ」へ訂正した。
+
+### Consequences
+
+- 良い点: 正文と `kind` 全数表が一致する。#35 が `CLAUDE.md` へ写した時点で実装と食い違わない
+- トレードオフ: 項2 が1文から3文に伸びた。正文は写される先が `CLAUDE.md` なので簡潔さに価値があるが、誤りを残すよりよい
+
+## ADR-102: `CREATE INDEX` をデータ量依存の DDL として分類し、大テーブルへの索引追加を多段 migration へ分解する
+
+### Status
+
+Accepted
+
+### Context
+
+第9.2節は「テーブル追加・列追加・**索引追加**といった DDL 中心の変更は単発適用で足りる。SQLite の DDL はデータ量にほぼ依存しないためである」と断定していた。SQLite 公式を実地に確認したところ、この一括の根拠は成立しない。`lang_altertable.html` は「No changes are made to table content for renames or column addition without constraints. Because of this, the execution time of such ALTER TABLE commands is independent of the amount of data in the table」と述べる一方、**CHECK 制約付きの列追加・NOT NULL の生成列追加・列削除**については「takes time that is proportional to the amount of content in the table」と明記している。`CREATE INDEX` については `optoverview.html` が索引構築のコストを「the cost of constructing the automatic or query-time index is O(NlogN) (where N is the number of entries in the table)」と定義しており、全行走査 + ソートである。分割が必要な3条件は `CREATE INDEX` を1つも捕捉しない（条件3 は明示的に「上記 1 / 2 を」に限定されている）ので、索引追加は単発適用へ分類されていた。ゲート関数は全 RPC エントリと `alarm()` の先頭に置かれ、CPU 予算超過はエラーではなく**エビクションとリセット**として現れる（F-4）ので、帰結は当該 DO の**恒久的な応答不能**であり、しかもエラーとして観測されない。PITR も救済にならない（`schema_version` が進んでいないので巻き戻す対象が無い）。
+
+### Decision
+
+**(i) 根拠文を DDL の種類ごとに分ける** — `CREATE TABLE` と制約を伴わない `ALTER TABLE ADD COLUMN` / `RENAME` はデータ量非依存、CHECK 制約付き列追加・NOT NULL 生成列追加・列削除・`CREATE INDEX` はデータ量依存（いずれも公式記述を引用する）。**(ii) 分割条件に「4. 既に大きく育った DO に対する `CREATE INDEX`」を足し、SQLite では分割できないことを明記する**（中断・再開の単位が無く `SAVEPOINT` も使えない）。**(iii) 回避策を1つに決め切る** — **(a) 索引は原則としてテーブル新設時に同時に張る**（空テーブルへの `CREATE INDEX` は O(1)）、**(b) 既存の大テーブルへ索引を足す必要が生じたら「索引つきの新テーブルを作る → `migrate-bulk` でコピー → 参照を切り替える → 旧テーブルを落とす」という多段 forward-only migration へ分解する**（第9.3節が既に定めている形と同じ）。コピーは条件1 に当たるのでチェックポイント分割に乗り、索引構築が行の挿入に分散して有界になる。あわせて FTS5 の `CREATE VIRTUAL TABLE`（external-content）は shadow table を作るだけで単発でよいが、既存行を載せる `'rebuild'`（公式: "This command first deletes the entire full-text index, then rebuilds it based on the contents of the table or content table"）は条件2 に当たることを明記した。
+
+### Consequences
+
+- 良い点: 大きく育った DO を索引追加でブリックする経路が閉じる。回避策が本設計の他の規則（多段 forward-only migration）とそのまま噛み合う
+- トレードオフ: 既存テーブルへの索引追加が「1行の DDL」から「テーブルのコピー」になり、migration の設計コストと所要時間が上がる。単発でよい範囲を DDL の種類で線引きしたので、影響を受けるのは大テーブルへの索引追加だけである
+
+## ADR-103: `UnitOfWorkContext` に `updateOperation` / `setMigrationCursor` を足し、非集約ストアの書き込み口を全数宣言する
+
+### Status
+
+Accepted
+
+### Context
+
+第8.2節の `recordOperation(operationId, kind, payloadDigest, phase)` では `operations.targetLocators` と `terminalReason` を書けない。ところが第4.1.1節はこの2列を `operations` の列として挙げ、第6.6節は link 手順1 で `targetLocators` の記録を、unlink 手順2 で「削除する前に消す行の locator を全世代分退避する」ことを要求しており、それが `sweep-orphan-mapping` の**唯一の逆引き情報**である。同じ節が代替経路（`ctx.storage.sql` の usecase からの直接使用）を明示的に閉じているので、**第6.9節が締め出し経路として登録している孤児 mapping の回収を実装する手段が UoW 契約の側に存在しなかった**。`migration_progress` のカーソル更新については本文が「同じ位置に置く」と補っていたが、メソッドが書かれていなかった。
+
+### Decision
+
+**`recordOperation` に `targetLocators?: readonly LocatorRef[]` を足し、`updateOperation(operationId, patch)`（`phase` / `targetLocators` / `terminalReason`）と `setMigrationCursor(targetVersion, step, cursor)` を並べる。** あわせて **「上のメソッド列挙は、その DO が持つ非集約ストア（`jobs` / `operations` / `migration_progress`）への書き込み口の全数である」と宣言する** — リポジトリ側は DO ごとに増減するが、非集約ストア側はここが全数であり、新しい非集約ストアを足したらメソッドを1本足す。`ctx.storage.sql` の直接使用を禁じている以上、列挙しないテーブルは「書く手段を持たないまま第4.1.1節に載る」ことになるためである。`LocatorRef` はブランド型を含まないプレーンなオブジェクトとし、`operations.createdAt` / `migration_progress.updatedAt` は引数に取らず実装側が書く（`UnitOfWorkContext` は clock を持たない）。
+
+### Consequences
+
+- 良い点: 第4.1.1節の列と UoW 契約が一致し、#37 が孤児 mapping の回収を実装できる。「全数か否か」が明記されたので、次の改訂でテーブルを足したときに書き込み口の欠落が検出できる
+- トレードオフ: `UnitOfWorkContext` のメソッドが2本増える。`recordOperation` と `updateOperation` を分けたので、phase の前進が2つの入口を持つ形になった（新規は前者、更新は後者）
+
+## ADR-104: リセットトークンの `tokenId` に128ビット以上の暗号論的乱数を要求する
+
+### Status
+
+Accepted
+
+### Context
+
+トークンの秘匿部は `{random} = HMAC(IDENTITY_RESET_TOKEN_KEY[tokenKeyGeneration], tokenId)` の1点に集約されているので、推測困難性は **`tokenId` の推測困難性と鍵の秘匿の積**になる。ところが `tokenId` の定義は本書全体で「bucket 内で採番する不透明値」だけで、長さもエントロピーも要求していなかった。本書は `callerToken` と `credentialId` については「128ビットの不透明値」とビット数まで固定しているので、この1つだけが抜けていた。連番・rowid・単調カウンタで実装しても文言に反しないが、その実装だと **`IDENTITY_RESET_TOKEN_KEY` 単独の漏えいで、`{generation}` × `{bucketIndex}`（0..255）× `{tokenId}`（連番）を全列挙するだけでその時点の未使用・未期限の全リセットトークンを再現できる**。第5.5節 3 / 第6.1節 (d) の範囲検査はこの列挙を止めない（正しい範囲の値を投げるため）。設計は「導出鍵は DB に載らないので DB 漏えいだけでは再現できない」と片方向だけを保証しており、逆方向（鍵漏えい単独）はどこにも評価が無かった。生トークンのハッシュを保存する素朴な設計には鍵が存在しないので、**この方向のリスクは導出方式の採用によって新設されたもの**である。
+
+### Decision
+
+**第6.1節 (d) と第4.1.1節に「`tokenId` は暗号論的乱数由来の128ビット以上の値であり、bucket 内の連番・rowid・時刻由来の値を使わない」を制約として書く**（`callerToken` / `credentialId` と同じ書き方）。あわせて「DB 漏えいだけでは再現できない」を **「DB 漏えい単独でも鍵漏えい単独でも再現できない」** へ直し、2方向とも成立していることを明示する（第3.2節の鍵表にも同じ形で書いた）。
+
+### Consequences
+
+- 良い点: 第5.2.1節 (a) が「リセットトークンの安全性がアカウント所有の安全性の上限になる」と断定している以上、その上限側の前提が数値で固定される。導出方式が新設したリスクが閉じる
+- トレードオフ: 無い。採番規則が1つ増えるだけで、既に `callerToken` / `credentialId` で同じ規則を使っている
+
+## ADR-105: Identity Directory bucket の PITR restore 直後の必須ステップを定義する
+
+### Status
+
+Accepted
+
+### Context
+
+第10.1節は PITR の穴を2つ挙げ、どちらにも User Data DO restore 直後の**必須ステップ**を割り当てていた（`sessionEpoch` を十分大きな単調値へ / `ai_client_connections` を全件 `revoked` へ）。しかし Directory bucket 側の restore については第6.7節が「承認手続きの対象にする」「アカウント1件の復旧手段としては使えない」と述べるだけで、**restore 後に何をしなければならないかが1つも定義されていなかった**。「saga の中間状態は restore で復活しうる」の列挙も `reserved` 行と `operations` 行だけで、`password_reset_tokens` 行が入っていなかった。具体的な経路は次のとおり — 乗っ取り被害者がリセットで攻撃者を締め出した後に bucket を T0 へ restore すると、(a) `passwordVerifier` / `credentialVersion` が n へ巻き戻り、(b) 攻撃者が保持していたリセットトークン行が `usedAt = null` で復活する。(a) 単独なら第5.3節 step 5 (iii) の照合が User Data 側の n+1 と不一致になって **fail closed** で止まるが、(b) は照合を回避せずに**前進させて解消する** — `consume-reset-token` →`begin-credential-change`（起点 B の束縛 `consumedByOperationId` も復活済みの行で満たされる）→ phase 2 が n+2 へ進める → phase 3 で攻撃者の `pendingVerifier` が昇格する。終状態は攻撃者のパスワードで正規にログインできるアカウントであり、第6.9節の「どの中間状態でも fail closed」に対する反例になる。トークン TTL が時間オーダーなので成立するのは「直近数時間へ戻す restore」に限られるが、それは PITR の典型的な使い方そのものである。
+
+### Decision
+
+**第10.1節に3つ目の PITR 穴として1項を立て、Directory bucket restore 直後の必須ステップを2つ定義する。** **(1) restore した bucket の `password_reset_tokens` を全行削除する**（消費済み・未消費を問わない。誰のトークンがいつ有効だったかは restore 後には読めないので「復旧できないなら全部切る」を既定手順にする — `ai_client_connections` を全件 `revoked` にするのと同じ判断で、利用者影響は「リセットをやり直す」だけである）。**(2) `failedAttempts` を0・`nextAttemptAllowedAt` を過去へ戻す**（同じく巻き戻る列で、restore 前の値を知らなくても安全側になる形。締め出し方向へ倒さないのが要点で、発信元単位の抑止は第6.2.2節 (c) の WAF が引き受ける）。あわせて **第6.9節の「どの中間状態でも fail closed」の射程を「本設計が作る中間状態」と明記し、PITR がその外側であることを書く**（射程を書かないと宣言が反例を持つ）。第6.7節の「PITR 保持期間の外側では成立しない」の帰結にも「消去の不可逆性だけでなく認可の再開にも及ぶ」を足し、第11.3節の PITR の項を DO クラス別（User Data DO 2つ / Directory bucket 2つ）に書き分けた。
+
+### Consequences
+
+- 良い点: 認可が開く向きに倒れる唯一の PITR 経路が塞がる。第6.9節の宣言が反例を持たなくなる
+- トレードオフ: Directory bucket の restore が「戻して終わり」ではなくなり、restore 後に必ず全ユーザーのリセットトークンが無効になる。bucket は同じ index に写像される全ユーザーを含むので、影響は restore 対象の1人に留まらない — もっとも同じ理由で bucket restore は元から「アカウント1件の復旧手段として使えない」と決めてある
+
+## ADR-106: `read-own-canonical` の行選択キーを `credentialId` に確定する
+
+### Status
+
+Accepted
+
+### Context
+
+`read-own-canonical` の引数に `credentialId`（または `kind`）が含まれるかが、第5.1節の表にも第6.2.1節 (c) 4 にも書かれていなかった。ガードは「`callerToken` の定数時間比較 + `credential_mappings.userId` が引数の `userId` と一致する行に限る」だけで、選択キーが `userId` のみだと**同じ bucket に同じ `userId` の行が複数ある場合**（SSO signup がメール credential と SSO credential の両方を置き、bucket index が衝突した場合）にどの行を復号するかが決まらない。認可は `callerToken` + `userId` で閉じているので穴ではないが、返る値が「自分のメールアドレス」ではなく「自分の SSO canonical（`provider + U+0000 + subject`）」になりうるため、#37 が実装を決められない。
+
+### Decision
+
+**引数を `(userId, credentialId, callerToken)` とし、行の選択キーを `credentialId` に確定する**（ADR-099 により bucket 内 UNIQUE なので最大1行に定まる）。**呼び出し元（User Data DO）は `credential_locators` の `kind = 'email'` かつ active な行から `credentialId` と locator を引く。** ローテーション中は同じ `credentialId` の行が2世代あるが、2つの locator は別 bucket を指し**どちらの平文も同じ canonical である**ので、第6.1.1節 (R2) に従って「行が実在する世代」を1つ選べばよい（active を先に試し、無ければ previous）。
+
+### Consequences
+
+- 良い点: 実装が一意に決まり、返る値が必ず「自分のメールアドレス」になる。ADR-099 の UNIQUE と噛み合う
+- トレードオフ: RPC の引数が1つ増える。材料は呼び出し元の `credential_locators` に既にあるので追加の往復は生じない
+
+## ADR-107: 認可コードに `redirectUri` を載せ、token エンドポイントで一致検証する
+
+### Status
+
+Accepted
+
+### Context
+
+`exchange-authz-code` のガード列挙に `redirect_uri` の一致検証が無かった。OAuth 2.1 では PKCE が必須なので code interception 自体は `code_challenge` の定数時間比較で塞がれており、認可エンドポイント側の登録済み `redirect_uri` との突き合わせは #13 の領分と読める。しかし第5.4.1節が当該エントリのガードを「代わりに『署名検証 + `typ` 厳密一致 + `exp` + `jti` の一回性 CAS + PKCE の定数時間比較 + `account.status = 'active'`』が守る」と**完結した集合として**宣言しているので、OAuth の必須検証が列挙から漏れると「宣言された集合が実は完結していない」状態になる。
+
+### Decision
+
+**認可コードのペイロードに `redirectUri` を足して署名し（`{ typ: "authzCode", userId, connectionId, scope, codeChallenge, codeChallengeMethod, redirectUri, exp }`）、token エンドポイントが受け取った `redirect_uri` との完全一致を検証する。** これを第5.1節の表のガード欄にも足して列挙を完結させる。**`/authorize` 側の検証（クライアント登録済み `redirect_uri` との突き合わせ、認可画面の組み立て）は #13 へ明示的に委譲し、その旨を第5.4.1節と第11.1節の #13 への入力に書く。** 委譲を書かずに列挙だけを完結集合と宣言すると、#13 と #37 のどちらも自分の担当でないと読む。
+
+### Consequences
+
+- 良い点: 完結集合の宣言が実際に完結する。#13 と #37 の分界が1文で書かれる
+- トレードオフ: 認可コードのペイロードが1フィールド増える。署名済みの自己完結値なので永続化は増えない
+
+## ADR-108: `credential_locators.status` の値域を `active` の1値に固定する
+
+### Status
+
+Accepted
+
+### Context
+
+第4.1.1節は「認証・saga・ジョブ系は列の全数」の正本を名乗り、他の列には値域を添えている（`kind`、`account.status` など）が、`credential_locators.status` だけは値域の記載が無かった。読み側は第5.3節 step 5 (ii) と第6.6節 unlink 手順1 の「active な行」だけで、書き側（第6.3節 phase 4 / 第6.6節 link 手順4 / 第6.8節 手順2 (1) の `record-credential-locator`）はいずれも記録・上書きする列として `status` を挙げていない。削除は物理削除（unlink 手順2 / 退会 手順4）なので、実質的に値は `active` 固定になる。
+
+### Decision
+
+**値域を `active` の1値に固定し、`revoked` のような論理削除状態は置かない、と断定する。** `record-credential-locator` は挿入時に `active` を書き、除去は物理削除で行う。理由は、論理削除状態を足すと「active な行」を数える述語が2系統になり、第6.1.1節 (R4) の数え方と第5.3節 step 5 (ii) の到達性検査が同じ列を別々に解釈しうるためである。
+
+### Consequences
+
+- 良い点: #37 が「`revoked` のような状態を足すべきか」を迷わずに済む。第4.1.1節が名乗る「列の全数の正本」に値域の欠落が無くなる
+- トレードオフ: 将来クレデンシャルの一時無効化が要るとしても、この列は使えない。使う場合は (R4) の数え方と到達性検査の両方を同時に改訂する必要がある
+
+## ADR-109: 第1.1節から参照節の件数を落とす
+
+### Status
+
+Accepted
+
+### Context
+
+第1.1節は「#35 は第11.1節を起点に…**実参照は31節ある**」「#38 は…**実参照は14節ある**」と書いていたが、実測は41節 / 19節で一致しなかった（同じ「31節」は第6.1節 (d) からも引用されていた）。本書は他の箇所では「件数を書き換えるときは台帳を再走査する」（第4.3節）「件数を書き換えるときは第11.4節の表を数え直す」（第11.2節）という規律を守っているので、ここだけ実測と外れているのは非対称である。
+
+### Decision
+
+**件数を書かない形へ改める。** その文の趣旨は件数ではなく「個別列挙をしない」ことなので、数字を持たないほうが古びない。「参照先の節は改訂のたびに増減するので件数を書かない（数えた値を本文に置くと、次の改訂で必ず実測とずれる）」とし、代わりに**必ず入力として要る節の名指し**（#35 は5節、#38 は5節）だけを残した。第6.1節 (d) の引用も同じ文言へ差し替えた。
+
+### Consequences
+
+- 良い点: 改訂のたびに数え直す義務が1つ減る。名指しした必須入力は数ではなく役割で書かれているので古びない
+- トレードオフ: 「どれくらいの分量を辿ることになるか」の目安が読み手に伝わらなくなる。起点（第11.1節 / 第11.3節）が明示されているので実害は小さい
