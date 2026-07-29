@@ -336,9 +336,9 @@ describe("registerWithPassword (integration)", () => {
   });
 
   // Both callers pass the `findByEmail` pre-check, so the loser only
-  // learns of the collision when `users_email_uq` fires at flush time.
-  // The assertions stay loose enough to hold under either failure shape
-  // (D1 aborts the losing batch).
+  // learns of the collision when `users_email_uq` fires at flush time:
+  // D1 aborts the losing batch and the adapter reads that as a
+  // UNIQUE_VIOLATION.
   it("collapses a concurrent registration race onto EMAIL_ALREADY_REGISTERED (TC-registerWithPassword-014)", async () => {
     const container = createTestContainer();
     const input = { email: "race@example.com", password: PASSWORD };

@@ -66,8 +66,7 @@ The `FakePasswordHasher` case is the criterion for adding a fake at all: the por
 | --- | --- |
 | All | `pnpm test` |
 | Unit only | `pnpm test:unit` |
-| Integration only | `pnpm test:integration` |
-| Integration, Workers pool + D1 | `pnpm test:integration:cf` |
+| Integration only (Workers pool + D1) | `pnpm test:integration` (alias of `pnpm test:integration:cf`) |
 | A single file or path pattern | `pnpm test:unit packages/core/src/domain/identity` |
 
 ## Coverage

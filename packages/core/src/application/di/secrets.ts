@@ -40,17 +40,17 @@ export type SessionSecret = string & {
 /**
  * Asserts a usable `SESSION_SECRET` while the request config is built.
  *
- * The env schema keeps `SESSION_SECRET` optional on purpose: the same
- * `ServerEnv` shape is read by the relay / consumer / pruner / DLQ
- * Workers, which never touch a session, and a required key there would
- * stop those workers from booting. Requiring it in the request-config
- * reader instead means only the request path — the sole consumer —
- * demands the secret.
+ * `ServerEnv` keeps `SESSION_SECRET` optional on purpose: the same shape
+ * is read by the relay / consumer / pruner / DLQ Workers, which never
+ * touch a session, so making it required would force
+ * `wrangler secret put SESSION_SECRET` onto Workers that must not
+ * receive it. Requiring it in the request-config reader instead means
+ * only the request path — the sole consumer — demands the secret.
  *
- * Cloudflare has no boot phase in which `env` exists, so the request
- * config is necessarily per-request; the check still runs before the
- * isolate does any work, and the message names only the variable, never
- * a value.
+ * Cloudflare hands `env` to a handler and never to module scope, so
+ * there is no boot phase that could validate it and the request config
+ * is necessarily per-request. The check still runs before the container
+ * is built, and the message names only the variable, never a value.
  */
 export function requireSessionSecret(
   secret: string | undefined,

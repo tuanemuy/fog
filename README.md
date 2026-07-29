@@ -40,7 +40,7 @@ apps/
    │  └─ server.cloudflare.ts  # server fetch entry
    └─ scripts/         # render-wrangler.ts (renders wrangler.<stage>.toml from its .tpl)
 infra/                # cloudflare (Pulumi)
-docs/                 # implementation pattern examples + the Cloudflare runtime guide
+docs/                 # implementation pattern examples + the Cloudflare runtime guide + the testing guide
 spec/                 # entry point for the /spec workflow
 ```
 
@@ -76,6 +76,8 @@ For a production build:
 pnpm build
 ```
 
+The build output cannot be run locally yet — both `pnpm start` (`wrangler dev`) and `pnpm preview` fail to boot; see [Development commands](#development-commands) for the cause. Use `pnpm dev`, or deploy to a stage.
+
 See [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) for deployment, secrets, queues, and per-stage D1 management.
 
 ## Development commands
@@ -88,7 +90,7 @@ pnpm build                       # alias of pnpm build:cf
 pnpm build:cf
 
 pnpm start                       # alias of pnpm start:cf
-pnpm start:cf                    # wrangler dev (top-level Worker)
+pnpm start:cf                    # wrangler dev (top-level Worker) — currently fails to boot, see below
 
 pnpm typecheck                   # tsgo (@typescript/native-preview)
 pnpm lint                        # Biome lint
@@ -100,6 +102,8 @@ pnpm test                        # unit + integration
 pnpm test:unit                   # Vitest (unit)
 pnpm test:integration            # integration suites
 ```
+
+**`pnpm start` does not work today.** `wrangler dev` bundles the Worker successfully, but workerd refuses to start it: `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, and workerd disallows generating random values outside a handler. The top-level Worker reaches that module through `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts`. `pnpm preview` fails identically for the same reason, so **`pnpm dev` is the only way to run the app locally** — Vite evaluates modules inside the request handler, where the restriction does not apply. `pnpm build` itself is unaffected.
 
 Recommended routine after changes:
 

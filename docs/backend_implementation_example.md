@@ -21,7 +21,7 @@ packages/core/src/
 │       └── ports/${domain}Repository.ts
 ├── application/
 │   ├── di/types.ts                SharedDeps, RequestContainer, WorkerContainer, AppConfig
-│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer (shared)
+│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer
 │   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig
 │   ├── ports/
 │   │   ├── clock.ts
