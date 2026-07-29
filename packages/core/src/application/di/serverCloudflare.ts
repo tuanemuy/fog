@@ -57,17 +57,15 @@ export type RequestServerConfig = AppConfig &
 
 /**
  * Cloudflare bindings shape. The `OUTBOX_*` vars are runtime-agnostic
- * (see {@link TuningEnv}); the D1/Fetcher bindings are CF-only. The
- * Node entry has its own env shape in `./serverNode`.
+ * (see {@link TuningEnv}); the D1/Fetcher bindings are CF-only.
  */
 export type ServerEnv = Readonly<{
   DB: D1Database;
   APP_URL: string;
   RELAY?: Fetcher;
   // Delivered as a wrangler secret (`wrangler secret put` / `.dev.vars`),
-  // never as a `[vars]` entry. Optional here — like the zod-validated
-  // runtimes, the request path is what demands it (see
-  // `requireSessionSecret`), so workers boot without one.
+  // never as a `[vars]` entry. Optional here — the request path is what
+  // demands it (see `requireSessionSecret`), so workers boot without one.
   SESSION_SECRET?: string;
   // Worker tuning knobs. Wrangler `[vars]` deliver strings — parse +
   // default via `readRelayTuning` / `readPruneTuning` at the worker

@@ -67,20 +67,7 @@ export default defineConfig({
       "packages/core/src/adapters/d1/**/*.integration.test.ts",
       "packages/core/src/application/**/*.integration.test.ts",
     ],
-    // The libSQL adapter and the in-process worker runner have their
-    // own Node-pool integration tests (`vitest.config.integration.node.ts`).
-    // They share the `*.integration.test.ts` suffix with the D1 tests
-    // but cannot run inside Miniflare — `@libsql/client` requires the
-    // Node `libsql` native module, which is not available in the
-    // Workers pool. Exclude those subtrees here.
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/.direnv/**",
-      "packages/core/src/adapters/libsql/**",
-      "packages/core/src/adapters/node/**",
-      "apps/web/app/worker/node/**",
-    ],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
     setupFiles: ["packages/core/src/adapters/d1/__tests__/setup.ts"],
   },
 });

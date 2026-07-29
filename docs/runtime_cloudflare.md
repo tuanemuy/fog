@@ -2,8 +2,6 @@
 
 Multi-Worker, edge-distributed runtime. The main app runs in the `app` Worker; outbox publish, queue consumption, daily pruning, and DLQ surfacing each ship as a sibling Worker driven by Service Bindings, Queues, and Cron Triggers.
 
-See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs the same code on a single Node process.
-
 ## Table of contents
 
 - [Quick start](#quick-start)
@@ -17,7 +15,6 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 - [Queues](#queues)
 - [Cron triggers](#cron-triggers)
 - [Retry budget](#retry-budget)
-- [D1-specific behaviour and the libSQL diff](#d1-specific-behaviour-and-the-libsql-diff)
 
 ## Quick start
 
@@ -89,7 +86,7 @@ pnpm --filter @repo/web exec wrangler secret put MY_SECRET --config wrangler.pro
 
 For local dev, drop them into `apps/web/.dev.vars` (copied from `apps/web/.dev.vars.example`).
 
-The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `apps/web/.env.example` — the schema is shared with the Node runtime via `packages/core/src/application/di/env.ts`.
+The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `apps/web/wrangler.toml` — `OUTBOX_BATCH_SIZE` / `OUTBOX_LEASE_MS` / `OUTBOX_MAX_ATTEMPTS` under `[env.relay.vars]` and `OUTBOX_RETENTION_MS` under `[env.pruner.vars]`. The schema itself lives in `packages/core/src/application/di/env.ts`.
 
 ### `SESSION_SECRET`
 
@@ -138,7 +135,7 @@ pnpm deploy:production:all:dry       # dry run
 
 ## D1 migrations
 
-The SQL lives under `packages/core/src/adapters/d1/migrations/` and is regenerated from `packages/core/src/adapters/d1/schema.ts` with `pnpm db:generate:cf`. (Bare `pnpm db:generate` targets the libSQL runtime, matching `pnpm db:migrate`.)
+The SQL lives under `packages/core/src/adapters/d1/migrations/` and is regenerated from `packages/core/src/adapters/d1/schema.ts` with `pnpm db:generate:cf`. (Bare `pnpm db:generate` is an alias of it.)
 
 ```bash
 pnpm db:apply:local                    # apply to the local D1
@@ -149,7 +146,7 @@ pnpm db:execute:staging --file=...     # run an arbitrary SQL file against stagi
 pnpm db:execute:production --file=...  # run an arbitrary SQL file against production
 ```
 
-`pnpm db:migrate:cf` is an alias of `db:apply:local` for parity with the Node runtime's `pnpm db:migrate`.
+`pnpm db:migrate:cf` is an alias of `db:apply:local`, and bare `pnpm db:migrate` is an alias of it.
 
 ### Replacing a migration in place
 
@@ -192,19 +189,3 @@ A message reaches the DLQ only after **both** retry budgets are exhausted:
 | Consumer subscriber attempts  | 4       | `1 + max_retries` from the `[[queues.consumers]]` block   |
 
 The user-visible attempt count is the **product** of those numbers (max 8 by default), so adjust them together when tuning. Once the relay budget is exhausted on a row, `processOutboxEvents` stamps `failed_at`, and the row stays out of the queue until manually re-driven.
-
-## D1-specific behaviour and the libSQL diff
-
-The SQLite schema and SQL are shared verbatim across runtimes — both adapters consume `packages/core/src/adapters/d1/schema.ts` (libSQL re-exports it). What differs:
-
-| Concern                     | D1                                                      | libSQL                                                          |
-| --------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
-| Transactional UoW           | `db.batch(stmts)` — pre-collected `PendingBatch`        | `client.transaction("write", fn)` — interactive transaction     |
-| Error mapping               | Driver errors are parsed from message strings           | `LibsqlError.code` is a structured enum — more robust matching  |
-| Relay trigger               | `ServiceBindingRelayTrigger` (cross-Worker `fetch`)     | `InProcessRelayTrigger` (`setImmediate` in the same process)    |
-| Queue                       | Cloudflare Queues, durable, cross-region                | `InMemoryQueueDispatcher`, in-process only                      |
-| Cron                        | Cloudflare Cron Triggers                                | `setInterval` inside the runner                                 |
-| OCC `CHECK` constraints     | Shared — works identically                              | Shared — works identically                                      |
-| `RETURNING` clauses         | Supported                                               | Supported (fuller coverage than D1, but kept to the shared subset) |
-
-D1 cannot run an interactive transaction inside a Worker invocation: the only atomic primitive is `db.batch`, which is why the UoW pre-collects statements into a `PendingBatch`. libSQL exposes an interactive `transaction("write", fn)` API, so its UoW executes the same statements eagerly. Both produce the same observable semantics — including OCC failures, FK enforcement, and the at-least-once outbox dispatch — at the application layer.

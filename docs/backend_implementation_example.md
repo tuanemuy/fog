@@ -22,8 +22,7 @@ packages/core/src/
 ├── application/
 │   ├── di/types.ts                SharedDeps, RequestContainer, WorkerContainer, AppConfig
 │   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer (shared)
-│   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig (CF runtime)
-│   ├── di/serverNode.ts           createNodeRequestContainer, createNodeWorkerContainer, readNodeServerEnv (Node runtime)
+│   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig
 │   ├── ports/
 │   │   ├── clock.ts
 │   │   ├── idGenerator.ts

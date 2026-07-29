@@ -37,72 +37,57 @@ apps/
    │  ├─ components/
    │  ├─ styles/
    │  ├─ worker/       # background-worker entries (relay / consumer / pruner / dlq)
-   │  └─ server.*.ts   # server fetch entries
-   └─ scripts/         # migration and production launcher scripts
-infra/                # aws (CDK, workspace member), cloudflare (Pulumi), gcp (Terraform)
-docs/                 # implementation pattern examples + runtime guides
+   │  └─ server.cloudflare.ts  # server fetch entry
+   └─ scripts/         # render-wrangler.ts (renders wrangler.<stage>.toml from its .tpl)
+infra/                # cloudflare (Pulumi)
+docs/                 # implementation pattern examples + the Cloudflare runtime guide
 spec/                 # entry point for the /spec workflow
 ```
 
 For the deeper rationale, see [`CLAUDE.md`](CLAUDE.md), [`docs/backend_implementation_example.md`](docs/backend_implementation_example.md), and [`docs/frontend_implementation_example.md`](docs/frontend_implementation_example.md).
 
-## Reference runtimes
+## Reference runtime
 
-The template ships **four reference runtime wirings** as worked examples of how the adapter and entry-point layers can be swapped while the inward layers stay intact:
-
-- **Node.js + libSQL** — single-process, no Docker or cloud account required. The data file lives at `apps/web/data/app.db`. This is the default for `pnpm dev` / `pnpm build` / `pnpm start`.
-- **Cloudflare Workers + D1 + Queues** — multi-worker, edge-distributed, managed queues. Reached via the `:cf` script suffix.
-- **AWS Lambda + Turso + SQS** — Lambda entries and CDK infrastructure. Reached via the `:aws` script suffix.
-- **GCP Cloud Run + Turso + Pub/Sub** — one container image serving four roles, with Terraform examples. Reached via the `:gcp` script suffix.
-
-**Pick one and delete the others** when you start a real project. Or, if you genuinely need multiple targets, keep them. The template does not assume you maintain a multi-runtime deployment.
+The template targets **Cloudflare Workers + D1 + Queues** — multi-worker, edge-distributed, managed queues. The main app runs in the top-level Worker; outbox publish, queue consumption, daily pruning, and DLQ surfacing each ship as a sibling Worker.
 
 To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put.
 
-Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) / [`docs/runtime_aws.md`](docs/runtime_aws.md) / [`docs/runtime_gcp.md`](docs/runtime_gcp.md).
+Operational guidance: [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
 
 ## Requirements
 
 - Node.js (the `flake.nix` / `.envrc` direnv environment is recommended)
 - pnpm
-- The matching cloud CLI/account only for runtimes you keep
+- A Cloudflare account and the `wrangler` CLI (bundled as a dev dependency) for deployment
 
 ## Quick Start
 
-The default scripts target the Node runtime.
-
 ```bash
 pnpm install
-cp apps/web/.env.example apps/web/.env   # edit DATABASE_URL / APP_URL / PORT if needed
-pnpm db:migrate            # creates apps/web/data/app.db and applies SQL migrations
-pnpm dev                   # vite dev server on http://localhost:3000
+cp apps/web/.dev.vars.example apps/web/.dev.vars   # wrangler-loaded secrets for local dev (gitignored)
+openssl rand -base64 48    # paste into SESSION_SECRET (ships empty)
+pnpm db:migrate            # apply SQL migrations to the local D1
+pnpm dev                   # vite dev server backed by workerd on http://localhost:3000
 ```
 
 For a production build:
 
 ```bash
 pnpm build
-pnpm start
 ```
 
-If you want to try the Cloudflare wiring instead, see [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
+See [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) for deployment, secrets, queues, and per-stage D1 management.
 
 ## Development commands
 
 ```bash
-pnpm dev                         # alias of pnpm dev:node
-pnpm dev:node                    # vite dev (Node)
+pnpm dev                         # alias of pnpm dev:cf
 pnpm dev:cf                      # vite dev (Cloudflare / workerd)
-pnpm dev:gcp                     # vite dev with the GCP server entry
 
-pnpm build                       # alias of pnpm build:node
-pnpm build:node
+pnpm build                       # alias of pnpm build:cf
 pnpm build:cf
-pnpm build:aws
-pnpm build:gcp
 
-pnpm start                       # alias of pnpm start:node
-pnpm start:node                  # @hono/node-server
+pnpm start                       # alias of pnpm start:cf
 pnpm start:cf                    # wrangler dev (top-level Worker)
 
 pnpm typecheck                   # tsgo (@typescript/native-preview)
@@ -124,12 +109,12 @@ pnpm typecheck && pnpm lint:fix && pnpm format
 
 ## Database migrations
 
-Migration SQL is generated from `schema.ts`, committed, and shared across the reference runtimes.
+Migration SQL is generated from `schema.ts` and committed.
 
 ```bash
-pnpm db:generate                       # generate libSQL SQL (alias of db:generate:node)
-pnpm db:migrate                        # apply to local libSQL via Drizzle's programmatic migrator
+pnpm db:generate                       # alias of db:generate:cf
 pnpm db:generate:cf                    # generate D1 SQL
+pnpm db:migrate                        # alias of db:migrate:cf
 pnpm db:migrate:cf                     # wrangler d1 migrations apply (local D1)
 ```
 

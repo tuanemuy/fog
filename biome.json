@@ -12,7 +12,6 @@
       "packages/**",
       "infra/**",
       "*.ts",
-      "*.mjs",
       "*.json",
       "!**/routeTree.gen.ts",
       "!**/migrations"
