@@ -76,7 +76,7 @@ For a production build:
 pnpm build
 ```
 
-The build output cannot be run locally yet — both `pnpm start` (`wrangler dev`) and `pnpm preview` fail to boot; see [Development commands](#development-commands) for the cause. Use `pnpm dev`, or deploy to a stage.
+The build output cannot be run locally yet — both `pnpm start` (`wrangler dev`) and `pnpm preview` fail to boot ([#40](https://github.com/tuanemuy/fog/issues/40)); see [Development commands](#development-commands) for the cause. Use `pnpm dev`, or deploy to a stage.
 
 See [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) for deployment, secrets, queues, and per-stage D1 management.
 
@@ -103,7 +103,7 @@ pnpm test:unit                   # Vitest (unit)
 pnpm test:integration            # integration suites
 ```
 
-**`pnpm start` does not work today.** `wrangler dev` bundles the Worker successfully, but workerd refuses to start it: `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, and workerd disallows generating random values outside a handler. The top-level Worker reaches that module through `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts`. `pnpm preview` fails identically for the same reason, so **`pnpm dev` is the only way to run the app locally** — Vite evaluates modules inside the request handler, where the restriction does not apply. `pnpm build` itself is unaffected.
+**`pnpm start` does not work today** ([#40](https://github.com/tuanemuy/fog/issues/40)). `wrangler dev` bundles the Worker successfully, but workerd refuses to start it: `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, and workerd disallows generating random values outside a handler. The top-level Worker reaches that module through `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts`. `pnpm preview` fails identically for the same reason, so **`pnpm dev` is the only way to run the app locally** — Vite evaluates modules inside the request handler, where the restriction does not apply. `pnpm build` itself is unaffected.
 
 Recommended routine after changes:
 
