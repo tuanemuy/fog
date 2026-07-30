@@ -305,3 +305,36 @@ R6 の構造的修正（第1.4節の不変条件 I-1〜I-8 と機械検査）は
 | `design.md:9.4/fail-closed のバックオフと「(3) を飛ばして戻る」の両立` | R8 | fix | 2つの記述が両立しない | 0 |
 
 **Round 8 集計（最終）**: fix 9 / wont-fix 0 / defer 1（#44。4ラウンド分の Blocker 8件 + R8 async B-001 を含む）
+
+## Round 9
+
+**鍵ローテーション由来の指摘はゼロ**。4層すべてが「#44 への委譲は正しい」「#37 は #44 を待たずに着手できる」と独立に確認したため、`design.md:6.8/鍵ローテーションと他 saga の相互作用（構造）` は defer 判定のまま決着とする。
+
+### 仕分けの誤りを1件記録する
+
+**B-001（signup が `passwordVerifier` を書かない）は Round 7 のセキュリティレビューが N-003 として挙げていた指摘である。** そのラウンドでメインが Notes の一部だけを修正対象に拾い、この1件を落とした。Note として報告されても「設計が構造的に成立しない」ものは Warning 相当として扱うべきだった。以降は Notes も本文を確認して仕分ける。
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `design.md:6.3/signup が passwordVerifier を書かない` | R7 | fix | phase 4 の `usableForLogin` 述語が構造的に真になりえず、login / リセット / パスワード変更がすべて不成立 | 1 |
+| `design.md:6.7/退会が未完了の SSO link を引き取らない` | R9 | fix | R8 で unlink は引き取るようにしたが link が漏れた。回収不能な active 孤児 mapping が残る | 0 |
+| `design.md:6.6/link 予約行の reservedUntil と sweep-reservations 投入点` | R9 | fix | 駆動源の `min()` が NULL になる二次障害も伴う | 0 |
+| `design.md:5.1/changeAuthToken に失効経路が無い` | R9 | fix | R8 で導入した際の副作用。未使用のまま温存された値が奪還権として残る | 0 |
+| `design.md:5.1/epoch 前進の冪等性判定が退会に当てはまらない` | R9 | fix | 実際の担保は `account.status` | 0 |
+| `design.md:6.5.1/credential 変更 saga の起点が永続化されていない` | R9 | fix | `resetVersion` 前進と AI 接続の自動失効が Alarm 再開経路で決まらない（I-4 の破れ） | 0 |
+| `design.md:5.1/changeAuthToken の NULL・引数欠落の扱い` | R9 | fix | `ep` / `typ` 欠落は明示的に拒否と書いてあるのにこの列だけ未断定 | 0 |
+| `design.md:9.2/migration ゲートが投入したジョブの setAlarm 発行主体` | R9 | fix | `run()` を呼ばない RPC 経路について決まっていない | 0 |
+| `design.md:1.4/検査8 の件数カウントコマンドが自己参照で終端しない` | R9 | fix | 実測 2,242行に対し期待 61。検査本体は正しく動く。2層が独立に検出 | 0 |
+| `testing.md/確認項目6 手順3 の許容リスト` | R9 | fix | `.thread/34/review/` 配下の未 commit ファイルを覆っていない | 0 |
+
+### Round 9 追加（`review-009-handoff.md` が更新された分）
+
+引き継ぎ視点のレビューは2度通知され、後の内容が最終。
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `design.md:6.8/bucketCount を locator 名に含める の誤記` | R9 | fix | 主語の誤記（`bucketCount` → `generation`）。同一文後半・第5.2.3節・第6.2節と矛盾し、**#44 の Issue 本文まで伝播している**。design.md / `.thread/34/adr.md` 2箇所 / #44 本文の4箇所を直す | 0 |
+| `design.md:6.8/移送の実行主体の正本が不明` | R9 | fix | 決着済み方針（方針4）と #44 の論点2 の両方に置かれ、#44 の前提6点には含まれない | 0 |
+| `design.md:11.2/application/di/env.ts の欠落` | R9 | fix | 削除対象 `application/workers/` を value-import しているのに design.md に1度も現れない。#40 クローズが #37 へ引き継いだ論点（チューニング定数の置き場）も未反映 | 0 |
+
+**Round 9 集計（最終）**: fix 13 / wont-fix 0 / defer 0（生指摘 B5 + W9 = 14 件を 13 Key に正規化）

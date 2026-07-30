@@ -857,7 +857,9 @@ design.md 第6.2節で Identity Directory の分割方式を「固定 bucket 数
 
 ### Decision
 
-**bucket 数を locator 名に世代とともに埋め込み（`dir:g{generation}:b{index}`）、bucket 数の変更を鍵ローテーションとまったく同じ再写像機構で処理する。** これにより判断軸 (ii) は行き止まりではなくなる。具体値（初期256）と根拠は design.md 第6.2節にだけ書き、`.adr/` には一切書かない。
+**世代を locator 名に埋め込み（`dir:g{generation}:b{index}`）、bucket 数は keyring エントリのメタデータとして持ち、bucket 数の変更を鍵ローテーションとまったく同じ再写像機構で処理する。** これにより判断軸 (ii) は行き止まりではなくなる。具体値（初期256）と根拠は design.md 第6.2節にだけ書き、`.adr/` には一切書かない。
+
+> **訂正（R9 handoff B-001）。** 本項の初版は Decision を「**bucket 数を** locator 名に世代とともに埋め込み」と書いていた。**主語の誤記であり、正しくは `generation` である** — locator 名 `dir:g{generation}:b{index}` に入るのは世代と bucket index であって bucket 数ではない。`bucketCount` は keyring エントリだけが持つ（design.md 第5.2.3節・第6.2節）。**誤記が design.md 第6.8節 方針3・下の ADR-126・Issue #44 の Issue 本文の前提欄へ伝播していたため、4箇所すべてを訂正した。** 記録としての履歴は書き換えず、誤記を正す形で残す。**判断そのもの（bucket 数の変更を再写像機構で処理する）は変わっていない。**
 
 初期値を design.md で断定したのは、「実装時に決める」で終えると #37 が判断材料ごと持たされるためである。根拠（Directory を叩くのは未認証経路だけで認証済みトラフィックは通らない / 1 bucket あたりの負荷が soft limit から十分離れる / 全 bucket 走査が Alarm の CPU 予算で分割実行できる規模）も併記した。
 
@@ -3130,7 +3132,7 @@ Accepted
 
 **ユーザーの判断を仰ぎ、ローテーション手順を新規 Issue #44 へ切り出す。**
 
-**本 Issue に残すのは方針8点である**（第6.8節「本 Issue が決着させた方針」）— locator を正規化値の HMAC から導出する / `userId` 由来 locator と credential 由来 locator を分離する / 鍵は `{ generation, key, bucketCount }` の keyring として配布し bucket 数を locator 名と keyring の両方に含める / 再 HMAC は bucket の中で行い鍵は一時注入する / `rotate-remap` は Alarm ジョブではない / 移送は `credentialVersion` を増やさず `credentialId` / `callerToken` を再採番しない / AAD は `hmac` を含めない / リセットトークン行は移送しない。**ログに PII と逆引き可能な値を出さない方針と、移送が `purge-user-mappings` と同格以上に危険であることも残す。**
+**本 Issue に残すのは方針8点である**（第6.8節「本 Issue が決着させた方針」）— locator を正規化値の HMAC から導出する / `userId` 由来 locator と credential 由来 locator を分離する / 鍵は `{ generation, key, bucketCount }` の keyring として配布し **`generation` を locator 名と keyring エントリの両方に含める（`bucketCount` は keyring エントリだけが持ち、locator 名には入らない）** / 再 HMAC は bucket の中で行い**平文 canonical を bulk で越境させない・routing 鍵を bucket へ永続化しない** / `rotate-remap` は Alarm ジョブではない / 移送は `credentialVersion` を増やさず `credentialId` / `callerToken` を再採番しない / AAD は `hmac` を含めない / リセットトークン行は移送しない。**ログに PII と逆引き可能な値を出さない方針と、移送が `purge-user-mappings` と同格以上に危険であることも残す。**
 
 **#44 へ委譲するのは手順である** — 移送の phase・ガード・巻き戻し、移送中の2世代並存の規則（第6.1.1節 (R6)(R7)(R9)）、2つのローテーションの関係と退役条件の判定、漏えい起因のローテーションでの失効の成立性、機械検証できる不変条件。**第6.8節に #44 の論点6件を表として置き、#44 の Issue 本文と一致させた**（正本は #44 側であることも明記した）。
 
@@ -3139,6 +3141,8 @@ Accepted
 **#37 が「ローテーション未実行」を前提に着手できることを断定形で書く。** 初期デプロイでは keyring の世代が1つだけで previous が存在しないので、2世代並存も移送中の状態も存在しない。第6.8節に **#37 が実装する範囲 / #44 の結論を待つ範囲の境界表**を置き、あわせて **#37 が「移送が後から入る余地を壊さない」ために落としてはならない4点**（`credential_locators` の一意性 `(credentialId, generation)` / `record-credential-locator` が upsert であること / `credential_mappings.credentialId` の bucket 内 UNIQUE / 述語のキーを `credentialId` にすること）を明示した。
 
 **R8 の Blocker 3件（do-boundary B-001 / B-002 / B-003）は #44 の論点として引き継ぎ、design.md 側で個別に直さない。**
+
+> **訂正2件（R9 handoff B-001 / W-001）。** 上の方針8点の要約のうち2点に誤りがあったので訂正した。**(1) 主語の誤記** — 「bucket 数を locator 名と keyring の両方に含める」は誤りで、正しくは **`generation` を locator 名と keyring エントリの両方に含め、`bucketCount` は keyring エントリだけが持つ**（ADR-026 の訂正欄に根拠を書いた）。**(2) 射程の取り違え** — 「鍵は一時注入する」を決着扱いにしていたが、**一時注入という形は移送の実行主体の選択と不可分**であり、決着扱いにすると #44 が取りうる解（bucket に routing keyring を配る / 専用の maintenance Worker を立てる）を design.md 側が先に禁じることになる。**残す制約は「平文 canonical を Worker 境界の外へ bulk で出さない」「routing 鍵を bucket の SQLite / インスタンスフィールドへ永続化しない」の2点だけであり、実行主体と鍵の渡し方は #44 の論点2 に属する**（ADR-138 に切り分けの根拠を書いた）。**どちらも #44 の Issue 本文の前提欄へ伝播していたので、Issue 本文も同時に訂正した。**
 
 ### Consequences
 
@@ -3424,3 +3428,176 @@ Accepted
 - 良い点: fail-closed 経路が「(3) を飛ばして戻る」1文で閉じ、`setAlarm` の規則が本書で1本になった
 - 良い点: 第7.4節 `deleteAlarm()` 規則の但し書き（「ジョブを実行せずに一定間隔で `setAlarm` を張り直す」＝意図的に消さない）と表現が一致した
 - トレードオフ: fail-closed の DO は回復まで `再開間隔` ごとに起き続ける（`setAlarm` 1回ぶんの書き込みが継続する）。**これは意図した受容である** — 消すと dormant な DO では回復を永久に検知できないからであり、間隔の調整は #38 の運用値に委ねる
+
+## ADR-137: signup の `passwordVerifier` を phase 0 で計算し phase 1a の予約行へ書く
+
+### Status
+
+Accepted
+
+### Context
+
+第6.3節の signup saga は、どの phase も `credential_mappings.passwordVerifier` を書いていなかった。ところが phase 4 の `usableForLogin` 述語は「`kind = 'sso'` であるか、または `kind = 'email'` かつその mapping 行が `passwordVerifier` を持つ」と定義されている。**書く phase が存在しないので、この述語はパスワード signup に対して必ず偽になる。** 記述漏れではなく述語の自己矛盾であり、#37 が本書のとおり実装すると (i) login step 4 の照合が成立しない、(ii) 第7.6節が「送るか送らないかの判定は `passwordVerifier` の有無で行う」と決め切っているのでリセットメールも送られない（第5.2.1節 (a) が「所有の唯一の証明」と断定した復旧経路が存在しない）、(iii) 起点 A のパスワード変更も成立しない、(iv) unlink のログイン手段の数え上げが常に0になる — **一度もログインできず自己回復手段も持たないアカウントが作られる。**
+
+**この指摘は Round 7 のセキュリティレビューが N-003 として挙げていた。** そのラウンドでメインが Notes の一部だけを修正対象に拾い、1件を落としていた（`.thread/34/review/triage.md` に仕分けの誤りとして記録済み）。列は第4.1.1節（E-1）にあり、所在も第6.1節 (d) が「パスワードの検証材料は `credential_mappings` の `kind: 'email'` 行に持つ」と決めていたが、**書き込み点だけがどこにも無かった。**
+
+### Decision
+
+**計算は phase 0（request Worker）、書き込みは phase 1a の予約行（`reserve-credential` の引数）である。**
+
+決めは4点である。
+
+1. **計算は phase 0 で `PasswordHasher.hash`。** 第4.8節の「CPU を食う仕事は DO の外で回す」に合致し、login step 4 の `PasswordHasher.verify` と同じ場所である。
+2. **書き込みは phase 1a の予約行。** `reserve-credential` の引数を1つ増やす（第5.1節の RPC 全数表も直した）。予約行そのものが phase 3 で `active` へ昇格する行なので、`initialize-account` / `activate-reservation` / `record-credential-locator` に材料を運び直す必要が無い。
+3. **`lookup-credential` は `status != 'active'` の行をダミー材料へ倒す**（第5.1節・第5.3節 step 3）。予約行が `passwordVerifier` を持つ以上、この条件が無いと未活性 signup の検証材料がクラス (2)（未認証から無条件応答）へ出る。**`changeState = 'pending'` をダミーへ倒す規則とまったく同じ形である。**
+4. **SSO signup がメール一意性のために置く行には載せない。** `usableForLogin = false` が正しく出る条件そのものであり、第7.6節（SSO 専用アカウントにリセットメールを送らない）と第6.1.1節 (R4) がこれに依存している。
+
+**したがって `passwordVerifier` の書き込み点は phase 1a と第6.5.1節 phase 3 の2つだけであり、それが全数である**（第4.1.1節の当該列に全数として書いた）。
+
+### Consequences
+
+- 良い点: phase 4 の `usableForLogin` 述語がパスワード signup で真になりうるようになり、login / リセット / パスワード変更 / unlink の数え上げが同時に成立する
+- 良い点: SSO signup のメール予約行との非対称（載せる / 載せない）が1箇所で決まるので、`usableForLogin` の判定規則と第7.6節の送信判定が同じ材料を見る
+- トレードオフ: `reserved` 状態の行が検証材料を持つ期間が生まれる。**`lookup-credential` の `status` 条件がそれを未認証経路から隠す**（決め 3）。第5.3節 step 3 は `status` を既に返しているので、判定材料は増えない
+- 棄却した代替案: **phase 3（`activate-reservation`）で運ぶ** — 昇格 RPC の引数に検証材料を載せることになり、`activate-reservation` は (3-a) 群（CAS と phase 条件だけが守る）なので、認証材料を運ぶ経路として束縛が弱い。予約時に書けば phase 1a の一意制約と `operationId` / `payloadDigest` の CAS がそのまま掛かる
+- 棄却した代替案: **phase 4 の後に別 RPC で書く** — `usableForLogin` の判定が phase 4 なので、判定より後に材料が書かれる循環になる
+
+## ADR-138: 退会が未完了の cross-DO saga を `kind IN ('link','unlink')` で引き取る
+
+### Status
+
+Accepted
+
+### Context
+
+R8 で退会 手順3 に「未完了の unlink を引き取る」を足したが、**link が漏れていた。** link 手順1 は `operations` に `{ kind: 'link', phase: 'reserving', targetLocators }` を記録する一方、`credential_locators` へ行を書くのは**手順4** である。したがって手順1〜3 のあいだ、link 対象の credential は退会 手順3 の削除対象集合（`credential_locators` 由来）に一切現れない。引き取り述語が `kind = 'unlink'` 限定だと link 行も拾わないので、手順4 の前提条件（未完了 unlink が0件）は満たされてそのまま通過し、`credential_locators` と `account.callerToken` を消して `deleted` になる。**単一世代・ローテーション未実行でも成立する。**
+
+帰結は R8 で塞いだ unlink×退会 と同一である — (i) `encryptedCanonical` を持つ mapping が bucket に残って第6.2.1節 (d) が破れる、(ii) その SSO 主体が恒久的に再登録不能になる、(iii) 回収経路が1つも無い（`sweep-reservations` は `reserved` だけ、`sweep-orphan-mapping` の残件条件は unlink 行だけ、`resume-link` は `account.callerToken` を失って前進できない）。復旧は `purge-user-mappings` の 256 bucket 走査しか残らない。
+
+### Decision
+
+**引き取り述語と手順4 の前提条件を、両方 `kind IN ('link','unlink')` へ広げる。** 具体は「`operations` に `kind IN ('link','unlink')` かつ `phase != 'done'` の行があれば、その `targetLocators` が持つ全世代の locator へも `delete-mapping` を発行し、成功したらその行を `phase = 'done'` にする」「手順4 は未完了の link / unlink 行が0件になったあとに限る」である。
+
+**あわせて `resume-link` の側にも規則を1つ置いた。** **`account.status != 'active'` を見たら手順2〜4 を1つも実行せず、`operations` 行に触れずにジョブだけを `done` にする。** **`operations.phase` を `'done'` へ倒してはならない** — 倒すと引き取り述語から外れ、`credential_locators` にも行が無いので回収経路が消える（本 ADR が塞ごうとしている状態そのものに戻る）。
+
+**`sweep-orphan-mapping` の残件条件は unlink 限定のままにする。** 同ジョブは削除の再試行であり、link の前進を担うのは分類 (C) の `resume-link` である。link 行を残件条件に混ぜると「前進すべき saga を削除で終端させる」ジョブになり、退会と競合しない通常の link まで巻き込む。**link 行を `phase = 'done'` にする手段は `resume-link` の完走と退会の引き取りの2つであり、それが全数である。**
+
+### Consequences
+
+- 良い点: 第6.9節の unlink×退会 の行が link を含む形になり、cross-DO 操作どうしの相互作用について「片方だけ塞ぐ」非対称が消えた
+- 良い点: `delete-mapping` が「無ければ成功」の冪等操作なので、`resume-link` が手順4 まで完走していた場合と二重発行になっても無害である。したがって `sweep-orphan-mapping` / `resume-link` / `finalize-withdrawal` のどれが先に走っても同じ結果に収束する
+- トレードオフ: 退会中のアカウントに対する link は完走しない（利用者から見て「連携が反映されないまま退会した」）。**退会するアカウントに対する link の正しい終端は前進ではなく回収である**ため、これは意図した挙動である
+- 棄却した代替案: **退会の起点で未完了 link を先に完走させる** — 手順1 は `sessionEpoch` を進めて `deleting` へ倒す同期処理であり、link の完走（Directory への RPC 2本）を待てない
+
+## ADR-139: SSO link の予約行に `reservedUntil` を書き、同じ `transactionSync` で `sweep-reservations` を投入する
+
+### Status
+
+Accepted
+
+### Context
+
+`reservedUntil` を書く箇所は signup phase 1a / 1b の2つだけで、`sweep-reservations` の投入点も signup 限定だった。SSO link 手順2 は「active 世代の bucket に予約を取る」と書くだけで、どちらも持っていなかった。
+
+2つの欠落が別々の失敗を生む。**投入点が無いと**、第7.4節 (7) が自ら断定している失敗モード（「投入点の無い周期・反復ジョブは1回完走した時点で恒久的に停止する」）が link 経路で発火する — 定常状態では対象 bucket の `sweep-reservations` は残件0で `done` に落ちているので、link が新しい `reserved` 行を作っても誰も `pending` へ戻さない。**`reservedUntil` が `NULL` だと**、作業述語（`reservedUntil < ?`）から永久に外れる一方で (1-A) の駆動源クエリ（`WHERE status = 'reserved' AND sagaCommitted IS NULL` の `min(reservedUntil)`）の集合には入るので、「残件はあるが `min(...)` が `NULL`」が作れ、(1-A) が `nextRunAt = NULL` を書く。これは完了時に `nextRunAt` を `NULL` にする規定と衝突し、`deleteAlarm()` の述語と最早 `nextRunAt` の読み直しの両方が未定義の値を掴む。
+
+`resume-link` は分類 (C) なのでバックオフ上限で `poison` に落ちる。落ちた時点で予約行は誰の回収対象でもなくなり、その SSO 主体は恒久的にロックされる。
+
+### Decision
+
+**link 手順2 の予約行にも `reservedUntil`（`now + TTL`）を書き、予約行を書くのと同じ `transactionSync` で対象 bucket へ `sweep-reservations` を投入する。** 第6.3節 phase 1b とまったく同じ形（「コーディネーターかどうかにかかわらず、予約行を書いた bucket が自分に投入する」）を link にも適用した。**両方が必要であり、片方だけでは閉じない。**
+
+**`reservedUntil` を NOT NULL と断定し、書き手を3箇所（signup phase 1a / 1b・link 手順2）の全数として第4.1.1節に書いた。** これで駆動源の `min(...)` が `NULL` になる状態が構造的に作れない。第6.4節 1 の TTL 下限不等式（「saga の再開間隔 × 再試行上限 + マージン」より長く取る）も link に掛かることを明記した（あちらの再開間隔と再試行上限は `resume-link` のものである）。
+
+**link の予約行には `sagaCommitted` 印を立てない。** link は単一 bucket の予約なので伝播する相手が無く、TTL 掃除で消えても `resume-link` が手順2 から予約を取り直せる。取り直しのあいだに同じ canonical を別アカウントが取ったら手順2 が `ConflictError` で敗北し、既存の巻き戻し（`operations` 行を `terminalReason` 付きで閉じる）に落ちる。signup で `sagaCommitted` が必要だったのは「phase 2 で `active` なアカウントが完成した後に掃除が先行する」非対称を消すためで、link にはその非対称が無い。
+
+### Consequences
+
+- 良い点: 第7.4節 E-3 の投入点欄が「予約行を書いた bucket が自分に投入する」の1規則で3箇所を覆う形になり、経路ごとの例外が消えた
+- 良い点: 第6.4節の cross-DO 操作表の SSO link 行に「手順2〜3 の `reserved` 行」が中間状態として載り、片付ける主体も書かれた（初版は手順3→4 の `active` 孤児だけを書いていた）
+- トレードオフ: link の予約は TTL 掃除で消えうるので、`resume-link` が長く止まった場合に「連携に失敗した」で終わる。**やり直せる操作なので受容する**（signup と違い、完成済みのアカウントを失うわけではない）
+- 棄却した代替案: **`reservedUntil` を NOT NULL にするだけ** — 駆動源の破れは閉じるが、投入点が無いままでは (7) の恒久停止が残る
+
+## ADR-140: `changeAuthToken` に失効経路を持たせる（一回性 ≠ 失効）
+
+### Status
+
+Accepted
+
+### Context
+
+ADR-127 で導入した `changeAuthToken` は、採番・保存・返却・比較・**消去（一回性）**まで閉じていたが、**失効経路が無かった。** `consume-reset-token` は行を消さず `usedAt` を立てるだけで、その同じ行に `changeAuthToken` を載せて返す。ところが credential 変更 phase 1 が消すのは「**未使用**トークン**行**」だけなので、「消費済み・`changeAuthToken` 未使用」の行は削除対象に入らず `expiresAt` まで残る。
+
+**この状態は公開面から到達する安定した中間状態である** — `consume-reset-token` に成功した直後に `begin-credential-change` が失敗すれば残り（`.overloaded`（bucket index はリセット URL に載っているので攻撃者は狙う bucket を選べる）/ DO のリセット / `ctx.abort()` のいずれでも起きる）、`usedAt` によりリトライもできない。保持者は被害者が起点 A（通常のパスワード変更）でも起点 B（新しいトークンでのリセット完了）でも復旧した**後に** `begin-credential-change` を叩ける — ガードは `changeAuthToken` と `credentialId` の一致だけで、`credentialVersion` も `changeState` も `usedAt` も被害者の復旧の事実も見ない。**終状態は ADR-127 が「乗っ取り原始関数」と呼んだ状態そのものである。**
+
+**一回性は失効ではない。** 「同じ依頼の材料を後から再提示して差し替えることはできない」は成立していたが、攻撃に要るのは再提示ではなく**まだ一度も使っていない材料の温存**だった。
+
+### Decision
+
+**無効化を行の削除だけでなく列にも掛ける。credential 変更 phase 1 を2段にする。** **(1) 対象 `credentialId` の未使用トークン行を全削除する。(2) 残る全行（消費済みの行）の `changeAuthToken` を `NULL` にする。** 同じ `transactionSync` で行い、**起点 A / 起点 B の両方に課す**（起点 B は自分が照合した行も `NULL` になるので、既定の一回性がそのまま満たされる）。
+
+**あわせて `NULL` と引数欠落の扱いを断定した**（R9 security W-002）。第5.1節 (3-b) に**不透明値による束縛の共通規則**を置き、射程を `callerToken` と `changeAuthToken` の2列にした — **(i) 行側の値が `NULL` なら常に不一致とする、(ii) 引数が欠落・空文字なら比較に入る前に拒否する。** どちらの列も `NULL` を取る局面が設計に実在する（`changeAuthToken` は消費と失効、`account.callerToken` は退会 手順4）ので、定数時間比較を素直に「両辺をバイト列化して比較」と実装すると `NULL == NULL` が通り、**束縛の実体を1つも持たない呼び出し元が起点 B を開始できる。** 本書はセッションの `ep` 欠落と `typ` 欠落を明示的に fail closed と断定しているので、束縛の実体であるこの2列にも同じ強さの断定を置いた。
+
+### Consequences
+
+- 良い点: 「被害者の復旧で失効する」という性質が得られた。被害者のどちらの復旧経路も phase 1 を通るので、温存された値がその時点で失効する
+- 良い点: 第4.1.1節の記述（「credential 変更 / unlink / 退会が**未使用**トークンを一括削除」）と第6.6節 unlink 手順3 / 第6.7節 手順3 の「全削除」の食い違いも同時に解消した — 射程を経路ごとに書き分けた（credential 変更は2段、unlink / 退会は `usedAt` を問わず全削除）
+- 良い点: `NULL` 規則を1箇所（(3-b)）に置いたので、`callerToken` を使う7エントリと `changeAuthToken` の起点 B が同じ規則を共有する
+- トレードオフ: phase 1 の `transactionSync` が UPDATE を1本増やす。索引は `credentialId` に既にあるので走査は増えない
+- 棄却した代替案: **`changeAuthToken` に独立した短い有効期限を持たせる** — 列が1つ増えるうえ、「被害者の復旧で失効する」性質が得られない（攻撃者は復旧の直後に使えばよい）
+
+## ADR-141: credential 変更 saga の起点を `credential_mappings.changeOrigin` として永続化する
+
+### Status
+
+Accepted
+
+### Context
+
+第6.5.1節 phase 2 は「**起点がリセットトークンの消費だった場合に限り** `resetVersion` を進め、`createdAtResetVersion` が前進前の値と等しい接続を `revoked` にする」と定めている。ところが phase 2 の前進を駆動するのは Directory bucket の `resume-credential-change`（Alarm）で、その入力は mapping 行だけである。**`credential_mappings` の列の全数（第4.1.1節）に起点を表す列が無く、検査8 の一覧にも無かった** — 第1.4節 I-4 が「本文が要求する列が E-1 に無ければ違反であり、直す向きは E-1 の側」と定めているので、I-4 の破れである。
+
+**帰結はどちらへ倒しても閉じない。** 「常に進めない」に倒すと**被害者のリセット完走後も攻撃者が持ち込んだ AI クライアント接続が `exp` まで生き残る**（第5.4節 (i) が `credentialVersion` ではなく `resetVersion` を新設してまで塞いだ経路が、再開経路でだけ再び開く）。「常に進める」に倒すと通常のパスワード変更でも接続が切れ、第5.4節の断定に反する。さらに `advance-credential-change` は `payloadDigest` の CAS を課すので、起点が payload にだけあると再開時に digest を再構成できず `ConflictError` で saga が `pending` のまま止まる（旧新どちらのパスワードも通らない＝第6.9節が塞いだ恒久ロックアウト）。
+
+### Decision
+
+**`credential_mappings` に `changeOrigin`（`null` / `'password-change'` / `'reset'`）を1列足す。** 値は `begin-credential-change` の引数で、**phase 1 が `changeState = 'pending'` と同じ `transactionSync` で書き、phase 3 が `changeState` を解除するのと同じ `transactionSync` で `null` へ戻す。** **phase 2 の判定の権威はこの列であって、request Worker がその場で知っている文脈ではない。**
+
+**`advance-credential-change` の payload にこの値を載せてよい** — 値は mapping 行から読むので再開時にも同じ payload が再構成でき、`payloadDigest` の CAS が `ConflictError` にならない。
+
+**`password_reset_tokens.consumedByOperationId` からの導出は採らない。** 同列は ADR-127 で監査用へ格下げした値であり、さらに `sweep-reset-tokens` が行を消した後は導出そのものが偽になるので、**判定の権威がトークンの期限に依存してしまう。**
+
+**列は第4.1.1節（E-1）と第1.4節 検査8 の一覧の両方に足した**（I-4 の「直す向きは E-1 の側」に従った）。第11.2節の新設列表にも行を足し、本文の「下の N 行」も直した（検査7b が突き合わせる）。
+
+### Consequences
+
+- 良い点: 第1.4節 I-4 の破れが1つ閉じた。**本文が列を要求したら E-1 と検査8 の両方に足す**という運用が実際に回ったことの記録でもある
+- 良い点: phase 2 の分岐が「行を読む」だけで決まるので、同期経路と Alarm 再開経路で判定が一致する
+- トレードオフ: `credential_mappings` の列が1つ増える（新設テーブルなので DDL 側の追加作業は無い）。saga の終了時に `null` へ戻す規則も1つ増えるが、`changeState` の解除と同じ `transactionSync` なので独立した書き込みにはならない
+- 棄却した代替案: **`resetVersion` を常に進める / 常に進めない** — どちらも上のとおり成立しない
+- 棄却した代替案: **起点ごとに別の `kind` のジョブを持つ**（`resume-credential-change-reset` / `resume-credential-change-password`）— `kind` の全数が13種になり、第7.7節 項2 の4類型表・E-1 の `jobs` 行・E-3・E-4 を同時に直すことになる。列1つのほうが規則が少ない
+
+## ADR-142: migration ゲートが投入したジョブの arming を全 RPC エントリのラッパーに置く
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節は Alarm 経路（先頭で `setAlarm` + `sync()`）と RPC 経路（`run()` の戻り後）の2つについて `setAlarm` の発行主体を名指しし、「誰がいつ呼ぶかを決めないと #37 に落ちる」と明言していた。ところが第9.2節の migration ゲートは `run()` の**前**に自分の `transactionSync` で走り、しかも「`schema_version` の読み取りから全 DDL ステップの適用まで `await` を1つも挟まない」と定められているので、**`sync()` を要する `setAlarm` をゲートの中では発行できない。** したがってゲートが投入した `migrate-bulk` / `reindex` の arming は「ゲートの外・本体処理の後」でしか行えないが、**`run()` を呼ばない RPC（`UnitOfWorkContext` を経由しない projection 読み。第4.3節 行10 の `SearchIndexPort.query` が該当しうる）では発火点が存在しなかった。**
+
+dormant DO では実害になる。`deleteAlarm()` 規則により実行可能集合が空の DO には alarm が張られていないので、「新リリース → 読み取りだけの RPC が来る → ゲートが DDL を適用し `schema_version` を進めて `migrate-bulk` / `reindex` を投入 → alarm が張られない」の順序で**投入されたのに起動されないジョブ行**が残る。`migrate-bulk` は第9.3節の両対応読みがあるので正しさは保たれるが、**`reindex` は第9.2節 条件2 の4段分解の2段目が止まり、参照先を切り替えたあとの検索が空を返す方向に倒れうる。**
+
+### Decision
+
+**RPC 経路の規約に (4) を足し、射程を `run()` の有無から切り離す。** **DO facade のラッパーは全 RPC エントリについて、migration ゲートと本体処理の後に1回だけ再設定（`setAlarm` + `await ctx.storage.sync()`）を行う。`run()` を呼ばない RPC も対象である。** 発行値は既存規則どおり DB の最早 `nextRunAt` で、過去・現在なら現在時刻の1秒後へ clamp する。
+
+**この `await` はゲートの外なので、第9.2節の「ゲート関数は `await` を1つも挟まない」という排他条件は破れない。** 第9.2節の側にも、arming の主体が第7.4節 (4) であることと、射程を限らないと決め切った理由を書いた。
+
+**「ゲートがジョブを投入した場合だけ発行する」という条件付きの形は採らない。** 条件を持たせると、ゲートの戻り値に「投入したか」を運ぶ口が要り、ラッパーの分岐が1つ増える。**投入が無かった起動では `setAlarm` の発行値が既存値と同じになるので、既存規約 (2) のインスタンスフィールド比較が余分な書き込みを落とす。**
+
+### Consequences
+
+- 良い点: `setAlarm` の発行主体が「Alarm 経路は先頭、RPC 経路はラッパーの末尾」の2つだけになり、`run()` を呼ぶかどうかという実装上の区別が規約から消えた
+- 良い点: 第7.4節が Alarm 経路について塞いだ失敗モード（dormant DO のジョブ恒久停止）と同じ形の穴が、RPC 経路のゲート投入についても閉じた
+- トレードオフ: 読み取り専用 RPC でもインスタンスフィールドの比較が1回入る（フィールドが未初期化のコールドスタート直後は `setAlarm` が1回走る）。**書き込み1行ぶんであり、ジョブ行が起動されない害と比べれば安い**
