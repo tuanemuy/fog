@@ -35,7 +35,9 @@ DO の分割数・saga の手順・migration の手順・スキーマ断片は `
 
 ### 1.3 先行案（issue/19/cloudflare-do-fts）との差分 ［派生］
 
-分割元 Issue #19 のブランチには DO 実装一式と ADR 10件（`.thread/19/adr.md`）が残っている。#19 はクローズ済みで #34〜#38 に分割されたので、**これは採用済みの決定ではなく、本 Issue が引き受けるか棄却するかを判断すべき先行案**である。全10件 + レビュー指摘2件に採否を出した。**保留はゼロ** — すべて採用 / 部分採用 / 棄却のいずれかに倒してある。
+分割元 Issue #19 のブランチには DO 実装一式と ADR 10件（`.thread/19/adr.md` の **ADR-001〜ADR-010**。`git show origin/issue/19/cloudflare-do-fts:.thread/19/adr.md` で実取得して数え直した）が残っている。#19 はクローズ済みで #34〜#38 に分割されたので、**これは採用済みの決定ではなく、本 Issue が引き受けるか棄却するかを判断すべき先行案**である。**ADR 10件すべて + レビュー指摘1件 + ADR 由来でない先行実装2件に採否を出した。保留はゼロ** — すべて採用 / 部分採用 / 棄却のいずれかに倒してある。
+
+**表の行数と ADR の件数は一致しない。対応関係を先に書く**（書かないと「10件」と「表の行数」が食い違って見える。第1.4節 I-8）。**下の表は15行**で、内訳は **ADR 由来12行 + ADR 由来でない先行実装2行（行2 = request / state Worker 分割、行4 = 検索 API の詳細。どちらも先行ブランチの実装にあるが `.thread/19/adr.md` に対応する ADR が無い）+ レビュー指摘1行（行13 = B-IDDS6-001）**である。ADR 由来が10行ではなく12行になるのは、**ADR-003 が行5 と行7 に、ADR-006 が行6 と行11 に、それぞれ2行へ分かれている**ためで、**採否が分割の前後で違うので1行にまとめない**（ADR-003 は行5 が採用・行7 が部分採用、ADR-006 は行6 が棄却・行11 が採用）。**行14（最小 DO command harness）はレビュー指摘ではなく ADR-007 である。**
 
 | 先行案 | 採否 | 採用した内容の要旨 / 棄却の理由 |
 |---|---|---|
@@ -51,6 +53,7 @@ DO の分割数・saga の手順・migration の手順・スキーマ断片は `
 | 新規 DO namespace を宣言的 `exports` で管理する | **採用** | 本書第9.1節 |
 | RPC は primitive DTO と `{ ok: true, value } \| { ok: false, error: SerializedError }` だけを返し、リポジトリ・クロージャ・transaction capability・カスタムエラー実体を境界外へ出さない | **採用** | 本書第8.3節 (d) |
 | PITR は staging 手動 smoke で検証し、local は wrapper contract まで。Account Home は restore 対象外とする operator policy | **部分採用** | 検証境界は本書第10.1節・第11.3節で採る。「Account Home を restore 対象外にする」は Account Home ごと棄却したので消える。代わりに「Directory mapping が到達性のゲートであり、User Data DO の restore に追随しない」を第10.1節の結論にした |
+| **#19 のスコープを「既存 identity の移行と将来 primitive の確立」までに限定し、password change / reset・SSO link / unlink・export の完成 usecase と UI は #11 / #12 / #15 へ引き継ぐ**（`.thread/19/adr.md` ADR-009） | **棄却（対象消滅）** | **#19 のクローズと #34〜#38 への分割そのものがこのスコープ宣言を置き換えたので、引き受ける対象が無い。** 先行案15行のうち唯一「Issue のスコープ宣言」であって設計判断ではない。本書は「どの usecase をどこまで実装するか」を決めない — 実装範囲は #37 の Issue 本文、spec 側の範囲は #35 が持つ。**なお ADR-009 が #11 / #12 / #15 へ送っていた対象のうち、本書が設計として引き受けたのは「再開可能な saga primitive と非公開 RPC contract」だけである**（第6.3〜6.8節）。完成 usecase / UI は引き続き後続 Issue の領分である |
 | #19 のレビュー指摘 B-IDDS6-001「Directory の page 走査だけでは旧世代 locator の0件を証明できない」（Account Home の reverse locator が集計から漏れる / 同一ユーザーの複数 locator を重複加算する / checkpoint が加算更新で snapshot 置換になっていない） | **採用** | 本書第6.8節。3つの穴のうち1つ目は Account Home の廃止で構造的に消え、残り2つは「bucket ごとの snapshot 置換」で塞ぐ |
 | #19 固有の検証手段（最小 DO command harness、#19 のスコープ限定） | **棄却** | #19 のクローズに伴い対象消滅。#37 は本番ユースケースを直接実装する |
 
@@ -58,7 +61,9 @@ DO の分割数・saga の手順・migration の手順・スキーマ断片は `
 
 ### 1.4 「全数」を名乗る表と、その相互整合の不変条件（正本） ［派生］
 
-本書には「全数」を名乗る表が7つあり、互いを参照し合っている。**片方を直すともう片方が取り残される**という同じ形の破れが、レビューの R3・R5・R6 の3ラウンドで繰り返し検出された（`jobs` の列の欠落 / 駆動源表の行の欠落 / 投入点の不在 / RPC エントリの分類漏れ / UoW 書き込み口が7ストア中3つ / 秘密の個数の不一致）。**個別に直すのをやめ、表どうしが満たすべき不変条件を明文化し、機械で検査できる形にする。本節がその正本である。**
+本書には「全数」を名乗る表が7つあり、互いを参照し合っている。**片方を直すともう片方が取り残される**という同じ形の破れが、レビューの R3・R5・R6・R7 の4ラウンドで繰り返し検出された（`jobs` の列の欠落 / 駆動源表の行の欠落 / 投入点の不在 / RPC エントリの分類漏れ / UoW 書き込み口が7ストア中3つ / 秘密の個数の不一致 / **`rotation_checkpoints` に区別列が無く2つのローテーションが同じ行を潰し合う** / **`reindex` のカーソルにどの表にも置き場が無い** / **第1.3節の数え上げが表と合わない**）。**個別に直すのをやめ、表どうしが満たすべき不変条件を明文化し、機械で検査できる形にする。本節がその正本である。**
+
+**R7 の3件は、検査そのものに穴があったからすり抜けた。** 穴は3つで、いずれも本節で塞いである — (i) **I-4 を「表 → 本文」の向きだけで検査していた**（テーブル**名**の実在しか見ず、本文が要求する**列**が E-1 にあるかを見なかった）→ **検査8** を足した。(ii) **E-2 の「書き込み箇所」欄が本文と一致するかを検査していなかった** → **検査9** を足した。(iii) **検査7 の grep が5パターン決め打ちで、散文中の数え上げ（第1.3節が先行案の件数を数えている箇所）を拾わなかった** → **検査7b** を足し、対応する表の行数を同じ手順で数えて突き合わせる形にした。あわせて **I-2 の重複検出**（同じ `kind` が2つの分類表に現れないこと）を検査2 に足した。
 
 **本書を改訂する担当者（レビュー往復を含む）は、改訂の最後に必ず本節の検査を全項目走らせる。** `.thread/34/testing.md` は本節を参照し、同じ手順を確認項目として持つ。
 
@@ -79,17 +84,20 @@ DO の分割数・saga の手順・migration の手順・スキーマ断片は `
 #### 不変条件（I-1〜I-8）
 
 - **(I-1) E-3 の各行は投入点を持つ。** 「そのジョブ行を最初に書く箇所」が本書の節として特定できる。投入点を持たない `kind` は存在しない。
-- **(I-2) E-3 の各行は再武装分類 (A) / (B) / (C) のちょうど1つに属する。** **(A) 時刻駆動の周期ジョブ**は E-4 の (1-A) 表にちょうど1行を持つ。**(B) 残件駆動の反復ジョブ**は E-4 の (1-B) 表にちょうど1行を持つ。**(C) 一回性ジョブ**はどちらの表にも行を持たない。
+- **(I-2) E-3 の各行は再武装分類 (A) / (B) / (C) のちょうど1つに属する。** **(A) 時刻駆動の周期ジョブ**は E-4 の (1-A) 表にちょうど1行を持つ。**(B) 残件駆動の反復ジョブ**は E-4 の (1-B) 表にちょうど1行を持つ。**(C) 一回性ジョブ**はどちらの表にも行を持たない。**「ちょうど1つ」は両向きで見る** — E-3 の分類欄が2つの分類を同時に名乗る行が無いこと、および (1-A) と (1-B) の両方に現れる `kind` が無いことの2つを検査する（分類欄だけを数えると、後者はすり抜ける）。
 - **(I-3) E-3 の `kind` 集合と、E-1 の `jobs` 2行が列挙する `kind` 集合は一致する。** どちらにも `rotate-remap` は現れない（Alarm ジョブではないため。第7.4節）。
-- **(I-4) E-3 / E-4 が名指しするテーブルと列は E-1 に実在する。** 逆向きも見る — 第6〜9章の本文が要求する列が E-1 に無い場合、直す向きは E-1 の側である（第4.1.1節のタイブレーク規則）。
+- **(I-4) E-3 / E-4 が名指しするテーブルと列は E-1 に実在する。逆向きも同じ強さで見る — 第6〜9章の本文が要求する列が E-1 に無ければ違反である。** 直す向きは E-1 の側である（第4.1.1節のタイブレーク規則）。**逆向きは目視に落とさない** — 認証・saga・ジョブ系テーブルの列を `テーブル:列` の一覧（60件）として検査8 に持ち、E-1 の当該行に実在するかを機械で見る。**本文が新しい列を導入したら、E-1 と同時に検査8 の一覧にも足す。**
 - **(I-5) E-2 の7ストアはそれぞれ、E-6 が列挙する口のいずれかにちょうど1回対応する。** ただし `_meta` だけは「UoW からの口を持たない（アダプター専用）」という値を取る。**この1件が唯一の例外である。**
+  - **(I-5b) E-2 の「書き込み箇所（全数）」欄は、本文が「そのストアへ書く」と述べている書き手をすべて名指しする。** 例外は `jobs` の1件だけで、こちらは投入点の全数を E-3 の投入点欄へ**委譲する**（同じ列挙を2箇所に持たない）。**欄が書き手を取りこぼしていると、そのストアを共有している別の機構の存在が設計の視界から外れる** — R7 の `rotation_checkpoints`（`rotate-encryption` が欄から漏れており、2つのローテーションが同じ表を共有している事実が見えていなかった）がこの形の破れである。
 - **(I-6) E-7 のクラス (3) の行数と、(3-a)〜(3-d) に割り当てられたエントリ数の合計は一致する。** クラス (2)(3) の各行は本文のどこかに手順を持つ。
 - **(I-7) E-5 の4類型は E-3 の12種を漏れなく覆い、各 `kind` はちょうど1類型に属する。**
-- **(I-8) 本書が「N つの秘密」「N 種」「N 件」と数える箇所は、対応する表の行数と一致する。** 数を書くのは表を持つ箇所だけにし、表を持たない列挙には数を書かない（第1.1節が読者導線について既に置いている規則を、全数表へ広げたものである）。
+- **(I-8) 本書が「N つの秘密」「N 種」「N 件」「N 行」「N 経路」と数える箇所は、対応する表の行数と一致する。** 数を書くのは表を持つ箇所だけにし、表を持たない列挙には数を書かない（第1.1節が読者導線について既に置いている規則を、全数表へ広げたものである）。
+  - **射程は E-1〜E-7 に限らない。本書のどこであれ、表を持つ数え上げはすべて対象である。** R7 の第1.3節（先行案の数え上げが、直下の表の行数とも先行ブランチの実体とも食い違っていた）は E-1〜E-7 の外側で起きた。したがって検査7 は**表の行数を計算して突き合わせる側**（検査7b）を持つ。
+  - **数え上げの単位が表の行数と一致しない場合は、対応関係を同じ段落に書く。** 第1.3節が「ADR 10件」と「表15行」の両方を持つのがその形である（1つの ADR が採否の違いで2行に分かれる／ADR 由来でない行がある）。**対応関係を書かずに片方だけを載せてはならない。**
 
 #### 検査手順
 
-リポジトリルートで実行する。**すべて「出力が期待どおりであること」で判定し、目視の読み下しに依存しない。** 表の行はヘッダ行の先頭語で選ぶ。
+リポジトリルートで実行する。**すべて「出力が期待どおりであること」で判定し、目視の読み下しに依存しない。** 表の行はヘッダ行の先頭語で選ぶ。**検査は1から9まで上から順に実行する** — 検査1 が作る `/tmp/e3.txt`（`kind` の全数）を検査4 と検査9 が、検査6 が作る `/tmp/e1tbl.txt` を検査8 が入力にするためである。
 
 ```bash
 D=.thread/34/design.md
@@ -124,6 +132,12 @@ cells1() { grep -oE '^\| `[a-z_-]+`' | tr -d '|` '; }
   tbl '| `kind` | 残件条件' | cells1 | sort > /tmp/e4b.txt     # 期待: 2行
   diff <(tbl '| `kind` | 所有者 |' | grep '(A) 時刻駆動' | cells1 | sort) /tmp/e4a.txt && echo 'I-2(A) OK'
   diff <(tbl '| `kind` | 所有者 |' | grep '(B) 残件駆動' | cells1 | sort) /tmp/e4b.txt && echo 'I-2(B) OK'
+  # 重複検出（I-2 の「ちょうど1つ」の逆向き）— 分類欄を数えるだけでは拾えない
+  tbl '| `kind` | 所有者 |' | awk -F'|' '{n=0
+      if ($5 ~ /\(A\) 時刻駆動/) n++; if ($5 ~ /\(B\) 残件駆動/) n++; if ($5 ~ /\(C\) 一回性/) n++
+      if (n != 1) print "分類がちょうど1つでない:", $2, "(" n ")"}'   # 期待: 出力なし
+  cat /tmp/e4a.txt /tmp/e4b.txt | sort > /tmp/e4all.txt
+  diff <(sort -u /tmp/e4all.txt) /tmp/e4all.txt && echo 'I-2 重複なし OK'   # (1-A)/(1-B) の両方に出る kind が無い
   ```
 
 - **検査3（I-5）** — 非集約ストア表が7行で、`_meta` 以外の6行の書き込み口が第8.2節のインターフェース定義に現れる。
@@ -170,13 +184,127 @@ cells1() { grep -oE '^\| `[a-z_-]+`' | tr -d '|` '; }
   done                                              # 期待: 出力なし
   ```
 
-- **検査7（I-8）** — 数を書いている箇所を洗い出し、対応する表の行数と突き合わせる。
+- **検査7a（I-8 — 表と1対1で対応する数え上げ）** — 数を書いている箇所を洗い出し、対応する表の行数と突き合わせる。
 
   ```bash
   grep -nE '新設する[0-9]+つの秘密|新設[0-9]+秘密|第7\.4節の[0-9]+列|同じ[0-9]+列|[0-9]+種である' "$D"
   ```
 
   現在の期待値は次のとおり。**新設する秘密は4つ**（request 側2 = `AI_CLIENT_TOKEN_SECRET` / `DIRECTORY_ROUTING_SECRET`、state 側2 = `IDENTITY_MAIL_ENCRYPTION_KEY` / `IDENTITY_RESET_TOKEN_KEY`。第3.2節の表の state 側3行目はバインディングであって秘密ではない）。**`jobs` は12列**（第4.1.1節・第7.4節）。**`kind` は各クラス6種・合計12種**。
+
+- **検査7b（I-8 — 散文中の数え上げ）** — 決め打ちの5パターンでは拾えない数え上げを洗い出し、**対応する表の行数を同じ手順で数えて**突き合わせる。**期待値を人が覚えている必要が無いように、右側は必ずコマンドで数える。**
+
+  ```bash
+  # 本節（第1.4節）自身は検査の定義文なので走査対象から外す
+  body() { awk '/^## 2\. /{f=1} f' "$D"; }
+  body | grep -nE '全[0-9]+件|レビュー指摘[0-9]+件|下の[0-9]+行|実行数[0-9]+行|次の[0-9]+経路|下表の[0-9]+件|第11\.4節は[0-9]+行|表は[0-9]+行'
+  # ヒットした各箇所に対応する表の行数（左のヒットと突き合わせる）
+  tbl '| 先行案 | 採否 |' | wc -l                              # 第1.3節の表 -> 15
+  tbl '| 先行案 | 採否 |' | grep -c 'レビュー指摘'              # 第1.3節のレビュー指摘由来の行 -> 1
+  tbl '| Worker | 持つ秘密 |' | wc -l                           # 第3.2節の秘密配布表 -> 6（うち1行はバインディング）
+  tbl '| # | カテゴリ | 箇所 |' | wc -l                         # 第4.3節の帰属表 -> 35
+  tbl '| 締め出す経路 | 塞ぎ方 |' | wc -l                        # 第6.9節の締め出し経路一覧 -> 18
+  tbl '| 列 | テーブル | テーブル定義の外に生む作業 |' | wc -l     # 第11.2節の新設列表 -> 10
+  tbl '| 論点 | 決める主体 |' | wc -l                            # 第11.4節の未決事項表 -> 9
+  ```
+
+  **第1.3節だけは `body` の外にあるので、grep には出ないが上の右辺で突き合わせる**（表の行数15 / レビュー指摘由来1行が、同節の本文の記述と一致すること）。**`ADP-*` の件数（第4.3節の「53件」「85件」「32件」）だけは表の行数ではなく `spec/inventory/adapter.md` の実測なので、同節が持つ再走査コマンドで確認する**（`grep -o 'ADP-[A-Za-z0-9-]*' spec/inventory/adapter.md | sort -u | wc -l`）。`.thread/34/testing.md` の確認項目11 が別途この照合を持つ。
+
+- **検査8（I-4 の逆向き）** — 第6〜9章の本文が要求する列が E-1 に実在する。**テーブル名だけを見る検査6 では拾えない。**
+
+  ```bash
+  tbl '| DO クラス | テーブル |' > /tmp/e1tbl.txt
+  while IFS=: read -r t c; do
+    grep -E "^\| (User Data DO|Identity Directory DO) \| .*\`$t\`" /tmp/e1tbl.txt \
+      | grep -qF "\`$c\`" || echo "MISSING column in 4.1.1: $t.$c"
+  done <<'COLS'
+  account:status
+  account:sessionEpoch
+  account:callerToken
+  account:version
+  account:resetVersion
+  user_settings:version
+  credential_locators:credentialId
+  credential_locators:hmac
+  credential_locators:generation
+  credential_locators:bucketIndex
+  credential_locators:credentialVersion
+  credential_locators:usableForLogin
+  credential_locators:label
+  ai_client_connections:version
+  ai_client_connections:createdAtResetVersion
+  jobs:operationKey
+  jobs:payloadDigest
+  jobs:attempt
+  jobs:nextRunAt
+  jobs:leaseUntil
+  jobs:ownerToken
+  jobs:providerIdempotencyKey
+  jobs:terminalReason
+  jobs:completedAt
+  operations:operationId
+  operations:phase
+  operations:targetLocators
+  migration_progress:targetVersion
+  migration_progress:step
+  migration_progress:cursor
+  credential_mappings:credentialId
+  credential_mappings:passwordVerifier
+  credential_mappings:pendingVerifier
+  credential_mappings:changeState
+  credential_mappings:credentialVersion
+  credential_mappings:encryptedCanonical
+  credential_mappings:encryptionGeneration
+  credential_mappings:encryptionNonce
+  credential_mappings:failedAttempts
+  credential_mappings:nextAttemptAllowedAt
+  credential_mappings:lastResetRequestedAt
+  credential_mappings:reservedUntil
+  credential_mappings:sagaCommitted
+  credential_mappings:coordinatorLocator
+  credential_mappings:callerToken
+  password_reset_tokens:tokenId
+  password_reset_tokens:tokenHash
+  password_reset_tokens:expiresAt
+  password_reset_tokens:usedAt
+  password_reset_tokens:credentialId
+  password_reset_tokens:consumedByOperationId
+  password_reset_tokens:tokenKeyGeneration
+  rotation_checkpoints:rotationKind
+  rotation_checkpoints:bucketIndex
+  rotation_checkpoints:previousCount
+  rotation_checkpoints:scannedAt
+  rotation_checkpoints:conflictCount
+  rotation_checkpoints:lastConflictAt
+  rotation_checkpoints:lastConflictCredentialId
+  _meta:schema_version
+  COLS
+  # 期待: 出力なし（一覧は60件。件数は `awk '/<<.COLS./{f=1;next} /^COLS$/{f=0} f'` で数え直せる）
+  ```
+
+- **検査9（I-5b）** — E-2 の「書き込み箇所（全数）」欄が、本文で同じ行に現れる書き手（E-3 の `kind`）を取りこぼしていない。
+
+  ```bash
+  cat > /tmp/e2skip.txt <<'SKIP'
+  operations:rotate-encryption
+  operations:sweep-reservations
+  credential_locators:sweep-orphan-mapping
+  credential_locators:sweep-reservations
+  SKIP
+  # `jobs` は投入点の全数を E-3 へ委譲しているので対象外（空欄は検査2 が見る）
+  # 本節（第1.4節）自身は検査の定義文なので走査対象から外す
+  body() { awk '/^## 2\. /{f=1} f' "$D"; }
+  for s in operations migration_progress credential_locators password_reset_tokens rotation_checkpoints; do
+    cell=$(tbl '| 非集約ストア | 所属 |' | grep -F "| \`$s\`" | awk -F'|' '{print $5}')
+    body | grep -v '^|' | grep -F "\`$s\`" | grep -oE '`[a-z-]+`' | tr -d '`' | sort -u \
+      | grep -Fx -f /tmp/e3.txt | while read -r w; do
+          printf '%s' "$cell" | grep -qF -- "$w" && continue
+          grep -qx "$s:$w" /tmp/e2skip.txt || echo "E-2 の欄に無い書き手候補: $s <- $w"
+        done
+  done   # 期待: 出力なし
+  ```
+
+  **`/tmp/e2skip.txt` は「同じ行に名前が出るが、そのストアへは書かない `kind`」の除外リストである。** 現在の4件はいずれも本文で書き手でないことを確認済み — `rotate-encryption` / `sweep-reservations` は `operations` 行を読みも書きもせず（前者は `credential_mappings` の再暗号化、後者は予約行の掃除）、`sweep-orphan-mapping` / `sweep-reservations` は Directory 側の行だけを触るので `credential_locators`（User Data DO）へは書かない。**除外リストへ足してよいのは、本文を読んで「書かない」ことを確認できた組だけである。確認せずに足すと、この検査は R7 の `rotation_checkpoints` と同じ形で無力化する。**
 
 ## 2. 前提と制約 ［派生］
 
@@ -363,21 +491,21 @@ export ドメインはテーブルを持たない（`ExportSourceReader.readAll`
 
 | DO クラス | テーブル | 列（認証・saga・ジョブ系は全数） | 定義箇所 |
 |---|---|---|---|
-| User Data DO | `account` | `status`（`active` / `deleting` / `deleted`）/ `sessionEpoch` / `deletedAt` / **`callerToken`**（DO 間 RPC の呼び出し元束縛。第5.1節）/ **`version`**（OCC。第8.4節）。非 PII tombstone は退会後もこの行として残る（`callerToken` は退会完了時に消す） | 第3.1節・第5.1節・第6.7節 |
+| User Data DO | `account` | `status`（`active` / `deleting` / `deleted`）/ `sessionEpoch` / `deletedAt` / **`callerToken`**（DO 間 RPC の呼び出し元束縛。第5.1節）/ **`resetVersion`**（**パスワードリセット完了だけで進む単調増加カウンタ。** 初期値0。`credentialVersion` とは別の列であり、通常のパスワード変更・SSO link / unlink では進まない。AI クライアント接続の自動失効の基準。第5.4節 (i)・第6.5.1節 phase 2）/ **`version`**（OCC。第8.4節）。非 PII tombstone は退会後もこの行として残る（`callerToken` は退会完了時に消す） | 第3.1節・第5.1節・第5.4節・第6.7節 |
 | User Data DO | `user_settings` | `trashRetentionDays` ほかユーザー単位設定（単一行）/ **`version`**（OCC。第8.4節） | 第4.1節・第8.4節 |
 | User Data DO | `credential_locators` | **`credentialId`**（世代非依存の credential 同一性。第6.1.2節）/ `kind`（`email` / `sso`）/ `hmac`（全長64 hex）/ `generation` / `bucketIndex` / `credentialVersion` / `status`（**値域は `active` の1値だけである。** 除去は物理削除で行うので他の値を取らない — `record-credential-locator` は挿入時に `active` を書き、unlink 手順2 / 退会 手順4 は行ごと消す。**`revoked` のような論理削除状態は置かない**、を断定する。置くと「active な行」を数える述語が2系統になり、第6.1.1節 (R4) の数え方と第5.3節 step 5 (ii) の到達性検査が同じ列を別々に解釈しうる）/ **`usableForLogin`**（その credential が単独でログイン手段として成立するか。`kind = 'sso'` は常に真、`kind = 'email'` は Directory 側の mapping 行が `passwordVerifier` を持つときだけ真。SSO signup がメール一意性のためだけに置く行は偽。値は Directory 側が判定して `record-credential-locator` / `advance-credential-change` の引数で運ぶ）/ **`label`**（設定画面に出す非 PII の表示名。`kind = 'sso'` なら provider 名（`google` / `apple`）、`kind = 'email'` なら空文字。**SSO subject もメールアドレスも入れない**。値は `usableForLogin` と同じく Directory 側が判定して運ぶ）。**一意性は `(credentialId, generation)` で取る。`(kind, hmac, generation)` にも UNIQUE を張る**（同じ canonical が2つの `credentialId` を持たないことを保証するため）。**login の到達性検査の権威**（照合は `credentialId` だけを見て `generation` を含めない）であり、退会・unlink 時の mapping 削除の唯一の逆引き情報。**鍵ローテーション中は同じ credential について新旧2世代の行が並存しうる**（第6.1.1節）。**したがって「ログイン手段の数」は行数ではなく `usableForLogin = true` かつ active な行の distinct な `credentialId` の個数である** | 第5.3節 step 5・第6.1.1節・第6.1.2節・第6.3節 phase 4・第6.6節・第6.7節・第6.8節 |
-| User Data DO | `ai_client_connections` | `id` / `clientName` / `scope` / `status` / `connectedAt` / `lastUsedAt` / `revokedAt` / **`createdAtCredentialVersion`**（作成時点のパスワード credential の `credentialVersion`。リセット完了時の自動失効に使う）/ **`version`**（OCC。第8.4節。**設定画面からの二重解除操作の競合を検出する対象そのものである**）。ただし `recordUsage` による `lastUsedAt` の単独更新は `version` を進めない後勝ち更新にする（`spec/database/index.md` の現行規約を維持する） | 第5.4節・第6.5.1節 phase 2・第8.4節 |
+| User Data DO | `ai_client_connections` | `id` / `clientName` / `scope` / `status` / `connectedAt` / `lastUsedAt` / `revokedAt` / **`createdAtResetVersion`**（作成時点の `account.resetVersion`。リセット完了時の自動失効に使う。**`credentialVersion` を基準にしない** — 侵害と復旧のあいだにパスワード変更が1回でも挟まると失効対象が0件になるからである。第5.4節 (i)）/ **`version`**（OCC。第8.4節。**設定画面からの二重解除操作の競合を検出する対象そのものである**）。ただし `recordUsage` による `lastUsedAt` の単独更新は `version` を進めない後勝ち更新にする（`spec/database/index.md` の現行規約を維持する） | 第5.4節・第6.5.1節 phase 2・第8.4節 |
 | User Data DO | `memos` / `memo_revisions` | memo 集約（`purge_after` 列を足す。第7.5節） | 第4.1節・第7.5節 |
 | User Data DO | `topics` / `documents` / `document_revisions` / `source_links` | knowledge 集約（`topics` / `documents` に `purge_after` 列を足す）。`source_links` は複合 PK のまま | 第4.1節・第4.2節・第7.5節 |
 | User Data DO | `search_entries` / `search_fts` | FTS5 projection（external-content）。`search_entries` の PK は `rowid INTEGER PRIMARY KEY`、`id TEXT` は UNIQUE 制約付きの別列 | 第7.1節 |
 | User Data DO | `jobs` | 第7.4節の12列（`operationKey` / `kind` / `payload` / `payloadDigest` / `attempt` / `nextRunAt` / `status` / `leaseUntil` / `ownerToken` / `providerIdempotencyKey` / `terminalReason` / **`completedAt`**）。**`completedAt` は `done` / `poison` へ落ちた時刻**で、prune の複合索引 `(status, completedAt)` がここから引く（第7.4節）。`nextRunAt` では代用できない — あちらは「次に実行してよい時刻」であり、バックオフで未来へ先送りされる列だからである。`pending` / `running` の行では `NULL` である。`kind` は `purge-trash` / `reindex` / `migrate-bulk` / `finalize-withdrawal` / `sweep-orphan-mapping` / `resume-link` の6種である。 | 第7.4節 |
 | User Data DO | `operations` | `operationId` / `kind` / `payloadDigest` / `phase` / `createdAt` / `terminalReason` / **`targetLocators`**（link では対象 locator を、unlink では削除対象の locator を退避する。要素は **`credentialId`** + `kind` + 全長 HMAC + 世代 + bucket index。**単一値ではなく配列である** — ローテーション中は同じ credential が2世代の bucket に行を持つので、削除対象も2件になりうる。第6.1.1節 (R3)） | 第6.5節・第6.6節 |
-| User Data DO | `migration_progress` | `targetVersion` / `step` / `cursor` / `updatedAt` | 第9.3節 |
+| User Data DO | `migration_progress` | `targetVersion` / `step` / `cursor` / `updatedAt`。**主キーは `(targetVersion, step)`。** **`migrate-bulk` と `reindex` の2種が共有する**（同じ `targetVersion` から両方が投入されても行が衝突しない。第7.4節「カーソルの永続先」・第9.2節） | 第7.4節・第9.2節・第9.3節 |
 | User Data DO | `_meta` | `schema_version` / 自 locator（`userId`。`ctx.id.name` のフォールバック） | 第6.3節・第9.2節 |
 | Identity Directory DO | `credential_mappings` | **識別**: **`credentialId`**（世代非依存の credential 同一性。第6.1.2節）/ `kind`（`email` / `sso`）/ `hmac`（全長64 hex）/ `generation`。一意性は `(kind, hmac)` で取る（第6.1節 (b)）。**`credentialId` にも bucket 内 UNIQUE を張る。** 根拠は Directory DO の命名規則である — DO 名は `dir:g{generation}:b{index}` で**世代を含む**ので（第6.1節 (d)・第6.2節）、世代が違えば bucket index が一致しても別の DO インスタンスであり、**1つの Directory DO の `credential_mappings` に載る行は常に同一世代である**。したがって bucket 内では `(credentialId, generation)` UNIQUE と `credentialId` UNIQUE が等価になる。`(credentialId, generation)` の UNIQUE も残してよいが、`generation` 列は DO 名と冗長なので実効は変わらない。**初版は「新旧2世代の locator が同じ bucket index に落ちると同じ bucket に2行並ぶ」を根拠に非一意と書いていた。これは DO 名が世代を含むという自分の決定と矛盾しており、事実として誤りである** — 2世代が同居するのは `credential_locators`（User Data DO 側。1 DO に両世代が載る）であって `credential_mappings` ではない。`consume-reset-token` / `delete-mapping` / トークン一括削除はこの UNIQUE 索引から引く。**写像**: `userId` / `status`（`reserved` / `active`）。**認証材料**: `passwordVerifier` / `pendingVerifier` / `changeState`（`null` / `pending`）/ `credentialVersion`。**PII**: `encryptedCanonical` / `encryptionGeneration` / **`encryptionNonce`**（AES-256-GCM の96ビット nonce。**独立列に持ち、暗号文に連結しない** — AAD が `(kind, credentialId, encryptionGeneration)` を束縛するので、nonce の切り出し規則を暗号文の形式に埋め込むと再暗号化ジョブが世代ごとに別の切り出しを持つことになる。行ごと・書き込みごとに再生成し、使い回さない。第6.2.1節 (b-2)）。**濫用抑止**: `failedAttempts` / `nextAttemptAllowedAt` / `lastResetRequestedAt`。**saga コーディネーター状態**: `operationId` / `candidateUserId` / **`reservedUntil`**（予約 TTL の絶対時刻）/ `sagaCommitted` / `locators[]`（コーディネーター行が持つ全 credential の locator 一覧。要素は `credentialId` + `kind` + 全長 HMAC + 世代 + bucket index）/ `coordinatorLocator`（非コーディネーター行が持つ）。**呼び出し元束縛**: **`callerToken`**（この mapping の所有アカウントが提示すべき不透明値。User Data DO 側の `account.callerToken` と同じ値。第5.1節） | 第6.1節・第6.1.2節・第6.2.1節・第6.2.2節・第6.3節・第6.4節・第6.5.1節 |
 | Identity Directory DO | `password_reset_tokens` | `tokenId`（**暗号論的乱数由来の128ビット以上の不透明値**。bucket 内で採番する。**連番・rowid・時刻由来の値を使わない** — 理由は第6.1節 (d)）/ `tokenHash` / `expiresAt` / `usedAt` / **対象 credential のキー `credentialId`**（第6.1.2節）/ **`consumedByOperationId`**（`consume-reset-token` が消費時に記録する。`begin-credential-change` の起点 B 側の束縛に使う。第5.1節）/ **`tokenKeyGeneration`**（`IDENTITY_RESET_TOKEN_KEY` の世代。**routing 世代とは別の番号体系である**。第6.1節 (d)）。credential キー `credentialId` に索引を張り、credential 変更 / unlink / 退会が未使用トークンを一括削除できるようにする。**キーを `(kind, hmac)` にしない理由は第6.1.2節にある** — `hmac` は世代依存なので、ローテーション中に発行されたトークンが世代の違う削除要求から漏れる。**生トークンは保存しない**（`tokenId` から導出する） | 第6.1節 (d)・第6.1.2節 |
 | Identity Directory DO | `jobs` | User Data DO 側と同じ12列（`completedAt` を含む）。`kind` は `send-mail` / `resume-signup` / `resume-credential-change` / `sweep-reservations` / `sweep-reset-tokens` / `rotate-encryption` の6種である。**`rotate-remap` は Alarm ジョブではない** — routing key を保持できないため maintenance 経路が1チャンクずつ駆動する同期 RPC である（第6.8節 手順2） | 第7.4節 |
-| Identity Directory DO | `rotation_checkpoints` | `bucketIndex` / `generation` / `previousCount` / `scannedAt`（**置換**で記録する）/ **`conflictCount`** / **`lastConflictAt`** / **`lastConflictCredentialId`**（移送先に `userId` の違う行があって移送を見送った件数と、直近の発生時刻・対象。第6.8節 手順2 (2) の第2分岐の記録先である。**`rotate-remap` は `jobs` 行も `operations` 行も持たないので `poison` / `terminalReason` を記録先にできない** — この3列がその代わりである） | 第6.8節 |
+| Identity Directory DO | `rotation_checkpoints` | **`rotationKind`**（`'remap'`（routing 鍵のローテーション）/ `'encryption'`（メール暗号鍵のローテーション）の2値。**この列が無いと2つのローテーションの記録が同じ行を潰し合う** — 詳細と置換キーは第6.8節「2つのローテーションの関係」）/ `bucketIndex` / `generation`（**`rotationKind` によって意味が違う。** `'remap'` では退役させる routing 世代、`'encryption'` では退役させる `encryptionGeneration` であり、**2つは独立した番号体系である**。第6.2.1節 (b-1)）/ `previousCount` / `scannedAt`（**置換**で記録する。**置換キーは `(rotationKind, bucketIndex, generation)` である**）/ **`conflictCount`** / **`lastConflictAt`** / **`lastConflictCredentialId`**（移送先に `userId` の違う行があって移送を見送った件数と、直近の発生時刻・対象。**`rotationKind = 'remap'` の行だけが使う**（`rotate-encryption` は行を移送しないので衝突が発生しない）。第6.8節 手順2 (2) の第2分岐の記録先である。**`rotate-remap` は `jobs` 行も `operations` 行も持たないので `poison` / `terminalReason` を記録先にできない** — この3列がその代わりである） | 第6.2.1節 (b-1)・第6.8節 |
 | Identity Directory DO | `_meta` | `schema_version` / 自 locator（`dir:g{gen}:b{index}`） | 第6.3節・第9.2節 |
 
 **OCC の `version` 列を持つテーブルを本表で確定する。持たない側も明示する。** 第8.4節は「OCC は残す」と断定し、第8.2.1節は `Versioned<T>` / `ExpectedVersion<T>` を「そのまま残す」と決めているので、**列の全数を名乗る本表に `version` が1つも無いと第8.4節が実装不能になる**。`spec/database/index.md` の現行規約（「集約ルートに `version INTEGER NOT NULL`（生成時 0）。リビジョン・出典リンクは不変の子行のため `version` を持たない」）を DO 側へそのまま引き継ぐ。
@@ -388,14 +516,16 @@ export ドメインはテーブルを持たない（`ExportSourceReader.readAll`
 
 **非集約ストアの全数と、UoW からの書き込み口。** `ctx.storage.sql` を usecase から直接触る形は採らない（第8.2節）ので、**ここに口が無いストアは「usecase からは書けない」ことを意味する。** 第8.2節の「書き込み口の全数」宣言は本表を射程とし、**本表に行を足したら第8.2節にも口を1つ足す**（第1.4節 I-5）。
 
-| 非集約ストア | 所属 | UoW からの書き込み口 | 主な書き込み箇所 |
+**「書き込み箇所（全数）」欄は書き手を名指しする**（第1.4節 I-5b）。**唯一の例外が `jobs` で、こちらは投入点の全数を第7.4節の `kind` 全数表へ委譲する** — 同じ列挙を2箇所に持つと必ず片方が取り残されるからである。**欄が書き手を取りこぼすと、そのストアを共有している別の機構が設計の視界から外れる**（`rotation_checkpoints` の欄から `rotate-encryption` が漏れていたために、2つのローテーションが同じ表を共有している事実が見えていなかった。第6.8節）。
+
+| 非集約ストア | 所属 | UoW からの書き込み口 | 書き込み箇所（全数） |
 |---|---|---|---|
-| `jobs` | 両クラス | `enqueueJob`（副作用登録メソッド） | 全ジョブの投入点（第7.4節の `kind` 全数表の「投入点」欄）。claim / 完了 / backoff / prune はジョブランナー（アダプター）が同じ行に対して行う |
-| `operations` | User Data DO | `recordOperation` / `updateOperation` | signup phase 2 / link 手順1 / unlink 手順2 / credential 変更 phase 2（第6.3節・第6.6節・第6.5.1節） |
-| `migration_progress` | User Data DO | `setMigrationCursor` | `migrate-bulk` のカーソル前進（第9.3節） |
-| `credential_locators` | User Data DO | `credentialLocatorStore` ポート | `record-credential-locator` の upsert（第5.1節）/ unlink 手順2 と退会 手順4 の削除（第6.6節・第6.7節）/ credential 変更 phase 2 の全世代更新（第6.5.1節） |
+| `jobs` | 両クラス | `enqueueJob`（副作用登録メソッド） | 全ジョブの投入点（第7.4節の `kind` 全数表の「投入点」欄へ**委譲する。本欄が唯一の委譲である**）。claim / 完了 / backoff / prune はジョブランナー（アダプター）が同じ行に対して行う |
+| `operations` | User Data DO | `recordOperation` / `updateOperation` | **`recordOperation`**: signup phase 2（`initialize-account`）/ link 手順1 / unlink 手順2 / credential 変更 phase 2（`advance-credential-change`）（第6.3節・第6.6節・第6.5.1節）。**`updateOperation`**: `resume-signup` / `resume-link` / `resume-credential-change` / `sweep-orphan-mapping` / `finalize-withdrawal` の phase 前進と終端（第6.4節・第6.6節・第6.5.1節・第6.7節） |
+| `migration_progress` | User Data DO | `setMigrationCursor` | `migrate-bulk` と **`reindex`** のカーソル前進（第9.3節・第7.4節 (iii)）。**この2種が永続カーソルを持つ全数である** |
+| `credential_locators` | User Data DO | `credentialLocatorStore` ポート | `record-credential-locator` の upsert（signup phase 4 = `resume-signup` / link 手順4 = `resume-link` / `rotate-remap` の移送 (1)。第5.1節・第6.8節 手順2）/ unlink 手順2 と退会 手順4（`finalize-withdrawal`）の削除（第6.6節・第6.7節）/ credential 変更 phase 2（`resume-credential-change` → `advance-credential-change`）の全世代更新（第6.5.1節）/ `rotate-remap` の (4) による旧世代行の削除（第6.8節 手順2） |
 | `password_reset_tokens` | Identity Directory DO | `resetTokenStore` ポート | リセット依頼時の発行と `consume-reset-token` の消費記録（第6.1節 (d)・第5.1節）/ credential 変更 phase 1・unlink 手順3・退会 手順3 の一括削除（第6.1節 (d)）/ `sweep-reset-tokens` の期限切れ掃除（第7.4節） |
-| `rotation_checkpoints` | Identity Directory DO | `rotationCheckpointStore` ポート | `rotate-remap` チャンク完了時の snapshot 置換と競合の記録（第6.8節 手順2・手順4） |
+| `rotation_checkpoints` | Identity Directory DO | `rotationCheckpointStore` ポート | **`rotate-remap`**: チャンク完了時の `rotationKind = 'remap'` の snapshot 置換と競合の記録（第6.8節 手順2・手順4）。**`rotate-encryption`**: 残件が尽きた時点の `rotationKind = 'encryption'` の `previousCount = 0` の置換記録（第6.2.1節 (b-1)・第6.8節「2つのローテーションの関係」）。**置換キーは両者とも `(rotationKind, bucketIndex, generation)` である** |
 | `_meta` | 両クラス | **無い（アダプター専用）** | 初期化時の自 locator 書き込み（第6.3節）と migration ゲートの `schema_version` 更新（第9.2節・第9.3節）だけが書く。**どちらもゲート／constructor であって usecase ではないので、UoW に口を置かない、と断定する** — 置くと usecase が `schema_version` を書ける経路ができ、第9.4節の fail-closed の権威が二重になる |
 
 **予約 TTL の列名を `reservedUntil` に確定する。** 第6.3節 phase 1a が「TTL 付き」、第6.4節の sweep が「TTL 超過」と書いているだけで列名も型も決まっていなかった。**型は絶対時刻**（epoch ミリ秒）にする — 相対値にすると sweep の述語が行の作成時刻を別に読む必要が生じるためである。これで `sweep-reservations` の述語が `WHERE status = 'reserved' AND reservedUntil < ? AND sagaCommitted IS NULL` として組める（第6.4節）。
@@ -514,14 +644,14 @@ export ドメインはテーブルを持たない（`ExportSourceReader.readAll`
 
 | プラットフォーム条件 | 捕捉する側 | 写す先 | retryable | 根拠 |
 |---|---|---|---|---|
-| `.overloaded` が真のエラー（1オブジェクト 1,000 req/s の soft limit 超過） | **呼び出し側（request Worker / 他 DO）の stub アダプター** | `SystemError(ServiceOverloaded)` | **false** | 超過分は DO へ配送されないので、エラーを受け取るのは stub を叩いた側である。公式がリトライ禁止と明記している（第2.1節 F-19）。`ConflictError("OPTIMISTIC_LOCK_FAILURE")` のようなリトライ可能系へ写してはいけない |
+| `.overloaded` が真のエラー（1オブジェクト 1,000 req/s の soft limit 超過） | **呼び出し側（request Worker / 他 DO）の stub アダプター** | `SystemError(ServiceOverloaded)` | **false** | 超過分は DO へ配送されないので、エラーを受け取るのは stub を叩いた側である。公式がリトライ禁止と明記している（第2.1節 F-19）。**`ConflictError("OPTIMISTIC_LOCK_FAILURE")` のような `kind: "conflict"`（HTTP 409）系へ写してはいけない** — 409 はクライアントに再送を促す意味を持つからである。**`retryable` フラグの話ではない**（`ConflictError` は `CodedError.retryable` の既定 `false` を返す。`packages/core/src/lib/error.ts:35-37`。同表 行4 も false である） |
 | `SQLITE_FULL`（10 GB 到達） | **DO 内アダプター** | `SystemError(StorageCapacityExceeded)` | **false** | 書き込みだけが失敗し読みと `DELETE` は通る半死状態。通常の DB 障害と同じ扱いにすると復旧手段（削除）を塞ぐ |
-| `ctx.abort()` / DO のリセット | **呼び出し側の stub アダプター** | `SystemError(DatabaseError)` | true | DO が消滅した結果として RPC の promise が reject する形でしか観測できない。公式も output gate について「書き込みに失敗するとシステムは Object をリセットし、**送出待ちのメッセージをすべて破棄し**、クライアントにはエラーを返す」としており、DO 側に catch する場所が残らない。接続断と同種で、次のリクエストで DO が再構築される |
+| `ctx.abort()` / DO のリセット | **呼び出し側の stub アダプター** | `SystemError(DatabaseError)` | **false** | DO が消滅した結果として RPC の promise が reject する形でしか観測できない。公式も output gate について「書き込みに失敗するとシステムは Object をリセットし、**送出待ちのメッセージをすべて破棄し**、クライアントにはエラーを返す」としており、DO 側に catch する場所が残らない。接続断と同種で、次のリクエストで DO が再構築される。**`retryable` を false にするのは、この欄が `SystemError.retryable` の実値だからである** — 実装の `RETRYABLE_SYSTEM_CODES` は `NetworkError` / `ExternalApiError` の2値だけで `DatabaseError` を含まない（`packages/core/src/application/errors.ts:206-210`）。**`DatabaseError` を `RETRYABLE_SYSTEM_CODES` へ足す変更は行わない** — 足すと既存の全 D1 経路（現在は D1、移行後は DO 内アダプター）の `retryable` が一斉に反転するので、この1行のために払う代償として釣り合わない。「次のリクエストで DO が再構築されるので上位でのリトライには意味がある」ことは事実だが、それは**シリアライズ契約の `retryable` フラグではなく運用上の性質**であり、この欄には書かない |
 | 条件付き UPDATE の0行一致（OCC 不一致） | **DO 内アダプター** | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` | false（呼び出し元まで届ける） | 現行方針を維持（`CLAUDE.md`「Retry strategy」）。D1 のような CHECK 違反メッセージの部分一致は不要になる |
 
 **したがって翻訳層は2箇所に置く。** DO 内アダプター（行2 / 行4）と、**DO stub factory が返す facade ラッパー**（行1 / 行3）である。後者を置かないと、生のプラットフォームエラーが `apps/web/app/presentation/errorResponse.ts` の `serializeError`（:70）へ素通りして `kind: "unknown"` の 500 になり、行1 が持つ**リトライ禁止**という最も重要な情報が失われる。第8.3節 (b) が「request 側 DI に残るもの」に DO stub factory を挙げているので、翻訳はそのファクトリが返すラッパーの責務である。**state Worker 内の DO 間 RPC にも同じラッパーを通す**（第3.2節で state Worker にも両 binding を置いたため）。
 
-**`ServiceOverloaded` / `StorageCapacityExceeded` は新規コードである。** 現行の `packages/core/src/application/errors.ts` の `SystemErrorCode` は `DatabaseError` / `DataIntegrityError` / `CryptoError` / `SessionError` / `NetworkError` / `ExternalApiError` の6値で、この2つは存在しない。**#37 は同ファイルへ2値を追加する**（`RETRYABLE_SYSTEM_CODES` には**入れない** — どちらも retryable false）。第11.2節の変更対象一覧に行を足してある。
+**`ServiceOverloaded` / `StorageCapacityExceeded` は新規コードである。** 現行の `packages/core/src/application/errors.ts` の `SystemErrorCode` は `DatabaseError` / `DataIntegrityError` / `CryptoError` / `SessionError` / `NetworkError` / `ExternalApiError` の6値で、この2つは存在しない。**#37 は同ファイルへ2値を追加する**（`RETRYABLE_SYSTEM_CODES` には**入れない** — どちらも retryable false）。**`RETRYABLE_SYSTEM_CODES` の中身そのものは変えない、と断定する**（`NetworkError` / `ExternalApiError` の2値のまま。`packages/core/src/application/errors.ts:206-210` で実確認済み）。第11.2節の変更対象一覧に行を足してある。**上の表の `retryable` 欄は、この集合から導出される実値である** — 表と実装が食い違ったら表を直す（表は要約であり、値を決める理由を持っているのは実装側の集合定義だからである）。
 
 **HTTP status は `kind` 単位のまま据え置き、両方とも 500 で返す。** `apps/web/app/presentation/errorResponse.ts` の `HTTP_STATUS_BY_KIND` は `kind`（`system`）だけを見て `code` を見ない。`CLAUDE.md`「HTTP status mapping is presentation-only, driven by the serialized `kind`」がそう定めているからであり、`overloaded` に 429 / 503 を割り当てるために `code` 分岐を presentation へ持ち込むのは、その契約を崩すのに見合わない。**`overloaded` は 500 で返す**（リトライしてはならないので、クライアントへ「後で再試行せよ」を意味する 429 / 503 を返すほうがむしろ有害である。第2.1節 F-19）。利用者向けの文言差は `code` を見る表示側（`apps/web/app/presentation/` のエラー表示ヘルパ）で吸収する。
 
@@ -593,7 +723,7 @@ Cookie / Authorization ヘッダ
 | (3) | `abandon-account`（第6.4節 3 の終端規則） | User Data DO | コーディネーター bucket | `operations` 行の `operationId` 一致 + `kind = 'signup'` + `phase` が `done` でないこと。`account.status` を `deleting` へ倒して `finalize-withdrawal` を投入する。**`done` に達した saga は倒せない** |
 | (3) | `propagate-saga-committed`（第6.4節 2） | Directory bucket | コーディネーター bucket | 予約行の `operationId` 一致 |
 | (3) | `purge-user-mappings`（退会の最後の砦。第6.7節） | Directory bucket | **operator 専用 maintenance 経路**（request Worker 内） | **CAS も phase 条件も持たない。** maintenance 経路そのものの到達制御（公開ルートを持たない。#38）+ 対象 `userId` の存在確認 + **実行の監査ログを必須にする**（#38）。逆引き情報ごと失われた場合の回収手段なので `callerToken` を要求できない — したがって**本表で最も危険なエントリであり、到達制御と監査だけが守っている**ことを明記する |
-| (3) | `rotate-remap` の1チャンク駆動（routing 鍵の一時注入を伴う） | Directory bucket | operator 専用 maintenance 経路（request Worker 内） | maintenance 経路そのものの到達制御（公開ルートを持たない。#38）+ **previous 世代の鍵の所持証明**（下記 (3-c)。`{ previousKey, activeKey, activeGeneration, activeBucketCount }` を受け取り、bucket は自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから `activeKey` を受け入れる）+ 自 DO 名 `dir:g{gen}:b{index}` の `gen` が previous 世代であることの照合 + **`activeGeneration > gen` の CAS** + **実行の監査ログを必須にする**（#38）。**`rotate-remap` は Alarm ジョブではなく、maintenance 経路が1チャンクずつ同期に駆動する**（第6.8節 手順2） |
+| (3) | `rotate-remap` の1チャンク駆動（routing 鍵の一時注入を伴う） | Directory bucket | operator 専用 maintenance 経路（request Worker 内） | maintenance 経路そのものの到達制御（公開ルートを持たない。#38）+ **previous 世代の鍵の所持証明**（下記 (3-c)。`{ previousKey, activeKey, activeGeneration, activeBucketCount }` を受け取り、bucket は自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから `activeKey` を受け入れる）+ 自 DO 名 `dir:g{gen}:b{index}` の `gen` が previous 世代であることの照合 + **`activeGeneration > gen` の CAS** + **実行の監査ログを必須にする**（#38）。**所持証明が呼び出し元束縛として効くのは previous 世代の鍵が未漏えいであるあいだだけである** — 漏えいを動機とするローテーションでは攻撃者も3条件を満たせるので、そのときの守りは到達制御と監査だけになる（下記 (3-c)）。**`rotate-remap` は Alarm ジョブではなく、maintenance 経路が1チャンクずつ同期に駆動する**（第6.8節 手順2） |
 | (3) | `rotate-encryption` の起動（自 bucket の job table へジョブを投入する） | Directory bucket | operator 専用 maintenance 経路（request Worker 内） | maintenance 経路そのものの到達制御（#38）+ **引数の `encryptionGeneration` が state Worker の keyring の active 世代と一致すること**（bucket 側で検証できる — 暗号化 keyring は state Worker の常設バインディングなので bucket の手元にある。第6.2.1節 (b-1)）+ 実行の監査ログ。**鍵の注入を伴わない**ので所持証明は要らない |
 
 **本表は「クラス (2)(3) の全数」を宣言している。したがって更新規則を表に添える — 本文が新しい RPC エントリを導入したら、本表にも必ず行を足す。** 第6.4節の cross-DO 操作表・第6.9節の締め出し経路表と同じ扱いである。本表と本文が食い違ったら**本表を直す**（本文がエントリを導入した理由を持つので、本文の側が正しい）。
@@ -624,9 +754,13 @@ Cookie / Authorization ヘッダ
 - **(3-d) saga を新規に開始できる群 — `callerToken` が守る。** `begin-credential-change`（クラス (2)）/ `advance-credential-change` / ローテーション経路の `record-credential-locator` の3本である。**この3本は `operations` 行や `changeState` を新規に作る側なので、(3-a) の「記録されていない `operationId` で phase を飛ばせない」が原理的に当てはまらない。** 束縛を置かないと次の3つが同時に成立する — (i) `begin-credential-change` を無束縛にすると、任意アカウントの `pendingVerifier` を差し替えて `resume-credential-change` の Alarm に phase 2 / 3 を自走させられる（**乗っ取り原始関数**）、(ii) `advance-credential-change` を無束縛にすると `sessionEpoch` と `credentialVersion` だけが前進して Directory 側と不一致になる（**恒久ロックアウト原始関数**）、(iii) ローテーション経路の `record-credential-locator` を無束縛にすると `reserve-credential` + `activate-reservation` と組み合わせて任意アカウントへ攻撃者のクレデンシャルを注入でき、第5.3節 step 5 (ii) の到達性検査を通せる。**同じ locator に対する読み（`lookup-credential-by-locator`）を `callerToken` で束縛しておきながら、より強い書きを無束縛のまま残すのは設計の自己矛盾なので、3本とも `callerToken` で束縛する。** 材料は新しく増えない — 起点 A は phase 0 の A-1 が `account.callerToken` を返し、`advance-credential-change` と `record-credential-locator` は Directory 側の mapping 行が同じ値を持つ。**唯一の例外は `begin-credential-change` の起点 B（リセット完了）で、未認証経路なので `callerToken` を提示できない。** ここは `consume-reset-token` が同じ bucket で走ることを使い、消費したトークン行の `consumedByOperationId` と `credentialId` の一致を条件にする（表のガード欄）。**ローテーション経路の `record-credential-locator` に `operations` 行を要求しない、と決め切る** — 要求するとローテーションが動かず、`operations` 行を新規作成して満たす実装にすると無束縛になるので、どちらにも倒さずに `callerToken` を束縛の実体にする。
 - **(3-c) 到達制御と監査、＋ bucket が自分で検証できる材料が守る群** — `check-previous-generation` / `purge-user-mappings` / `rotate-remap` の1チャンク駆動 / `rotate-encryption` の起動の4本。前者2本は追加の束縛を持てず、後者2本は**bucket が自分の手元の材料だけで検証できるガードを1つ持つ**。
   - **`rotate-remap` の1チャンク駆動は、注入された鍵を bucket 側で検証できなければならない。** 初版のガード欄は「maintenance 経路の到達制御 + 世代の CAS」だけで、**bucket は `DIRECTORY_ROUTING_SECRET` を保持しない**（第3.2節の非重複配布）ため、引数で渡された `{ generation, key, bucketCount }` が本物かどうかを判定する材料を1つも持たなかった。世代番号も呼び出し元が名乗るだけの値である。**帰結は (3-b) が「正しく塞げている」と断定した攻撃者クラス（binding には到達できるが `SESSION_SECRET` を持たない呼び出し元）に対して成立する** — 任意の鍵 `k'` と任意の世代 `g'` でチャンクを駆動すると、第6.8節 手順2 の4段がそのまま走り、行は `dir:g':b{HMAC_k'(canonical) mod bucketCount'}` へ移送されて移送元が消える。移送先の bucket index は攻撃者が自分で計算できるので、**被害者のメールアドレスを知っている攻撃者は移送先 bucket へ `HMAC_k'(victim@example.com)` を投げるだけで `lookup-credential`（無条件に応答する。クラス (2)）から `passwordVerifier` を取得できる。** 通常経路でこの値を守っていたのは「正規鍵が無いと HMAC を作れない」ことだけであり、鍵注入がその前提を消す。同時に移送元 bucket の全利用者が login も `request-password-reset` も解決不能になる。
-  - **したがって previous 世代の鍵の所持証明を必須ガードにする。** チャンク RPC は `{ previousKey, activeKey, activeGeneration, activeBucketCount }` を受け取り、bucket は **(i) 自 DO 名 `dir:g{gen}:b{index}` の `gen` が引数の previous 世代と一致すること、(ii) `activeGeneration > gen` であること、(iii) 自分の `credential_mappings` 行を1件選び、`encryptedCanonical` を復号して `HMAC(previousKey, canonical) == 行の hmac` が成り立つこと**の3つを確認してから `activeKey` を受け入れる。**追加の秘密も新しい配布経路も要らない** — `encryptedCanonical` と `hmac` はどちらも bucket が自分で持っている値であり、復号鍵は state Worker の常設バインディングだからである。第3.2節の非重複配布は崩れない。**previous 鍵を提示できるのは routing keyring を持つ request Worker だけなので、これが実質的な呼び出し元束縛になる。** 一致しなければチャンクを拒否する（行が0件の bucket は (iii) を空振りで通してよい — 移送対象が無いので鍵を使わずに `previousCount = 0` を記録して終わる）。
+  - **したがって previous 世代の鍵の所持証明を必須ガードにする。** チャンク RPC は `{ previousKey, activeKey, activeGeneration, activeBucketCount }` を受け取り、bucket は **(i) 自 DO 名 `dir:g{gen}:b{index}` の `gen` が引数の previous 世代と一致すること、(ii) `activeGeneration > gen` であること、(iii) 自分の `credential_mappings` 行を1件選び、`encryptedCanonical` を復号して `HMAC(previousKey, canonical) == 行の hmac` が成り立つこと**の3つを確認してから `activeKey` を受け入れる。**追加の秘密も新しい配布経路も要らない** — `encryptedCanonical` と `hmac` はどちらも bucket が自分で持っている値であり、復号鍵は state Worker の常設バインディングだからである。第3.2節の非重複配布は崩れない。一致しなければチャンクを拒否する（行が0件の bucket は (iii) を空振りで通してよい — 移送対象が無いので鍵を使わずに `previousCount = 0` を記録して終わる）。
+  - **所持証明が呼び出し元束縛として機能するのは「previous 世代の鍵が未漏えいであるあいだ」だけである。射程を限定して書く。** previous 鍵を提示できるのは routing keyring を持つ request Worker **と、その鍵を入手した任意の主体**である。**routing 鍵をローテーションする第一の動機は「その鍵が漏えいしたこと」なので、最も重要な場面ではこの前提が偽になる** — 漏えい鍵 `k1` を active から previous へ降格させて走らせるローテーションの最中、`k1` を持つ攻撃者は (i)(ii)(iii) をすべて満たせる（(iii) の照合相手は `k1` で作られた previous 世代 bucket の行そのものである）。**したがって漏えいを動機とするローテーションでは、所持証明をガードとして数えない、と断定する。** その場合の唯一の守りは maintenance 経路の到達制御と実行監査であり、**`purge-user-mappings` とまったく同格である**（下記）。
+  - **bucket 側に代替の検証材料は存在しない。** `encryptedCanonical` も `hmac` も previous 世代の鍵に対する材料であり、**引数の `activeKey` / `activeGeneration` / `activeBucketCount` の真正性を bucket が確かめる手段は原理的に無い**（bucket は routing secret を保持しないので、active 鍵と照合できる自分の値を1つも持たない）。ここを「もう1つガードを足せば閉じる」と読ませないために明記する。
+  - **漏えい起因のローテーションに固有の追加被害を書く。** 攻撃者が `activeKey = k1` を注入して先に bucket を駆動すると、行は `dir:g2:b{HMAC_k1(canonical) mod bucketCount'}` へ `hmac = HMAC_k1(canonical)` として着地する。以後その行は (a) 攻撃者からは恒久的に `lookup-credential`（クラス (2)、無条件応答）で読め、(b) 正規経路（active 鍵 `k2` で locator を導出する）からは永久に見つからない。**つまり漏えい鍵の失効手段そのものを、漏えい鍵の保持者が無効化できる。** 塞ぎ方は設計側ではなく運用側にしか無い — **#38 は「routing 鍵の漏えいを契機とするローテーションでは、鍵の世代を進めるより先に maintenance 経路の到達性（binding 構成 / デプロイ資格情報）を再発行する」を運用要件として持つ**（第11.3節）。**それを踏まないローテーションは、漏えいへの対処として成立しない。**
+  - **それでも所持証明は撤去しない。** 定期・衛生目的のローテーション（鍵が漏れていない場合）に対しては、第5.1節 (3-c) の他の3本と違って bucket が自分で検証できる実効的なガードだからである。**撤去すると、鍵が漏れていない場合にも「binding には到達できるが鍵を持たない呼び出し元」が任意の鍵で移送を駆動できるようになる**（下の (3-c) の本文にその経路を書いた）。
   - **`callerToken` はこの経路に流用できない。** `callerToken` はアカウント単位の値で、チャンクは bucket 単位の操作だからである。共有トークンを新設すると request / state の両方に同じ秘密が要り、非重複配布が壊れる。**上の所持証明が、制約を1つも破らない唯一の形である。**
-  - **`rotate-remap` は `purge-user-mappings` と同格に危険なので、同じ運用ガードを掛ける。** 破壊（bucket 単位の恒久解決不能）に加えて**検証材料の窃取**まで成立するため、危険度はむしろ上である。実行前承認と「誰が・いつ・どの世代／bucket に対して実行したか」の監査記録を #38 へ送る（第11.3節）。第6.9節の締め出し経路一覧にも行を足してある。
+  - **`rotate-remap` は `purge-user-mappings` と同格に危険なので、同じ運用ガードを掛ける。** 破壊（bucket 単位の恒久解決不能）に加えて**検証材料の窃取**まで成立するため、危険度はむしろ上である。実行前承認と「誰が・いつ・どの世代／bucket に対して実行したか」の監査記録を #38 へ送る（第11.3節）。第6.9節の締め出し経路一覧にも行を足してある。**「所持証明があるから運用ガードは弱めてよい」と読んではならない** — 上の限定のとおり、漏えい起因のローテーションでは所持証明はガードとして数えないので、そのとき残るのは運用ガードだけである。
   - **`check-previous-generation` は副作用が無く、返す情報が真偽1ビットなので追加の束縛を課さない。** locator の算出には `DIRECTORY_ROUTING_SECRET` が要り、返る情報量は signup を1回投げて得られる情報と同じである。**しかも signup 起点では未認証の request Worker から呼ばれるので、クラス (3) の定義文（「呼び出し元が DO または operator 専用の maintenance 経路」）に文字どおりは当てはまらない** — その扱いはクラス定義の側に例外として明記してある（上記）。
   - **`purge-user-mappings` は逆引き情報ごと失われた場合の最後の砦なので、原理的に `callerToken` を要求できない**（トークンは失われた行と一緒に消えている）。**したがって operator 専用 maintenance 経路の到達制御と実行監査だけが守る、と正直に書く。** 残余リスクは「request Worker 内でのコード実行を得た攻撃者が任意アカウントの mapping を消せる（＝恒久ロックアウト）」であり、緩和は #38 の監査要件へ送る（第11.3節）。
 
@@ -697,6 +831,7 @@ DO の名前が変われば別オブジェクトであり、データは付い�
 - lookup は active → previous の順に引く。各世代で「その世代の `bucketCount` で剰余を取る」ため、bucket 数が世代間で違っていても正しく引ける。**読みだけでなく一意性の登録も全世代を見る**（第6.1節 (c)）。
 - 再 HMAC が必要なローテーション（第6.8節）は、operator 専用の maintenance 経路（公開ルートを持たない）が request Worker 側で起動する。**ただし再 HMAC の計算そのものは bucket の中で行い、平文 canonical を Worker 境界の外へ出さない。** maintenance 経路は active 世代の鍵を RPC 引数として bucket へ**一時的に注入**し、bucket は受け取った鍵を SQLite にもインスタンスフィールドにも書かずに、その呼び出しの中だけで使って破棄する。
   - **注入される鍵は active 世代だけではない。previous 世代の鍵も同時に渡し、bucket に所持を検証させる。** 引数は `{ previousKey, activeKey, activeGeneration, activeBucketCount }` で、bucket は自分の `credential_mappings` 行を1件選んで `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから `activeKey` を受け入れる（第5.1節 (3-c)）。**bucket は routing secret を保持しないので、この照合が「引数の鍵が本物か」を判定できる唯一の材料である。** 材料は `encryptedCanonical` と `hmac` の2つとも bucket が既に持っているので、新しい秘密も配布経路も増えない。**検証を持たないと、binding へ到達できる呼び出し元が任意の鍵と任意の世代で移送を駆動でき、移送先 bucket の `lookup-credential` から `passwordVerifier` を引き出せる**（同節に経路を書いた）。
+  - **ただしこの所持証明は「previous 世代の鍵が未漏えいであるあいだ」しか呼び出し元束縛として機能しない。** 鍵の漏えいを動機とするローテーションでは、漏えい鍵の保持者も3条件をすべて満たせるので、**そのときは所持証明をガードとして数えない**（第5.1節 (3-c) に射程と追加被害を書いた）。**運用側の帰結を1つ固定する — routing 鍵の漏えいを契機とするローテーションでは、鍵の世代を進めるより先に maintenance 経路の到達性（binding 構成 / デプロイ資格情報）を再発行する**（#38。第11.3節）。順序を逆にすると、失効させたい鍵の保持者が失効操作そのものを乗っ取れる。
   - **「保持しない」と「一時注入しない」を区別する。** 第3.2節の配布境界が禁じているのは state Worker が routing secret を**バインディングとして保持する**ことであって、operator が明示的に起動した保守経路で鍵が一度だけ引数として渡ることではない。逆の設計（bucket が平文 canonical を request Worker へ返して向こうで HMAC する）を採らない理由は、**全ユーザーのメール平文が bulk で Worker 境界を越えることになり、被害の最大値がこちらのほうがはるかに大きい**からである。鍵1本の一時的な越境と、全 PII の bulk 越境を天秤にかけてこちらを採る。
   - HMAC-SHA-256 は PBKDF2 と違い CPU 予算を圧迫しないので、DO の中で回してよい（第4.8節の対象外）。
 
@@ -771,16 +906,19 @@ login（パスワード）の手順は次のとおり。
 | 個別の接続を revoke | `ai_client_connections.status = 'revoked'` | 次のリクエストで DO 内のガードが読んで拒否 |
 | 退会（`deleting` / `deleted`） | `account.status` | 次のリクエストで DO 内のガードが読んで拒否 |
 | パスワード変更（旧パスワードを知っている経路）・SSO link / unlink | **効かない（意図した挙動）** | 下記 |
-| **パスワードリセット完了** | `ai_client_connections.createdAtCredentialVersion` | 下記。**前進前の `credentialVersion` で作られた接続だけを自動失効させる** |
+| **パスワードリセット完了** | `ai_client_connections.createdAtResetVersion` | 下記。**前回のリセット完了以降に作られた接続をすべて自動失効させる**（間に何回パスワード変更が挟まっても射程が消えない） |
 
 **credential 変更で AI クライアント接続を一括失効させない、と断定する。** AI クライアント接続は利用者が接続ごとに発行・失効を管理する独立した認可であり、パスワードを変えたことがその認可の取り消し意思を意味しない。「パスワードを変えたら AI 連携が全部切れる」ほうが利用者の期待から外れる。
 
 **ただし「補償はドキュメントだけ」では侵害復旧として不完全なので、構造的な補償を1つ設計側で決める。** 攻撃者がパスワードを握っている間に AI クライアント接続を1本作れば、被害者がリセットを完走しても攻撃者のアクセスは `exp` まで（または被害者が接続一覧に気づいて個別 revoke するまで）残る。次の2点を置く。
 
-- **(i) `ai_client_connections` に `createdAtCredentialVersion` を1列足す。** 値は接続作成時点の、そのアカウントのパスワード credential の `credentialVersion`（第6.5.1節）である。**パスワードリセット完了に限り、第6.5.1節 phase 2 の同じ `transactionSync` で「`createdAtCredentialVersion` が前進前の現在値と等しい接続」を `revoked` にする。** 同じ DO 内の1列で済み、追加の往復が無い。
-  - **通常のパスワード変更（旧パスワードを知っている経路）には適用しない。** リセットは「アカウントの制御を失った」という利用者の申告であり、変更は日常操作である。両者を区別することで、「パスワードを変えたら最近作った連携だけ切れる」という説明のつかない挙動を避けられる。
-  - 失効の対象は「前回の credential 変更以降に作られた接続」に限られるので、**長く使っている接続は生き残る**。利用者の期待を壊さずに、攻撃者が持ち込んだ分だけを切れる。
-- **(ii) リセット完了画面に「AI クライアント接続の一覧」と「すべて失効」を必須の導線として出す。** (i) が切れるのは1世代分だけなので、それより前に持ち込まれた接続は利用者の判断で切る。画面要件なので #35 の `spec/pages/` へ送る（第5.1節の SSO link 残余リスクへの導線と同じ画面にまとめる）。
+- **(i) 失効の基準を credential 変更カウンタから切り離す。`account` に `resetVersion`（パスワードリセット完了だけで進む単調増加カウンタ。初期値0）を1列、`ai_client_connections` に `createdAtResetVersion`（作成時点の `account.resetVersion`）を1列足す**（第4.1.1節）。**パスワードリセット完了に限り、第6.5.1節 phase 2 の同じ `transactionSync` で `resetVersion` を1つ進め、「`createdAtResetVersion` が前進前の現在値と等しい接続」を `revoked` にする。** 同じ DO 内の2列で済み、追加の往復が無い。
+  - **`credentialVersion` を基準にしてはならない。最頻の乗っ取り系列でちょうど空振りするからである。** 典型手順は「パスワードを握る → AI 接続を作る → **パスワードを自分のものへ変更して正規利用者を締め出す**」であり、この順序では接続の作成時点が `n`、攻撃者の変更で `credentialVersion` が `n+1` へ進むので、被害者のリセット時点の「前進前の現在値」は `n+1` になる。**`n+1` で作られた接続は存在しないので失効対象は0件になり、攻撃者の接続（`n`）が生き残る。** 攻撃者が能動的に変更しなくても、侵害からリセットまでのあいだに正規利用者自身が1回パスワードを変えれば同じことが起きる。**「侵害復旧として不完全では困るので構造的な補償を1つ置く」という上の目的が、最も守りたい系列で達成されない。**
+  - **`resetVersion` はリセット完了でしか進まないので、`createdAtResetVersion` が前進前の値と等しいことは「前回のリセット完了以降に作られた接続である」と同値である**（`createdAtResetVersion` が現在値を超えることは無い）。**間にパスワード変更が何回挟まっても射程が消えない。**
+  - **通常のパスワード変更（旧パスワードを知っている経路）・SSO link / unlink では `resetVersion` を進めない。** リセットは「アカウントの制御を失った」という利用者の申告であり、変更は日常操作である。両者を区別することで、「パスワードを変えたら最近作った連携だけ切れる」という説明のつかない挙動を避けられる。
+  - 失効の対象は「前回のリセット完了以降に作られた接続」に限られるので、**それより前から長く使っている接続は生き残る**。利用者の期待を壊さずに、侵害の窓に持ち込まれた分を切れる。
+  - **列を1本増やす代わりに何を得たかを明示する。** `credentialVersion` の再利用は列を増やさない代わりに射程が「直前の credential 変更以降」に縮み、**その縮みが攻撃者の1操作で0になる**。`resetVersion` は縮みの下限を「前回のリセット以降」に固定するので、攻撃者が縮められない。
+- **(ii) リセット完了画面に「AI クライアント接続の一覧」と「すべて失効」を必須の導線として出す。** (i) が切れるのは前回のリセット以降に作られた分だけなので、それより前に持ち込まれた接続は利用者の判断で切る。画面要件なので #35 の `spec/pages/` へ送る（第5.1節の SSO link 残余リスクへの導線と同じ画面にまとめる）。
 
 **それでも「パスワードを変えても AI クライアント接続は有効のままである」ことは #38 の運用ドキュメントと利用者向け導線（P-13 相当の設定画面）に明記する。** (i)(ii) は補償であって、決定そのものを覆すものではない。
 
@@ -942,8 +1080,9 @@ HMAC は一方向なので locator から原本を復元できない。しかし
 **(b-1) 暗号化鍵も世代管理する。ローテーション経路を持たせる。** `encryptedCanonical` は全ユーザーのメールアドレス原本という本システムで最も価値の高い PII なので、「鍵が漏洩したら再暗号化できない」という状態にはしない。
 
 - keyring は routing secret と同じ形の `{ generation, key }` 配列（active 1件 + previous 0〜1件）で、**state Worker だけに配布する**。
-- `credential_mappings` 行は `encryptionGeneration` を持ち、**復号は行が宣言した世代の鍵で行う**。routing secret 側の世代（locator の世代）とは**独立した番号体系**である — 2つのローテーションは別々の理由で走るので連動させない。
-- 再暗号化は bucket の Alarm ジョブ `kind: 'rotate-encryption'` として回す（第7.4節）。走査・チェックポイント・retirement 証明は第6.8節とまったく同じ「bucket ごとの snapshot 置換」に乗せる — 旧鍵の破棄条件は「同一 `encryptionGeneration` の全 `0..N-1` bucket について `previousCount = 0` の記録が揃っていること」である。
+- `credential_mappings` 行は `encryptionGeneration` を持ち、**復号は行が宣言した世代の鍵で行う**。routing secret 側の世代（locator の世代）とは**独立した番号体系**である — 2つのローテーションは別々の理由で走るので、世代番号を連動させない。**ただし「番号体系が独立である」ことと「2つのローテーションを同時に走らせてよい」ことは別の主張であり、後者は成立しない。2つのローテーションの関係の正本は第6.8節「2つのローテーションの関係（正本）」である。**
+- 再暗号化は bucket の Alarm ジョブ `kind: 'rotate-encryption'` として回す（第7.4節）。走査・チェックポイント・retirement 証明は第6.8節とまったく同じ「bucket ごとの snapshot 置換」に乗せる — **記録先も同じ `rotation_checkpoints` テーブルである**（第4.1.1節）。**したがって記録は `rotationKind = 'encryption'` を持ち、置換キーは `(rotationKind, bucketIndex, generation)`、`generation` 列に入るのは `encryptionGeneration` である。** 旧鍵の破棄条件は「**`rotationKind = 'encryption'` かつ**同一 `encryptionGeneration` の全 `0..N-1` bucket について `previousCount = 0` の記録が揃っていること」である。**`rotationKind` が無いと、番号体系が独立であるがゆえに `encryptionGeneration = 3` の完了記録と routing `generation = 3` の進捗記録が同一キーへ落ち、片方の完了記録がもう片方の旧鍵破棄条件を誤って成立させる**（第6.8節）。
+  - **`0..N-1` の `N` は、その走査を開始した時点の routing 世代の `bucketCount` である。** routing ローテーションが進行中だと、同じ `encryptionGeneration` の行が2つの routing 世代の bucket 集合に散らばるので、**「全 bucket」が2通りに読めて retirement 証明そのものが定義されない。** これが第6.8節で2つのローテーションの同時進行を禁じる理由の1つである。
 - **再暗号化は bucket の中で完結する**（復号 → 再暗号化とも state Worker 側）。routing secret のローテーション（第6.8節）と違い、Worker 境界を越える値が無い。
 
 (b-2) 暗号方式を確定させる。**AEAD の AES-256-GCM を使う。**
@@ -951,7 +1090,7 @@ HMAC は一方向なので locator から原本を復元できない。しかし
 - **nonce は行ごと・書き込みごとにランダムな96ビット**を生成し、**`credential_mappings.encryptionNonce` という独立列**に保存する（第4.1.1節）。使い回さない。**暗号文に連結する形は採らない** — AAD が `(kind, credentialId, encryptionGeneration)` を束縛するので、nonce の切り出し規則を暗号文の形式に埋め込むと、再暗号化ジョブ（`rotate-encryption`）が世代ごとに別の切り出しを持つことになる。
 - **AAD に `(kind, credentialId, encryptionGeneration)` を束縛する。`hmac` は束縛しない。** 束縛の目的は、DB 書き込み権限を得た攻撃者が bucket 内で暗号文を別の mapping 行へ**付け替える**こと（「B のメールアドレスを A のアカウントの原本にすり替え、リセットメールを別アドレスへ送らせる」経路）を復号失敗として検出することである。`credentialId` は credential ごとに一意なので、**別 credential の行への付け替えは変わらず検出できる**。検出できなくなるのは「同じ credential の previous 世代の行と active 世代の行のあいだで暗号文を入れ替える」場合だけだが、**その2行の平文は同じ canonical なので入れ替えても何も起きない。**
   - **`hmac` を束縛しない理由は移送である。** `hmac` は世代依存の値なので（第6.1.2節）、AAD に含めると鍵ローテーションの移送で AAD が変わり、**移送された全行の暗号文が復号不能になる**。復号失敗は `SystemError(DataIntegrityError)` に翻訳して fail closed で止める規則なので（下記）、移送完了後に (i) パスワードリセットメールの宛先組み立て（第7.6節）、(ii) 設定画面の自メールアドレス表示（下記 (c) 4）、(iii) **次回のローテーションの再 HMAC**（本節の動機2）が恒久的に壊れる。(iii) が壊れるので1回目のローテーション完了時点で2回目が原理的に実行不能になり、しかも移送直後は誰も復号しないため最初のリセット依頼まで顕在化しない。
-  - **したがって移送時に再暗号化しない、と決め切る。** 第6.8節 手順2 は暗号文系の列（`encryptedCanonical` / `encryptionGeneration` / `encryptionNonce`）を**そのまま運ぶ**。代替案（AAD に `hmac` を残したまま移送時に新しい nonce と新しい AAD で再暗号化する）は、平文がその場にあるのでコストは無いが、**再暗号化を `rotate-encryption` ジョブだけの仕事として定義した (b-1) と、2つのローテーションを独立に走らせてよいという第6.8節末尾の断定の両方を崩す**。AAD から `hmac` を外すほうが規則が1つ減る。
+  - **したがって移送時に再暗号化しない、と決め切る。** 第6.8節 手順2 は暗号文系の列（`encryptedCanonical` / `encryptionGeneration` / `encryptionNonce`）を**そのまま運ぶ**。代替案（AAD に `hmac` を残したまま移送時に新しい nonce と新しい AAD で再暗号化する）は、平文がその場にあるのでコストは無いが、**再暗号化を `rotate-encryption` ジョブだけの仕事として定義した (b-1) を崩す**（移送側に鍵の使い方をもう1つ持たせることになり、規則が2系統になる）。AAD から `hmac` を外すほうが規則が1つ減る。**なお「2つのローテーションを独立に走らせてよい」という初版の断定は第6.8節で撤回してあるので、この棄却の論拠には数えない** — 棄却は上の1点だけで成立する。
 - 復号失敗は `SystemError(DataIntegrityError)` に翻訳し、**その行を使う操作を fail closed で止める**（黙って未登録扱いにしない）。
 
 (c) **復号が許される経路を4つに限る。**
@@ -1101,7 +1240,7 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
 |---|---|---|
 | 0 | request Worker | `operationId` を採番し、`PasswordHasher.hash` で**新しい検証材料を計算する**（第4.8節。DO の外で回す）。**対象 credential の locator は canonical から導出せず、下記の規則で解決する** |
 | 1 | Directory bucket | 対象 `credential_mappings` 行を `{ operationId, pendingVerifier, changeState: 'pending' }` にする。**この瞬間から旧検証材料での login 照合を拒否する**（第5.3節 step 3 がダミー材料経路へ倒す）。**同じ `transactionSync` で、その credential の未使用リセットトークン行を全削除する**（下記）。同時に自 bucket の job table へ `resume-credential-change` を投入する |
-| 2 | User Data DO | `operations` に記録し、**`sessionEpoch` を1つ進め**、**`credentialId` が一致する `credential_locators` の全世代の行**の `credentialVersion` を1つ進め（第6.1.1節 (R8)。「当該行」1行ではない — 1行だけ進めるとローテーション中に世代スキューが残って恒久ログイン不能になる）、**`usableForLogin` を Directory 側が判定した値へ更新する**（第4.1.1節）。**この更新で値が変わることは無い、と断定する** — credential 変更 saga の対象は必ず `usableForLogin = true` の行だからである（起点 A は第6.5.1節 phase 0 の A-1 が `usableForLogin = true` の行だけを読み、起点 B のトークンは `passwordVerifier` を持つ credential にしか発行されない。第7.6節）。**`usableForLogin` を false から true へ遷移させる経路は本設計に存在しない**（第7.6節で決め切ってある）。更新を残すのは (R8) の「全世代の行へ同時に書く」を1本の規則に保つためであって、値の遷移のためではない。**起点がリセットトークンの消費だった場合に限り、同じ `transactionSync` で `createdAtCredentialVersion` が前進前の値と等しい `ai_client_connections` 行を `revoked` にする**（第5.4節 (i)） |
+| 2 | User Data DO | `operations` に記録し、**`sessionEpoch` を1つ進め**、**`credentialId` が一致する `credential_locators` の全世代の行**の `credentialVersion` を1つ進め（第6.1.1節 (R8)。「当該行」1行ではない — 1行だけ進めるとローテーション中に世代スキューが残って恒久ログイン不能になる）、**`usableForLogin` を Directory 側が判定した値へ更新する**（第4.1.1節）。**この更新で値が変わることは無い、と断定する** — credential 変更 saga の対象は必ず `usableForLogin = true` の行だからである（起点 A は第6.5.1節 phase 0 の A-1 が `usableForLogin = true` の行だけを読み、起点 B のトークンは `passwordVerifier` を持つ credential にしか発行されない。第7.6節）。**`usableForLogin` を false から true へ遷移させる経路は本設計に存在しない**（第7.6節で決め切ってある）。更新を残すのは (R8) の「全世代の行へ同時に書く」を1本の規則に保つためであって、値の遷移のためではない。**起点がリセットトークンの消費だった場合に限り、同じ `transactionSync` で `account.resetVersion` を1つ進め、`createdAtResetVersion` が前進前の値と等しい `ai_client_connections` 行を `revoked` にする**（第5.4節 (i)）。**起点 A（通常のパスワード変更）では `resetVersion` を進めず、AI 接続にも触らない** |
 | 3 | Directory bucket | `pendingVerifier` を `passwordVerifier` へ昇格し、行の `credentialVersion` を phase 2 と同じ値へ揃え、`changeState` を解除する。**同じ `transactionSync` で `failedAttempts` を0にし `nextAttemptAllowedAt` を過去へ戻す**（第6.2.2節 (a) の脱出経路） |
 
 **phase 0 の locator 解決規則を定める。起点によって出所が違う。** 第6.1.1節 (R5) の適用であり、**どちらの起点でも canonical からは導出しない。**
@@ -1231,6 +1370,7 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
        - **行があって `userId` が同じで `source.credentialVersion > dest.credentialVersion`** → **移送先を移送元のスナップショットで行ごと上書きする**（`passwordVerifier` / `pendingVerifier` / `changeState` / `operationId` / `credentialVersion` / `status` / `failedAttempts` / `nextAttemptAllowedAt` / `lastResetRequestedAt` / `encryptedCanonical` / `encryptionGeneration` / `encryptionNonce` / `callerToken` / `credentialId`）。
        - **行があって `userId` が同じで `source.credentialVersion < dest.credentialVersion`** → **移送先が既に正本なので触らず、(3)(4) だけを行う**。
        - **等しい** → 何も書かずに (3)(4) を行う（冪等成功）。
+     - **(2) が移送先に行を書いたら、同じ `transactionSync` の中でその行の `encryptionGeneration` を検査し、active 世代でなければ `enqueueJob('rotate-encryption', <定数 operationKey>, {}, now)` を発行する**（下記「2つのローテーションの関係」(X3)）。**移送は暗号文系の3列をそのまま運ぶので、移送先が `rotate-encryption` を完走済みだと「再暗号化の残件が外から増えたのに誰も再武装しない」状態が作れる** — そのまま放置すると暗号化 previous 鍵が退役し、その行の `encryptedCanonical` が恒久的に復号不能になる。**行を書かなかった分岐（`userId` 衝突でスキップ / 移送先が正本で触らない / 等しい）では発行しない** — 移送先の行は動いていないからである。
      - **「行があれば書かない」だけに倒すと2方向のうち片方しか塞げない。** 初版の規則は「再実行が新 bucket の新しい値を previous 行の古い値で上書きする」向き（＝**旧パスワードの復活**）だけを塞いでいたが、**移送先が陳腐化する向き**は無防備だった。後者は偶然ではなく**起点 B（リセット完了）では構造的に必然**である — リセットトークンは発行時の `{generation}.{bucketIndex}` を運び（第6.1節 (d)）、`consume-reset-token` は「同 bucket に対象 credential の mapping 行が存在すること」しか確認しないので、旧世代 bucket に行が残っている限り必ずそちらに着地する。そのとき移送元が n+1 / 移送先が n になり、旧来の規則では「行があるから書かない」を選んで移送元を消してしまう。**終状態は「active bucket に旧 `passwordVerifier`」であり、第5.3節 step 5 の (ii)(iii) はどちらも通る — 旧パスワードでログインでき、リセットで設定した新パスワードは通らない。**
      - **移送は `credentialVersion` を増やさない。** 移送は認証状態の変更ではないからである。運ぶのは常に正本側の値である。`callerToken` と `credentialId` も行ごと引き継ぎ、再採番しない（第5.1節 (3-b)・第6.1.2節 (C1)）。
      - **暗号文系の3列（`encryptedCanonical` / `encryptionGeneration` / `encryptionNonce`）は再暗号化せずにそのまま運ぶ。** AAD が束縛するのは `(kind, credentialId, encryptionGeneration)` であり `hmac` を含まないので（第6.2.1節 (b-2)）、移送で AAD が変わらない。**AAD に `hmac` を残したまま移送すると、移送された全行の canonical が復号不能になる** — その帰結（リセットメールの宛先組み立て・自メールアドレス表示・次回ローテーションの再 HMAC が恒久的に壊れ、しかも最初のリセット依頼まで顕在化しない）は同節に書いた。
@@ -1249,12 +1389,7 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
    - 保護規定を明示する。**(i) 注入された鍵と復号結果を含む RPC のログ・トレースを無効化する**、**(ii) チェックポイントは bucket 単位に閉じ、1回の Alarm 起動で複数 bucket 分の平文を同時にメモリへ載せない**、**(iii) 平文を DO の SQLite にも request Worker のいかなる永続領域にも書かない**（第6.2.1節 (c)）。
    - **リセットトークン行は移送しない**（第6.1節 (d)）。移送対象は `credential_mappings` 行だけである。
 3. 手順2 の (1) と (4) は **Directory bucket → User Data DO の RPC**（`record-credential-locator`。第5.1節のクラス (3)）であり、locator は mapping 行が持つ `userId` である（第5.5節 1 の但し書き）。**冪等キーは `(credentialId, generation)` で、`credentialVersion` / `usableForLogin` / `label` を上書きする upsert である**（第6.1.1節 (R8)。link / signup 経路とまったく同じ意味論を使う）。**ローテーション経路は `operations` 行を作らない、と決め切る** — 移送は認証状態の変更ではないので saga の phase を持たせる必然が無い。**したがってこの経路の束縛は `callerToken` だけである**（mapping 行が持つ値を運び、User Data DO の `account.callerToken` と定数時間比較する。第5.1節 (3-d)）。**この2本は独立した手順ではなく手順2 の一部である** — 分けて後回しにすると上に書いた login の窓が開く。
-4. **全 bucket で previous 世代が0件になったことを確認してから、旧鍵を破棄する。** 数えるのは **`status` を問わず previous 世代の bucket に残る `credential_mappings` 行の総数**である（`reserved` を除外すると、移送されていない予約行を見落とす）。**手順2 でスキップした `pending` / `reserved` 行もここに数えられるので、退役条件はスキップ行の消化を自動的に要求する。** 走査は `previousCount = 0` が全 bucket で揃うまで繰り返す（手順2 の最後の項）。
-
-**暗号化鍵（`IDENTITY_MAIL_ENCRYPTION_KEY`）のローテーションは別の走査である。** 手順の骨格（世代の追加 → bucket 走査 → snapshot 置換による retirement 証明 → 旧鍵破棄）は同じだが、locator が変わらないので**移送が発生せず、行を同じ bucket の中で再暗号化するだけ**である。ジョブは `kind: 'rotate-encryption'`（第6.2.1節 (b-1)）。2つのローテーションは独立に走らせてよい。
-
-- **`rotate-encryption` の投入点は operator 専用 maintenance 経路である。** 新しい `encryptionGeneration` を active にしたあと、operator が `0..N-1` の各 bucket に対して「`rotate-encryption` の起動」RPC（第5.1節のクラス (3)）を1回ずつ叩き、bucket は自 job table へ `enqueueJob('rotate-encryption', <定数 operationKey>, {}, now)` を発行する。**`rotate-remap` と違って鍵の注入を伴わない**ので（暗号化鍵は state Worker の常設バインディングである）、以後の駆動は bucket の Alarm が自走する。
-- **`rotate-encryption` の再武装は「残件駆動」である**（第7.4節の分類 (B)）。残件条件は「`credential_mappings` に `encryptionGeneration` が active 世代でない行が存在すること」で、**時刻条件を持たない**ので第7.4節 (1-A) の駆動源クエリ表には構造的に当てはまらない。1回の起動で再暗号化する行数には (iii-a) と同じ上限を掛け、残件があれば最小再開間隔だけ先へ `nextRunAt` を置いて `pending` へ戻し、無ければ `done` にして `rotation_checkpoints` に `previousCount = 0` を置換記録する（第7.4節 (1-B)）。
+4. **全 bucket で previous 世代が0件になったことを確認してから、旧 routing 鍵を破棄する。** 数えるのは **`status` を問わず previous 世代の bucket に残る `credential_mappings` 行の総数**である（`reserved` を除外すると、移送されていない予約行を見落とす）。**照合する記録は `rotationKind = 'remap'` の行だけである** — `rotate-encryption` が書く `rotationKind = 'encryption'` の行は別の退役条件のものなので、`rotationKind` で絞らずに数えると**暗号化ローテーションの完了記録が routing 旧鍵の破棄条件を成立させる**（下記「2つのローテーションの関係」）。**手順2 でスキップした `pending` / `reserved` 行もここに数えられるので、退役条件はスキップ行の消化を自動的に要求する。** 走査は `rotationKind = 'remap'` の `previousCount = 0` が全 bucket で揃うまで繰り返す（手順2 の最後の項）。
 
 **「旧世代 locator が0件である」ことの証明。** 全 bucket の checkpoint scan を加算集計するだけでは足りない。#19 のレビュー指摘 B-IDDS6-001 が3つの穴を記録している。本設計での扱いは次のとおり。
 
@@ -1262,7 +1397,25 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
 |---|---|
 | Directory 側に active row が無い reverse locator が集計から漏れる | **構造的に消える。** Account Home を採らなかった（第3.1節）ので reverse locator は User Data DO 側の `credential_locators` に1系統しか無く、Directory bucket の走査が唯一の権威になる。突き合わせは第6.6節の孤児検出が別途行う |
 | 同一ユーザーの複数 locator を重複加算する | **加算をやめる。** 数えるのは「bucket ごとの previous 世代の行数」であり、ユーザー単位では数えない |
-| checkpoint が加算更新で snapshot 置換になっていない | **bucket ごとの snapshot 置換にする。** 各 bucket の走査完了時に `rotation_checkpoints` テーブル（第4.1.1節）へ `{ bucketIndex, generation, previousCount, scannedAt }` を**置換**で記録する。旧鍵の破棄条件は「同一 generation の全 `0..N-1` について `previousCount = 0` の記録が揃っていること」。加算カウンタは持たない |
+| checkpoint が加算更新で snapshot 置換になっていない | **bucket ごとの snapshot 置換にする。** 各 bucket の走査完了時に `rotation_checkpoints` テーブル（第4.1.1節）へ `{ rotationKind: 'remap', bucketIndex, generation, previousCount, scannedAt }` を**置換**で記録する（置換キーは `(rotationKind, bucketIndex, generation)`）。旧鍵の破棄条件は「**`rotationKind = 'remap'` の**同一 generation の全 `0..N-1` について `previousCount = 0` の記録が揃っていること」。加算カウンタは持たない。**`rotationKind` で絞らないと、暗号化ローテーションの完了記録がこの条件を成立させる**（下記「2つのローテーションの関係」） |
+
+#### 2つのローテーションの関係（正本）
+
+**暗号化鍵（`IDENTITY_MAIL_ENCRYPTION_KEY`）のローテーションは別の走査である。** 手順の骨格（世代の追加 → bucket 走査 → snapshot 置換による retirement 証明 → 旧鍵破棄）は同じだが、locator が変わらないので**移送が発生せず、行を同じ bucket の中で再暗号化するだけ**である。ジョブは `kind: 'rotate-encryption'`（第6.2.1節 (b-1)）。
+
+**初版は「2つのローテーションは独立に走らせてよい」と書いていた。これは誤りである。** 2つは (a) `rotation_checkpoints` テーブルと (b) `credential_mappings` の行そのものを共有しており、**共有を検証しないまま「独立」と書いたために、片方の完了がもう片方の旧鍵破棄条件を誤って成立させる経路が2つ開いていた。** 関係を3点で決め切る。
+
+- **(X1) `rotation_checkpoints` は2つのローテーションで共有し、`rotationKind`（`'remap'` / `'encryption'`）で区別する。置換キーは `(rotationKind, bucketIndex, generation)` である**（第4.1.1節）。**テーブルを分けない理由**は、走査・チェックポイント・retirement 証明の形が完全に同じで、分けると同じ規則を2箇所に持つことになるからである（第1.4節 I-5b が塞いだのと同じ形の二重管理になる）。**区別列が無いと何が起きるか。** `generation` 列に入る2つの番号体系は独立なので（第6.2.1節 (b-1)）、`encryptionGeneration = 3` の完了記録と routing `generation = 3` の進捗記録が同一キーへ落ちる。しかも**物理的な同居が構造的に起きる** — routing ローテーション G → G+1 が走査するのは `dir:gG:b{i}` であり、そこは routing ローテーション開始前に `rotate-encryption` が走っていた bucket そのものだからである。**帰結は、まだ移送の終わっていない状態で operator が previous 世代の routing 鍵を破棄することであり、その bucket の全利用者が `lookup-credential` も `request-password-reset` も恒久的に解決不能になる**（復旧は 256 bucket の PITR しか無い）。第6.9節の締め出し経路一覧に行を足してある。
+- **(X2) 2つのローテーションを同時進行させない。「一方の previous 世代の鍵を破棄し終えるまで、他方を開始しない」を運用の制約として課す**（#38。第11.3節）。**「独立に走らせてよい」からの変更点はここである。** 理由は2つある。
+  - **(i) 同時進行中は暗号化側の retirement 証明が定義されない。** 証明は「同一 `encryptionGeneration` の全 `0..N-1` bucket について `previousCount = 0`」だが、routing ローテーションが進行中だと同じ `encryptionGeneration` の行が previous 世代と active 世代の**2つの bucket 集合**に散らばるので、「全 bucket」が2通りに読める（第6.2.1節 (b-1)）。**証明が2通りに読める状態で鍵を破棄してよいと書くことはできない。**
+  - **(ii) 移送が古い `encryptionGeneration` の行を、`rotate-encryption` が完走済みの bucket へ運び込む。** 手順2 は暗号文系の3列を**再暗号化せずそのまま運ぶ**と決め切っており（AAD が世代非依存なのでこれ自体は正しい。第6.2.1節 (b-2)）、`rotate-encryption` は残件が尽きた時点で `done` + `previousCount = 0` を記録する。**「暗号化を先に完走させ、その後に routing を走らせる」という順序でも、未移送 bucket に残っていた旧 `encryptionGeneration` の行が完走済み bucket へ移送されうる**（`rotate-encryption` は bucket ごとに完走するので、bucket 間で完走時刻がずれる）。運び込まれた行を誰も再暗号化しないまま全 bucket の `previousCount = 0` が揃うと、**operator が暗号化 previous 鍵を破棄し、その行の `encryptedCanonical` が恒久的に復号不能になる。** 帰結は第6.2.1節 (b-2) が AAD について自ら列挙した3つと同一で — リセットメールの宛先組み立て・自メールアドレス表示・次回ローテーションの再 HMAC が壊れる — **login は `hmac` で解決するので通り続けるため、最初のリセット依頼まで顕在化しない。** 第5.2.1節 (a) が「所有の唯一の証明はパスワードリセット経路である」と断定している以上、これは**所有の証明そのものの喪失**である。
+- **(X3) (X2) は運用の制約なので、破られたときに恒久的なデータ喪失にならないよう、構造側で fail closed に倒す。移送先の bucket は、手順2 の (2) で行を書いたのと同じ `transactionSync` の中で、その行の `encryptionGeneration` が自分の keyring の active 世代でなければ `enqueueJob('rotate-encryption', <定数 operationKey>, {}, now)` を発行する。** 第7.4節の再投入規則により `done` / `poison` の行は `pending` へ戻るので、**運び込まれた行は必ず再暗号化の対象になり、`rotationKind = 'encryption'` の `previousCount` が0でなくなって退役条件が崩れる。** 失敗モードが「旧鍵を破棄して復号不能になる（気づかない）」から「暗号化ローテーションが可視的に完了しない（気づく）」へ変わる — これは手順2 (2) の第2分岐（`userId` 衝突でローテーションを可視的に停止させる）と同じ考え方である。
+  - **bucket は active `encryptionGeneration` を自分で判定できる。** 暗号化 keyring は state Worker の**常設バインディング**なので手元にある（第3.2節・第5.1節 (3-c) の `rotate-encryption` 起動ガードが同じ材料を使っている）。新しい引数も新しい配布経路も要らない。
+  - **`rotate-encryption` の投入点が2つになるので、第7.4節の `kind` 全数表の投入点欄も同時に直してある**（第1.4節 I-1）。
+  - **移送時に再暗号化する案は採らない。** 第6.2.1節 (b-2) が「再暗号化は `rotate-encryption` ジョブだけの仕事である」と決め切っており、移送側に鍵の使い方をもう1つ持たせると規則が2系統になる。**(X3) は移送側に「残件が増えたことを申告させる」だけで、再暗号化そのものは従来どおり `rotate-encryption` が行う。**
+
+- **`rotate-encryption` の投入点は2つである。** **(a) operator 専用 maintenance 経路** — 新しい `encryptionGeneration` を active にしたあと、operator が `0..N-1` の各 bucket に対して「`rotate-encryption` の起動」RPC（第5.1節のクラス (3)）を1回ずつ叩き、bucket は自 job table へ `enqueueJob('rotate-encryption', <定数 operationKey>, {}, now)` を発行する。**`rotate-remap` と違って鍵の注入を伴わない**ので（暗号化鍵は state Worker の常設バインディングである）、以後の駆動は bucket の Alarm が自走する。**(b) 手順2 (2) の移送先 bucket** — 上の (X3)。**(b) は (X2) が守られていれば発火しない保険だが、投入点として全数表に載せる**（載せないと #37 が (X3) を実装しない）。
+- **`rotate-encryption` の再武装は「残件駆動」である**（第7.4節の分類 (B)）。残件条件は「`credential_mappings` に `encryptionGeneration` が active 世代でない行が存在すること」で、**時刻条件を持たない**ので第7.4節 (1-A) の駆動源クエリ表には構造的に当てはまらない。1回の起動で再暗号化する行数には (iii-a) と同じ上限を掛け、残件があれば最小再開間隔だけ先へ `nextRunAt` を置いて `pending` へ戻し、無ければ `done` にして `rotation_checkpoints` へ **`rotationKind = 'encryption'`** の `previousCount = 0` を置換記録する（第7.4節 (1-B)）。
 
 ### 6.9 DO 間分散トランザクションを前提としない宣言 ［Issue 要求］
 
@@ -1276,7 +1429,7 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
 - 補償は「無ければ成功」の冪等操作にし、何度実行しても同じ結果に収束させる。
 - **どの中間状態でも、認証・認可は fail closed 側に倒れる**（第6.5.1節・第6.6節・第6.7節）。中間状態が「ログインできてしまう」方向に開くことは無い。
   - **この宣言の射程は「本設計が作る中間状態」であり、PITR による巻き戻しはその外側である。** restore は本設計が進めた状態を過去へ戻す操作なので、`credentialVersion` の照合を回避せずに**前進させて解消する**経路（復活した消費済みリセットトークン）が成立し、認可が開く方向へ倒れうる。**塞ぐのは restore 直後の必須ステップであって中間状態の設計ではない**（第10.1節）。射程を書かないと、この宣言が反例を持つ。
-- **第2の規則を置く。fail closed が「利用者を締め出す」方向へ働く経路は列挙して塞ぐ。** 「開かない」だけを規則にすると、締め出す側の破れが設計から見えなくなる。初版は該当経路を「1つだけ」と断定し、次に4つ・8つ・12・14へ広げたが、実際には次の16経路がある。**うち後半の4つは `hmac`（世代依存の値）を credential の世代非依存な同一性として使っていたことを共通の根とする**（第6.1.2節）。**新しい cross-DO 操作を足したら、この一覧にも行を足す。加えて — 3ラウンド目に追加した4行はいずれも「新しい操作」ではなく既存操作どうしの相互作用だったので — `.thread/34/design.md` の cross-DO 操作表（第6.4節）に載っている操作の組み合わせについても、片方が中間状態を持つ間に他方が走る場合を検査する。**
+- **第2の規則を置く。fail closed が「利用者を締め出す」方向へ働く経路は列挙して塞ぐ。** 「開かない」だけを規則にすると、締め出す側の破れが設計から見えなくなる。初版は該当経路を「1つだけ」と断定し、次に4つ・8つ・12・14・16へ広げたが、実際には次の18経路がある。**うち行11〜行14 の4つは `hmac`（世代依存の値）を credential の世代非依存な同一性として使っていたことを共通の根とし、末尾の行17・行18 は「routing 鍵のローテーションと暗号化鍵のローテーションを独立に走らせてよい」という未検証の1文を共通の根とする**（第6.1.2節・第6.8節「2つのローテーションの関係」）。**新しい cross-DO 操作を足したら、この一覧にも行を足す。加えて — 3ラウンド目に追加した4行はいずれも「新しい操作」ではなく既存操作どうしの相互作用だったので — `.thread/34/design.md` の cross-DO 操作表（第6.4節）に載っている操作の組み合わせについても、片方が中間状態を持つ間に他方が走る場合を検査する。**
 
 | 締め出す経路 | 塞ぎ方 |
 |---|---|
@@ -1294,7 +1447,9 @@ DO 間に分散トランザクションは無い（第6.9節）ので、**再開
 | **`record-credential-locator` の冪等キーを `(kind, hmac)` にすると、ローテーションの (1) が常に no-op になり (4) の後に `credential_locators` が空になる**（第6.6節 link 手順4 × 第6.8節 手順2）。到達性検査が**移送を終えた全利用者**を締め出す | 冪等キーを `(credentialId, generation)` に統一する（第6.1.1節 (R8)・第6.1.2節）。`hmac` が世代依存であることが根因なので、世代非依存の `credentialId` を突き合わせキーにする |
 | **`encryptedCanonical` の AAD が `hmac` を束縛していると、移送された全行が復号不能になる**（第6.2.1節 (b-2) × 第6.8節 手順2）。リセットメールの宛先組み立てが壊れ、**アカウント回復手段そのものが失われる** | AAD を `(kind, credentialId, encryptionGeneration)` にして移送で変わらないようにする（第6.2.1節 (b-2)）。付け替え防止は `credentialId` の一意性で維持される |
 | **移送先の陳腐化を区別しない移送規則が、リセットで設定した新パスワードを捨てて旧 `passwordVerifier` を正本に戻す**（第6.8節 手順2 (2)）。締め出しではなく**認可が開く**方向の破れだが、(R8) と対で直さないと失敗モードが入れ替わるだけなので同じ表に並べる | 第6.1.1節 (R9) — `credentialVersion` が大きい側を正本とし、移送を必ず正本の側へ収束させる（第6.8節 手順2 (2) の4分岐） |
-| **`rotate-remap` への鍵注入が bucket 側で検証されず、任意の鍵と世代で移送を駆動できる**（第5.1節 (3-c) × 第6.8節 手順2）。移送元 bucket の**全利用者**が login も `request-password-reset` も解決不能になり（復旧は 256 bucket の PITR しか無い）、同時に攻撃者が計算できる移送先 bucket の `lookup-credential` から **`passwordVerifier` が引き出せる**。締め出しと認可漏れが同時に成立する唯一の経路である | previous 世代の鍵の所持証明を必須ガードにする — bucket が自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから active 鍵を受け入れる（第5.1節 (3-c)・第5.2.3節）。あわせて `purge-user-mappings` と同格の実行前承認・監査記録を課す（#38。第11.3節） |
+| **`rotate-remap` への鍵注入が bucket 側で検証されず、任意の鍵と世代で移送を駆動できる**（第5.1節 (3-c) × 第6.8節 手順2）。移送元 bucket の**全利用者**が login も `request-password-reset` も解決不能になり（復旧は 256 bucket の PITR しか無い）、同時に攻撃者が計算できる移送先 bucket の `lookup-credential` から **`passwordVerifier` が引き出せる**。締め出しと認可漏れが同時に成立する唯一の経路である | **鍵が漏えいしていない場合**は previous 世代の鍵の所持証明が塞ぐ — bucket が自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac` を確認してから active 鍵を受け入れる（第5.1節 (3-c)・第5.2.3節）。**鍵の漏えいを動機とするローテーションでは所持証明は成立しない**（漏えい鍵の保持者も3条件を満たせる）ので、そこでは `purge-user-mappings` と同格の到達制御・実行前承認・監査記録だけが守る。**さらに #38 は「漏えい起因のローテーションでは、鍵の世代を進めるより先に maintenance 経路の到達性（binding 構成 / デプロイ資格情報）を再発行する」を運用要件として持つ**（第11.3節）— この順序を逆にすると、失効させたい鍵の保持者が失効操作そのものを乗っ取れる |
+| **`rotation_checkpoints` を2つのローテーションが区別列なしで共有し、暗号化ローテーションの完了記録が routing 旧鍵の破棄条件を成立させる**（第6.2.1節 (b-1) × 第6.8節 手順4）。移送が終わっていない状態で operator が previous 世代の routing 鍵を破棄すると、**未移送 bucket の全利用者**が `lookup-credential` も `request-password-reset` も恒久的に解決不能になる（復旧は 256 bucket の PITR しか無い）。routing ローテーションの走査対象 bucket は、その直前まで `rotate-encryption` が走っていた bucket そのものなので、同居は偶然ではなく構造的である | `rotation_checkpoints` に **`rotationKind`（`'remap'` / `'encryption'`）** を1列足し、置換キーを `(rotationKind, bucketIndex, generation)` にする。両ローテーションの退役条件も `rotationKind` で絞る（第4.1.1節・第6.8節 (X1)） |
+| **移送が古い `encryptionGeneration` の行を `rotate-encryption` 完走済みの bucket へ運び込み、再武装経路が無いまま暗号化 previous 鍵が退役する**（第6.8節 手順2 (2) × 第6.2.1節 (b-1)）。運ばれた行の `encryptedCanonical` が恒久的に復号不能になり、リセットメールの宛先組み立てが壊れて**アカウント回復手段そのものが失われる**。`hmac` での login は通り続けるので**最初のリセット依頼まで顕在化しない** | (1) 2つのローテーションの同時進行を禁じる運用制約（第6.8節 (X2)。#38）と、(2) それが破られても構造で止まるよう、**移送先 bucket が (2) で行を書いた同じ `transactionSync` で `encryptionGeneration` が active でなければ `rotate-encryption` を再投入する**（同 (X3)）。失敗モードが「気づかずに復号不能」から「暗号化ローテーションが可視的に完了しない」へ変わる |
 | **`cancel-reservation` の `status` 非依存削除が、`operationId` の知識だけで完了済みアカウントの mapping を消せる**（第5.1節 × 第5.2節 (c) × 第6.4節 3-i）。第5.2節 (c) が未認証経路のログへ `operationId` を出すことを許しているので、ログ閲覧権限と binding 到達性の組み合わせで発火する。消えた行はどの回収ジョブの対象でもなく利用者に自己回復手段が無いうえ、空いた canonical で攻撃者がアカウントを取り直せる | ガードに **`callerToken` の定数時間比較**を足す（第5.1節 (3-a) の但し書き）。呼び出し元のコーディネーター bucket は自分の予約行にこの値を持っているので材料は増えず、`callerToken` は第5.2節 (c) の非露出対象なのでログには出ない。これで「`operationId` は capability ではない」が本文で成立する |
 
 - **意図的に可用性を落とす中間状態は上の一覧に含めない。** credential 変更の `changeState = 'pending'`（旧新どちらのパスワードも通らない。第6.5.1節）と退会の `deleting` は、**利用者の操作の結果として短時間だけ閉じる**ものであり、締め出しではない。
@@ -1426,7 +1581,7 @@ Outbox をドメインイベントの transport として使うのをやめる�
 | `resume-credential-change` | Directory bucket | 第6.5.1節 phase 1（`changeState = 'pending'` と同じ `transactionSync`） | **(C) 一回性** | credential 変更 saga の前進（第6.5.1節） |
 | `sweep-reservations` | Directory bucket | 第6.3節 phase 1a / 1b（予約行と同じ `transactionSync`。予約を書いた bucket が自分に投入する） | **(A) 時刻駆動** | 予約の期限切れ掃除（第6.4節） |
 | `sweep-reset-tokens` | Directory bucket | 第6.1節 (d)（トークン行の発行と同じ `transactionSync`） | **(A) 時刻駆動** | リセットトークンの期限切れ行掃除（第6.1節 (d)） |
-| `rotate-encryption` | Directory bucket | 第6.8節末尾（operator 専用 maintenance 経路の「`rotate-encryption` の起動」RPC。第5.1節のクラス (3)） | **(B) 残件駆動** | メール暗号鍵ローテーションの再暗号化（第6.2.1節 (b-1)） |
+| `rotate-encryption` | Directory bucket | **投入点は2つある。** 第6.8節「2つのローテーションの関係」(a) operator 専用 maintenance 経路の「`rotate-encryption` の起動」RPC（第5.1節のクラス (3)）/ (b) 同節 (X3) — 第6.8節 手順2 (2) の移送先 bucket が、active でない `encryptionGeneration` の行を書いたのと同じ `transactionSync` で再投入する | **(B) 残件駆動** | メール暗号鍵ローテーションの再暗号化（第6.2.1節 (b-1)） |
 
 **`rotate-remap`（routing secret ローテーションの再写像）は本表に無い。Alarm ジョブではないからである。** 再 HMAC には routing key が要るが、その鍵は「RPC 引数として一時注入し、呼び出しのスコープを出たら破棄する」と定めてあるので（第5.2.3節）、**Alarm 起動時には存在しない**。Alarm ジョブにすると #37 が鍵を bucket の SQLite かインスタンスフィールドに置く実装へ倒れ、第3.2節の秘密の配布境界が壊れる。**したがって `rotate-remap` は operator の maintenance 経路が1チャンクずつ駆動する同期 RPC である**（第6.8節 手順2）。`rotate-encryption` が本表に残るのは、`IDENTITY_MAIL_ENCRYPTION_KEY` が state Worker の常設バインディングで Alarm 起動時にも存在するためである。
 
@@ -1473,9 +1628,11 @@ Outbox をドメインイベントの transport として使うのをやめる�
 - **(6) `sweep-reservations` / `sweep-reset-tokens` も (1-A) の同じ規則に乗る。** 予約 TTL やトークン期限は行ごとに違うので、1回の起動で処理しきれなかった残りと、まだ期限の来ていない行の**両方**について次の起動が要る。どちらも上の駆動源クエリの集合に入っているので、`min(...)` を書くだけで両方が拾われる（前者は `min(...)` が過去になるので即時再開、後者は最早の期限そのものになる）。**これが無いと第6.4節の TTL 掃除（3段ガードの1段目）が1回きりで止まる。**
 - **(7) 分類 (A)(B) の5種は、投入点と再武装の両方を持って初めて閉じる。** 再武装だけでは足りない — (1-A) / (1-B) はどちらも「集合が空なら `done`」なので、**平常時（ゴミ箱が空 / 予約が0件 / 未使用トークンが0件 / 未回収の unlink が0件 / 再暗号化残が0件）にはどのジョブも必ず `done` へ落ちる**。そこから `pending` へ戻す唯一の手段が、上の再投入規則（`done` / `poison` の行を `pending` へ戻す）であり、それを発行するのが `kind` 全数表の「投入点」欄である。**投入点の無い周期・反復ジョブは、1回完走した時点で恒久的に停止する。** これが第1.4節 I-1 を不変条件に置いた理由である。
 
-**claim と完了の CAS。** 1件ずつ `UPDATE jobs SET status='running', leaseUntil=?, ownerToken=? WHERE operationKey=? AND (status='pending' OR leaseUntil < ?)` で claim し、0行更新なら他が持っているとみなして次へ進む。完了も `WHERE operationKey=? AND ownerToken=?` の CAS で行う。DO は single-threaded なので同一 DO 内で claim が競合することは無いが、**lease は「実行中に DO がリセットされた」場合の回収手段として必要である**（第2.1節 F-4 のエビクション）。期限切れ lease は専用の索引から reclaim する。
+**実行可能集合を1つ定義し、以下の述語をすべてそこへ帰着させる。** **実行可能集合 = `status IN ('pending','running')` の行である。** `done` / `poison` は実行可能集合の外にあり、**そこへ戻す唯一の手段は上の再投入規則（`enqueueJob`）である。** この定義を置かないと、claim の述語と `deleteAlarm()` の述語が別々の読みを持ち、下の2つがどちらも壊れる。
 
-**backoff と poison。** 失敗時は `attempt` を進め、指数バックオフで `nextRunAt` を先送りする。上限回数を超えたら `status='poison'` にして `terminalReason` を残し、ホットパスの索引から外す。**`done` / `poison` のどちらへ落とすときも、同じ `transactionSync` で `completedAt` に現在時刻を書く**（第4.1.1節）。`done` と `poison` は別々の保持期間で prune し、走査を bounded に保つ。
+**claim と完了の CAS。** 1件ずつ `UPDATE jobs SET status='running', leaseUntil=?, ownerToken=? WHERE operationKey=? AND (status='pending' OR (status='running' AND leaseUntil < ?))` で claim し、0行更新なら他が持っているとみなして次へ進む。完了も `WHERE operationKey=? AND ownerToken=?` の CAS で行う。**第2の選言に `status='running'` を必ず含める** — 落とすと、`done` / `poison` の行が過去の `leaseUntil` を保持したままこの述語に一致し、**prune の保持期間のあいだずっと再 claim・再実行の対象になる**（`finalize-withdrawal` のような一回性ジョブが完了後に再実行される）。ジョブは冪等なので（第7.7節 項3）実害は限定的だが、**下の「lease の用途を DO リセット時の回収手段だけに限定できる」という断定がそのままでは成立しない。** DO は single-threaded なので同一 DO 内で claim が競合することは無いが、**lease は「実行中に DO がリセットされた」場合の回収手段として必要である**（第2.1節 F-4 のエビクション）。期限切れ lease は専用の索引から reclaim する。
+
+**backoff と poison。** 失敗時は `attempt` を進め、指数バックオフで `nextRunAt` を先送りする。上限回数を超えたら `status='poison'` にして `terminalReason` を残し、ホットパスの索引から外す。**`done` / `poison` のどちらへ落とすときも、同じ `transactionSync` で `completedAt` に現在時刻を書き、`leaseUntil` / `ownerToken` / `nextRunAt` を `NULL` にする**（第4.1.1節。`completedAt` が `pending` / `running` の行で `NULL` であるのと対になる列ごとの状態規定である）。**`nextRunAt` を残さないのが要点である** — 残すと下の `deleteAlarm()` の述語が prune されるまで真にならず、恒久起床ループが開く。`done` と `poison` は別々の保持期間で prune し、走査を bounded に保つ。
 
 **`done` / `poison` の prune には専用の `kind` を置かない。ジョブランナーが自分でやる、と断定する。** 「`jobs` 自身を掃除するジョブ」を `kind` に足すと、その行自体が prune 対象になるという入れ子ができ、`kind` の全数表（下記）と第4.1.1節の両方に自己参照が1行増える。**規則は「ジョブランナーは1回の Alarm 起動の末尾で、保持期間を過ぎた `done` / `poison` を最大 N 行だけ削除する」である。** N は内側の行数上限と同じ扱いで #37 → #38 が決める（出発点 1,000行）。**削除は `(status, completedAt)` の複合索引から引く**（第4.1.1節の `completedAt` 列がこの索引の材料である）。走査は bounded に保つ。**この処理はジョブ行を持たないので、下の `kind` 表と第4.1.1節の `kind` 列挙のどちらにも現れない — その理由を本段落が正本として持つ。**
 
@@ -1495,7 +1652,13 @@ Outbox をドメインイベントの transport として使うのをやめる�
 
 **(iii-b) を落とすと保護が消える。** (iii-a) は1チャンクの大きさを縛るだけで**反復回数を縛らない**ので、「1,000 行ずつ 100 万回」が (i)(ii)(iii-a) のどれにも違反せずに書ける。初版はこの反復回数を外側の累積経過時間で縛るつもりでいたが、上のとおりその測定手段が存在しない。**行数上限と反復回数上限は必ず対で置く。**
 
-**(iii) の対象は内部カーソルを持つ4種 — `reindex` / `migrate-bulk` / `finalize-withdrawal`（退会の一括削除）/ `purge-trash` である。** `purge-trash` を含めるのは、`HardDeletePolicy.expandTargets` の展開件数が利用者のゴミ箱の大きさに比例するためである（第7.5節）。**残り8種（`sweep-orphan-mapping` / `resume-link` / `send-mail` / `resume-signup` / `resume-credential-change` / `sweep-reservations` / `sweep-reset-tokens` / `rotate-encryption`）は1件の仕事量が構造的に有界なので (iii) の対象外である** — ただし **`sweep-*` 3種と `rotate-encryption`** は1回の起動で処理する行数に (iii-a) と同じ上限を掛け、残りを次の起動へ回す。**「次の起動」を張るのは上の「周期・反復ジョブの再武装規則」であり、どの表を読むかは再武装分類で決まる** — 分類 (A) の `sweep-reservations` / `sweep-reset-tokens` は (1-A) の駆動源クエリ表（作業述語から時刻条件だけを外したもの）を、分類 (B) の `sweep-orphan-mapping` / `rotate-encryption` は (1-B) の残件条件表を、それぞれ完了時に読み直して `nextRunAt` を設定する。**`sweep-*` という接頭辞で一括りにしない** — `sweep-orphan-mapping` の作業述語には時刻条件が無く、(1-A) の規則が構造的に当てはまらないからである。
+**カーソルの永続先を確定させる。** (iii) は「カーソルを進めてコミットする」ことを要求するので、**カーソルの置き場所が全数表のどこかに無ければ実装できない。** 決めは2点である。
+
+- **永続カーソルを持つのは `reindex` / `migrate-bulk` の2種で、置き場所はどちらも `migration_progress`（`targetVersion` / `step` / `cursor` / `updatedAt`。第4.1.1節）、書き込み口は `setMigrationCursor` である**（第8.2節）。**主キーは `(targetVersion, step)`** なので、同じ `targetVersion` から `reindex` と `migrate-bulk` の両方が投入されても行が衝突しない。**両者の投入点はどちらも migration ゲートであり、そこには必ず `targetVersion` がある**（第9.2節）ので、`reindex` だけ別の置き場所を用意する理由が無い。第9.2節が初版で書いていた「`reindex` は `migration_progress` ではなく自分の内部カーソルで進む」という排除は**撤回する**（同節）。
+- **`finalize-withdrawal` / `purge-trash` は永続カーソルを持たない。** どちらも作業が**行の削除**なので、作業述語そのもの（`WHERE trashed = 1 AND purge_after < ?` / 退会対象の残存行）が進捗を表し、次のチャンクは「まだ残っている行の先頭」から始めれば正しい。**カーソルを持たせると、削除で行が消えた後のカーソル値の意味が定義できない。**
+- **`jobs.payload` へカーソルを持たせる形は採らない。** `payloadDigest` の照合対象は「`nextRunAt` を除いた payload」と定義されているので（上記）、カーソルを更新するたびに digest がずれて再投入が `ConflictError` になる。**`jobs` に `cursor` 列を足す形も採らない** — `jobs` は両クラスで共有する12列の表であり、User Data DO の2種のためだけに13列目を足すと、Directory bucket 側の6種が常に `NULL` を持つ列が1つ増える。
+
+**(iii) の対象は内部カーソルを持つ4種 — `reindex` / `migrate-bulk` / `finalize-withdrawal`（退会の一括削除）/ `purge-trash` である**（うち永続カーソルを持つのは上記のとおり前2種である）。 `purge-trash` を含めるのは、`HardDeletePolicy.expandTargets` の展開件数が利用者のゴミ箱の大きさに比例するためである（第7.5節）。**残り8種（`sweep-orphan-mapping` / `resume-link` / `send-mail` / `resume-signup` / `resume-credential-change` / `sweep-reservations` / `sweep-reset-tokens` / `rotate-encryption`）は1件の仕事量が構造的に有界なので (iii) の対象外である** — ただし **`sweep-*` 3種と `rotate-encryption`** は1回の起動で処理する行数に (iii-a) と同じ上限を掛け、残りを次の起動へ回す。**「次の起動」を張るのは上の「周期・反復ジョブの再武装規則」であり、どの表を読むかは再武装分類で決まる** — 分類 (A) の `sweep-reservations` / `sweep-reset-tokens` は (1-A) の駆動源クエリ表（作業述語から時刻条件だけを外したもの）を、分類 (B) の `sweep-orphan-mapping` / `rotate-encryption` は (1-B) の残件条件表を、それぞれ完了時に読み直して `nextRunAt` を設定する。**`sweep-*` という接頭辞で一括りにしない** — `sweep-orphan-mapping` の作業述語には時刻条件が無く、(1-A) の規則が構造的に当てはまらないからである。
 
 **(iii-a) / (iii-b) の上限値の初期値は #37 が着手時の spike で出し、#38 が運用値として確定する**（第4.8節の export 上限と同じ2段の分担）。目安として (iii-a) は 1,000 行、(iii-b) は 20 チャンクを初期値の出発点にする。**「例外が上がるから検出できる」を前提にした設計にしない。**
 
@@ -1514,7 +1677,7 @@ Outbox をドメインイベントの transport として使うのをやめる�
   - **`setAlarm` を `await` して代用しない。** 戻り値は公式ドキュメント内で `void` と `Promise` に食い違っており（第2.1節 F-30）、依拠できない。`ctx.storage.sync()` が pending write のフラッシュ完了を待つ唯一の手段である（同 F-31）。
   - **この `await` は `transactionSync` の外なので第8.2節の同期契約と衝突しない。** 出力ゲートも救わない — output gate が保証するのは**外向きネットワークメッセージ**を書き込み確定まで止めることであって、送信の無い CPU 専従の `alarm()` には効かないからである。
 - **正常完了時に DB の最早 `nextRunAt` へ張り直す。** ジョブの変更と「DB 上の最早 `nextRunAt`」の読み取りは同じ `transactionSync` の戻り値にする。`finally` での再設定は正常系・例外系の**最適化**として残してよいが、**正しさの拠り所にはしない**。
-- **正常完了時、DB に `nextRunAt` を持つ行が1件も無ければ `deleteAlarm()` する。これは規則の一部であって省略可能な最適化ではない。** 先頭での再武装は「仕事を始める前に必ず次の起動を張る」ので、**張った alarm を明示的に消す手順が無いと、due job がゼロでも DO が再開間隔ごとに永久に起き続ける** — 起きて、先頭でまた張って、仕事ゼロで終わり、また起きる、の恒久ループになる。`setAlarm()` 1回は1行の書き込みとして課金され（第2.1節 F-24）、第10.2節が「コストの主要因は rows written」「`setAlarm` が算入される」と書いているとおり、これは**一度でもジョブを走らせた全ユーザー分**の恒久的な書き込みになる。同時に第7.5節が retention 方式の利点として掲げる「dormant な DO は Alarm でだけ起きる」も崩れる。
+- **正常完了時、DB に実行可能集合（`status IN ('pending','running')`）の行が1件も無ければ `deleteAlarm()` する。これは規則の一部であって省略可能な最適化ではない。** **述語を「`nextRunAt` を持つ行が無ければ」と書いてはならない** — `done` / `poison` の行にも `nextRunAt` を残す実装だとこの述語が prune まで真にならないからである（上の完了時 `NULL` 化と対で読む。同節 (3) の「`pending` 行が常に1件あるので `deleteAlarm()` も発火しない」も同じ実行可能集合の読みである）。 先頭での再武装は「仕事を始める前に必ず次の起動を張る」ので、**張った alarm を明示的に消す手順が無いと、due job がゼロでも DO が再開間隔ごとに永久に起き続ける** — 起きて、先頭でまた張って、仕事ゼロで終わり、また起きる、の恒久ループになる。`setAlarm()` 1回は1行の書き込みとして課金され（第2.1節 F-24）、第10.2節が「コストの主要因は rows written」「`setAlarm` が算入される」と書いているとおり、これは**一度でもジョブを走らせた全ユーザー分**の恒久的な書き込みになる。同時に第7.5節が retention 方式の利点として掲げる「dormant な DO は Alarm でだけ起きる」も崩れる。
   - **`deleteAlarm()` の戻り値にも依拠しない**（第2.1節 F-30 の公式内不整合は `getAlarm` / `deleteAlarm` にも及ぶ）。削除の永続化も `await ctx.storage.sync()` で確認する。
   - **例外は第9.4節の fail-closed 経路だけである。** そちらは「ジョブを実行せずに一定間隔で `setAlarm` を張り直す」＝**意図的に消さない**経路なので、本規則の対象外であることを同節に明記してある。
 - **通常の DO 入力（RPC）での再設定は、DO facade のラッパーが `run()` の戻り後に発行する。実行主体をここで名指しする。** `enqueueJob` は `UnitOfWorkContext` の同期メソッドでトランザクション内に閉じる（第8.2節）一方、`setAlarm` はトランザクションの外なので、誰がいつ呼ぶかを決めないと #37 に落ちる。**規約は次の3点である。**
@@ -1673,7 +1836,7 @@ export interface UnitOfWorkProvider {
 - **`run` はスコープ引数を取らない。** DO インスタンスそのものがスコープであり、`userId` は DO 選択の時点で消費済みである（第4.5節）。現行の「スコープを受け取る引数が無い」という形はそのまま維持され、**意味だけが「根拠が示されていない」から「DO が境界なので不要」へ変わる**。
 - **`collectEvents` は消えるが、その位置を `enqueueJob` が引き継ぐ**（第7.3節）。`collectEvents` が占めていた「**トランザクション内の唯一の副作用登録点**」というスロットは空にしない。設計の複数箇所が「ジョブ投入は本体更新と同一 `transactionSync` に入っていなければ意味がない」ことを要求している — 第7.5節（`purge_after` の最小値から `purge-trash` を投入）、第7.6節（外部 I/O は必ずトランザクションでジョブ行を書く）、第6.2.2節 (b)（レート制限時もジョブ行を必ず書く）、第9.2節（migration ゲートの中でのジョブ投入）。
   - **`jobs` / `operations` はドメイン集約ではないので、リポジトリとしてではなく専用メソッドとして配る。** 第4.1.1節はこの2つを集約テーブルとは別の用途で並べており、第4.2節も「ジョブ / 冪等化状態」を集約の表とは別行で扱っている。`operations` の CAS（`operationId` + `payloadDigest` + phase。第6.5節）も同じ位置に置く。
-  - **`migration_progress` のカーソル更新も同じ位置に置く**（第9.3節。`setMigrationCursor`）。`ctx.storage.sql` を usecase から直接触る形は採らない — レイヤー違反であり、UoW を通らない書き込み経路を作るからである。
+  - **`migration_progress` のカーソル更新も同じ位置に置く**（第9.3節。`setMigrationCursor`）。**書き手は `migrate-bulk` と `reindex` の2種で、これが「内部カーソルを永続化するジョブ」の全数である**（第7.4節「カーソルの永続先」）。`ctx.storage.sql` を usecase から直接触る形は採らない — レイヤー違反であり、UoW を通らない書き込み経路を作るからである。
 - **上の (ii) と (iii) は「非集約ストアへの書き込み口の全数」であり、その射程は第4.1.1節の非集約ストア表7行である。** リポジトリ側 (i) は DO ごとに増減する（コメント行の `// ... その DO が持つ集約のリポジトリ`）が、非集約ストア側は**ここに書かれたものが全数であり、第4.1.1節の表に行を足したら必ず口を1本足す**（第1.4節 I-5）。`ctx.storage.sql` の直接使用を禁じている以上、書き込み口をここに列挙しないと、そのテーブルは**書く手段を持たないまま第4.1.1節に載る**ことになる。
   - **対応は次のとおりで、7行のうち6行が口を持ち、`_meta` だけが持たない。** `jobs` → `enqueueJob`、`operations` → `recordOperation` / `updateOperation`、`migration_progress` → `setMigrationCursor`、`credential_locators` → `credentialLocatorStore`、`password_reset_tokens` → `resetTokenStore`、`rotation_checkpoints` → `rotationCheckpointStore`。**`_meta` に口を置かないのは意図した決定である** — 書くのは DO の初期化（自 locator。第6.3節）と migration ゲート（`schema_version`。第9.2節・第9.3節）だけで、どちらも usecase ではなくアダプターであり、usecase から `schema_version` を書ける経路を開くと第9.4節の fail-closed の権威が二重になる。
   - **初版は全数の射程を「`jobs` / `operations` / `migration_progress` の3つ」と書いていた。これは第4.1.1節が非集約と分類した7ストアのうち3つしか覆っておらず、残り4つ（`credential_locators` / `password_reset_tokens` / `rotation_checkpoints` / `_meta`）は本文が書き込みを明確に要求しているのに書く手段が契約側に無い状態だった。** とくに `credential_locators` は unlink 手順2（第6.6節）と退会 手順4（第6.7節）が、`password_reset_tokens` は credential 変更 phase 1（第6.5.1節）と unlink 手順3・退会 手順3 が、いずれも**usecase の中から**削除を要求している。**「アダプターが自分の `transactionSync` で書くから射程外」と逃がす形は採らない** — 逃がすと同じ `transactionSync` に入ることを型で保証できず、第6.1節 (d) が要求する「トークンの一括削除は credential 変更と同じトランザクションで」という不変条件が規約頼みになる。
@@ -1853,14 +2016,14 @@ DO は single-threaded なので、1つのトランザクションの中の read
 分割する場合は **DDL 部分を単発の `transactionSync` で適用して `schema_version` を進め、データ書き換え部分はジョブとして Alarm のチェックポイント分割に乗せる**（第7.4節）。**ジョブの `kind` は2つに分かれる。ここが両者の投入点である**（第7.4節の `kind` 全数表の「投入点」欄）。
 
 - **条件1 / 3 / 4（既存行の書き換え、索引つき新テーブルへのコピー）は `migrate-bulk`。** ゲートの中で `enqueueJob('migrate-bulk', ...)` を発行する。投入自体は同期の1行書き込みなので、ゲート関数の「`await` を挟まない」条件を破らない。
-- **条件2（FTS5 の全件再インデックス）は `reindex`。** 同じくゲートの中で `enqueueJob('reindex', ...)` を発行する。**`migrate-bulk` に畳まない** — `reindex` は本体テーブルを一切書き換えず projection だけを作り直すジョブであり、`migration_progress` ではなく自分の内部カーソルで進む（第7.4節 (iii)）。`spec/database/index.md` のトークナイザ方針や第5.2.1節 (d) の canonical 規則を変えたときは、`schema_version` を進めるのと同じゲートからこのジョブが投入される。
+- **条件2（FTS5 の全件再インデックス）は `reindex`。** 同じくゲートの中で `enqueueJob('reindex', ...)` を発行する。**`migrate-bulk` に畳まない** — `reindex` は本体テーブルを一切書き換えず projection だけを作り直すジョブなので、両対応の読み取り（第9.3節）が要らず、失敗しても本体データが壊れない。**ただしカーソルの置き場所は `migrate-bulk` と共通で `migration_progress` である**（`setMigrationCursor`。第7.4節「カーソルの永続先」）。**初版は「`migration_progress` ではなく自分の内部カーソルで進む」と書いていた。これは撤回する** — その「内部カーソル」の永続先が第4.1.1節（`jobs` は12列）にも第8.2節の書き込み口にもどこにも無く、**`reindex` だけが (iii-b) の中断のたびに先頭からやり直しになって、大きく育った DO では永久に完了しない**（(iii-b) を置いた目的そのものが失われる）。`migration_progress` の主キーは `(targetVersion, step)` なので、同じ `targetVersion` から両方が投入されても行は衝突しない。`spec/database/index.md` のトークナイザ方針や第5.2.1節 (d) の canonical 規則を変えたときは、`schema_version` を進めるのと同じゲートからこのジョブが投入される。
 
 ### 9.3 forward-only と失敗時の再実行 ［Issue 要求］
 
 **forward-only にする。** 下方向の migration は書かない。
 
 - **各ステップは冪等に書き、ステップの適用と `schema_version` の更新を同じ `transactionSync` に入れる。** これで「適用したがバージョンが進んでいない」状態が原理的に作れない。途中で失敗したステップは丸ごとロールバックされ、次のゲート通過時に同じステップから再実行される。
-- **1回で完了しない migration の部分適用を記録する。** `migration_progress` テーブルに `{ targetVersion, step, cursor, updatedAt }` を持ち、**カーソルを進めた分をコミットしてから次の Alarm を張る。** これは任意の最適化ではなく必須である（第9.2節の「黙ってリセットされる」失敗モードのため）。
+- **1回で完了しない migration の部分適用を記録する。** `migration_progress` テーブルに `{ targetVersion, step, cursor, updatedAt }` を主キー `(targetVersion, step)` で持ち、**カーソルを進めた分をコミットしてから次の Alarm を張る。** これは任意の最適化ではなく必須である（第9.2節の「黙ってリセットされる」失敗モードのため）。**`migrate-bulk` と `reindex` の両方がこの表を使う**（第7.4節「カーソルの永続先」）— `reindex` の再開位置を別の場所に持たせると、第4.1.1節にも第8.2節の書き込み口にも現れない永続状態が1つ増える。
 - **途中状態でのリクエスト受付可否。** DDL 部分が完了して `schema_version` が進んでいれば、**リクエストは受け付ける**。データ書き換えが進行中の期間は、新旧どちらの形の行も読めるようにコードを書く（両対応の読み取り）。受付を止めると、10 GB 級の DO で数分〜数十分のダウンタイムになるためである。両対応が書けない変更は、第9.2節の分類 1 として「新しい列を足して二重書きし、書き換え完了後に旧列を落とす」という**多段の forward-only migration** に分解する。
 - **再実行の安全性。** ステップは `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` のように再実行可能な形で書く。**ただし冪等であることは有界であることを意味しない** — 既に大きく育ったテーブルへの `CREATE INDEX` は再実行可能でも1回の入力で完了しないので、第9.2節の条件4 の回避策（索引つき新テーブル + `migrate-bulk` コピー）へ分解する。`ALTER TABLE ADD COLUMN` のように冪等でない文は、`schema_version` の比較でスキップされることが保証されるので問題にならない（同じトランザクションでバージョンが進むため）。
 
@@ -1983,7 +2146,7 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 **画面仕様として #35 へ送る4件（本文が断定形で書いているもの）。** いずれも `spec/pages/index.md` / `spec/scenario/account.md` / `spec/inventory/frontend.md` に落ちる。
 
 1. **メールアドレスの所有確認（verification）が signup に存在しないことを、既知の前提として明記する**（第5.2.1節 (a)）。第6.3節の saga は phase 0〜4 のいずれにも確認手順を持たない。したがって**所有の唯一の証明はパスワードリセット経路であり、リセットトークンの安全性がアカウント所有の安全性の上限になる**。所有確認 phase を新設するかは #34 のスコープ外だが、この前提は画面文言（「登録されていれば送信された」の意味）と運用の両方に効くので落とさない。
-2. **リセット完了画面に必須の導線を2つ置く** — **クレデンシャル一覧**（覚えの無い SSO 連携を解除できる。第5.1節の残余リスクの唯一の対策）と、**AI クライアント接続一覧 + 「すべて失効」**（第5.4節 (ii)。`createdAtCredentialVersion` による自動失効が切るのは1世代分だけなので、それより前に持ち込まれた接続は利用者の判断で切る）。**2つは同じ画面にまとめる。** この画面は第10.1節の PITR 復旧手順（restore 後に全接続を失効させ利用者に再接続させる）からも流用される。
+2. **リセット完了画面に必須の導線を2つ置く** — **クレデンシャル一覧**（覚えの無い SSO 連携を解除できる。第5.1節の残余リスクの唯一の対策）と、**AI クライアント接続一覧 + 「すべて失効」**（第5.4節 (ii)。`createdAtResetVersion` による自動失効が切るのは前回のリセット完了以降に作られた分だけなので、それより前に持ち込まれた接続は利用者の判断で切る）。**2つは同じ画面にまとめる。** この画面は第10.1節の PITR 復旧手順（restore 後に全接続を失効させ利用者に再接続させる）からも流用される。
 3. **SSO 専用アカウントにはパスワードを設定する経路が無いことを画面仕様として明記する**（第7.6節）。リセットメールを送らない側に決め切ったので、**SSO 専用の利用者に対してはパスワード変更フォームもリセット導線も出さない**（現行の `PAGE-settings-005`「SSOのみのユーザーにはフォーム自体を非表示」と同じ判定を、クレデンシャル集合に `usableForLogin = true` の `kind = 'email'` 行があるかで行う）。**リセット依頼フォーム自体は誰にでも出す** — 依頼の応答が登録済み / 未登録 / SSO のみ / スロットル中で完全に一致することが第7.6節の要求だからである。**#35 は「SSO 専用でもリセットできるようにすべきでは」と再検討しない** — 送る側に倒すと SSO 専用アカウントの奪取条件が IdP 認証からメール到達性へ下がる、というのが第7.6節の断定である。
 4. **signup の重複エラーは秘匿しない。文言方針を明示的な設計判断として送る**（第6.3節）。**画面には「このメールアドレスは既に登録されています」を出してよい。** これは公開の列挙オラクルであることを承知のうえでの受容判断であり、理由は「重複を秘匿する唯一の実装可能な形（重複時もメールを送って結果を UI で区別しない）が、所有確認 phase を持たない本設計では成立しないから」である。**#35 は「秘匿すべきでは」と再検討しない** — 覆すなら所有確認 phase の新設とセットであり、それは #34 のスコープ外として明示的に切り出してある。緩和は未認証エンドポイントへの WAF / Rate Limiting Rules（第6.2.2節 (c)）で、signup にも掛かる。
 
@@ -2101,7 +2264,7 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 | `spec/testcases/identity/requestPasswordReset.md` | 「該当メールのユーザーが未登録 → **トークン発行・メール送信は行われず**正常終了する」は第7.6節（mapping が無くてもジョブ行を必ず書く）の**結論の反対**。「同一メールで連続してリセットを依頼する → **依頼ごとにトークンが発行される**」は第6.2.2節 (b) のレート制限と衝突する。`PasswordResetTokenPort.issue(user.id, now)` / `UserRepository.findByEmail` は第4.3節 行7b / 行5 で Directory へ移る。`SsoUser` 前提のケースは第6.6節で前提ごと変わる | 期待値を「**登録済み / 未登録 / SSO のみ / スロットル中の4ケースで処理経路が完全に一致する**（同じ `transactionSync` でジョブ行を1行書き、同じ `setAlarm` を発行し、同じ応答を返す。違うのは行の中身だけ）」へ書き換える（第7.6節）。**「SSO のみ」の行の中身がどちらかを明示する — 送らない側である**（第7.6節で決め切った）。`kind = 'email'` の mapping 行は SSO signup でも置かれるので宛先は存在するが、`passwordVerifier` を持たないためトークンを発行せず何も送らない。**判定は「mapping の有無」ではなく「`passwordVerifier` の有無」である。** 現行 spec（`spec/usecases/identity.md` / 本ファイル）の「SSO ユーザーにはトークンを発行せずメールも送らない」という結論は**維持される** — 変わるのは処理経路の均一化（ジョブ行は必ず書く）だけである。**同じ canonical への連打が `operationKey` によりジョブ行1本に収束する**ケースを足す。**ジョブ行に載るのは `tokenId` だけで生トークンは載らない**（第6.1節 (d)）と、**新しいトークンの発行がその credential の未使用トークンを全部置き換える**（同）をケースに足す |
 | `spec/testcases/identity/loginWithPassword.md` | 11ケース全部が「`findByEmail` を引いて `PasswordHasher.verify` する」現行フロー前提で、第5.3節が足した手順が1つも無い | 次の6ケースを足す。(i) **到達性検査**（step 5 (ii)）— Directory に mapping が残っているが `credential_locators` に active 行が無いと拒否される。(ii) **`credentialVersion` 不一致**（step 5 (iii)）で拒否される。(iii) **`changeState: 'pending'` 中**は行が存在してもダミー材料が返り照合が成立しない。(iv) **`nextAttemptAllowedAt` 未到達**の試行はダミー経路へ倒れ、成功・失敗を区別できない（第6.2.2節 (a)）。(v) **step 7 の報告** — 成功で `failedAttempts` がリセットされ、失敗で前進する。(vi) **鍵ローテーション中**に `credential_locators` が両世代の行を持っていてもログインできる（第6.8節 手順2）。「同一メールの `SsoUser`」ケースは第6.6節のクレデンシャル集合へ読み替える |
 | `spec/testcases/identity/getCurrentUser.md` | `authMethod: "password"` / `"sso"` が `User = PasswordUser \| SsoUser` の判別共用体を前提にしている。また `email` を返すが、原本は Directory bucket の `encryptedCanonical` にしか無い | `authMethod` を「**保有クレデンシャルの種別集合**」へ読み替える（第6.6節）。**集合の要素は `{ credentialId, kind, label }` の3つ組である**（第6.1.2節 (C5)）— `credentialId` が unlink の対象指定に使われるので、DTO から落とすと解除操作が書けなくなる。**一覧には `kind = 'email'` の行も出すが、解除操作を出してよいのは `kind = 'sso'` の行だけである**（第6.6節 unlink 手順1 (1-a)。権威は DO 側にあり、`kind = 'email'` の unlink は `BusinessRuleError` で拒否される。UI の出し分けは二重の防波堤である）。`email` の取得は**第6.2.1節 (c) の復号許可経路 (4)**（認証済み本人の自己参照）に当たることを明記し、`provider` / `providerSubject` を返さない現行の期待は維持する（`label` は provider 名までで subject を含まない） |
-| `spec/testcases/identity/listAiClientConnections.md` | 「active と revoked の混在」ケースはあるが、**リセット完了による自動失効**のケースが無い | 「**パスワードリセットを完走すると、`createdAtCredentialVersion` が前進前の値と等しい接続だけが `revoked` になり、それより古い接続は `active` のまま残る**」ケースを足す（第5.4節 (i)）。通常のパスワード変更では失効しないことも足す |
+| `spec/testcases/identity/listAiClientConnections.md` | 「active と revoked の混在」ケースはあるが、**リセット完了による自動失効**のケースが無い | 「**パスワードリセットを完走すると、`createdAtResetVersion` が前進前の `account.resetVersion` と等しい接続（＝前回のリセット完了以降に作られた接続）だけが `revoked` になり、それより古い接続は `active` のまま残る**」ケースを足す（第5.4節 (i)）。**「接続を作る → パスワードを変更する → リセットを完走する」の順で、変更を挟んでも接続が失効すること**もケースとして足す（`credentialVersion` を基準にしていた初版はここで空振りしていた）。通常のパスワード変更では失効しないことも足す |
 | `spec/testcases/export/exportAllData.md` | 第4.8節が「1回のエクスポートで返せる総バイト数に上限を置き、超過は拒否する」と決めたのに**上限超過ケースが無い**。読み出しと render / zip の実行位置分割（第8.3節 (a)）も期待値に無い | **上限超過で `SystemError` 系になる**ケースを足す（上限値そのものは #37 → #38 で決まるので、テストケースは「上限を超えると拒否される」まで書く）。`ExportSourceReader.readAll` が **DO 内の1回の `transactionSync`** で完結し、`ExportRenderer.render` / `ArchiveWriter.write` が **request Worker** で回ることを前提の欄に明記する |
 | `spec/testcases/trash/listTrash.md` | `:16` / `:17` が `expiresAt` を「**保存値ではなく照会時算出。遡及適用**」と期待している。第7.5節は `purge_after` を**保存**し、`trashRetentionDays` の変更と同一トランザクションで一括再計算すると決めた | 遡及適用という**結果**は変わらないので、期待値の**根拠**だけを「変更と同一トランザクションで全項目の `purge_after` が再計算され、Alarm が張り直される」へ差し替える（第7.5節）。`:19` の「他ユーザーのゴミ箱」は第4.5節の読み替え（DO 内に他ユーザーの行が存在しない）へ |
 | `spec/scenario/account.md` | S-AC-01 / S-AC-02 / S-AC-07 のいずれにも、本設計が足した前提と導線が無い | (i) **S-AC-01 に「メールアドレスの所有確認は行わない」ことを既知の前提として明記する**（第5.2.1節 (a)）。所有の唯一の証明はパスワードリセット経路である。(ii) **S-AC-02（SSO 初回自動登録）はメール一意性が SSO にも掛かるので Directory bucket を2つ跨ぐ**（第6.3節）。「初回なら自動でアカウントが作成され」の裏で予約が2本走ることを異常系に反映する（メール側が既に他アカウントで使われていれば SSO 登録も敗北する）。(iii) **S-AC-07 のリセット完了に必須導線を足す** — クレデンシャル一覧と AI クライアント接続一覧（「すべて失効」つき）を提示し、覚えの無いものを解除させる（第5.1節・第5.4節 (ii)）。(iv) 「SSO のみのユーザーにパスワード変更を出さない」はクレデンシャル集合に `kind: 'email'` があるかで判定する |
@@ -2152,7 +2315,7 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 | **作り直す** | `packages/core/src/application/di/serverCloudflare.ts` | `ServerEnv = { DB: D1Database; ...; OUTBOX_* }` を DO バインディング前提へ | 第3.2節・第8.3節 |
 | **作り直す** | `apps/web/scripts/render-wrangler.ts` + `apps/web/wrangler.staging.toml.tpl` / `wrangler.production.toml.tpl` | Worker が2本になるので `.tpl` を2系統に増やし、2出力へ拡張する。**`.gitignore` により `wrangler.staging.toml` / `wrangler.production.toml` は生成物であり直接編集してはいけない。** 未コミットの `apps/web/wrangler.{request,state}.{staging,production}.toml` 4本は `.tpl` を通さない手書き実ファイルなので破棄して作り直す。**あわせて `main` をビルド成果物へ向ける**（現行は両 `.tpl` の `:21` が `main = "app/server.cloudflare.ts"` で TS ソースを指しており、redirect 設定を使わない経路 — `wrangler deploy --dry-run` など — がビルドできない。下の引き継ぎ表 H-8 が「`main` の修正は #37 の対応項目8 として依然必要」と結論している）。**DO クラスの宣言は `exports` で行い `new_sqlite_classes` は使わない**（第9.1節。#37 の Issue 本文の当該行は訂正対象である） | 第3.2節・第9.1節 |
 | **改修** | `packages/core/src/application/di/types.ts` / `containerStore.ts` | `RequestContainer` から `unitOfWorkProvider` を外し DO facade を足す。**`WorkerContainer` は用途ごと消える。** ただし「そこから拡張していた indexer 専用 / pruner 専用コンテナ」は**実装に存在しない** — 書かれているのは spec 側（`spec/domains/search.md:264` / `spec/usecases/search.md:93` / `spec/domains/trash.md:239` / `spec/usecases/trash.md:315`）だけなので、その撤回は #35 の作業である（第4.3節の行29 / 行30）。`containerStore.ts` は request 側専用として残す（実装は `globalThis` の Symbol スロットのみで、ALS の実体は `apps/web/app/server.cloudflare.ts:4,33,44` 側にある）。**`types.ts:37` 付近の JSDoc（`collectEvents` を「ドメインイベントを enqueue する唯一の経路」として説明している段落）も同時に書き換える** — その経路ごと消えるので、放置すると存在しない機構を説明する JSDoc が残る（第7.3節） | 第8.3節 (b)(c)・第7.3節 |
-| **改修** | `packages/core/src/application/errors.ts` | `SystemErrorCode` に **`ServiceOverloaded` と `StorageCapacityExceeded` の2値を追加する**（現行は `DatabaseError` / `DataIntegrityError` / `CryptoError` / `SessionError` / `NetworkError` / `ExternalApiError` の6値）。**`RETRYABLE_SYSTEM_CODES` には入れない** — どちらも retryable false である | 第4.7節 |
+| **改修** | `packages/core/src/application/errors.ts` | `SystemErrorCode` に **`ServiceOverloaded` と `StorageCapacityExceeded` の2値を追加する**（現行は `DatabaseError` / `DataIntegrityError` / `CryptoError` / `SessionError` / `NetworkError` / `ExternalApiError` の6値）。**`RETRYABLE_SYSTEM_CODES` には入れない** — どちらも retryable false である。**`RETRYABLE_SYSTEM_CODES` の中身そのものも変えない**（`NetworkError` / `ExternalApiError` の2値のまま。`:206-210`）— とくに **`DatabaseError` を足さない。** 足すと既存の全 DB 経路の `retryable` が一斉に反転するので、第4.7節 行3（`ctx.abort()` / DO のリセット）は表の側を **false** に合わせてある | 第4.7節 |
 | **改修** | `apps/web/app/presentation/errorResponse.ts` | **変更しない、が結論である。** `HTTP_STATUS_BY_KIND` は `kind` 単位のままにし、追加2コードは 500 で返す。`code` 分岐を presentation へ持ち込まない（第4.7節）。#37 はここを触らないことを明示的な決定として扱う | 第4.7節 |
 | **改修** | `packages/core/src/application/ports/sessionCodec.ts` | `issue(userId, now)` → **`issue(userId, epoch, now)`**、`verify` の戻り値に **`epoch` を追加**する。epoch を運ぶ口が現行契約に無い | 第5.1節 |
 | **改修** | `packages/core/src/adapters/webcrypto/hmacSessionCodec.ts` | ペイロードを `{ uid, exp }` から **`{ typ: "session", uid, ep, exp }`** へ広げる。`parsePayload` は `typ` の厳密一致と `ep` の存在を要求する。**`ep` を持たない既存トークンは `verify` が `null` を返す（fail closed）** — 移行の代償は全ユーザーの再ログイン1回で、セッションはロールバックしても再ログインで回復するので互換ウィンドウの対象外である（第5.1節）。あわせて `AI_CLIENT_TOKEN_SECRET` で署名する `typ: "aiClient"` 用の codec を別に立てる（第3.2節・第5.4節） | 第5.1節・第5.4節 |
@@ -2174,7 +2337,7 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 - **DO 内のテーブル群。** 第4.1.1節が全数の正本である。`account` / `user_settings` / `credential_locators` / `jobs` / `operations` / `migration_progress` / `_meta`（User Data DO）、`credential_mappings` / `password_reset_tokens` / `jobs` / `rotation_checkpoints` / `_meta`（Identity Directory DO）はいずれも現行スキーマに存在しない新設である。
 - **trigram / `bm25` の再確認 spike。** 第2.1.1節の手順を着手時に1回走らせる。#37 の Issue が要求する tokenizer 実環境検証と同じ作業である。**あわせて第11.4節の表のうち「#37 / 着手時の spike」を含む行すべてを同じ着手時にまとめて走らせる。第11.4節は9行あり、9行とも #37 の着手時 spike を含む**（うち2行は #37 が根拠値を出して #38 が運用値を確定する2段の分担である）。trigram / `bm25` の再確認以外の**残り8件**は、`snippet()` / `highlight()` の可用性 / `transactionSync` のネスト可否 / Alarm・RPC の CPU リセット契機 / 単一 SQL クエリの結果セット合計サイズ上限 / チェックポイント予算の中間・内側の初期値 / `SELECT changes()` の意味論 / `transaction()` コールバックの `async` 可否 / `sql.exec()` が `Date.now()` を進めるか、である。**件数を書き換えるときは第11.4節の表を数え直す。**
 
-**本設計が新しく導入した列が変更対象一覧に与える影響。** 下の10行はいずれも新設テーブルの列なので DDL 側の追加作業は増えないが、**テーブル定義の外に作業を1つずつ生む**。
+**本設計が新しく導入した列が変更対象一覧に与える影響。** 下の12行はいずれも新設テーブルの列なので DDL 側の追加作業は増えないが、**テーブル定義の外に作業を1つずつ生む**。
 
 | 列 | テーブル | テーブル定義の外に生む作業 |
 |---|---|---|
@@ -2186,6 +2349,8 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 | `operations.targetLocators` | User Data DO `operations` | **配列である**。要素は `credentialId` + `kind` + 全長 HMAC + 世代 + bucket index。単一値で実装すると、ローテーション中に片側の世代の mapping が回収されずに残る（第6.1.1節 (R3)） |
 | `password_reset_tokens.consumedByOperationId` | Directory `password_reset_tokens` | `consume-reset-token` が消費時に記録し、`begin-credential-change` の**起点 B（未認証）側の束縛材料**になる（第5.1節 (3-d)）。この列が無いと、リセット完了経路の `begin-credential-change` に DO 側の束縛が1つも無くなる |
 | `jobs.completedAt` | 両クラスの `jobs` | **`done` / `poison` へ落とす `transactionSync` で必ず書く。** prune が引く複合索引 `(status, completedAt)` の材料である（第7.4節）。**`nextRunAt` で代用しない** — バックオフで未来へ動く列なので、保持期間の判定に使うと `poison` 行が保持期間を過ぎても消えない／`done` 直後の行が消えるという両方向の誤りが出る。第7.4節が要求する「`done` と `poison` を別々の保持期間で prune」「`send-mail` の空振り行に最短の保持期間」「#38 が運用値を決める」の3つは、この列が無いと実装できない |
+| **`account.resetVersion` / `ai_client_connections.createdAtResetVersion`** | User Data DO `account` / `ai_client_connections` | **パスワードリセット完了でしか進まない単調カウンタと、その値の写しである**（第5.4節 (i)）。第6.5.1節 phase 2 が**起点 B（リセット完了）に限り**同じ `transactionSync` で `resetVersion` を1つ進め、`createdAtResetVersion` が前進前の値と等しい接続を `revoked` にする。**起点 A（通常のパスワード変更）では進めない。** **`credentialVersion` で代用してはならない** — 最頻の乗っ取り系列（接続作成 → 攻撃者によるパスワード変更 → 被害者のリセット）で失効対象が0件になり、補償が空振りする。AI 接続の作成経路（#13 の `/authorize` 承認時）が `account.resetVersion` を読んで写す必要があるので、**#13 の接続行生成にも1項目増える** |
+| **`rotation_checkpoints.rotationKind`** | Directory `rotation_checkpoints` | **2つのローテーション（`rotate-remap` / `rotate-encryption`）が同じ表を共有するための区別列である**（第6.8節 (X1)）。置換キーが `(rotationKind, bucketIndex, generation)` になり、**両者の旧鍵破棄条件のクエリにも `rotationKind` の絞りが要る**（第6.2.1節 (b-1)・第6.8節 手順4）。**絞りを落とすと、片方の完了記録がもう片方の旧鍵破棄条件を成立させる。** あわせて第6.8節 手順2 (2) の移送先が `rotate-encryption` を再投入する経路（同 (X3)）も実装対象である — これが無いと移送で運び込まれた行の `encryptedCanonical` が恒久的に復号不能になりうる |
 | `rotation_checkpoints.conflictCount` / `lastConflictAt` / `lastConflictCredentialId` | Directory `rotation_checkpoints` | 第6.8節 手順2 (2) の第2分岐（移送先に `userId` の違う行がある）の**唯一の記録先**である。**`rotate-remap` は `jobs` 行も `operations` 行も持たないので `poison` / `terminalReason` を使えない**（第7.4節・第6.8節 手順3）。チャンク RPC は同じ内容を値エンベロープでも返し、operator 側のログに残す。運用エスカレーションの受け口は #38（第11.3節） |
 | `credential_mappings.encryptionNonce` | Directory `credential_mappings` | AES-256-GCM の nonce を**独立列**に持つ。AAD に `(kind, credentialId, encryptionGeneration)` を束縛するので、暗号文への連結にしない（第4.1.1節・第6.2.1節 (b-2)）。**移送では再暗号化しない** — AAD が世代非依存なので暗号文は3列そのまま運べる（第6.8節 手順2） |
 
@@ -2238,13 +2403,15 @@ Issue #35 の受け入れ条件7項目を左端に置き、それを満たすた
 - **容量監視** — 「本体 + FTS インデックスの合計で 10 GB」の監視閾値、逼迫時の利用者向け導線（第4.6節）。
 - **コスト** — rows written の内訳（trigram の増幅、`setAlarm`）（第10.2節）。
 - **鍵ローテーションの運用手順** — keyring の世代管理（`{ generation, key, bucketCount }`）、maintenance 経路の実行、旧鍵破棄の判定（第5.2.3節・第6.8節）。**ローテーション開始を告知し、直後のリセット依頼失敗を想定する**（第6.1節 (d)）。**maintenance 経路のログ・トレースを平文が残らない構成にする**（第6.2.1節 (c)・第6.8節）。
+- **2つのローテーションの排他と順序**（第6.8節「2つのローテーションの関係」）— **routing 鍵（`DIRECTORY_ROUTING_SECRET`）のローテーションと暗号化鍵（`IDENTITY_MAIL_ENCRYPTION_KEY`）のローテーションを同時進行させない。** 「一方の previous 世代の鍵を破棄し終えるまで、他方を開始しない」を運用の制約として手順に書く。理由は2つあり、どちらも設計側で決着済みである — (i) 同時進行中は暗号化側の retirement 証明の「全 `0..N-1` bucket」が2通りに読めて定義されない、(ii) 移送が古い `encryptionGeneration` の行を再暗号化済み bucket へ運び込む。**制約が破られた場合に恒久的なデータ喪失にならないよう構造側の保険（移送先での `rotate-encryption` 再投入）は入っている**（同節 (X3)）ので、#38 が書くのは「順序を守る手順」と「保険が発火した＝制約が破られた合図として `rotationKind = 'encryption'` の `previousCount` が0に戻らないことを検知する」の2点である。**旧鍵破棄の判定クエリには必ず `rotationKind` の絞りを入れる**（落とすと片方の完了記録がもう片方の破棄条件を成立させる）。
+- **routing 鍵の漏えいを契機とするローテーションの手順**（第5.1節 (3-c)・第5.2.3節）— **鍵の世代を進めるより先に、maintenance 経路の到達性（binding 構成 / デプロイ資格情報）を再発行する。** `rotate-remap` の「previous 世代の鍵の所持証明」は**漏えい鍵の保持者も満たせる**ので、漏えい起因のローテーションではガードとして数えられない。順序を逆にすると、失効させたい鍵の保持者が `activeKey` を注入して行を自分だけが引ける bucket へ着地させ、**失効操作そのものを無効化できる**（第6.9節の該当行）。**定期・衛生目的のローテーション（鍵が漏れていない場合）にはこの追加手順は要らない** — 手順書で2つを分けて書く。
 - **`rotate-remap` の1チャンク駆動の監査要件** — **`purge-user-mappings` と同格に危険なエントリである**（第5.1節 (3-c)）。破壊（移送元 bucket の全利用者が login も `request-password-reset` も解決不能になり、復旧は 256 bucket の PITR しか無い）に加えて、**移送先 bucket の `lookup-credential` から `passwordVerifier` を引き出せる**という検証材料の窃取まで成立するため、危険度はむしろ上である。設計側のガード（previous 世代の鍵の所持証明・自 DO 名の世代照合・`activeGeneration > gen` の CAS）は第5.1節・第5.2.3節で固定済みなので、#38 は運用側を書く — (i) **実行前の承認手続き**、(ii) **誰が・いつ・どの世代／どの bucket 範囲に対して実行したかの記録を必須にする**（`purge-user-mappings` と同じく「無ければ実行しない」と書く）、(iii) 走査を中断・再開する手順と `rotation_checkpoints.previousCount` の読み方、(iv) **`conflictCount` が増えたときのエスカレーション手順**（同じ canonical が別ユーザーに二重登録された状態であり、自動では解決しない。第6.8節 手順2 (2)）。
 - **SSO 専用アカウントの復旧不能性** — 本設計は SSO 専用アカウントにリセットメールを送らない（第7.6節）。**したがって SSO 専用の利用者が IdP 側のアカウントを失うと、本サービス側に復旧経路が無い。** これは本設計が作る中間状態ではなく外部依存なので第6.9節の締め出し経路一覧には載せていないが、**問い合わせ対応の切り分けとして #38 が明記する**。設計を変える判断（メールクレデンシャルの追加フロー ＝ 所有確認を持つ credential 追加 saga の新設）は #34 のスコープ外として切り出してある。
 - **未認証経路のレート制限** — Cloudflare WAF / Rate Limiting Rules を login / signup / password reset に当てる際のキー・閾値・窓・チャレンジの出し方と、`failedAttempts` のバックオフ係数・リセット依頼間隔の具体値（第6.2.2節）。
 - **メールアドレスの所有確認が signup に存在しないことの運用上の帰結** — 所有の唯一の証明はパスワードリセット経路であり、**リセットトークンの安全性がアカウント所有の安全性の上限になる**（第5.2.1節 (a)）。侵害対応の手順と利用者向け説明をこの前提の上で書く。所有確認 phase を新設するかは別 Issue の判断である。
 - **メール local 部の lowercase 化による誤配送の残余リスク** — 本設計は local 部を lowercase に畳む（第5.2.1節 (a)）。RFC 5321 上 local 部は大文字小文字を区別しうるので、**区別するプロバイダの利用者に対してはリセットメールが別のメールボックスへ届きうる**（`Foo@example.com` → `foo@example.com`）。これは NFKC を local 部に掛けない論拠（オクテット単位の不透明性 / 打鍵形の復元不能 / 所有確認が無いための乗っ取り経路）が形式的にはそのまま当てはまる箇所で、**「区別しない側に揃っている実運用の実態」を根拠に受容した判断である**（現行実装 `valueObject.ts:47` の `trim().toLowerCase()` と同じ妥協）。#38 は (i) 侵害対応の手順にこの経路を明記し、(ii) 利用者からの「リセットメールが届かない」申告の切り分けに含める。**設計を変える判断（打鍵形の別列保持）は第5.2.1節で棄却済みなので、#38 は再検討しない。**
 - **`purge-user-mappings`（operator 専用）の監査要件** — 第5.1節の RPC エントリ表で**最も危険なエントリ**であり、逆引き情報ごと失われた場合の最後の砦なので**原理的に `callerToken` で束縛できない**（第5.1節 (3-c)・第6.7節）。任意の `userId` を受けて自 bucket 内の全 mapping 行を破壊的に削除できる。**守りは maintenance 経路の到達制御と実行監査だけである。** #38 は次を運用手順として書く — (i) **実行前の承認手続き**（誰が承認したかを含む）、(ii) **誰が・いつ・どの `userId` に対して実行したかの記録を必須にする**、(iii) 256 bucket の走査手順そのもの、(iv) 残余リスク（request Worker 内でのコード実行を得た攻撃者が任意アカウントを恒久ロックアウトできる）を明記したうえでの検知方法。**監査ログを「あればよい」ではなく「無ければ実行しない」と書く。**
-- **リセット完了後の利用者向け導線と説明** — クレデンシャル一覧と AI クライアント接続一覧（「すべて失効」つき）を提示する画面は #35 が仕様化するが、**「パスワードを変えても AI クライアント接続は有効のままである」「リセット完了で自動失効するのは直近世代の接続だけである」**の説明は #38 の運用ドキュメントと利用者向け文言に書く（第5.4節）。
+- **リセット完了後の利用者向け導線と説明** — クレデンシャル一覧と AI クライアント接続一覧（「すべて失効」つき）を提示する画面は #35 が仕様化するが、**「パスワードを変えても AI クライアント接続は有効のままである」「リセット完了で自動失効するのは前回のリセット完了以降に作られた接続である」**の説明は #38 の運用ドキュメントと利用者向け文言に書く（第5.4節）。**「直近の credential 変更以降」ではない** — 基準は `account.resetVersion` であり、途中のパスワード変更では進まないので射程が消えない。
 - **予約 TTL の具体値** — 「saga の再開間隔 × 再試行上限 + マージン」より長く取るという不等式は設計側で固定済みなので、値だけを決める（第6.4節）。到達不能アカウントの終端（poison + エスカレーション）の運用受け口も含む。
 - **retention を Alarm 化した後の「手動での期限到達再現手段」** — `spec/manual-tests/trash.md` の pruner 手動起動口に対応する運用手段（Alarm の強制発火 / 時計の巻き戻しに相当するもの）。**共有 DB への直接 SQL 更新に依存していた `spec/manual-tests/{timeline,settings}.md` の準備手順の代替**（DO 単位のシード投入、または開発用の RPC）も同じ枠で決める。`spec/manual-tests/{search,document}.md` の consumer 起動口は consumer ごと消えるので対応不要である。
 - **fail-closed で止まっている DO の検知** — `_meta.schema_version` がコードより新しい DO をメトリクスで拾う（第9.4節）。

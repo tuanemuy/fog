@@ -2926,3 +2926,181 @@ Accepted
 
 - 良い点: 「自動で解決しない」ケースの運用受け口が定義され、#38 へ送る監査要件（`conflictCount` が増えたときのエスカレーション手順）が具体化した。停止が安全側に倒れることも明文になった
 - トレードオフ: `rotation_checkpoints` が3列増える。bucket 単位の集計なので、同じ bucket で複数の衝突が起きた場合に個別の credential を全部は追えない（直近1件と件数だけが残る）。全件が要るならチャンク RPC の戻り値と operator 側のログを見る
+
+## ADR-117: `rotation_checkpoints` に `rotationKind` を足し、2つのローテーションの記録を区別する
+
+### Status
+
+Accepted
+
+### Context
+
+`rotation_checkpoints` は routing 鍵のローテーション（`rotate-remap`）と暗号化鍵のローテーション（`rotate-encryption`）の**両方**が使う。routing 側は第6.8節 手順4 が「同一 generation の全 `0..N-1` bucket で `previousCount = 0`」を旧鍵破棄条件にし、暗号化側は第6.2.1節 (b-1) が「同一 `encryptionGeneration` の全 bucket で `previousCount = 0`」を同じ形で使う。ところが表の列は `bucketIndex` / `generation` / `previousCount` / `scannedAt` + 競合3列で、**「どちらのローテーションの記録か」を示す列が無かった**。しかも第6.2.1節 (b-1) 自身が「暗号化鍵の世代は routing 世代とは独立した番号体系である」と断定しているので、`encryptionGeneration = 3` の完了記録と routing `generation = 3` の進捗記録が同一キーへ落ちる。物理的な同居も構造的に起きる — routing ローテーション G → G+1 が走査する `dir:gG:b{i}` は、その直前まで `rotate-encryption` が走っていた bucket そのものである。第4.1.1節の E-2（非集約ストアの書き込み箇所欄）が `rotation_checkpoints` の書き手を `rotate-remap` だけと書いていたことが、この共有を設計の視界から外していた。
+
+### Decision
+
+**`rotation_checkpoints` に `rotationKind`（`'remap'` / `'encryption'`）を1列足し、置換キーを `(rotationKind, bucketIndex, generation)` にする。** `generation` 列の意味は `rotationKind` に依存する（`'remap'` は routing 世代、`'encryption'` は `encryptionGeneration`）。**両ローテーションの旧鍵破棄条件のクエリにも `rotationKind` の絞りを必須にする。** テーブルは分けない — 走査・チェックポイント・retirement 証明の形が完全に同じなので、分けると同じ規則を2箇所に持つことになる。競合3列（`conflictCount` / `lastConflictAt` / `lastConflictCredentialId`。ADR-116）は `rotationKind = 'remap'` の行だけが使う（`rotate-encryption` は行を移送しないので衝突が発生しない）。あわせて E-2 の書き込み箇所欄に `rotate-encryption` を足す。
+
+### Consequences
+
+- 良い点: 「片方の完了記録が他方の旧鍵破棄条件を誤って成立させ、移送が終わっていない状態で operator が previous 世代の routing 鍵を破棄する」経路が閉じる。その経路の被害は未移送 bucket の全利用者が login も `request-password-reset` も恒久的に解決不能になること（復旧は 256 bucket の PITR しか無い）で、悪用ではなく通常運用で成立していた
+- トレードオフ: 列が1つ増え、両ローテーションの退役条件クエリに絞りが1つ増える。絞りを落とした実装は静かに誤るので、第1.4節の検査8（本文が要求する列が E-1 に実在するか）と検査9（E-2 の書き込み箇所欄の網羅）を新設して機械で見る形にした
+
+## ADR-118: 2つの鍵ローテーションを同時進行させず、移送先での `rotate-encryption` 再投入を構造的な保険にする
+
+### Status
+
+Accepted
+
+### Context
+
+初版は第6.8節末尾に「2つのローテーションは独立に走らせてよい」と1文だけ置いていた。この前提を検証すると2つの破れが出る。**(i) 同時進行中は暗号化側の retirement 証明が定義されない** — 証明は「同一 `encryptionGeneration` の全 `0..N-1` bucket について `previousCount = 0`」だが、routing ローテーションが進行中だと同じ `encryptionGeneration` の行が previous 世代と active 世代の2つの bucket 集合に散らばるので「全 bucket」が2通りに読める。**(ii) 移送が古い `encryptionGeneration` の行を、`rotate-encryption` が完走済みの bucket へ運び込む** — 移送は暗号文系3列をそのまま運ぶと決め切っており（ADR-091）、`rotate-encryption` は残件が尽きた時点で `done` + `previousCount = 0` を記録し、`done` から `pending` へ戻す唯一の手段は投入点である operator の起動 RPC だった。運び込まれた行を誰も再暗号化しないまま全 bucket の `previousCount = 0` が揃うと、operator が暗号化 previous 鍵を破棄して当該行の `encryptedCanonical` が恒久的に復号不能になる。帰結はリセットメールの宛先組み立て・自メールアドレス表示・次回ローテーションの再 HMAC の恒久的な破壊であり、login は `hmac` で解決するので**最初のリセット依頼まで顕在化しない**。第5.2.1節 (a) が「所有の唯一の証明はパスワードリセット経路である」と断定している以上、これは所有の証明そのものの喪失である。
+
+### Decision
+
+**「独立に走らせてよい」を撤回し、2点を決め切る。** **(X2) 2つのローテーションを同時進行させない** — 「一方の previous 世代の鍵を破棄し終えるまで、他方を開始しない」を運用の制約として #38 へ送る。**(X3) 運用制約が破られても恒久的なデータ喪失にならないよう、構造側で fail closed に倒す** — 第6.8節 手順2 (2) の移送先 bucket は、行を書いたのと同じ `transactionSync` の中でその行の `encryptionGeneration` を検査し、active 世代でなければ `enqueueJob('rotate-encryption', <定数 operationKey>, {}, now)` を発行する。第7.4節の再投入規則により `done` / `poison` の行は `pending` へ戻るので、運び込まれた行は必ず再暗号化の対象になり、`rotationKind = 'encryption'` の `previousCount` が0でなくなって退役条件が崩れる。**したがって `rotate-encryption` の投入点は2つになり、`kind` 全数表の投入点欄も同時に直す。** 移送時に再暗号化する案は採らない（再暗号化を `rotate-encryption` だけの仕事として定義した ADR-091 を崩す）。**あわせて ADR-091 の棄却理由から「2つのローテーションを独立に走らせてよいという断定を崩す」を落とす** — 同 ADR の棄却は「再暗号化を `rotate-encryption` だけの仕事として定義した規則を崩す」の1点だけで成立する。
+
+### Consequences
+
+- 良い点: 失敗モードが「気づかずに暗号化旧鍵を破棄して復号不能になる」から「暗号化ローテーションが可視的に完了しない」へ変わる。手順2 (2) の第2分岐（`userId` 衝突で可視的に停止させる。ADR-116）と同じ考え方に揃った。運用制約だけに頼らないので、手順書の読み違いでデータが失われない
+- トレードオフ: ローテーションを直列化するので、両方を回す場合の総所要時間が長くなる。bucket は active `encryptionGeneration` を自分の keyring（state Worker の常設バインディング）から判定できるので新しい秘密も引数も増えないが、移送経路に検査が1つ増える
+
+## ADR-119: `rotate-remap` の鍵の所持証明の射程を「previous 鍵が未漏えいであるあいだ」に限定する
+
+### Status
+
+Accepted
+
+### Context
+
+ADR-113 は `rotate-remap` の1チャンク駆動に「previous 世代の鍵の所持証明」（自 DO 名の `gen` 一致 / `activeGeneration > gen` / 自分の行1件について `HMAC(previousKey, decrypt(encryptedCanonical)) == 行の hmac`）を課し、第5.1節 (3-c) と第5.2.3節がこれを「previous 鍵を提示できるのは routing keyring を持つ request Worker だけなので、実質的な呼び出し元束縛になる」と正当化していた。**ところが routing 鍵をローテーションする第一の動機は「その鍵が漏えいしたこと」である。** 漏えい鍵 `k1` を active から previous へ降格させて走らせるローテーションの最中、`k1` を持つ攻撃者は3条件をすべて満たせる（(iii) の照合相手は `k1` で作られた previous 世代 bucket の行そのものである）。したがって攻撃者は任意の `activeKey` / `activeGeneration` / `activeBucketCount` を注入でき、行を `dir:g2:b{HMAC_k1(canonical) mod bucketCount'}` へ着地させて (a) 自分だけが `lookup-credential` で恒久的に読め、(b) 正規経路からは永久に見つからない状態を作れる。**漏えい鍵の失効手段そのものを漏えい鍵の保持者が無効化できる。** bucket 側に `activeKey` の真正性を検証できる材料は原理的に存在しない（`encryptedCanonical` と `hmac` はどちらも previous 世代の鍵に対する材料である）。
+
+### Decision
+
+**所持証明は撤去しない**（定期・衛生目的のローテーションに対しては有効で、撤去すると鍵が漏れていない場合にも任意鍵での移送駆動が通る）。**射程を明記する** — 第5.1節 (3-c)・第5.2.3節の正当化を「**previous 世代の鍵が未漏えいであるあいだに限り**呼び出し元束縛として機能する」に限定し、**漏えいを動機とするローテーションでは所持証明をガードとして数えない**と断定する。その場合の守りは maintenance 経路の到達制御と実行監査だけであり、`purge-user-mappings` とまったく同格である。**あわせて #38 へ運用要件を1つ送る — routing 鍵の漏えいを契機とするローテーションでは、鍵の世代を進めるより先に maintenance 経路の到達性（binding 構成 / デプロイ資格情報）を再発行する。** 第6.9節の該当行の「塞ぎ方」欄も、所持証明だけを解として書かない形に直す。
+
+### Consequences
+
+- 良い点: #37 / #38 が「`rotate-remap` は所持証明で束縛済み」と読んで運用ガードを弱める余地が消える。漏えい対応の手順に「到達性の再発行を先にやる」という順序制約が入り、失効操作の乗っ取りが閉じる
+- トレードオフ: ガードの正当化が条件つきになるので、読み手は2つの場合を区別して読む必要がある。手順書側も定期ローテーションと漏えい起因ローテーションで2系統になる
+
+## ADR-120: AI クライアント接続の自動失効の基準を `credentialVersion` から `resetVersion` へ切り替える
+
+### Status
+
+Accepted
+
+### Context
+
+第5.4節 (i) は「`ai_client_connections.createdAtCredentialVersion` が前進前の現在値と等しい接続をリセット完了時に `revoked` にする」と定め、これを「攻撃者が持ち込んだ分だけを切れる」と評価していた。**ところが乗っ取りの典型手順は「パスワードを握る → AI 接続を作る → パスワードを自分のものへ変更して正規利用者を締め出す」であり、この順序では失効対象が0件になる** — 接続の `createdAtCredentialVersion = n`、攻撃者の変更で `credentialVersion` が `n+1` へ進むので、被害者のリセット時点の「前進前の現在値」は `n+1` になり、`n+1` で作られた接続は存在しない。攻撃者が能動的に変更しなくても、侵害からリセットまでに正規利用者自身が1回パスワードを変えれば同じことが起きる。**「侵害復旧として不完全では困るので構造的な補償を1つ置く」という導入の目的が、最頻の攻撃系列でちょうど達成されない。**
+
+### Decision
+
+**失効の基準を credential 変更カウンタから切り離す。`account` に `resetVersion`（パスワードリセット完了だけで進む単調増加カウンタ。初期値0）を1列、`ai_client_connections` に `createdAtResetVersion`（作成時点の `account.resetVersion`）を1列足す。** 第6.5.1節 phase 2 は**起点 B（リセット完了）に限り**同じ `transactionSync` で `resetVersion` を1つ進め、`createdAtResetVersion` が前進前の値と等しい接続を `revoked` にする。`resetVersion` はリセット完了でしか進まないので、この述語は「前回のリセット完了以降に作られた接続」と同値であり、**間にパスワード変更が何回挟まっても射程が消えない**。通常のパスワード変更・SSO link / unlink では `resetVersion` を進めない。第4.1.1節の列の全数・第5.4節の表と (i)・第6.5.1節 phase 2・第11.1節のテストケース・第11.3節の利用者向け説明を同時に直す。
+
+### Consequences
+
+- 良い点: 「長く使っている接続は生き残る」という受容判断を保ったまま、失効の射程の下限が「前回のリセット以降」に固定される。攻撃者が1操作で射程を0にする経路が消える。#35 へ送る (ii) の画面導線が「名前だけの補償」を補うためのものではなくなる
+- トレードオフ: 列が2つ増え、AI 接続の作成経路（#13 の `/authorize` 承認時）が `account.resetVersion` を読んで写す必要がある。`credentialVersion` を再利用する案より列は多いが、その節約は最も守りたい系列で補償が空振りするという代償を伴う
+
+## ADR-121: `reindex` の進捗カーソルを `migration_progress` に置き、専用の内部カーソルという記述を撤回する
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節 (iii) は `reindex` / `migrate-bulk` / `finalize-withdrawal` / `purge-trash` の4種を「内部カーソルを持つジョブ」と定め、(iii-b) の中断時にカーソルのコミットを要求している。ところが永続先が定義されているのは `migrate-bulk` だけ（`migration_progress` + `setMigrationCursor`）で、第9.2節は `reindex` について「`migration_progress` ではなく自分の内部カーソルで進む」と**明示的に排除**していた。`jobs` は第4.1.1節が12列と全数を宣言していてカーソル列を持たず、第8.2節の「非集約ストアへの書き込み口の全数」にも該当する口が無い。`jobs.payload` へ持たせる形は `payloadDigest` の照合対象が「`nextRunAt` を除いた payload」と定義されているので、カーソル更新のたびに digest がずれる。**`purge-trash` / `finalize-withdrawal` は作業が行の削除なので作業述語そのものが進捗を表すが、`reindex` は projection の作り直しで本体行を消費しないため、再開位置が無いと (iii-b) で中断するたびに先頭からやり直しになり、大きく育った DO では永久に完了しない。**
+
+### Decision
+
+**`reindex` の進捗カーソルは `migration_progress` に置く。第9.2節の「`migration_progress` ではなく」という排除文を撤回する。** `migration_progress` の主キーは `(targetVersion, step)` なので、同じ `targetVersion` から `reindex` と `migrate-bulk` の両方が投入されても行が衝突しない。両者の投入点はどちらも migration ゲートであり、そこには必ず `targetVersion` があるので、`reindex` だけ別の置き場所を用意する理由が無い。**あわせて第7.4節に「永続カーソルを持つのは `reindex` / `migrate-bulk` の2種であり、`finalize-withdrawal` / `purge-trash` は作業述語が進捗を表すので永続カーソルを持たない」を明記する。** `jobs` に `cursor` 列を足す案は採らない — `jobs` は両クラスで共有する12列の表であり、User Data DO の2種のためだけに13列目を足すと Directory bucket 側の6種が常に `NULL` を持つ列が増える。
+
+### Consequences
+
+- 良い点: 第4.1.1節（列の全数）・第8.2節（書き込み口の全数）のどちらにも現れない永続状態が消える。`jobs` は12列のまま据え置かれ、第1.4節 検査7a の期待値も変わらない
+- トレードオフ: `migration_progress` の `targetVersion` の意味が「`schema_version` の目標値」から「その migration ゲートが起点になった目標値」へ少し広がる。`reindex` は本体データを書き換えないので、途中状態でも検索結果が不完全になるだけで壊れない
+
+## ADR-122: ジョブの実行可能集合を `status IN ('pending','running')` と定義し、claim と `deleteAlarm()` の述語をそこへ帰着させる
+
+### Status
+
+Accepted
+
+### Context
+
+第7.4節の claim の CAS は `WHERE operationKey=? AND (status='pending' OR leaseUntil < ?)` で、**第2の選言に `status` の絞りが無い**。`done` / `poison` へ落とす際に `leaseUntil` を解放する規定も無かったので、完了済みの行は過去の `leaseUntil` を保持したままこの述語に一致し、prune の保持期間のあいだずっと再 claim・再実行の対象になる。ジョブは冪等（第7.7節 項3）なので実害は限定的だが、同節が「lease の用途を DO リセット時の回収手段だけに限定できる」と断定している根拠が成立しない。同じ根で `deleteAlarm()` の発火条件が節内で2通りに書かれていた — 「DB に `nextRunAt` を持つ行が1件も無ければ」と書く一方、同節 (3) は「`pending` 行が常に1件あるので `deleteAlarm()` も発火しない」と書いており、前者どおりに実装すると `done` / `poison` 行が `nextRunAt` を保持するので述語が prune まで真にならず、同節が自ら「規則の一部であって省略可能な最適化ではない」として塞いだ恒久起床ループ（`setAlarm` 1回 = 課金対象の1行書き込み × 一度でもジョブを走らせた全ユーザー）がそのまま開く。
+
+### Decision
+
+**「実行可能集合 = `status IN ('pending','running')`」を第7.4節に1文で定義し、両方の述語をそこへ帰着させる。** 具体は3点。**(1)** claim の CAS を `WHERE operationKey=? AND (status='pending' OR (status='running' AND leaseUntil < ?))` にする。**(2)** `deleteAlarm()` の条件を「実行可能集合の行が1件も無ければ」とし、「`nextRunAt` を持つ行が無ければ」と書かない。**(3)** `done` / `poison` へ落とす `transactionSync` で `completedAt` を書くのと同時に `leaseUntil` / `ownerToken` / `nextRunAt` を `NULL` にする（`completedAt` が `pending` / `running` の行で `NULL` であるのと対になる列ごとの状態規定である）。`done` / `poison` から実行可能集合へ戻す唯一の手段は再投入規則（`enqueueJob`）である。
+
+### Consequences
+
+- 良い点: 一回性ジョブ（`finalize-withdrawal` など）が完了後に再実行される経路が消え、「lease は DO リセット時の回収手段だけ」という断定が成立する。`deleteAlarm()` の述語が節内で1通りになり、恒久起床ループが再び開かない。`nextRunAt` を `NULL` にしたことで「正常完了時に DB の最早 `nextRunAt` へ張り直す」の `min()` が終端行を自然に除外する
+- トレードオフ: 完了時に書く列が3つ増える（同じ `transactionSync` 内なので往復は増えない）。`poison` 行の `nextRunAt` が消えるので、「いつ実行される予定だったか」は `terminalReason` と `completedAt` から読む
+
+## ADR-123: 第4.7節の `retryable` 欄を `RETRYABLE_SYSTEM_CODES` の写しとして扱う
+
+### Status
+
+Accepted
+
+### Context
+
+第4.7節の翻訳表は行3（`ctx.abort()` / DO のリセット → `SystemError(DatabaseError)`）の `retryable` を **true** と書いていた。**実装は false である** — `packages/core/src/application/errors.ts:206-210` の `RETRYABLE_SYSTEM_CODES` は `NetworkError` / `ExternalApiError` の2値だけで `DatabaseError` を含まず、`SystemError.retryable` はこの集合からのみ導出される。第11.2節の `errors.ts` 改修行も `ServiceOverloaded` / `StorageCapacityExceeded` の2値追加しか指示していないので、表が true と書く値を実装が false で返す状態がそのまま残っていた。あわせて行1 の根拠文が「`ConflictError("OPTIMISTIC_LOCK_FAILURE")` のようなリトライ可能系へ写してはいけない」と書いていたが、`ConflictError` は `retryable` をオーバーライドせず `CodedError.retryable` の既定 false を返し（`packages/core/src/lib/error.ts:35-37`）、同表 行4 も false と書いている。行1 が言いたかったのは「リトライを誘う `kind: "conflict"`（HTTP 409）へ写すな」であって `retryable` の話ではない。
+
+### Decision
+
+**行3 の `retryable` を false に直し、`RETRYABLE_SYSTEM_CODES` の中身は変えないと断定する**（`DatabaseError` を足さない — 足すと既存の全 DB 経路の `retryable` が一斉に反転するので、表1行のために払う代償として釣り合わない）。「次のリクエストで DO が再構築されるので上位でのリトライには意味がある」ことは事実だが、それはシリアライズ契約の `retryable` フラグではなく運用上の性質なので欄には書かない。**行1 の根拠文の「リトライ可能系」を「`kind: "conflict"`（HTTP 409）系」へ言い換え、`retryable` の話ではないことを明記する。** そのうえで「この欄は `RETRYABLE_SYSTEM_CODES` から導出される実値であり、表と実装が食い違ったら表を直す」というタイブレーク規則を第4.7節に置く。
+
+### Consequences
+
+- 良い点: #37 が表の値をそのまま実装の期待値にできる。翻訳層の実装とシリアライズ契約が一致する
+- トレードオフ: 「DO のリセットは上位でリトライしてよい」という運用上の助言が表から落ちる。必要なら #38 の運用ドキュメント側で書く
+
+## ADR-124: 第1.4節の機械検査に「I-4 の逆向き」「E-2 の書き込み箇所欄」「散文中の数え上げ」を足す
+
+### Status
+
+Accepted
+
+### Context
+
+R6 で新設した第1.4節（「全数」表の不変条件 I-1〜I-8 と機械検査1〜7）は、R7 のレビューで4層すべてが実行して全項目パスを確認した。**それでも R7 の Blocker 2件と Warning 1件がすり抜けた。** 原因は検査の側の穴である。**(i) 検査6（I-4）はテーブル名が E-1 に実在するかだけを見て、本文が要求する列が E-1 にあるかを見ていなかった** — `rotation_checkpoints` の区別列の不在（ADR-117）と `reindex` のカーソル列の不在（ADR-121）がここをすり抜けた。**(ii) 検査3（I-5）は E-2 の行数と第8.2節に口があるかだけを見て、E-2 の「主な書き込み箇所」欄が本文と一致するかを見ていなかった** — `rotation_checkpoints` の欄から `rotate-encryption` が漏れていたことが、2つのローテーションが同じ表を共有している事実を設計の視界から外していた。**(iii) 検査7 の grep は5パターン決め打ちで、散文中の数え上げを拾わなかった** — 第1.3節の先行案の件数（ADR-125）がここをすり抜けた。加えて I-2 の検査は E-3 の分類欄だけを数えていたので、同じ `kind` が (1-A) と (1-B) の両方に現れる形の破れを検出できなかった。
+
+### Decision
+
+**検査を4点補強する。すべて「出力が期待どおりであること」で判定し、目視に落とさない。**
+
+1. **検査2 に I-2 の重複検出を足す** — E-3 の分類欄が2つの分類を同時に名乗る行が無いこと、および (1-A) と (1-B) の両方に現れる `kind` が無いことの2つを見る。
+2. **検査8（I-4 の逆向き）を新設する** — 認証・saga・ジョブ系テーブルの列を `テーブル:列` の一覧（58件）として検査に持ち、E-1 の当該行に実在するかを機械で見る。**本文が新しい列を導入したら E-1 と同時にこの一覧にも足す**ことを不変条件の側に明記する。
+3. **検査9（I-5b）を新設する** — 各非集約ストアについて、本文（第2章以降）で同じ行に現れる `kind` が E-2 の「書き込み箇所（全数）」欄に載っているかを見る。あわせて **E-2 の欄名を「主な書き込み箇所」から「書き込み箇所（全数）」へ変え、欄が書き手を名指しする形に統一する**（唯一の例外が `jobs` で、投入点の全数を E-3 へ委譲する）。同じ行に名前が出るが書き手ではない `kind` は除外リストに置き、**足してよいのは本文を読んで「書かない」ことを確認できた組だけ**と規則で縛る。
+4. **検査7 を 7a / 7b に分ける** — 7b は散文中の数え上げを広いパターンで洗い出し、**対応する表の行数を同じ手順でコマンドで数えて**突き合わせる。期待値を人が覚えている必要が無い形にする。第1.4節自身は検査の定義文なので走査対象から外す（`awk '/^## 2\. /{f=1} f'`）。
+
+**あわせて I-2 / I-4 / I-5b / I-8 の条文を、逆向きと射程を明示する形へ書き直す。I-8 の射程は「E-1〜E-7 に限らず、本書のどこであれ表を持つ数え上げ」とする。**
+
+### Consequences
+
+- 良い点: R7 の3種の破れがすべて機械検査で検出できる形になった（実際に補強後の検査で3件を検出し、修正後に全項目パスを確認した）。検査が1から9まで順序依存で並び、`/tmp/e3.txt`（`kind` の全数）と `/tmp/e1tbl.txt`（E-1 のテーブル行）を後段が入力にする構造も明記した
+- トレードオフ: 検査8 の列一覧と検査9 の除外リストは本書と一緒に保守する対象が2つ増える。列一覧を更新し忘れると「新しい列が検査されない」形の穴が残るので、I-4 の条文に更新義務を書いた。除外リストは確認なしに足すと検査そのものが無力化するので、その禁止も条文に書いた
+
+## ADR-125: 第1.3節の先行案の数え上げを「ADR の件数」と「表の行数」の対応として書き直す
+
+### Status
+
+Accepted
+
+### Context
+
+第1.3節は「全10件 + レビュー指摘2件に採否を出した。保留はゼロ」と書いていたが、直下の表は14行で、`git show origin/issue/19/cloudflare-do-fts:.thread/19/adr.md` を実取得して数え直すと ADR は ADR-001〜ADR-010 の10件だった。表の14行を ADR に対応づけると **ADR-003 と ADR-006 がそれぞれ2行に分割され（採否が分割の前後で違う）、ADR-009「#19 は既存 identity 移行と将来 primitive の確立までに限定する」に対応する行が1つも無い**。「レビュー指摘2件」も表と合わず、レビュー指摘由来の行は B-IDDS6-001 の1行だけで、もう1行（最小 DO command harness）は ADR-007 に対応する。さらに行2（request / state Worker 分割）と行4（検索 API の詳細）は ADR 由来ではなく先行実装由来である。したがって「保留はゼロ」は少なくとも ADR-009 について成立していなかった（実質は「#19 のクローズで対象消滅」だが、それが書かれていない）。
+
+### Decision
+
+**ADR-009 の行を表に足し、採否を「棄却（対象消滅）」として理由を書く** — #19 のクローズと #34〜#38 への分割そのものがこのスコープ宣言を置き換えたので、引き受ける対象が無い。**数え上げを「ADR 10件すべて + レビュー指摘1件 + ADR 由来でない先行実装2件」に直し、表が15行であることと、その内訳（ADR 由来12行 + 先行実装2行 + レビュー指摘1行）を同じ段落に書く。** ADR-003 / ADR-006 が2行に分かれる理由（採否が分割の前後で違うので1行にまとめない）と、行14 がレビュー指摘ではなく ADR-007 であることも明記する。**「数え上げの単位が表の行数と一致しない場合は、対応関係を同じ段落に書く」を I-8 の条文に足す。**
+
+### Consequences
+
+- 良い点: 先行案の採否が「ADR の全数」に対して閉じたことが読者に確認可能になった。表の行数と ADR 件数の食い違いが、対応関係の明記によって矛盾ではなくなった
+- トレードオフ: 段落が1つ増える。数え上げが2種類（ADR 件数と表の行数）になるので、片方だけを直すと再び食い違う — 第1.4節 検査7b がこの2つを両方コマンドで数えて突き合わせる
