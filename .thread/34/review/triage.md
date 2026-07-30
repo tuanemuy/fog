@@ -291,4 +291,17 @@ R6 の構造的修正（第1.4節の不変条件 I-1〜I-8 と機械検査）は
 | `design.md:1.4/検査7b の期待値注記が実測とずれ` | R8 | fix | `-> 10` に対し実測12。3層が独立に検出。検査が自分自身を走査対象外にしているため機械検出できない | 0 |
 | `design.md:7.4/sweep-orphan-mapping の残件条件と finalize-withdrawal の生存期間` | R8 | fix | 退会経路で (B) の残件が単調減少しない可能性 | 0 |
 
-**Round 8 集計**: fix 3 / wont-fix 0 / defer 1（#44。4ラウンド分の Blocker 8件を含む）
+### Round 8 追加（`review-008-async-uow.md` が遅れて書き込まれた分）
+
+非同期・UoW 視点のレビューファイルは、サブエージェントが「書き込んだ」と報告した時点では実ファイルが存在せず、後から書き込まれた。B-001（移送先書き込みの実行主体が未定義）はローテーション由来のため **#44 へ引き継ぎ済み**。W-007 は上記の検査7b の指摘と同一 Key。残る6件は新規。
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `design.md:9.2/FTS5 'rebuild' が分割不能` | R8 | fix | 「必ず分割する」と両立しない。`CREATE INDEX`（条件4）と同型 | 0 |
+| `design.md:7.4/(iii-b) の pending 解放と 25件 の矛盾` | R8 | fix | 同一起動の再 claim について1起動あたり上界が25倍変わる | 0 |
+| `design.md:7.6/send-mail の収束説明と再投入規則の衝突` | R8 | fix | 「何も起きず」が `done`/`poison` → `pending` 再投入と衝突し優先順位が未定義 | 0 |
+| `design.md:7.4/「時計を読む実装を1箇所も置かない」の射程` | R8 | fix | 同節の `leaseUntil` / backoff / `completedAt` / clamp / prune と矛盾 | 0 |
+| `design.md:7.5/retention 一括再計算の進捗表現` | R8 | fix | チェックポイント分割に進捗の表現が無く、永続カーソル不要の根拠が UPDATE 作業に届かない | 0 |
+| `design.md:9.4/fail-closed のバックオフと「(3) を飛ばして戻る」の両立` | R8 | fix | 2つの記述が両立しない | 0 |
+
+**Round 8 集計（最終）**: fix 9 / wont-fix 0 / defer 1（#44。4ラウンド分の Blocker 8件 + R8 async B-001 を含む）
