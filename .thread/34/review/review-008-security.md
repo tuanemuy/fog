@@ -1,0 +1,36 @@
+# レビュー 008 — セキュリティ
+
+対象: PR #43 / Issue #34 / `.thread/34/design.md`（2,437行、全文読了）
+照合した実装: `apps/web/app/presentation/{currentUser,authState,errorResponse}.ts`、`packages/core/src/application/di/{secrets,types}.ts`、`packages/core/src/adapters/webcrypto/hmacSessionCodec.ts`、`packages/core/src/application/ports/sessionCodec.ts`、`packages/core/src/domain/identity/{valueObject,entity}.ts`、`packages/core/src/domain/identity/ports/userRepository.ts`、`packages/core/src/adapters/d1/migrations/0000_initial.sql`、`packages/core/src/application/errors.ts`、`packages/core/src/lib/error.ts`
+
+## セキュリティ
+
+### Blockers
+
+- **[B-001]** `begin-credential-change` 起点 B の束縛が「ログ出力を許した値」と「非秘密の識別子」だけで構成されており、binding 到達性を持つ呼び出し元に対する**乗っ取り原始関数**が残る。第5.1節 (3-a) の「`operationId` は capability ではない／その前提を破っていた唯一のエントリが `cancel-reservation` だった」という断定と自己矛盾する。
+  - 場所: `.thread/34/design.md:712`（クラス (2) `begin-credential-change` のガード欄）、`.thread/34/design.md:754`（(3-d) の「唯一の例外は起点 B」）、`.thread/34/design.md:1251-1252`（第6.5.1節 起点 B）、`.thread/34/design.md:746-747`（(3-a) の「`operationId` は capability ではない」）、`.thread/34/design.md:790`（第5.2節 (c)）、`.thread/34/design.md:1040`（(C5)）
+  - 理由:
+    - (3-d) は「`begin-credential-change` を無束縛にすると任意アカウントの `pendingVerifier` を差し替えて `resume-credential-change` の Alarm に phase 2 / 3 を自走させられる（**乗っ取り原始関数**）」と自ら書き、起点 A には `callerToken` を課している。ところが起点 B の束縛は「引数の `operationId` が同 bucket の `password_reset_tokens` 行の `consumedByOperationId` と一致し、その行の `credentialId` が対象と一致すること」の2点だけである（:712）。
+    - **この2点はいずれも攻撃者から遮断されていない。** (i) `operationId` は第5.2節 (c) が**未認証経路のログに出してよい唯一の値**と明記している（:790）。リセット完了は未認証経路である。(ii) `credentialId` は第5.2節 (c) の非露出リスト（canonical / HMAC / locator / `passwordVerifier` / `encryptedCanonical` / リセットトークン / `callerToken`）に**入っていない**うえ、(C5) が設定画面へ表示し unlink の引数として**クライアントから受け取る**と決めている（:1040）。つまり秘密ではない。`callerToken` を非露出対象に入れて束縛の実体にした (3-b)(3-d) の設計意図が、起点 B だけ成立していない。
+    - **bucket の宛先も障壁にならない。** 攻撃者は routing secret を持たなくても DO 名 `dir:g{gen}:b{index}` を `index = 0..255` で総当たりできる（第6.2節で bucket 数256、名前に世代と index しか入らない）。第5.1節 (3-a) が `cancel-reservation` について発火条件と認めた「ログ閲覧権限 + binding 到達性」とまったく同じ前提で足りる。
+    - **窓は「直前」ではなく token TTL 全体である。** 第6.5.1節（:1252）は束縛を「その `operationId` で**直前に**消費されたトークン」と説明しているが、:712 の述語に鮮度条件も一回性条件も無い。しかも `consume-reset-token` は `usedAt` を立てるだけで行を消さず、第6.5.1節 phase 1 が消すのは**未使用**トークンだけ（:997 / :1261）、行が消えるのは `sweep-reset-tokens` の期限切れ掃除（:506・:1583）である。したがって消費済み行は数時間残り、その間ずっと再生可能である。**なお「直前に自分が処理した RPC であること」は、第5.1節 :707 が `report-login-result` について「DO は RPC を跨いだセッション状態を持たないので実装不能な述語である」と自ら結論づけた形そのものであり、起点 B でも同じく実装できない。** :1252 の「直前に」は :712 の述語では担保されていない。
+    - **成立する攻撃**: (1) 未認証経路のログからリセット完了の `operationId` を得る、(2) 対象の `credentialId` を得る（認証済み経路のログ、または UI へ出る値なので秘密ではない）、(3) `index = 0..255` の各 bucket へ `begin-credential-change`（起点 B、`pendingVerifier` = 攻撃者のハッシュ）を投げる、(4) 一致した bucket が `changeState = 'pending'` を書き `resume-credential-change` を投入、(5) phase 2 は `advance-credential-change` で `callerToken` を要求するが、**それを提示するのは正規の Directory bucket 自身**なので通る、(6) phase 3 で攻撃者の `pendingVerifier` が `passwordVerifier` へ昇格。終状態は**攻撃者のパスワードで正規にログインできるアカウント**である。
+    - 脅威クラスは (3-b) が「正しく塞げている」と宣言した「binding には到達できるが `SESSION_SECRET` を持たない呼び出し元」（:752）そのものである。このクラスについて設計が受容済みと明記している残余リスクは `purge-user-mappings` の**恒久ロックアウト**（:725・:765）だけで、**認可が開く向きの原始関数は受容していない**。したがって受容済みリスクの範囲外である。
+    - 併せて、第10.1節（:2078）が PITR 経路で「`consume-reset-token` → `begin-credential-change` → phase 2/3 で攻撃者の `pendingVerifier` が昇格する」を**認可が開く唯一の PITR 経路**として特定し必須ステップを置いているのに、**PITR を経ない同じ昇格経路**が RPC 側に開いている。片方だけを塞いだ形になっている。
+  - 提案: 起点 B の束縛を、ログにも UI にも出ない値の一回性提示に変える。次の2点を第5.1節の表・第6.5.1節・第4.1.1節の `password_reset_tokens` 行に同時に反映する。
+    1. **`consume-reset-token` が128ビットの暗号論的乱数 `changeAuthToken` を採番し、消費したトークン行に保存して戻り値で返す。`begin-credential-change` 起点 B はこれの定数時間比較を必須ガードにする。** 材料は増えない（bucket が自分で採番し自分で照合する。`callerToken` と同じ形）。この値を第5.2節 (c) の非露出対象に加え、`consumedByOperationId` は監査用の記録に格下げする。
+    2. **束縛を一回性にする。** `begin-credential-change` 起点 B の成功時に同じ `transactionSync` で `changeAuthToken` を消す（`NULL → 値` ではなく `値 → NULL` の CAS）。これで「後勝ちでもう一度リセットをやり直す」ケースは**新しいリセット依頼から**やり直すことになり、第6.1節 (d) が既に受容している「リセットをやり直す」影響と同じ大きさに収まる。第6.5.1節 :1260 の後勝ち規則は「別の `operationId` による**新しい依頼**」を対象とする形に読み替える（新しい依頼は新しいトークンと新しい `changeAuthToken` を持つので規則は成立し続ける）。
+    - 上記を入れたら、第5.1節 (3-d) の「唯一の例外は起点 B」という記述と (3-a) の「`operationId` は capability ではない／破っていたのは `cancel-reservation` だけ」を書き換える。第6.9節の締め出し／認可漏れ経路一覧にも行を1つ足す（`cancel-reservation` の行と同じ形で、根が「第5.2節 (c) がログ出力を許した値を束縛に使った」であることを書く）。
+    - 代替案として「起点 B を廃止し、リセット完了でも一度セッションを発行してから起点 A に合流させる」形も閉じるが、リセット完了前にセッションを発行することになり第6.5.1節の fail closed 順序（phase 1 で旧材料を無効化してから前進）を崩すので、上の1+2のほうが既存制約を1つも破らない。
+
+### Warnings
+
+なし。
+
+### Notes
+
+- **[N-001]** 引用している実装の事実は全件一致した。`currentUser.ts:17-26` / `:28-33`（「The authoritative guard」の JSDoc）、`authState.ts:18-23`、`secrets.ts` の3保証（`MIN_SESSION_SECRET_LENGTH = 32` / ブランド型 `SessionSecret` / `RequestSecrets` の入れ子と rest-spread の関係）、`hmacSessionCodec.ts` の `parsePayload` が `uid` / `exp` しか見ないこと、`sessionCodec.ts` の `issue(userId, now)` / `verify` に epoch の口が無いこと、`valueObject.ts:45-62` の `Email.create`（`:47` の `trim().toLowerCase()`、`EMAIL_MAX_LENGTH = 320`、`EMAIL_PATTERN`）、`SsoProvider = "google" | "apple"`、`AiClientConnectionId` / `ClientName` だけが実装済みで `AiClientConnection` 型が無いこと、`userRepository.ts` が `insert` / `save` / `findById` / `findByEmail` の4本で `findBySsoIdentity` がリポジトリにも `apps/web/` にも1件も無いこと、`0000_initial.sql` の実テーブルが `_occ_guard` / `outbox_events` / `processed_events` / `users` の4つで `users_email_uq`（:46）/ `users_sso_identity_uq`（:47）が実在すること、`errors.ts` の `RETRYABLE_SYSTEM_CODES` が `NetworkError` / `ExternalApiError` の2値であること、`error.ts` の `retryable` 既定 `false`、`di/types.ts` の `RequestContainer`（:53）/ `WorkerContainer`（:70）の2つだけ、`errorResponse.ts:70` の `serializeError` と `:101` の `HTTP_STATUS_BY_KIND` — いずれも記述どおりである。
+- **[N-002]** AI クライアント接続の失効基準を `credentialVersion` から `account.resetVersion` へ切り替えた判断（第5.4節 (i)）は、射程の主張が正しく成立していることを追跡して確認した。`createdAtResetVersion ≤ resetVersion` が常に成り立ち、`resetVersion` はリセット完了でしか進まないので「前進前の現在値と等しい」は「前回のリセット完了以降に作られた接続」と同値になる。`changeState = 'pending'`（phase 1〜2 の窓）で攻撃者がセッションを使って作った接続も、phase 2 の前進前の値と等しいので射程に入る。`credentialVersion` 基準では最頻の乗っ取り系列（接続作成 → 攻撃者がパスワード変更）で失効対象が0件になるという指摘も、そのとおり成立する。
+- **[N-003]** `rotate-remap` の「previous 世代の鍵の所持証明」の射程限定（第5.1節 (3-c)・第5.2.3節）は、漏えい起因のローテーションでガードとして数えないことと、そのとき残るのが到達制御と監査だけであることを明示しており、さらに「鍵の世代を進めるより先に maintenance 経路の到達性を再発行する」を #38 の運用要件へ落としている（:2407）。ガードの限界を過大評価しない書き方になっている。0件 bucket が (iii) を空振りで通す扱い、および復号に使う `encryptionGeneration` が退役済みなら証明が失敗してチャンクが拒否される（＝安全側で停止する）ことも整合している。
+- **[N-004]** 2つのローテーションの同時進行禁止（第6.8節 (X1)〜(X3)）は、運用制約 (X2) が破られたときの失敗モードを「気づかずに復号不能」から「`rotationKind = 'encryption'` の `previousCount` が0に戻らない＝可視的に未完了」へ移す構造側の保険 (X3) を持ち、投入点が2つになったことを第7.4節の `kind` 全数表（:1584）にも反映してある。第1.4節 I-1 の不変条件が実際に効いている例である。
+- **[N-005]** `abandon-account`（:723）と `activate-reservation` / `propagate-saga-committed`（:717・:724）は束縛が `operationId` + phase 条件だけだが、(a) User Data DO の宛先には `userId` が要り第5.2節 (c) が未認証経路での `userId` 出力を禁じている、(b) `done` に達した saga は倒せない、(c) 進行中 saga の phase を先へ進めるだけで新しい状態を作れず、取り残された行は第6.4節 3 の終端規則（`status` を問わない `cancel-reservation`）が回収する — の3点で durable な悪状態に落ちない。(3-a) の正当化文がこの3本には実際に届いている。B-001 が問題になるのは、起点 B が**新しい認証材料を攻撃者の値で書ける**側だからである。
