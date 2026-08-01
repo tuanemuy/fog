@@ -22,5 +22,5 @@
 | — | `limit: 0` で取得する | バリデーションエラー | |
 | — | `limit: 101`（上限超過）で取得する | バリデーションエラー | |
 | — | `limit: 1` / `limit: 100`（境界値）で取得する | 正常に処理される | |
-| `userId` に対応するユーザーが存在しない | 一覧を取得する | `NotFoundError` | |
+| `userId` に対応する Durable Object が未初期化（ユーザー単位設定の行が無い） | 一覧を取得する | エラーにならず `items: []`、`totalCount: 0` が返る。**実在確認は行わない** — 保持日数を読まなくなったのでフローは Durable Object の選択と `TrashQueryPort` だけになり、未初期化の DO は空のゴミ箱として振る舞う | |
 | `TrashQueryPort.listTrashItems` で DB 例外が発生する | 一覧を取得する | `SystemError(DatabaseError)` | |

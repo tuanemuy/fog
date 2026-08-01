@@ -12,8 +12,8 @@
 | Phase 0: 準備 | 完了 | idea.md |
 | Phase 1: シナリオ設計 | 完了 | [scenario/index.md](./scenario/index.md)（account / timeline / document / search / trash / ai / settings） |
 | Phase 2: ページ設計 | 完了 | [pages/index.md](./pages/index.md)（P-01〜P-14 の14画面） |
-| Phase 3: 技術設計 | 完了 | [domains/index.md](./domains/index.md)・spec/usecases/・[database/index.md](./database/index.md)・spec/testcases/（53ユースケース・814ケース）・クロスフェーズ検証（spec/review/cross-phase/） |
-| Phase 4: マニュアルテスト | 完了 | [manual-tests/index.md](./manual-tests/index.md)（7カテゴリ・201ケース） |
+| Phase 3: 技術設計 | 完了 | [domains/index.md](./domains/index.md)・spec/usecases/・[database/index.md](./database/index.md)・spec/testcases/（54ユースケース・838ケース）・クロスフェーズ検証（spec/review/cross-phase/） |
+| Phase 4: マニュアルテスト | 完了 | [manual-tests/index.md](./manual-tests/index.md)（7カテゴリ・204ケース） |
 | デザイン（design-flow） | 完了 | [design/index.md](./design/index.md)・[design/tokens.md](./design/tokens.md)・spec/design/pages/（P-01〜P-14 の14画面 HTML）・spec/design/review/（5ラウンド） |
 
 ## 成果物
@@ -21,10 +21,10 @@
 - [scenario/index.md](./scenario/index.md) — シナリオ設計（7カテゴリ・39シナリオ）
 - [pages/index.md](./pages/index.md) — ページ設計（P-01〜P-14）
 - [domains/index.md](./domains/index.md) — ドメイン設計（identity / memo / knowledge / search / trash / export）
-- spec/usecases/ — ユースケース設計（6ドメイン・53ユースケース）
+- spec/usecases/ — ユースケース設計（6ドメイン・54ユースケース）
 - [database/index.md](./database/index.md) — DB設計（ユーザー単位 SQLite-backed Durable Objects。User Data DO 16 テーブル / Identity Directory DO 5 テーブル）
-- spec/testcases/ — テストケース定義（53ユースケース・814ケース）
-- [manual-tests/index.md](./manual-tests/index.md) — マニュアルテスト（201ケース）
+- spec/testcases/ — テストケース定義（54ユースケース・838ケース）
+- [manual-tests/index.md](./manual-tests/index.md) — マニュアルテスト（204ケース）
 - spec/review/cross-phase/ — クロスフェーズ検証
 - [design/index.md](./design/index.md) — デザイン方針（ソフトミニマリズム。採用ドラフト: [mock.html](./mock.html)）
 - [design/tokens.md](./design/tokens.md) — デザイントークン

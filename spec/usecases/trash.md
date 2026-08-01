@@ -54,12 +54,13 @@ TrashItemView（`kind` による直和）:
 2. `TrashQueryPort.listTrashItems(pagination)` で `TrashItem` のページを取得する（削除日時の降順。`expiresAt` は保存済みの `purgeAfter` がそのまま載る）
 3. `PaginationResult` を view に射影して返す。0 件は空配列（S-TR-01 エッジケース「ゴミ箱が空」の表示は UI の責務）
 
+**ユーザーの実在確認は行わない。** 保持日数を読まなくなったので `UserSettingsRepository` を経由せず、フローは Durable Object の選択と `TrashQueryPort` だけになる（共通事項「保持日数が必要になるのは `purgeAfter` を算出・再計算するときだけ」）。未初期化の Durable Object は空のゴミ箱として振る舞い、`listTrashItems` は 0 件を返す。
+
 ### エラーケース
 
 | 条件 | 種類 |
 |---|---|
 | page / limit が範囲外 | バリデーションエラー |
-| ユーザー不在 | NotFoundError |
 | DB 障害 | SystemError(DatabaseError) |
 
 ## restoreMemo ★
@@ -298,11 +299,10 @@ destination（直和）:
 
 | 条件 | 種類 |
 |---|---|
-| ユーザー不在 | NotFoundError |
 | 個別項目の OCC 競合 | ConflictError（記録して続行。全体は中断しない） |
 | DB 障害 | SystemError(DatabaseError) |
 
-ゴミ箱が空の場合はエラーにせず `deletedCount: 0` を返す。
+**ユーザーの実在確認は行わない**（listTrash と同じ理由）。ゴミ箱が空の場合も、未初期化の Durable Object に対する実行も、エラーにせず `deletedCount: 0` を返す。
 
 ## pruneExpiredTrashItems
 
@@ -310,15 +310,18 @@ destination（直和）:
 
 保持期限切れ（`purgeAfter < now`）のゴミ箱項目を自動でハードデリートする（S-TR-05）。**自分のユーザー単位 Durable Object の `purge-trash` ジョブから実行される**（`spec/database/index.md`）。ユーザー操作はなく、いかなる外部インターフェースにも公開しない。全ユーザーを1バッチで舐める定期実行ワーカーは存在しない。期限内の項目には一切触れない（「期限内であればいつでも復元できる」の保証）。
 
-**起動契機は cron ではなくジョブの起床である。** ソフトデリートと保持日数の変更が「ゴミ箱内の `purgeAfter` の最小値」（`TrashQueryPort.findEarliestPurgeAfter`）で起床時刻を張り、ジョブは完了トランザクションの中で同じ駆動源を読み直して次回を張り直す（domains/trash.md「保持期限」）。
+**起動契機は cron ではなくジョブの起床である。** ソフトデリートと保持日数の変更が「ゴミ箱内の `purgeAfter` の最小値」（`TrashQueryPort.findEarliestPurgeAfter`）で起床時刻を張り、ジョブは完了トランザクションの中で同じ駆動源を読み直して次回を張り直す（domains/trash.md「保持期限」）。**投入点は memo の `softDeleteMemo` / AI `delete`、knowledge の `trashDocument` / `trashTopic`、identity の `changeTrashRetentionDays` の5つで、これが全数である。** 張り直しは残件があるときにしか効かないので、ゴミ箱が空になって待機状態へ落ちた本ジョブを再起動できるのは投入点だけである。
 
 ### 入力DTO
 
 | フィールド | 型 | 必須 | バリデーション |
 |---|---|---|---|
-| chunkLimit | number | 必須 | 1 以上の整数（1 回の起床で処理する上限。ジョブ実行部が与える） |
+| chunkLimit | number | 必須 | 1 以上の整数（**1 チャンクで触る行数の上限**。ジョブ実行部が与える） |
+| maxChunks | number | 必須 | 1 以上の整数（**1 回の起床で回してよいチャンク反復回数の上限**。ジョブ実行部が与える） |
 
 ユーザー由来の入力はない。**`userId` も受け取らない** — 自分の Durable Object の中の期限だけを見るためである。
+
+2 つの上限は `spec/database/index.md`「jobs」の3階層のうち内側の2つ（1 チャンクの行数 / チャンク反復回数）に対応する。**行数上限と反復回数上限は必ず対で置く** — `chunkLimit` だけでは1チャンクの大きさが縛られるだけで反復回数が縛られず、「`chunkLimit` 件ずつ無限回」が上限に違反せずに書けてしまう。経過時間では測らない。
 
 ### 出力DTO
 
@@ -331,14 +334,14 @@ destination（直和）:
 ### 処理フロー
 
 1. `now = clock.now()` を取得する
-2. **保持日数の変更に伴う `purgeAfter` の再計算に残件があれば、空になるまで先に進める** — `UserSettingsRepository.find()` の `trashRetentionDays` を入力に `MemoRepository.recalculatePurgeAfter` / `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter` を、3つとも `hasMore` が偽になるまで呼ぶ（延長方向の変更で誤削除が起きないよう、再計算フェーズが必ず先である。domains/trash.md「保持期限」）。**残件はカーソルではなく作業述語が表す**ので、進捗を別に永続化しない
-3. 自分の Durable Object の索引から `purgeAfter < now` のゴミ箱項目を `chunkLimit` 件まで取得する（`TrashQueryPort.listItemsToPurge(now, chunkLimit)`）
+2. **保持日数の変更に伴う `purgeAfter` の再計算に残件があれば先に進める** — `UserSettingsRepository.find()` の `trashRetentionDays` を入力に `MemoRepository.recalculatePurgeAfter` / `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter`（1 回の呼び出しが `chunkLimit` 行を上限とする1チャンク）を、3つとも `hasMore` が偽になるまで繰り返し呼ぶ。**ただし反復は `maxChunks` で有界にする** — 上限に達したらこの起床では再計算を打ち切り、手順3以降へ進まずに `hasMore: true` を返して次の起床に委ねる。延長方向の変更で誤削除が起きないよう、**削除フェーズへ進むのは再計算の残件が空になった起床だけである**（domains/trash.md「保持期限」）。**残件はカーソルではなく作業述語が表す**ので、進捗を別に永続化しない。述語は更新した行をその場で外して単調に縮むため、残件は**有限回の起床で**空になる
+3. 自分の Durable Object の索引から `purgeAfter < now` のゴミ箱項目を `chunkLimit` 件まで取得する（`TrashQueryPort.listItemsToPurge(now, chunkLimit)`）。**この取得から手順5の消去までを1チャンクとし、手順2で使い残した `maxChunks` の予算の範囲で繰り返す**
 4. 各項目を `HardDeletePolicy.expandTargets(item)` で `HardDeletePlan` に展開する（期限切れトピックは自身の `setDocumentIds` から展開され、配下ドキュメントごと消去される。追加のポート照会は不要）
 5. 項目ごとに UnitOfWork 内で実行する:
    1. 消去前に影響先を確定する: メモは `DocumentRepository.listSourceLinksByMemo`、ドキュメントは `DocumentRepository.listSourceLinksByDocument`
    2. `findByIdIncludingTrashed`（memo / knowledge の各リポジトリ）で対象を OCC トークン付きで個別再取得し、`MemoRepository.hardDelete` / `DocumentRepository.delete` / `TopicRepository.delete` を実行する。メモの場合は同一 UoW で `DocumentRepository.deleteSourceLinksByMemo` も呼ぶ（ADR-003 の同期方式）
    3. 同じ `transactionSync` の中で、消去した項目のエントリを projection から除去し、影響先（出典リンクの相手）のエントリを作り直す
-6. 1 件の失敗は記録（logger）して次の項目へ進む。上限に達したら残件を `hasMore` で返し、次回の起床に委ねる（1 回で全件を消化しようとしない）
+6. 1 件の失敗は記録（logger）して次の項目へ進む。**チャンク反復回数が `maxChunks` に達したか、`listItemsToPurge` が 0 件を返したら**その起床を終え、残件の有無を `hasMore` で返して次回の起床に委ねる（1 回で全件を消化しようとしない）
 
 冪等性: 既にハードデリート済みの項目は駆動源のクエリに現れず、二重に起きても安全。同一項目への並行実行（emptyTrash / hardDeleteTrashItem との競合を含む）は OCC / 行不在の検出で片方が no-op になる。
 

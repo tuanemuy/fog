@@ -190,7 +190,7 @@ export const RetentionPolicy = {
 - **保持期限を短く変更した場合も、既にゴミ箱にある項目に適用される**（S-TR-05）。変更と**同一トランザクションで**ゴミ箱内全項目の `purgeAfter` を再計算し、新しい最も早い期限で次回の起床を張り直す。件数は利用者1人分なので一括更新で足り、大きい場合はチャンクに分けて進める
   - **書き込み口は各ドメインの Repository の `recalculatePurgeAfter(retentionDays, limit)` である**（memo / knowledge の3ポート。上記「書き込みポートについて」）。**進捗はカーソルではなく作業述語が表す** — 「まだ再計算していない項目」＝「`purgeAfter` が新しい保持日数から算出される値と一致しない項目」であり、更新した項目はその場で述語から外れるので、残件の有無だけを戻り値に持てば次のチャンクは先頭から始めてよい。保持日数が再計算の途中でもう一度変わっても、述語が新しい値に対して定義され直されるだけで先頭からやり直しにはならない
   - **算出規則の正本は `RetentionPolicy.expiresAt` である。** アダプターは一括更新のために同じ規則を持つが、規則を変えるときは両方を動かす（同じ規則を2箇所に持つことの明示的な受容である）
-- **延長方向の変更では、再計算が済むまで削除を進めない。** 再計算前の項目は古い（短い）期限を持っているので、順序を決めないと利用者が延ばしたはずの項目が消える。削除が次の起床へ遅れるのは安全側である（保持期限は「少なくともこの期間は保持する」規定である）
+- **延長方向の変更では、再計算が済むまで削除を進めない。** 再計算前の項目は古い（短い）期限を持っているので、順序を決めないと利用者が延ばしたはずの項目が消える。削除が次の起床へ遅れるのは安全側である（保持期限は「少なくともこの期間は保持する」規定である）。述語が単調に縮み、1回の起床で回すチャンク反復回数にも上限があるので、**残件は有限回の起床で空になる**（後述「ジョブのフロー」）
 
 ## ポート
 
@@ -239,6 +239,7 @@ trash 独自の書き込みポートは持たない。
 - 復元は memo の `Memo.restore(...)`、knowledge の `Document.restore(...)` / `TopicTrashService.restoreTopicSet(...)` といった各エンティティ・ドメインサービスの状態遷移として実行し、永続化は各ドメインの Repository（`MemoRepository` / `DocumentRepository` / `TopicRepository`）の `save` を使う
 - **保持日数の変更に伴う `purgeAfter` の一括再計算も各ドメインの Repository が担う**（`MemoRepository.recalculatePurgeAfter` / `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter`）。ゴミ箱内の全項目を `find` → `save` で回す形は採らない — 項目ごとに OCC トークンが要り、「同一トランザクションで一括更新する」という要求と噛み合わないためである（後述「保持期限」）
 - ハードデリートは各 Repository のハードデリート用メソッドを使う。`MemoRepository.hardDelete(id, expectedVersion)` の契約は**メモ本体と全リビジョンの消去のみ**であり、出典リンク（knowledge のテーブル）は含まない。出典リンクの消去は、trash のユースケースが**同一 UnitOfWork 内で** knowledge の `DocumentRepository.deleteSourceLinksByMemo(memoId)` を併せて呼ぶことで行う（ADR-003 の同期方式。オーケストレーションは trash のユースケースの責務）。ドキュメント / トピックのハードデリートは knowledge の `DocumentRepository.delete` / `TopicRepository.delete`（アダプターが同一トランザクションでリビジョンと documentId 側の出典リンクも消去する契約）を使う
+- **`purge-trash` の起床の投入も trash のポートではない。** 投入口は UnitOfWork コンテキストの `enqueueJob` であり、読み側の `TrashQueryPort.findEarliestPurgeAfter`（材料を返すだけ）と対になる。**したがって「trash は書き込みポートを持たない」は起床の投入を足しても崩れない** — 投入を行うのはソフトデリート・保持日数変更を実行する memo / knowledge / identity のユースケースであって、trash のユースケースではない（後述「保持期限」）
 - 理由: 削除状態の所有者は memo / knowledge であり（ADR-004）、書き込み経路を各ドメインに一本化することで、不変条件（リビジョンとの整合、出典リンクの消去、OCC）の実施箇所を分散させない。trash が独自の書き込みポートを持つと、同一テーブルへの書き込み契約が二重定義になる
 - したがって trash のユースケースは、`TrashQueryPort`（読み取り）+ memo / knowledge の Repository（書き込み、UnitOfWork 経由）+ trash のドメインサービス（規則）を組み合わせる構成になる
 
@@ -249,20 +250,21 @@ trash 独自の書き込みポートは持たない。
 **期限の持ち方と起床の張り方:**
 
 1. ソフトデリート時に `RetentionPolicy.expiresAt` を算出して `purgeAfter` に保存する
-2. 同じトランザクションで「ゴミ箱内の `purgeAfter` の最小値」を求め（`TrashQueryPort.findEarliestPurgeAfter`）、それが現在予定されている起床より早ければ `purge-trash` ジョブを投入する。**投入は早める方向にのみ効く**
+2. 同じトランザクションで「ゴミ箱内の `purgeAfter` の最小値」を求め（`TrashQueryPort.findEarliestPurgeAfter`）、それが現在予定されている起床より早ければ `purge-trash` ジョブを投入する（投入口は UnitOfWork コンテキストの `enqueueJob` であり、trash 独自の書き込みポートは介さない）。**投入は早める方向にのみ効く**ので、延長方向の変更では何も書かれず、既存の早い起床が1回空振りしてから手順3の張り直しが正しい時刻を書く
+   - **投入点は5つで、これが全数である** — ソフトデリートの4ユースケース（memo の `softDeleteMemo` と AI `delete`、knowledge の `trashDocument` と `trashTopic`）と、保持日数の変更（identity の `changeTrashRetentionDays`）である。**どれか1つでも投入を書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない** — 手順3の張り直しは残件があるときにしか効かないので、待機状態からの復帰手段は投入点しかない
 3. `purge-trash` は完了トランザクションの中で駆動源（ゴミ箱内の `purgeAfter` の最小値）を読み直し、対象が残っていれば自分の次回時刻をそこへ設定して待機状態へ戻す。**これが無いと1回目の完走で終了し、次の期限が来ても二度と起きない**
 4. 復元時は `purgeAfter` を `null` へ戻す。戻さないと駆動源が過去へ固定され、起床が止まらなくなる
 
 **ジョブのフロー:**
 
-1. 再計算の残件（`trashRetentionDays` 変更に伴う `purgeAfter` の一括再計算）があれば、空になるまで先に進める（各 Repository の `recalculatePurgeAfter` を残件が無くなるまで呼ぶ）
+1. 再計算の残件（`trashRetentionDays` 変更に伴う `purgeAfter` の一括再計算）があれば先に進める（各 Repository の `recalculatePurgeAfter` を1チャンクずつ繰り返し呼ぶ）。**1回の起床で回すチャンク反復回数には上限があり、上限に達したら残件を残したまま抜けて次の起床に委ねる。削除フェーズ（手順2以降）へ進むのは、再計算の残件が空になった起床だけである** — 「残件が空になるまで」は起床をまたいだ収束であって1回の起床の中で完了することではない（1回の起床を無界にすると、ゴミ箱の大きい Durable Object では予算を使い切って途中で落ちる。`spec/database/index.md`「jobs」の3階層の上限）
 2. 期限切れ項目（`purgeAfter` が現在時刻を過ぎたもの）を自分の Durable Object の索引から引く（`TrashQueryPort.listItemsToPurge(now, chunkLimit)`）
 3. 各項目について `HardDeletePolicy.expandTargets(item)` で `HardDeletePlan` に展開する（期限切れトピックは自身の `setDocumentIds` から展開され、配下ドキュメントごと消去される。追加のポート照会は不要）
 4. 項目ごとに UnitOfWork 内で実行する:
    - 消去前に影響先を確定する: メモの消去では `DocumentRepository.listSourceLinksByMemo` で当該メモを出典とするドキュメント ID 群、ドキュメントの消去では `DocumentRepository.listSourceLinksByDocument` で出典メモ ID 群を取得する
    - `findByIdIncludingTrashed`（memo / knowledge の各リポジトリ）で対象を OCC トークン付きで個別再取得し、該当 Repository のハードデリート（`MemoRepository.hardDelete` / `DocumentRepository.delete` / `TopicRepository.delete`）を実行する。メモの場合は同一 UoW で `DocumentRepository.deleteSourceLinksByMemo` も呼ぶ（ADR-003 の同期方式）
    - **同じトランザクションの中で、消去した項目の検索インデックスエントリを除去し、影響先（出典リンクの相手）のエントリを作り直す**（別ストアへ配送する経路は無い）
-5. 1回の起床で処理する量には上限を置き、残件があれば進捗を確定してから次の起床を張る（1回で全件を消化しようとしない）
+5. 1回の起床で処理する量には上限を置き、残件があれば進捗を確定してから次の起床を張る（1回で全件を消化しようとしない）。**上限は「1チャンクで触る行数」と「1回の起床で回すチャンク反復回数」の2つで、再計算フェーズと削除フェーズの双方に掛かる**（`spec/database/index.md`「jobs」の3階層のうち内側の2つ。経過時間では測らない）
 
 補足:
 

@@ -395,6 +395,7 @@ RevisionView:
    2. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`Memo.softDelete(memo, purgeAfter, now)` で `TrashedMemo` を得る
    3. `MemoRepository.save(trashedMemo, expectedVersionトークン)`
    4. 同じ `transactionSync` の中で projection を更新する（当該メモのエントリを除去し、あわせて出典先ドキュメントのエントリを作り直す）
+   5. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
 
 #### エラーケース
 
@@ -570,7 +571,7 @@ AI によるメモのソフトデリート（S-AI-05）。ソフトデリート�
 
 #### 処理フロー
 
-softDeleteMemo と同一（**保持日数の読み取りと `purgeAfter` の算出を含む**）: UoW 内で `findById` → `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` を算出 → `Memo.softDelete(memo, purgeAfter, now)` → `save` → 同一 `transactionSync` での projection 更新。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
+softDeleteMemo と同一（**保持日数の読み取りと `purgeAfter` の算出、および `purge-trash` の起床の投入を含む**）: UoW 内で `findById` → `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` を算出 → `Memo.softDelete(memo, purgeAfter, now)` → `save` → 同一 `transactionSync` での projection 更新 → 同一 `transactionSync` で `TrashQueryPort.findEarliestPurgeAfter()` を読み、現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
 
 #### エラーケース
 

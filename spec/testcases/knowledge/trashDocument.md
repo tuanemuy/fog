@@ -15,3 +15,4 @@
 | AI トークンで認証（MCP `delete`、`type: "document"`） | ドキュメントを削除する | presentation 層が本ユースケースへディスパッチし、人間 UI と同一の振る舞い（S-AI-05） | |
 | active ドキュメントが存在する | `DocumentRepository.save` で DB 例外が発生する | `SystemError(DatabaseError)`。ロールバックされ、状態遷移もインデックスエントリの除去も起きない | |
 | `trashRetentionDays: 30` のユーザーの active ドキュメントが存在する | ドキュメントを削除する | `purgeAfter` に `RetentionPolicy.expiresAt(now, 30)` の算出結果が保存される。`trashed` であることと `purgeAfter` を持つことは同値である（trash.md「保持期限」） | |
+| ゴミ箱が空で `purge-trash` が待機状態にある | ドキュメントを削除する | `save` と projection 更新と同じ `transactionSync` の中で `TrashQueryPort.findEarliestPurgeAfter()` が読まれ、現在予定されている起床より早ければ `purge-trash` の起床が張られる（**投入は早める方向にのみ効く**）。ここが5つの投入点の1つであり、書き落とすと以後の自動ハードデリート（S-TR-05）が走らない | |

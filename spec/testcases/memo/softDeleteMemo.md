@@ -16,3 +16,4 @@
 | 読み取り後、save までの間に他書き込み（AI の編集等）が割り込む | ソフトデリートする | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再試行する | |
 | — | `save` で DB 例外が発生する | `SystemError(DatabaseError)`。ロールバックされ状態遷移・インデックスエントリの除去のいずれも起きない | |
 | `trashRetentionDays: 30` のユーザーの active なメモが存在する | ソフトデリートする | `purgeAfter` に `RetentionPolicy.expiresAt(now, 30)` の算出結果が保存される。`trashed` であることと `purgeAfter` を持つことは同値である（不変条件 8。trash.md「保持期限」） | |
+| ゴミ箱が空で `purge-trash` が待機状態にある | メモをソフトデリートする | `save` と projection 更新と同じ `transactionSync` の中で `TrashQueryPort.findEarliestPurgeAfter()` が読まれ、現在予定されている起床より早ければ `purge-trash` の起床が張られる（**投入は早める方向にのみ効く**）。ここが5つの投入点の1つであり、書き落とすと以後の自動ハードデリート（S-TR-05）が走らない | |

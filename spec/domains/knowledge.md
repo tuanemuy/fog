@@ -35,6 +35,7 @@
 | `UserId` | identity | 全エンティティの所有者。データは利用者個人に閉じる |
 | `Actor` | identity | リビジョンの「誰が」。人間ユーザー / AI クライアント（トークン識別）の判別可能ユニオン |
 | `MemoId` | memo | 出典リンクの参照先 |
+| `TrashRetentionDays` | identity | `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter` の入力（`purgeAfter` の一括再計算。算出規則は trash の `RetentionPolicy`） |
 
 ## 値オブジェクト
 
@@ -170,8 +171,8 @@ export type LiveTopic = ActiveTopic | ArchivedTopic;
 | `changeDescription` | `<T extends LiveTopic>(topic: T, description: string \| null, now: Date) => T` | 説明文を変更（`null` で削除）。`version + 1` | なし |
 | `archive` | `(topic: ActiveTopic, now: Date) => ArchivedTopic` | `archived` へ遷移。`version + 1` | なし（アーカイブ済みトピックの内容も検索にヒットするので、配下ドキュメントのエントリを除去してはならない） |
 | `unarchive` | `(topic: ArchivedTopic, now: Date) => ActiveTopic` | `active` へ遷移。`version + 1` | なし |
-| `softDelete` | `(topic: LiveTopic, purgeAfter: Date, now: Date) => TrashedTopic` | `trashed` へ遷移。`trashedAt: now`、`wasArchived: topic.status === "archived"`、`version + 1`。**単独では呼ばず、必ず `TopicTrashService.trashTopicSet` 経由で配下ドキュメントとセットで使う** | 配下ドキュメントのエントリを同一トランザクションで除去する（トピック自体のエントリは無い） |
-| `restore` | `(topic: TrashedTopic, now: Date) => LiveTopic` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `purgeAfter` / `wasArchived` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | 復元した配下ドキュメントのエントリを同一トランザクションで作り直す |
+| `softDelete` | `(topic: LiveTopic, purgeAfter: Date, now: Date) => TrashedTopic` | `trashed` へ遷移。`trashedAt: now`、`wasArchived: topic.status === "archived"`、`version + 1`。**単独では呼ばず、必ず `TopicTrashService.trashTopicSet` 経由で配下ドキュメントとセットで使う** | 配下ドキュメントのエントリを同一トランザクションで除去し、**除去した各ドキュメントの出典メモのエントリも同じトランザクションで作り直す**（`Document.softDelete` と同じファンアウト。作り直さないと出典メモ側にゴミ箱内ドキュメントの ID が残る。search.md「インデックスの維持」）。トピック自体のエントリは無い |
+| `restore` | `(topic: TrashedTopic, now: Date) => LiveTopic` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `purgeAfter` / `wasArchived` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | 復元した配下ドキュメントのエントリを同一トランザクションで作り直し、**その各ドキュメントの出典メモのエントリも同じトランザクションで作り直す**（`Document.restore` と同じファンアウト。search.md「インデックスの維持」） |
 
 不正な遷移（`trashed` の rename、`archived` の archive 等）は引数型で表現不能にする。ハードデリートは後続エンティティが存在しないためドメインに関数を置かず、trash ドメインのユースケースがポートで直接消去する（実装規約に従う）。
 

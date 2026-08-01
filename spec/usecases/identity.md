@@ -9,7 +9,7 @@
 - 各ユースケースは `ServiceArgs<TInput>` で `container`（`clock` / `idGenerator` / `unitOfWorkProvider` / 各ポート）と `input` を受け取る。`now` / 新規 `id` はユースケース冒頭で解決し、ドメイン内では生成しない
 - 書き込みは `UnitOfWorkProvider.run` 内の**同期**コールバックで行う（`await` を挟めない）。**ドメインの変更を外部へ通知する経路は持たない**。認証情報側（Identity Directory）とユーザー単位設定側（User Data DO）の両方に書く操作は、単一のトランザクションに収まらないので順序と再開の規則を持つ手続きとして各ユースケースに書く
 - エラー種別の使い分け: 入力・照合の失敗は `ValidationError`、対象不在は `NotFoundError`、一意性・OCC 競合は `ConflictError`、ドメイン規則違反（値オブジェクト生成失敗を含む）は `BusinessRuleError<IdentityErrorCode>`、基盤障害は `SystemError`
-- `input` の `userId` はセッション由来の信頼済み ID（presentation 層が認証済みセッションから注入する）。外部入力として受けるのは `connectionId`（revokeAiClientConnection）等の明示したフィールドのみ
+- `input` の `userId` はセッション由来の信頼済み ID（presentation 層が認証済みセッションから注入する）。外部入力として受けるのは `connectionId`（revokeAiClientConnection）等の明示したフィールドのみ。**リセット完了画面（pages P-03）から呼ぶものも例外ではない** — `executePasswordReset` は完走時に新しいセッションを確立するので（後述）、完了画面は認証済みの画面であり、そこから呼ぶ `getCurrentUser` / `listAiClientConnections` / `unlinkSsoCredential` / `revokeAllAiClientConnections` の `userId` もそのセッション由来である
 - 出力DTOのフィールドはプリミティブ型で表記する（ブランド型 VO はプリミティブに widen して射影する）
 
 ## registerWithPassword
@@ -57,7 +57,7 @@
 | メール形式不正 | `BusinessRuleError(IdentityErrorCode.InvalidEmail)` |
 | パスワード要件違反 | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)` |
 | メール登録済み（事前検証。SSO ユーザーとの重複含む） | `ConflictError("EMAIL_ALREADY_REGISTERED")` |
-| 同時登録レース（insert の一意制約違反） | `ConflictError("EMAIL_ALREADY_REGISTERED")` |
+| 同時登録レース（認証情報側の予約獲得に敗北） | `ConflictError("EMAIL_ALREADY_REGISTERED")` |
 | ハッシュ計算失敗・DB 例外 | `SystemError` |
 
 ## registerOrLoginWithSso
@@ -108,7 +108,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 | 未対応プロバイダ | `BusinessRuleError(IdentityErrorCode.UnsupportedSsoProvider)` |
 | メール形式不正 | `BusinessRuleError(IdentityErrorCode.InvalidEmail)` |
 | 既存パスワードユーザーとメール一致 | `ConflictError("EMAIL_ALREADY_REGISTERED")` |
-| 同時初回サインインのレース（insert の一意制約違反） | `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` |
+| 同時初回サインインのレース（認証情報側の予約獲得に敗北） | `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` |
 | DB 例外 | `SystemError` |
 
 ## loginWithPassword
@@ -232,7 +232,11 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 
 ### 出力DTO
 
-なし（`void`）。再ログインは UI 側の導線で行う。
+| フィールド | 型 |
+|---|---|
+| userId | `string` |
+
+**セッションの確立は presentation 層が本出力の `userId` を用いて行う**（`loginWithPassword` と同じ扱い）。**確立は手順6-1 の世代前進より後なので、新しく張られたセッションだけが生き残る** — 侵害者が握っていた旧セッションは失効済みである。**完了画面（pages P-03）の必須導線はこのセッションの上で動くので、再ログインを挟まない。**
 
 ### 処理フロー
 
@@ -244,8 +248,10 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 6. **ユーザー単位設定側**で、同じトランザクションの中で次を行う:
    1. `AccountStore.advanceSessionEpoch()` で**セッションの世代を進める**（既存セッションは次のリクエストで失効する。**リセットは侵害からの復旧手順なので、侵害者のセッションをここで切る**）
    2. `CredentialLocatorStore.advanceCredentialVersion(credentialId)` で対象クレデンシャルの世代を進める（認証情報側の値と揃え、到達性検査が通り続けるようにする）
-   3. `AccountStore.advanceResetVersion()` で**リセット世代を進め**、`createdAtResetVersion` が前進前の値と等しい AI クライアント接続を失効させる
+   3. `AccountStore.advanceResetVersion()` で**リセット世代を進める**。戻り値は**前進後**の値なので、失効の射程となる前進前の値はそこから導く（**`AccountStore.find()` で読み直さない** — 読み直しと前進を分けると並行実行で射程がずれる。domains/identity.md）
+   4. `AiClientConnectionRepository.listByUserId()` から `status: "active"` かつ `createdAtResetVersion` が前進前の値と等しい接続を絞り、対象ごとに `findById` → `AiClientConnection.revoke` → `AiClientConnectionRepository.save` を同じトランザクションで実行する。**条件付き一括失効の専用メソッドは置かない** — 対象は前回のリセット完了以降に作られた分だけで件数が小さいためである
 7. 認証情報側で新しい検証材料を正本へ昇格させる（`promoteVerifier`）
+8. `userId` を返す
 
 **手順5〜7は2つの物理境界をまたぐ。** 中間状態のあいだは旧新どちらのパスワードでもログインできず、前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる。**終端の具体的な手順は [#45](https://github.com/tuanemuy/fog/issues/45) が定める。** **リセット完了に限り、前回のリセット完了以降に作られた AI クライアント接続が失効する**（通常のパスワード変更では `resetVersion` を進めないので対象が空になる。domains/identity.md）
 
@@ -375,7 +381,7 @@ OAuth 認可画面で「拒否する」が押されたときの処理（S-AC-05 
 
 ### 概要
 
-ユーザーの AI クライアント接続の一覧を返す（S-AC-06）。設定画面の「接続済みAIクライアント」表示に使う。失効済み接続も事実として返す（一覧に出すかは UI の判断）。
+ユーザーの AI クライアント接続の一覧を返す（S-AC-06）。設定画面（pages P-13）の「接続済みAIクライアント」表示と、**リセット完了画面（pages P-03）の必須導線の接続一覧**に使う。失効済み接続も事実として返す（一覧に出すかは UI の判断）。
 
 公開面: ★ 人間UI専用
 
@@ -456,7 +462,7 @@ AI クライアント接続を失効させる（S-AC-06）。以後そのクラ�
 
 ### 概要
 
-active な AI クライアント接続をすべて失効させる。**リセット完了画面の必須導線**であり（pages P-03）、自動失効が切らない接続（前回のリセット完了より前に持ち込まれたもの）を利用者の判断で切るための操作である。設定画面からも呼べる。
+active な AI クライアント接続をすべて失効させる。**リセット完了画面の必須導線**であり（pages P-03）、自動失効が切らない接続（前回のリセット完了より前に持ち込まれたもの）を利用者の判断で切るための操作である。**呼び元は P-03 だけである** — 設定画面（P-13）は接続の単体解除しか持たない。
 
 `revokeAiClientConnection` を一覧の全件へ適用した形だが、**部分失敗の扱いを持つ**ので独立したユースケースとして定義する（`emptyTrash` と同じ構成である）。
 
@@ -491,13 +497,69 @@ active な AI クライアント接続をすべて失効させる。**リセッ�
 | 個別接続の OCC 不一致 | `ConflictError`（記録して続行。全体は中断しない） |
 | DB 例外（一覧取得の失敗） | `SystemError` |
 
+## linkSsoCredential
+
+### 概要
+
+ログイン中のユーザーが自分のアカウントに SSO 連携を追加する（S-AC-02 エッジケース。pages P-13）。**追加できるのは `kind: "sso"` の要素だけである** — メールクレデンシャルを追加する経路は存在しない（domains/identity.md の不変条件）。
+
+IdP との認証フロー（リダイレクト・アサーション検証）は `registerOrLoginWithSso` と同じくアダプターの責務であり、本ユースケースは検証済みの IdP 主体情報を受け取ってからのドメイン操作のみを担う。
+
+**SSO 初回サインイン時の自動リンクとは別物である。** 自動リンク（IdP のメールが既存アカウントと一致したときに黙って紐づける）は行わない（`registerOrLoginWithSso`）。本ユースケースは利用者が設定画面から明示的に開始する操作であり、**`unlinkSsoCredential` が解除する対象を作る唯一の経路**でもある。
+
+公開面: ★ 人間UI専用
+
+### 入力DTO
+
+| フィールド | 型 | 必須 | バリデーション |
+|---|---|---|---|
+| userId | `string` | required | セッション由来の信頼済み ID |
+| provider | `string` | required | `SsoProvider` のいずれか（`"google" \| "apple"`） |
+| providerSubject | `string` | required | 非空（IdP の `sub`。アダプターが検証済み） |
+
+**メールアドレスは受け取らない。** 連携が確保するのは SSO 主体の一意性だけで、メールの一意性には触れない（触ると連携先アカウント自身のメール予約と衝突する）。
+
+### 出力DTO
+
+| フィールド | 型 |
+|---|---|
+| credentialId | `string` |
+
+### 処理フロー
+
+1. `now` と新規 `credentialId` を解決し、`UserId.create(input.userId)` / `SsoProvider` を構築する
+2. **ユーザー単位設定側**の `unitOfWorkProvider.run` 内で手続きを開始する:
+   1. `UserSettingsRepository.find()` で `User` を取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
+   2. `recordOperation` で手続きを記録し、連携先を特定する写像材料を控える。**同じトランザクションで `enqueueJob` により `resume-link` を投入する** — 途中で落ちたときに手続きの存在を知っているのはこの記録だけなので、**これが前進の唯一の投入点である**
+3. **認証情報側**で SSO 主体の予約を取る（`reserveCredential`）。既に使われていれば `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（**自分のアカウントで連携済みの場合も同じ**。連携は重複を拒否する）
+4. 認証情報側の予約を確定させる（`activateReservation`）
+5. **ユーザー単位設定側**の `unitOfWorkProvider.run` 内で、同じトランザクションで次を行う:
+   1. `User.addCredential(user, credential, now)` → `UserSettingsRepository.save(user, expectedVersion)`（`credential` は採番済みの `credentialId` と `kind: "sso"`、`usableForLogin: true`、`label` は provider 名）
+   2. `CredentialLocatorStore.record(locator)` で逆引きを記録する。**この記録が済むまでその SSO ではログインできない** — ログインの到達性検査がこのストアを読むためである
+   3. `updateOperation` で手続きの記録を完了にする
+6. `credentialId` を返す
+
+**`sessionEpoch` は進めない。** 連携は認証手段を増やすだけで既存セッションの信頼性を下げないためである。**既存クレデンシャルの `credentialVersion` にも触れない**（credential ごとのカウンタなので、連携が他のクレデンシャルでのログインを巻き添えにしない。domains/identity.md）
+
+**手順2〜5は2つの物理境界をまたぐので、単一のトランザクションには収まらない。** 途中で落ちた場合は前進させる仕組み（`resume-link`）が引き取る。**利用者から観測できるのは次の2点だけである** — 連携が完了するまでその SSO ではログインできず、前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる。**終端の具体的な手順は [#45](https://github.com/tuanemuy/fog/issues/45) が定める**
+
+### エラーケース
+
+| 条件 | エラー |
+|---|---|
+| 未対応プロバイダ | `BusinessRuleError(IdentityErrorCode.UnsupportedSsoProvider)` |
+| その SSO 主体が既に使われている（自分のアカウントを含む） | `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` |
+| ユーザー不在 | `NotFoundError("USER_NOT_FOUND")` |
+| OCC 不一致 | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
+| DB 例外 | `SystemError` |
+
 ## unlinkSsoCredential
 
 ### 概要
 
 SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画面）。**覚えの無い連携をその場で解除できる**ことが侵害からの復旧手順の一部である。
 
-解除は不可逆で、同じ SSO 主体を再度連携するには新しい連携フローが要る。**メールクレデンシャルの解除経路は存在しない**（domains/identity.md の不変条件）。
+解除は不可逆で、同じ SSO 主体を再度連携するには `linkSsoCredential` をやり直す（新しい `credentialId` が採番される）。**メールクレデンシャルの解除経路は存在しない**（domains/identity.md の不変条件）。
 
 公開面: ★ 人間UI専用
 
@@ -519,8 +581,9 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
    1. `UserSettingsRepository.find()` で `User` を取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
    2. **2つの検査をこの順に通す。どちらもドメイン側の権威であり、UI の出し分けには委ねない** — (i) 対象 `credentialId` の要素が存在し `kind: "sso"` であること（`kind: "email"` は `BusinessRuleError`）、(ii) 解除後も `usableForLogin` が真の要素が残ること（残らなければ `BusinessRuleError(LastCredentialRemoval)`）。**(ii) が数えるのは要素数ではなく `usableForLogin` が真である要素の `credentialId` の異なり数である**（SSO 専用アカウントのメール要素を数に入れない。domains/identity.md）
    3. `User.removeCredential(user, credentialId, now)` → `UserSettingsRepository.save(user, expectedVersion)`
-   4. `CredentialLocatorStore.deleteByCredentialId(credentialId)` で逆引きを消す。**消す前に写像材料を控えておく**（消した後は認証情報側の行へ辿り着けなくなる）
+   4. `CredentialLocatorStore.deleteByCredentialId(credentialId)` で逆引きを消す。**消す前に、その `credentialId` の写像材料を全世代分、`recordOperation` が書く手続きの記録へ退避する**（消した後は認証情報側の行へ辿り着けなくなる。1世代分だけ控えると回収されない世代が残る）
    5. `AccountStore.advanceSessionEpoch()` でセッションの世代を進める
+   6. **同じトランザクションで `enqueueJob` により `sweep-orphan-mapping` を投入する** — 手順3 が落ちたときに認証情報側へ残る写像を回収する**唯一の投入点**であり、これが無いと孤児の写像が残り続けて同じ SSO 主体を二度と連携できなくなる
 3. **認証情報側**で控えた写像材料をもとに `deleteMapping` を発行し、写像行とそのクレデンシャル宛のリセットトークン行を消す（「無ければ成功」の冪等操作）
 
 **手順2〜3は2つの物理境界をまたぐ。** 順序はこの向きに固定する — 逆順にすると、途中で落ちたときに「ユーザー単位設定側には残っているが引けない」状態になり、次の連携で「既に使われている」と誤判定させる。**この向きなら片方向にしか壊れない** — 残った写像でログインしようとしても、手順2-4 で逆引きが消えているのでログインの到達性検査が拒否する（「解除したのにログインできる」は起きない）。**利用者から観測できるのは「解除後はその SSO でログインできない」ことだけで**、認証情報側に残った行の回収は前進させる仕組みが引き取る。前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる。**終端の具体的な手順は [#45](https://github.com/tuanemuy/fog/issues/45) が定める**
@@ -578,7 +641,7 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
 
 ### 概要
 
-現在のユーザー情報を読み取る（設定画面 P-13 の表示用）。**保有クレデンシャルの一覧**はパスワード変更 UI の表示判定（`usableForLogin` が真の `kind: "email"` の要素が無ければ非表示。S-AC-07 エッジケース）と SSO 連携の解除操作に使う。資格情報や SSO 主体 ID は含めない。
+現在のユーザー情報を読み取る（設定画面 pages P-13 と**リセット完了画面 pages P-03** の表示用）。**保有クレデンシャルの一覧**はパスワード変更 UI の表示判定（`usableForLogin` が真の `kind: "email"` の要素が無ければ非表示。S-AC-07 エッジケース）と SSO 連携の解除操作に使う。資格情報や SSO 主体 ID は含めない。
 
 公開面: ★ 人間UI専用
 

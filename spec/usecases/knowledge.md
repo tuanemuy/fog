@@ -9,7 +9,7 @@
 ## 共通事項
 
 - **公開面**: 各ユースケースに「人間 UI ★（AI トークンのスコープに存在しない）/ AI API（MCP・REST）/ 両方」を明記する。★ 付きの排除は二層で保証する（domains/identity.md「TokenScope」）: `actor` を入力に持つ ★ ユースケース（editDocument / rollbackDocument）は `actor` の型を `UserActor` に限定して型エラーで排除し、`actor` を持たない ★ ユースケース（getTopic / listDocumentRevisions / diffDocumentRevisions 等）は AI 側 presentation（MCP / REST）に配線しないこと（配線分離）＋ AI トークンの認可ミドルウェアの許可ユースケース列挙に含めないことで排除する
-- **テナント分離**: 外部入力の ID を受ける全ユースケースは、リポジトリの各メソッドに操作主体の `userId` を第一引数で渡す。他ユーザー所有の ID は「存在しない」（null / 空）となり NotFound で扱われるため、ユースケースごとの所有権チェックは記載しない（domains/index.md「テナント分離」）
+- **テナント分離**: `userId` は**対象のユーザー単位 Durable Object を選ぶのに使い、その先のリポジトリ / ポートには渡さない**。対象 ID の所有権は到達可能性により構造的に保証され、他ユーザーの ID は「存在しない」（null / 空）となり NotFound で扱われるため、ユースケースごとの所有権チェックは記載しない（domains/index.md「テナント分離」）
 - **NotFound 変換**: `findById` 系の `null` を `NotFoundError` に変換するのはユースケースの責務。AI 向けユースケースは `findById` / `listActiveByIds` 系（active / Live のみ返す）だけを使い、ゴミ箱内は構造的に「存在しない」扱いになる（S-AI-04）。`findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使えるのは人間 UI・trash 系ユースケースのみ
 - **OCC**: 書き込みは UoW 内で `findById` 系が返した `ExpectedVersion` トークンを添えて `save` する。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。汎用リトライは設けない
 - **時刻・ID**: `now` は `container.clock.now()`、新規 ID は `container.idGenerator.next()` をユースケース冒頭で解決してドメインへ渡す
@@ -266,7 +266,8 @@ presentation ごとの `includeArchived` の指定:
 3. `DocumentRepository.listActiveByTopic(topicId)` で配下 active ドキュメント全件を OCC トークン付きで取得する
 4. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`TopicTrashService.trashTopicSet(topic, documents, purgeAfter, now)` で `TrashedTopic`・`TrashedDocument[]`（各 `trashedWith = topic.id`）を得る
 5. 同一 UoW 内で `TopicRepository.save(trashedTopic, expectedVersion)`、各ドキュメントを `DocumentRepository.save(trashedDocument, expectedVersion)`、および同じ `transactionSync` の中での projection 更新（配下ドキュメントのエントリを除去し、出典メモのエントリを作り直す）を行う
-6. 削除結果のビューを返す
+6. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
+7. 削除結果のビューを返す
 
 ### エラーケース
 
@@ -533,6 +534,7 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 2. UoW 内で `DocumentRepository.findById(documentId)`（active のみ）。`null` なら `NotFoundError`
 3. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`Document.softDelete(document, null, purgeAfter, now)` で `TrashedDocument`（`trashedWith: null`）を得る
 4. `DocumentRepository.save(trashedDocument, expectedVersion)`、および同じ `transactionSync` の中での projection 更新（当該ドキュメントのエントリを除去し、出典メモのエントリを作り直す）
+5. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
 
 ### エラーケース
 

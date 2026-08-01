@@ -1,6 +1,6 @@
 # テストケース: revokeAllAiClientConnections
 
-[usecases/identity.md](../../usecases/identity.md) の revokeAllAiClientConnections に対するテストケース。リセット完了画面（P-03）の必須導線であり、部分失敗を持つので `emptyTrash` と同じ構成で検証する。
+[usecases/identity.md](../../usecases/identity.md) の revokeAllAiClientConnections に対するテストケース。**呼び元はリセット完了画面（P-03）だけ**であり（設定画面 P-13 は接続の単体解除しか持たない）、部分失敗を持つので `emptyTrash` と同じ構成で検証する。
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|

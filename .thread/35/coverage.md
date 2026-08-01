@@ -1,6 +1,6 @@
 # カバレッジ台帳 — Issue #35
 
-`.thread/34/design.md` 第11.1節「走査の方法」の4手段を再実行し、`spec/` の非レビュー Markdown **全数に判定を付けた**もの。1行 = 1ファイルで、着手前の **101 行すべてを埋めてある**。**本ラウンドの新設2ファイルを加えて台帳は 103 行**になり、うち1行（`spec/testcases/search/maintainSearchIndex.md`）は削除済みファイルの記録である。
+`.thread/34/design.md` 第11.1節「走査の方法」の4手段を再実行し、`spec/` の非レビュー Markdown **全数に判定を付けた**もの。1行 = 1ファイルで、着手前の **101 行すべてを埋めてある**。**本ラウンドの新設3ファイルを加えて台帳は 104 行**になり、うち1行（`spec/testcases/search/maintainSearchIndex.md`）は削除済みファイルの記録である。
 
 **再走査の実測（2026-08-01）。** 設計 第11.1節と完全に一致した。
 
@@ -10,14 +10,14 @@
 | 手段1（語彙走査）のヒット | 62 ファイル | 62 ファイル |
 | 未ヒット（手段2〜4 の対象） | 39 ファイル | 39 ファイル |
 
-**判定の内訳は 改訂 80 / 新設 2 / 削除 1 / 影響なし 20 の計 103 行である。** 設計は「改訂 72 件 / 影響なし 29 件」で、**設計の判定を上書きしたのは 9 件**である。
+**判定の内訳は 改訂 80 / 新設 3 / 削除 1 / 影響なし 20 の計 104 行である。** 設計は「改訂 72 件 / 影響なし 29 件」で、**設計の判定を上書きしたのは 9 件**である。
 
 - `spec/manual-tests/index.md` の1件（adr.md **ADR-010**。件数表と実行記録の分母が本 Issue 自身の編集で動くため、「影響なし」→「改訂（ステップ16.5）」）
 - 読み取り専用ユースケースのテストケース **8 件**（adr.md **ADR-036**。いずれも本文に旧テナント分離機構（`userId スコープ`）を持つので「影響なし」は誤判定だった。「影響なし」→「改訂（ステップ14）」）
 
-残りは設計の判定をそのまま写した。**新設2ファイルは設計の一覧にそもそも載っていない**ので上書きではなく追加である。
+残りは設計の判定をそのまま写した。**新設3ファイルは設計の一覧にそもそも載っていない**ので上書きではなく追加である。
 
-**完了後のファイル数は 102 になる。** 内訳は着手前 101 − 削除1（`spec/testcases/search/maintainSearchIndex.md`。adr.md ADR-003）+ 新設2（`spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential}.md`。adr.md ADR-051 / ADR-059）である。それ以外の追加はすべて既存ファイルへの節・行の追加として現れる。**台帳の行数（103）がファイル数（102）と一致しないのは、削除済みファイルの行を記録として残すためである。**
+**完了後のファイル数は 103 になる。** 内訳は着手前 101 − 削除1（`spec/testcases/search/maintainSearchIndex.md`。adr.md ADR-003）+ 新設3（`spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential,linkSsoCredential}.md`。adr.md ADR-051 / ADR-059 / ADR-062）である。それ以外の追加はすべて既存ファイルへの節・行の追加として現れる。**台帳の行数（104）がファイル数（103）と一致しないのは、削除済みファイルの行を記録として残すためである。**
 
 ## 再現手順
 
@@ -86,6 +86,7 @@ comm -23 /tmp/all.txt /tmp/hits.txt   # 39 件
 | `spec/testcases/identity/denyAiClientAuthorization.md` | 改訂 | 14 | 1 |
 | `spec/testcases/identity/executePasswordReset.md` | 改訂 | 14 | 1 |
 | `spec/testcases/identity/getCurrentUser.md` | 改訂 | 15 | 4 |
+| `spec/testcases/identity/linkSsoCredential.md` | **新設**（ADR-062 / ADR-059） | 14 | — |
 | `spec/testcases/identity/listAiClientConnections.md` | 改訂 | 15 | 4 |
 | `spec/testcases/identity/loginWithPassword.md` | 改訂 | 15 | 4 |
 | `spec/testcases/identity/logout.md` | 改訂 | 14 | 1 |
@@ -144,7 +145,7 @@ comm -23 /tmp/all.txt /tmp/hits.txt   # 39 件
 
 - `spec/manual-tests/index.md` — 設計 `design.md:2487` は「件数表と推奨実行順序だけを持つ」ことを理由に影響なしと判定しているが、その判定は件数が動かないことを前提にしている。ステップ15 が `spec/manual-tests/account.md` に、ステップ16 が `spec/manual-tests/search.md` にケースを足すので前提が崩れる（adr.md ADR-010）。
 - **読み取り専用ユースケースのテストケース 8 件** — `spec/testcases/knowledge/{diffDocumentRevisions,getDocument,getTopic,listDocumentRevisions,listDocumentSourceMemos,listDocumentsReferencingMemo}.md` / `spec/testcases/memo/{diffMemoRevisions,getTimeline}.md`。設計は「`userId` スコープの読み替えは `spec/domains/index.md` の改訂で一括して効く」ことを理由に影響なしと判定しているが、**この8ファイルは本文に旧テナント分離機構（`userId スコープ`）を直接持つ**ので、上流だけを直すと同じ保証の説明が corpus 内で2通りになる。到達可能性の表現へ書き換えた（adr.md ADR-036）。
-- **新設2ファイル** — `spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential}.md`。設計の一覧に無い（ユースケース自体が本ラウンドの新設である）。`spec/testcases/` の「1ユースケース1ファイル」構成を保つための追加で、上書きではない（adr.md ADR-051 / ADR-059）。
+- **新設3ファイル** — `spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential,linkSsoCredential}.md`。設計の一覧に無い（ユースケース自体が本ラウンドの新設である）。`spec/testcases/` の「1ユースケース1ファイル」構成を保つための追加で、上書きではない（adr.md ADR-051 / ADR-059 / ADR-062）。`linkSsoCredential` はレビュー2R で足した3件目で、`unlinkSsoCredential` の正常系に到達する唯一の経路を作るための新設である。
 
 ## 検証
 

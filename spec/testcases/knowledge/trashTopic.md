@@ -4,7 +4,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| `active` トピックの配下に active ドキュメント 2 件が存在する | トピックを削除する | トピックは `status: "trashed"`（`trashedAt: now`, `wasArchived: false`）、配下 2 件は `TrashedDocument`（各 `trashedWith = topic.id`）になる。配下 2 件のエントリが同一 `transactionSync` の中で `search_entries` / `search_fts` から除去され、`trashedDocumentIds` に 2 件の ID が返る（トピック自体はエントリを持たない） | |
+| `active` トピックの配下に active ドキュメント 2 件が存在する | トピックを削除する | トピックは `status: "trashed"`（`trashedAt: now`, `wasArchived: false`）、配下 2 件は `TrashedDocument`（各 `trashedWith = topic.id`）になる。配下 2 件のエントリが同一 `transactionSync` の中で `search_entries` / `search_fts` から除去され、**除去した各ドキュメントの出典メモのエントリも同じトランザクションで作り直される**（`Document.softDelete` と同じファンアウト）。`trashedDocumentIds` に 2 件の ID が返る（トピック自体はエントリを持たない） | |
 | `archived` トピックが存在する | トピックを削除する | `wasArchived: true` で trashed になる（復元時にアーカイブ状態へ戻すための保持） | |
 | 配下ドキュメント 0 件のトピックが存在する | トピックを削除する | トピックのみ trashed になり `trashedDocumentIds: []`。配下が 0 件なので projection から除去されるエントリも無い（境界値: セット 0 件） | |
 | 配下に active 2 件と、個別削除済み（`trashedWith: null`）のゴミ箱内ドキュメント 1 件が存在する | トピックを削除する | セット削除対象は active の 2 件のみ（各 `trashedWith = topic.id`）。個別削除済みの 1 件は `trashedWith: null` のまま変更されない（エッジケース: trashedWith の区別。不変条件 7。S-TR-02 のセット復元対象を分ける根拠） | |
@@ -18,3 +18,4 @@
 | AI トークンで認証（MCP `delete`、`type: "topic"`） | トピックを削除する | presentation 層が本ユースケースへディスパッチし、人間 UI と同一のセット削除が行われる（S-AI-05） | |
 | トピックが存在する | `DocumentRepository.save` で DB 例外が発生する | `SystemError(DatabaseError)`。ロールバックされ、状態遷移もインデックスエントリの除去も起きない | |
 | `trashRetentionDays: 30` のユーザーの `active` トピックの配下に active ドキュメント 2 件が存在する | トピックを削除する | トピックと配下 2 件に同一の `purgeAfter`（`RetentionPolicy.expiresAt(now, 30)` の算出結果）が保存される。`trashed` であることと `purgeAfter` を持つことは同値である（trash.md「保持期限」） | |
+| ゴミ箱が空で `purge-trash` が待機状態にある | トピックを削除する | セット削除の `save` と projection 更新と同じ `transactionSync` の中で `TrashQueryPort.findEarliestPurgeAfter()` が読まれ、現在予定されている起床より早ければ `purge-trash` の起床が張られる（**投入は早める方向にのみ効く**）。ここが5つの投入点の1つである | |

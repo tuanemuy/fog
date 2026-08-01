@@ -21,9 +21,9 @@ fog の永続化スキーマ。**Cloudflare Workers + ユーザー単位 SQLite-
 
 ## 共通方針
 
-- **ID**: 単一の `TEXT` 列を主キーに持つテーブルでは、その値は UUIDv7 等（生成は `IdGenerator` ポート）とし、ブランド VO への再水和はアダプターの責務とする（例外は `password_reset_tokens.token_id` で、こちらは時刻由来を避けた暗号論的乱数の不透明値である。後述）。**主キーの形は3通りある** — (1) 単一 `TEXT` 列、(2) 複合キー（`memo_revisions` / `source_links` / `credential_locators` / `credential_mappings` / `migration_progress` / `rotation_checkpoints`）、(3) `search_entries` の `rowid INTEGER PRIMARY KEY`（`id TEXT` は UNIQUE の別列。後述）。**単一行のテーブル**（`account` / `user_settings` / `_meta`）は業務上の主キーを持たない（単一行制約の掛け方は実装裁量とする。#37）。**どのテーブルがどの形を採るかは各テーブルの節が正本であり、節に無いサロゲートの `id` 列を足してよいという読み方はしない**
+- **ID**: 単一の `TEXT` 列を主キーに持つテーブルでは、その値は UUIDv7 等（生成は `IdGenerator` ポート）とし、ブランド VO への再水和はアダプターの責務とする。**例外は2つで、これが全数である** — (a) `password_reset_tokens.token_id`（時刻由来を避けた暗号論的乱数の不透明値。後述）、(b) `jobs.operation_key`（**生成せず、ジョブの同一性から決定的に導く値である**。DO ごとに定数のキーを持つ種別と、対象と時間窓から導く種別がある。**`IdGenerator` で採番すると再投入のたびに別のキーになり、`jobs` の収束規則3つと `provider_idempotency_key` の決定的な導出がどれも成立しない**。導出の規則は `jobs` の節と各ユースケースが正本）。**主キーの形は3通りある** — (1) 単一 `TEXT` 列、(2) 複合キー（`memo_revisions` / `source_links` / `credential_locators` / `credential_mappings` / `migration_progress` / `rotation_checkpoints`）、(3) `search_entries` の `rowid INTEGER PRIMARY KEY`（`id TEXT` は名前つき UNIQUE 索引を持つ別列。後述）。**単一行のテーブル**（`account` / `user_settings` / `_meta`）は業務上の主キーを持たない（単一行制約の掛け方は実装裁量とする。#37）。**どのテーブルがどの形を採るかは各テーブルの節が正本であり、節に無いサロゲートの `id` 列を足してよいという読み方はしない**
 - **日時**: `INTEGER`（Unix epoch ミリ秒）。カラム名は `*_at`
-- **version（OCC）**: 集約ルートに `version INTEGER NOT NULL`（生成時 0）。`save` / `delete` は `WHERE id = ? AND version = ?（読み取り時の値）` の条件付き更新とし、**0 行更新を `ConflictError("OPTIMISTIC_LOCK_FAILURE")` にマップする**。**単一行テーブル（`account` / `user_settings`）は `id` 列を持たないので `WHERE version = ?` だけで条件付ける**（`id` 述語は不要。他の行が存在しないため）。0 行かどうかは `UPDATE ... WHERE id = ? AND version = ? RETURNING 1` が返した行の有無で読む（単一行テーブルでは `id` 述語を除いた同じ形。意味論がその文の中で閉じるため。`changes()` は第二候補、課金単位である書き込み行数カウンタは使わない）。リビジョン・出典リンクは不変の子行のため `version` を持たない。**持つテーブル / 持たないテーブルの全数は後述**
+- **version（OCC）**: 集約ルートに `version INTEGER NOT NULL`（生成時 0）。`save` / `delete` は `WHERE id = ? AND version = ?（読み取り時の値）` の条件付き更新とし、**0 行更新を `ConflictError("OPTIMISTIC_LOCK_FAILURE")` にマップする**。**単一行テーブルは `id` 列を持たないので `WHERE version = ?` だけで条件付ける**（`id` 述語は不要。他の行が存在しないため）。**本 spec の範囲でこの形の条件付き更新を発行するのは `user_settings` だけである** — `account` も `version` 列を持つが書き手が無い（後述の `account` の項）。0 行かどうかは `UPDATE ... WHERE id = ? AND version = ? RETURNING 1` が返した行の有無で読む（単一行テーブルでは `id` 述語を除いた同じ形。意味論がその文の中で閉じるため。`changes()` は第二候補、課金単位である書き込み行数カウンタは使わない）。リビジョン・出典リンクは不変の子行のため `version` を持たない。**持つテーブル / 持たないテーブルの全数は後述**
 - **boolean**: `INTEGER`（0 / 1）
 - **ライフサイクル直和型**: `status TEXT NOT NULL` + 状態依存カラムを nullable にし、「その状態でのみ非 NULL」を CHECK 制約で強制する（あり得ない行を DB でも排除。ドメインの判別可能ユニオンと 1:1 対応）
 - **書き込みの単位**: 書き込みは DO 内蔵の SQLite に対する単一の同期トランザクションで確定する。**本体行と検索 projection（`search_entries` / `search_fts`）も同じトランザクションに入る**（domains/search.md「インデックスの維持」）
@@ -78,6 +78,7 @@ trash / export ドメインは自前のテーブルを持たない（ADR-004）�
 - `reset_version` を `credential_version` で代用しない。侵害と復旧のあいだにパスワード変更が1回でも挟まると、失効させたい接続が対象から外れるためである
 - **ドメイン側の口は `AccountStore` である**（domains/identity.md）。名前は `*Store` だが**この表は後述の非集約ストア7つには入らない** — OCC の `version` を持つ集約ルート側であり、`User` 集約に畳まないことと非集約であることは別である
 - `session_epoch` / `reset_version` の前進は単調増加カウンタの更新なので、`version` の条件を付けない単独文で書き、`version` も進めない（`ai_client_connections.last_used_at` と同じ扱い）
+- **`version` 列は保持するが、本 spec の範囲では OCC の条件付き更新を発行する操作が無い。** `AccountStore` の3メソッド（`find` / `advanceSessionEpoch` / `advanceResetVersion`。domains/identity.md）はいずれも `version` を読まず進めない。`status` の3値遷移・`deleted_at`・`caller_token` を書くのは退会 saga の前進（`finalize-withdrawal`）であり、**その書き手は #37 が DO の RPC 側で決める**。列を落とさないのは、「集約ルートは `version` を持つ」という全数（後述の OCC の表）を崩さないためである
 
 ### user_settings
 
@@ -115,10 +116,10 @@ identity の `User` のユーザー単位設定。**単一行のテーブルで�
 
 | 名前 | 定義 | 用途 |
 |---|---|---|
-| `cl_credential_uq` | **PRIMARY KEY** (`credential_id`, `generation`) | 到達性検査・世代ごとの upsert |
+| （PK） | (`credential_id`, `generation`) | 到達性検査・世代ごとの upsert |
 | `cl_hmac_uq` | UNIQUE (`kind`, `hmac`, `generation`) | 同じ canonical が2つの `credential_id` を持たないことの保証 |
 
-- **PK は (`credential_id`, `generation`) の複合キーである**（上表の `cl_credential_uq`）。**サロゲートの `id` 列は置かない** — 同一性は世代非依存の `credential_id` と世代の組が持つので、別の主キーを足すと同一性の権威が二重になる
+- **PK は (`credential_id`, `generation`) の複合キーである**（上表の `（PK）` 行。**複合 PK の暗黙索引には名前を付けられない**ので、`CREATE INDEX` を書くのは名前欄が埋まっている行だけである。`source_links` と同じ表記である）。**サロゲートの `id` 列は置かない** — 同一性は世代非依存の `credential_id` と世代の組が持つので、別の主キーを足すと同一性の権威が二重になる
 - **到達性の照合は `credential_id` だけを見て `generation` を含めない。** 鍵のローテーション中は同じクレデンシャルについて新旧2世代の行が並存しうるためである
 - **したがって「ログイン手段の数」は行数ではなく、`usable_for_login = 1` の行の `credential_id` の異なり数である**（domains/identity.md の不変条件と同じ数え方）
 - **書き込み口は UoW コンテキストの `credentialLocatorStore` だけである。** 書き込み箇所は3つで、これが全数である — (1) 新規登録・SSO 連携の完了時の upsert、(2) SSO 連携解除・退会時の削除、(3) クレデンシャル変更の適用時の全世代更新。`usable_for_login` と `label` の値は Identity Directory 側が判定して引数で運ぶ（この表は自分では判定しない）。**鍵ローテーションに伴う追加と旧世代行の削除も同じ口を使うが、その呼び出し規約は #44 が定める**
@@ -372,7 +373,7 @@ knowledge の `SourceLink`。ドキュメント → 出典メモの純粋な関�
 | カラム | 型 | 制約 |
 |---|---|---|
 | `rowid` | INTEGER | **PRIMARY KEY**。真の rowid alias なので VACUUM でも再採番されない。`search_fts` の `content_rowid` がこの値を参照する |
-| `id` | TEXT | NOT NULL, **UNIQUE**。対象の ID（`MemoId` / `DocumentId`）。projection の作り直しはこのキーで引く |
+| `id` | TEXT | NOT NULL。対象の ID（`MemoId` / `DocumentId`）。projection の作り直しはこのキーで引く。**一意性は列制約ではなく下の `search_entries_id_uq` で取る**（列に `UNIQUE` を書くと名前のない暗黙索引が同じ列にもう1本できる） |
 | `type` | TEXT | NOT NULL, CHECK (`type IN ('memo','document')`) |
 | `topic_id` | TEXT | nullable。`type = 'document'` のときのみ非 NULL（所属トピック） |
 | `title` | TEXT | NOT NULL。ドキュメントのタイトル。メモは空文字（タイトルを持たない）。**NFKC 正規化 + trim 済みの値**を入れる |
@@ -384,7 +385,7 @@ knowledge の `SourceLink`。ドキュメント → 出典メモの純粋な関�
 
 | 名前 | 定義 | 用途 |
 |---|---|---|
-| `search_entries_id_uq` | UNIQUE (`id`) | projection の作り直し（旧値 delete → 新値 insert）と結果行の引き当て |
+| `search_entries_id_uq` | UNIQUE (`id`) | projection の作り直し（旧値 delete → 新値 insert）と、`id` を指定する引き当て。**全文検索の一致行から本体行を引く経路ではない**（そちらは `rowid`。後述） |
 | `search_entries_topic_idx` | (`topic_id`) WHERE `topic_id IS NOT NULL` | トピック絞り込み |
 | `search_entries_order_idx` | (`timestamp` DESC, `type`, `id`) | 安定順位の tie-breaker と短語フォールバックのページング |
 
@@ -431,7 +432,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `operation_key` | TEXT | PK。ジョブの同一性。同じキーの再投入は既存行に収束する |
 | `kind` | TEXT | NOT NULL。実行する処理の種別（下表） |
 | `payload` | TEXT | NOT NULL。実行に必要な値（対象 ID など）。**PII および再利用可能な秘密を入れない**（生のリセットトークンが典型で、載せると DB 漏えい時に使えてしまい、PITR の保持期間ぶん残る） |
-| `payload_digest` | TEXT | NOT NULL。同じ `operation_key` に違う payload が来たら `ConflictError`。**照合対象は `next_run_at` を除いた payload である**（含めると前倒しの再投入が競合になる） |
+| `payload_digest` | TEXT | NOT NULL。**射程は実行可能集合（`status IN ('pending','running')`）の行だけである** — その範囲で同じ `operation_key` に違う payload が来たら `ConflictError`。**照合対象は `next_run_at` を除いた payload である**（含めると前倒しの再投入が競合になる）。`done` / `poison` の行への再投入は下の収束規則 (2)(3) が定め、**digest の不一致では弾かない**（(2)(3) はどちらもこの列を引数の値で置き換えるか、何も書かずに成功を返す） |
 | `attempt` | INTEGER | NOT NULL。リトライ回数 |
 | `next_run_at` | INTEGER | nullable。次に実行してよい時刻。`done` / `poison` では `NULL` |
 | `status` | TEXT | NOT NULL, CHECK (`status IN ('pending','running','done','poison')`) |
@@ -450,37 +451,38 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `jobs_completed_idx` | (`status`, `completed_at`) | `done` / `poison` の prune（保持期間を過ぎた行を有界に削除する） |
 
 - **usecase からの書き込み口は `enqueueJob`（UoW コンテキストの副作用登録メソッド）だけである。** 投入点の全数は下の `kind` 全数表が持つ。claim・完了・backoff・prune はジョブランナー（アダプター）が同じ行に対して行うので、口を通らない
-- **再投入（`enqueueJob`）の収束規則は3つで、これが全数である。** `operation_key` の欄が言う「同じキーの再投入は既存行に収束する」だけでは、`kind` によって逆向きの更新が要求されるためである。**`status` 別の (2)(3) が (1) に優先する** — `done` / `poison` の行は `next_run_at` が `NULL` なので、「早める方向」という判定そのものが定義されない
+- **再投入（`enqueueJob`）の収束規則は3つで、これが全数である。** `operation_key` の欄が言う「同じキーの再投入は既存行に収束する」だけでは、`kind` によって逆向きの更新が要求されるためである。**`status` 別の (2)(3) は (1) と `payload_digest` 列の規則の両方に優先する** — `done` / `poison` の行は `next_run_at` が `NULL` なので「早める方向」という判定そのものが定義されず、payload の差も終端済みの行では競合ではなく次の一回分の入力だからである
   - **(1) 再投入は `next_run_at` を早める方向にのみ更新し、遅らせない。** 射程は実行可能集合（`status IN ('pending','running')`）の行で、既存値より早ければ更新し、同じか遅ければ何も書かずに成功を返す。**`status = 'running'` の行の `next_run_at` は書き換えない**（claim 済みの実行を横から動かさない）。保持期限の延長で次の期限が後ろへ動く場合はこの規則では何も書かれないが、ジョブが既存の早い時刻に1回空振りし、その完了トランザクションの中の再武装が新しい時刻を書くので正しい時刻に収束する
   - **(2) `status = 'poison'` の行への再投入は、`kind` によらず同じ行を `pending` へ戻し、`attempt` を 0 にして `next_run_at` / `payload` / `payload_digest` を引数の値で置き換える。別行は作らない**（`operation_key` はそのジョブの同一性なので、行を増やすと同一性の意味が壊れる）。`terminal_reason` は上書きせずに残す
   - **(3) `status = 'done'` の行を `pending` へ戻すのは、再武装する5種（`purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `sweep-orphan-mapping` / `rotate-encryption`）に限る。残る7種は `done` の行を復活させず、何も書かずに成功を返す。** 5種を復帰させるのは、定数 `operation_key` を持つこれらが1回完走した時点で prune の保持期間ぶん再投入を受け付けなくなるからである（平常時はどれも必ず `done` へ落ちるので、投入点からの復帰が唯一の再起動手段になる）。残る7種の `done` は「その `operation_key` が表す一回分の仕事が完了した」という意味なので、**同じキーの再投入は新しい仕事ではなく重複依頼である** — 復活させると `send-mail` の同窓連打で起床回数と書き込み行数が依頼回数に比例して増える。**`payload_digest` の一致では5種と7種を分けられない**（5種は投入点が毎回同じ payload を渡すので digest も一致する）
   - **3つの射程は外部からの再投入だけである。** ジョブ自身が完了時に行う再スケジュール（後述の再武装）には (1) を適用しない — 適用すると次の期限が現在の `next_run_at` より後のときに何も書けず、`done` に落ちて二度と起きなくなる
 - **claim と完了は CAS で行う。** `UPDATE jobs SET status='running', lease_until=?, owner_token=? WHERE operation_key=? AND (status='pending' OR (status='running' AND lease_until < ?))` の 0 行更新を「他が持っている」とみなす。**第2の選言に `status='running'` を必ず含める**（落とすと `done` / `poison` の行が過去の `lease_until` を保持したまま再 claim の対象になる）。完了も `WHERE operation_key=? AND owner_token=?` の CAS
 - **backoff と終端。** 失敗時は `attempt` を進めて指数バックオフで `next_run_at` を先送りする。上限を超えたら `status='poison'` にして `terminal_reason` を残し、ホットパスの索引から外す。**`done` / `poison` のどちらへ落とすときも、同じトランザクションで `completed_at` に現在時刻を書き、`lease_until` / `owner_token` / `next_run_at` を `NULL` にする**
-- **終端は一様である。** 前進不能が確定したジョブは `terminal_reason` を残して `poison` にし、operator 経路へエスカレーションする（後述）。**「黙って中間状態を残す」は選ばない。巻き戻し（自動回収）の具体 — 段の順序・原子性境界・材料の寿命・後始末の再試行上限 — は #45 が決める**ので、本ファイルには書かない
+- **終端は一様である。** 前進不能が確定したジョブは `terminal_reason` を残して `poison` にし、operator 経路へエスカレーションする（後述）。**「黙って中間状態を残す」は選ばない。** 材料の寿命のうち **#37 が落としてはならない前方互換点3本は本ファイルが各テーブルの節で持つ** — `account.caller_token`（消すのは退会の完走時だけ）/ `operations.target_locators`（終端の後始末が終わるまで消さない）/ `credential_mappings` のコーディネーター予約行（同）。**それ以外の巻き戻し（自動回収）の具体 — 段の順序・原子性境界・終端モードの印・後始末の再試行上限 — は #45 が決める**ので、本ファイルには書かない
 - **1回の起動で触る量は件数だけで有界にする。** 経過時間では測らない（`Date.now()` はコード実行中に進まない）。ジョブ件数・チャンク反復回数・1チャンクの行数の3階層の上限を置き、値は #37 が spike で出して #38 が運用値として確定する
+- **チャンク反復回数の上限に達したら、その時点の進捗をコミットするのと同じトランザクションで `status` を `pending` へ戻し、`lease_until` / `owner_token` を解放して次の起床へ回す**（解放した行は同じ起動の中では再 claim しない。しないと上限を置いた意味が消える）。**したがって「残件が空になるまで回す」と書かれたフェーズもこの上限の内側にある** — 空になるまでというのは**フェーズの順序の規定であって、1回の起床で終わることの規定ではない**。該当するのは `purge-trash` の再計算フェーズで、**削除フェーズへ進むのは再計算の残件が空になった起床でだけである**（有限回の起床で空になる根拠は `user_settings` の項の自己消尽する作業述語が持つ）
 - **prune 専用の `kind` は置かない。** ジョブランナーが1回の起動の末尾で、保持期間を過ぎた `done` / `poison` を上限件数だけ削除する（`jobs_completed_idx` から引く）
 
 #### `kind` の全数
 
-**本表が `spec/` 側の `kind` の全数である。12種で、所有 DO クラスごとに6種ずつである。**
+**本表が `spec/` 側の `kind` の全数である。12種で、所有 DO クラスごとに6種ずつである。** **「投入点」欄を落とさない** — 投入点を同じ表に持たせることで、**投入されるが二度と起きないジョブ**を欄の空白として検出できるようにするためである（投入点の無い再武装ジョブは1回完走した時点で恒久的に停止する）。投入点はいずれも**そのジョブが待つ状態を書くのと同じトランザクション**の中で `enqueueJob` する。
 
-| `kind` | 所有 DO クラス | 類型 | 用途 |
-|---|---|---|---|
-| `purge-trash` | User Data | 期限処理 | 保持期限の到達処理（`purge_after` の再計算フェーズが先、削除フェーズが後。**再計算フェーズの自己消尽する作業述語は `user_settings` の項が持つ**） |
-| `reindex` | User Data | チェックポイント分割を要する一括処理 | FTS5 の全件再構築（トークナイザ・正規化規則の変更時） |
-| `migrate-bulk` | User Data | チェックポイント分割を要する一括処理 | データ書き換えを伴う migration |
-| `finalize-withdrawal` | User Data | cross-DO saga の前進 | 退会の後続手順の前進 |
-| `sweep-orphan-mapping` | User Data | cross-DO saga の前進 | SSO 連携解除後に残った孤児 mapping の削除再試行 |
-| `resume-link` | User Data | cross-DO saga の前進 | SSO 連携 saga の前進 |
-| `send-mail` | Identity Directory | 外部 I/O を伴う処理 | メール送信（**12種で唯一、外部 I/O を伴う**） |
-| `resume-signup` | Identity Directory | cross-DO saga の前進 | 新規登録 saga の前進 |
-| `resume-credential-change` | Identity Directory | cross-DO saga の前進 | クレデンシャル変更 saga の前進 |
-| `sweep-reservations` | Identity Directory | 期限処理 | 予約の期限切れ掃除 |
-| `sweep-reset-tokens` | Identity Directory | 期限処理 | リセットトークンの期限切れ行の掃除 |
-| `rotate-encryption` | Identity Directory | チェックポイント分割を要する一括処理 | メール暗号鍵ローテーションの再暗号化 |
+| `kind` | 所有 DO クラス | 投入点 | 類型 | 用途 |
+|---|---|---|---|---|
+| `purge-trash` | User Data | ソフトデリートの4ユースケース（`softDeleteMemo` / AI の `delete` / `trashDocument` / `trashTopic`）と `changeTrashRetentionDays`。`purge_after` を書くのと同じトランザクションで `TrashQueryPort.findEarliestPurgeAfter()` を読んで張る（domains/trash.md「保持期限」） | 期限処理 | 保持期限の到達処理（`purge_after` の再計算フェーズが先、削除フェーズが後。**再計算フェーズの自己消尽する作業述語は `user_settings` の項が持つ**） |
+| `reindex` | User Data | migration ゲート（トークナイザ・正規化規則の変更を含む `schema_version` の前進時）。アダプター側で、usecase からは投入しない | チェックポイント分割を要する一括処理 | FTS5 の全件再構築（トークナイザ・正規化規則の変更時） |
+| `migrate-bulk` | User Data | migration ゲート（データ書き換えを伴う段を切り出すとき）。アダプター側で、usecase からは投入しない | チェックポイント分割を要する一括処理 | データ書き換えを伴う migration |
+| `finalize-withdrawal` | User Data | **2つあり、これが全数である** — (1) 退会の開始（`account.status` を `deleting` にするのと同じトランザクション）、(2) 新規登録 saga の終端規則によるアカウントの放棄（**その手順は #45 が定める**が、投入点が2つであること自体は本表が持つ） | cross-DO saga の前進 | 退会の後続手順の前進 |
+| `sweep-orphan-mapping` | User Data | `unlinkSsoCredential` の逆引き削除（`credential_locators` の行を消すのと同じトランザクション）。**これが唯一の投入点である** — 落とすと写像の削除が落ちたときに `active` な孤児 mapping が恒久的に残る | cross-DO saga の前進 | SSO 連携解除後に残った孤児 mapping の削除再試行 |
+| `resume-link` | User Data | SSO 連携 saga の開始（`operations` 行を記録するのと同じトランザクション） | cross-DO saga の前進 | SSO 連携 saga の前進 |
+| `send-mail` | Identity Directory | `requestPasswordReset` を受けたトランザクション。**写像の有無・スロットルの有無にかかわらず必ず1行書く**（書くかどうかが列挙オラクルになるため） | 外部 I/O を伴う処理 | メール送信（**12種で唯一、外部 I/O を伴う**） |
+| `resume-signup` | Identity Directory | 新規登録 saga の予約行を書くのと同じトランザクション。**コーディネーター bucket だけが自分に投入する**（非コーディネーター bucket には投入しない） | cross-DO saga の前進 | 新規登録 saga の前進 |
+| `resume-credential-change` | Identity Directory | クレデンシャル変更 saga の開始（`change_state` を `pending` にするのと同じトランザクション） | cross-DO saga の前進 | クレデンシャル変更 saga の前進 |
+| `sweep-reservations` | Identity Directory | 予約行を書く3箇所（新規登録 saga の予約2つと SSO 連携の予約）。**予約を書いた bucket が自分に投入する** | 期限処理 | 予約の期限切れ掃除 |
+| `sweep-reset-tokens` | Identity Directory | リセットトークン行を発行するのと同じトランザクション | 期限処理 | リセットトークンの期限切れ行の掃除 |
+| `rotate-encryption` | Identity Directory | operator 専用 maintenance 経路からの起動（後述）。**本 spec で確定している投入点はこれだけである** — 移送側からの再投入を足すかは #44 が決める | チェックポイント分割を要する一括処理 | メール暗号鍵ローテーションの再暗号化 |
 
-- **類型は4つで、12種を漏れなく1回ずつ覆う**（CLAUDE.md「Key concepts」の非同期実行契約と同じ4類型である）。`kind` を足したら両方の表を同時に直す
+- **類型は4つで、12種を漏れなく1回ずつ覆う**（CLAUDE.md「Key concepts」の非同期実行契約と同じ4類型である）。`kind` を足したら両方の表を同時に直し、**本表の投入点欄も同時に埋める**
 - **完了時に自分を再武装する5種は `purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `sweep-orphan-mapping` / `rotate-encryption` であり、これが全数である**（類型欄からは導けない — 前3種は期限処理、`sweep-orphan-mapping` は cross-DO saga の前進、`rotate-encryption` は一括処理である）。完了トランザクションの中で自分の駆動源（`min(purge_after)` などの時刻、または残件の有無）を読み直し、残件があれば `pending` へ戻す。**残件が無いときだけ `done` にする**。この再武装が無いと、1回完走した時点で dormant な DO が二度と起きない。**残る7種は完走したら `done` で終わりであり、次の起動は投入点からの再投入だけが張る**（上の収束規則 (3)）
 - 実行可能集合（`status IN ('pending','running')`）が空になったら `deleteAlarm()` する。**例外は fail-closed で止まっている DO だけである**（後述）
 - **`rotate-remap`（写像鍵ローテーションの再写像）は Alarm ジョブではない**ので本表に現れない。写像鍵を Alarm 起動時に手元へ持てないためである。実行主体そのものは #44 が決める
@@ -607,12 +609,12 @@ DO ごとのメタ情報。単一行。
 
 | 名前 | 定義 | 用途 |
 |---|---|---|
-| `cm_credential_uq` | **PRIMARY KEY** (`kind`, `hmac`) | メール / SSO 主体の一意性。制約違反を `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` にマップ |
+| （PK） | (`kind`, `hmac`) | メール / SSO 主体の一意性。制約違反を `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` にマップ |
 | `cm_credential_id_uq` | UNIQUE (`credential_id`) | `credential_id` を指定する消費・削除経路（bucket 内の行は常に同一世代なので `(credential_id, generation)` と等価） |
 | `cm_user_idx` | (`user_id`) | 退会の一括削除と、bucket 内の `userId` 列挙（運用の診断経路） |
 | `cm_reservation_idx` | (`status`, `reserved_until`) WHERE `saga_committed IS NULL` | `sweep-reservations` の作業述語と駆動源 |
 
-- **PK は (`kind`, `hmac`) の複合キーである**（上表の `cm_credential_uq`）。**サロゲートの `id` 列は置かない** — 同一性は `(kind, hmac)` が持ち、`credential_id` にも bucket 内 UNIQUE を張るので、別の主キーを足すと同一性の権威が三重になる
+- **PK は (`kind`, `hmac`) の複合キーである**（上表の `（PK）` 行。**複合 PK の暗黙索引には名前を付けられない**ので、`CREATE INDEX` を書くのは名前欄が埋まっている行だけである）。**サロゲートの `id` 列は置かない** — 同一性は `(kind, hmac)` が持ち、`credential_id` にも bucket 内 UNIQUE を張るので、別の主キーを足すと同一性の権威が三重になる
 - **終端の後始末が終わるまで予約行を消さない。** `locators` / `candidate_user_id` / `caller_token` を持つコーディネーター予約行は、**中断した saga を回収するための唯一の材料**であり、期限切れ掃除（`sweep-reservations`）がこれを先に消すと材料が失われる。掃除と終端の関係の具体（どの段でどの行を消すか）は #45 が決めるので本ファイルには書かない
 - **OCC の `version` を持たない。** 書き込みはすべて `operation_id` / `change_state` / `status` / `saga_committed` を条件に含む CAS で直列化されており、同じ行に対する「読んで判断して書く」がリクエストを跨がない。汎用の OCC を重ねると CAS 条件と `version` のどちらが権威かが二重になる。**したがって `CredentialMappingRepository` は `ExpectedVersion` を取らない**（domains/identity.md）
 - 検証材料の照合そのものはこの表を読むアダプターでは行わない。計算は `PasswordHasher` が担い、実行位置はトランザクションの外である
@@ -754,7 +756,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 
 ## operator 専用 maintenance 経路
 
-ジョブが一様な終端（`terminal_reason` + `poison`）に達したときのエスカレーション先として、**operator 専用の maintenance 経路が存在する**。`purge-user-mappings`（退会の最後の砦）と `cancel-reservation`（新規登録の予約の取り消し）の2つで、どちらも `jobs.kind` の12種には入らない（ジョブではなく RPC である）。診断用の `read-schema-version` / `list-bucket-user-ids` も同じ経路に属する。**到達制御・監査ログ・運用手順の実体は #38 が定める。**
+ジョブが一様な終端（`terminal_reason` + `poison`）に達したときのエスカレーション先として、**operator 専用の maintenance 経路が存在する**。`purge-user-mappings`（退会の最後の砦）と `cancel-reservation`（新規登録の予約の取り消し）の2つで、どちらも `jobs.kind` の12種には入らない（ジョブではなく RPC である）。診断用の `read-schema-version` / `list-bucket-user-ids` と、`rotate-encryption` の起動（`jobs` の `kind` 全数表が名指しする唯一の投入点）も同じ経路に属する。**到達制御・監査ログ・運用手順の実体は #38 が定める。**
 
 ## 本ファイルで定義しないテーブル
 
@@ -816,13 +818,13 @@ account.caller_token        ──→ credential_mappings.caller_token（同じ�
 | 出典参照 document → memos（単発・一括） | `source_links` PK 前方一致 |
 | トピック配下ドキュメント（active / trashed・一括） | `docs_topic_active_idx` / `docs_topic_trashed_idx` |
 | 接続一覧（`listByUserId`） | `acc_connected_idx` |
-| 全文検索（`SearchIndexPort.query`。3文字以上） | `search_fts`（trigram）+ `search_entries_id_uq` で本体行へ、`topics` とは join |
+| 全文検索（`SearchIndexPort.query`。3文字以上） | `search_fts`（trigram）→ 一致 rowid で `search_entries` の `rowid` PK を引き、`topics` とは join |
 | 短語フォールバック（1〜2文字） | 索引を使わない全走査（対象列とページサイズを制限する）+ `search_entries_order_idx` |
 | トピック絞り込み・安定順位 | `search_entries_topic_idx` / `search_entries_order_idx` |
 | 履歴一覧・単一リビジョン取得 | `memo_revisions` PK / `doc_revs_doc_rev_uq` |
 | エクスポート全件読み（`ExportSourceReader.readAll`） | `memos_timeline_idx` / `topics_live_idx` / `docs_updated_idx` |
-| メール / SSO 主体でのユーザー解決 | `cm_credential_uq`（`credential_mappings` の PK） |
-| ログインの到達性検査 | `cl_credential_uq`（`credential_locators` の PK。前方一致） |
+| メール / SSO 主体でのユーザー解決 | `credential_mappings` の PK (`kind`, `hmac`) |
+| ログインの到達性検査 | `credential_locators` の PK (`credential_id`, `generation`)（前方一致） |
 | リセットトークンの照合（`verifyAndConsume`） | `prt_token_hash_uq` |
 | 予約の期限切れ掃除（`sweep-reservations`） | `cm_reservation_idx` |
 | リセットトークンの期限切れ掃除（`sweep-reset-tokens`） | `prt_expires_idx` |

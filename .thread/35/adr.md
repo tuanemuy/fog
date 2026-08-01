@@ -1561,7 +1561,7 @@ Proposed
 
 - 良い点: 判定基準が実際に判定できる形になり、`spec/domains/export.md` と食い違わなくなる。
 - 良い点: 例外を増やしたくなったときの問いが「外で動くか」ではなく「同期で書けるか」になる。後者のほうが厳しい。
-- 波及: `spec/domains/index.md`（横断事項）、`spec/domains/identity.md`（ポート節の冒頭が同じ言い回しを持っていた）。
+- 波及: `spec/domains/index.md`（横断事項）、`spec/domains/identity.md`（ポート節の冒頭が同じ言い回しを持っていた）、`CLAUDE.md`（Key concepts の Unit of Work 項が同じ「外で動くから `Promise`」の言い回しを持っていた。2ラウンド目で「非同期ポートを context に載せない」という禁止形へ寄せた）、`spec/inventory/domain.md`（ポート行の要点欄が同じ理由づけを写していた。2ラウンド目で判定基準ごと差し替えた）。
 
 ## ADR-053: `search_entries` の物理形はデータベース設計に一本化する
 
@@ -1633,18 +1633,28 @@ Proposed
 
 ### Context
 
-ADR-005 は「`CLAUDE.md` は実装に先行して新構成で断定する」と決めた。その結果、Key concepts の導入文「Each of these is enforced in code and documented in library-level JSDoc at the relevant module」が、**#37 完了前に足した新規4項（Durable Objects / `jobs` / Alarm / 10 GB 上限）については嘘になっている。** 読者は JSDoc を探して空振りする。
+ADR-005 は「`CLAUDE.md` は実装に先行して新構成で断定する」と決めた。その結果、Key concepts の導入文「Each of these is enforced in code and documented in library-level JSDoc at the relevant module」が、**改訂後の項の大半について嘘になっている。** 読者は JSDoc を探して空振りする。
+
+**「実体のある項」と「#37 未着地の項」は、項の境界では割れない。** 改訂後の Key concepts は **Unit of Work / Retry strategy / Input validation / Storage limits の4項と「Asynchronous execution contract」節**で構成される（本 PR は Outbox 項を削除したので、Outbox はもう項として存在しない）。このうち
+
+- **Storage limits と Asynchronous execution contract は丸ごと #37 未着地**である（`CLAUDE.md` の移行注記が「Nothing named Durable Object, `jobs` or Alarm exists in the code yet」と書いている）。
+- **Unit of Work も未着地側である。** 改訂後の項は「コールバックは完全同期で、`run<T>(fn: (ctx) => T extends Promise<unknown> ? never : T): T` が `async` を型で弾く」と断定するが、同じファイルの移行注記が「`UnitOfWorkProvider.run` is still asynchronous and its context still exposes `collectEvents`」と明言している。**現在の code / JSDoc はこの項の正本ではない。**
+- **Retry strategy は項の内部で割れる。** 「OCC のミスマッチは再試行候補ではなく呼び出し元に見える信号」「アプリ層の OCC リトライデコレータを置かない」は今日の `packages/core/src/adapters/d1/unitOfWork.ts` にそのまま当たるが、`version` による条件付き `UPDATE` の形とジョブランナーは #37 側である。
+- **Input validation はほぼ実体がある**が、「DO への RPC ホップは第3の検証点ではない」という一文だけが未着地である。
 
 移行中注記（`### Migration in progress — #37`）は**何が消えるか**を書く節であり、**どこに正本があるか**は書いていない。役割が違うので同じ注記では覆えない。
 
 ### Decision
 
-**導入文に例外句を足し、#37 が未着地の項は `spec/` が唯一の正本であることを明示する。** 実体のある項（Unit of Work / Outbox / Retry strategy / Input validation）は従来どおり「code と JSDoc が正本」のままにする。
+**導入文に例外句を足し、#37 が未着地の部分は `spec/` が唯一の正本であることを明示する。ただし項名を列挙しない。** 上のとおり分割線が項の境界と一致しないので、列挙すると「列挙に載っていない項は全部 code が正本」という誤った読み方を許してしまう。代わりに「`#37` 待ちのものは規則を述べるだけで裏づけとなるモジュールも JSDoc も無い」と条件で書き、**現況の全数は移行中注記へポインタで渡す**（`see "Migration in progress" under Reference runtime for what is and is not in the code today`）。
+
+現況の列挙を1箇所に閉じるのは ADR-054（員数は書かず正本を指す）と同じ形である。
 
 ### Consequences
 
 - 良い点: 読者が JSDoc を探して見つからない空振りが無くなる。ADR-005 の「先行して断定する」は維持したまま、断定の**根拠の所在**だけを正しくする。
-- トレードオフ: **#37 完了時に導入文を戻す作業が1つ増える。** 移行中注記の撤去と同じタイミングなので、その手順に1行足す形で済む。
+- 良い点: 項の増減や項内の一文の移動で導入文が嘘にならない。現況の全数を持つのは移行中注記だけになる。
+- トレードオフ: 導入文だけを読んでも「どの項が未着地か」は分からず、移行中注記まで辿る必要がある。**#37 完了時に導入文を戻す作業が1つ増える**が、移行中注記の撤去と同じタイミングなので、その手順に1行足す形で済む。
 - 波及: `CLAUDE.md`（Key concepts の導入文）。ADR-054 と同じく `CLAUDE.md` 担当への申し送りである。
 
 ## ADR-057: 削除済み `ADP-trash-004` は欠番のまま残し、新設2メソッドを `-005` / `-006` として末尾 append する
@@ -1707,6 +1717,7 @@ plan.md AC-16 は「着手前 101 / **完了後 100**」を固定値のゲート
 - 良い点: 「ユースケース数 = テストケースファイル数」の不変条件が維持される（**53 = 53**）。
 - トレードオフ: 固定値のゲートを1つ書き換えることになる。ただし AC-16 が測っているのは「判定の無いファイルが無いこと」であり、数値はその補助である。
 - 波及: plan.md AC-16・「カバレッジの再走査」節、`.thread/35/coverage.md`（新設2ファイルの判定行と総数）、`.thread/35/testing.md`。
+- **続報（2ラウンド目）:** ADR-062 が `linkSsoCredential` を足したので、同じ規約により新設ファイルは3件になった。**不変条件は 54 = 54、`spec/` のファイル数は 103、AC-16 の期待値も 103 である。** 本 ADR が決めたのは数値ではなく「1ユースケース1ファイルを崩さず新規ファイルで足す」という規約なので、決定そのものは変わらない。
 
 ## ADR-060: DB 層の規則のうち、ユースケースから観測できないものにはテストケースを置かない
 
@@ -1729,3 +1740,382 @@ Proposed
 - 良い点: `spec/testcases/` が usecase 単位である構成を保つ。期待値の書けない行が入らない。
 - トレードオフ: **スキーマ規則の検証が `spec/` の自動テスト定義から漏れる。** 引き取り先は #37 の実装テスト（アダプター層）である。
 - 波及: `spec/inventory/adapter.md` の要点欄。
+
+## ADR-061: リセット完了時に新しいセッションを確立する
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/pages/index.md` P-03（リセット完了画面）は必須導線を4本持つ — `getCurrentUser` / `listAiClientConnections` / `unlinkSsoCredential` / `revokeAllAiClientConnections`。**4本ともセッション由来の `userId` を要求する**（`spec/usecases/identity.md` の全体宣言）。ところが完了画面は未ログインで到達する画面であり、しかも `executePasswordReset` の手順6-1 が `sessionEpoch` を前進させるので、**リセット前に張っていた旧セッションも同時に死ぬ。** つまり4導線は誰からも呼べない。
+
+### Decision
+
+**`executePasswordReset` が `{ userId }` を返し、presentation 層が `sessionEpoch` の前進**後**にセッションを張る。** 扱いは `loginWithPassword` と同じである。
+
+**設計 第6.5.1節が却下した案とは別物である。** 却下されたのは「リセット完了**前**にセッションを発行する」案で、これは中間状態で発行したセッションが旧世代のまま生き残る。本決定は前進の後に張るので、生き残るのは新しいセッションだけになる。
+
+### Consequences
+
+- 良い点: 完了画面が認証済み画面になり、「`userId` はセッション由来」という全体宣言に**例外を書かずに済む**。
+- 良い点: `spec/pages` / `spec/scenario` / 手順書 / テストケースから「ログインし直す」が消える。導線の到達可能性が仕様の上で閉じる。
+- トレードオフ: ユースケースの出力が void から `{ userId }` へ増え、presentation 層に「世代を進めた後に張る」という順序の責務が乗る。順序を守らないと新しいセッションも旧世代として弾かれる。
+- 波及: `spec/usecases/identity.md`（`executePasswordReset` の手順と出力）、`spec/pages/index.md` P-03、`spec/scenario/account.md`、`spec/manual-tests/account.md`、`spec/testcases/identity/executePasswordReset.md`、`spec/inventory/usecase.md`。
+
+## ADR-062: SSO 連携の追加（`linkSsoCredential`）を spec に載せる
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第6.6節は SSO 連携の追加（link）を**4手順の cross-DO saga として全設計しており**、`spec/database/index.md` も `jobs.kind` に `resume-link` を既に持っている。ところが `spec/domains/identity.md` の「アカウントリンクはスコープ外」という一文が **blanket に読める**形で残っていた。結果として、本ラウンドで新設した `unlinkSsoCredential`（ADR-051）の**正常系が構造的に到達不能**になる — 解除できる SSO クレデンシャルを作る経路が spec のどこにも無いためである。`resume-link` も投入点を持たないジョブとして残り、設計 第7.4節 (7) の「投入点の無い周期・反復ジョブは1回完走した時点で恒久停止する」に当たる。
+
+### Decision
+
+**スコープ外なのは「サインイン時の自動リンク」だけであると限定し、`linkSsoCredential` を新設する。** 自動リンク（IdP のメールが既存アカウントと一致したときに黙って紐づける）を行わない判断は `registerOrLoginWithSso` の側にそのまま残す。利用者が設定画面から明示的に開始する連携追加は別物であり、設計が全設計している以上 spec に載る。
+
+### Consequences
+
+- 良い点: `unlinkSsoCredential` の正常系に到達する唯一の経路ができ、`resume-link` に投入点ができる。`User.addCredential` にも呼び出し元ができる（それまでドメイン側にメソッドだけがあった）。
+- 良い点: 「スコープ外」の射程が blanket ではなく1つの具体的な振る舞いに縮み、`spec/` だけを読む #37 が誤って link 全体を落とすことがなくなる。
+- トレードオフ: **ユースケースが 54 に増え、テストケースファイルが1件増える**（`spec/` は 103 ファイル）。`spec/pages/index.md` P-13 に機能が1つ増える。
+- 波及: `spec/domains/identity.md`（スコープ外の限定）、`spec/usecases/identity.md`（`linkSsoCredential` 節）、`spec/testcases/identity/linkSsoCredential.md`（新設）、`spec/pages/index.md` P-13、`spec/inventory/{usecase,test,frontend}.md`、`spec/manual-tests/account.md`、`.thread/35/{plan,coverage,testing}.md`（件数とファイル数）。
+
+## ADR-063: リセット完了時の AI 接続一括失効に専用ポートを置かない
+
+### Status
+
+Proposed
+
+### Context
+
+`executePasswordReset` の手順6-4 は「`createdAtResetVersion` が前進前の値と等しい active な接続をすべて失効させる」。同じ形の一括操作について、`purgeAfter` の再計算には **`recalculatePurgeAfter` という専用メソッドを新設して閉じた前例**がある（ADR-047）。同じ前例をここにも適用するなら `AiClientConnectionRepository` に条件付き一括失効を足すことになる。
+
+### Decision
+
+**専用ポートを置かず、呼び出し列（`listByUserId` → `findById` → `revoke` → `save`）で書く。** 前例と扱いを分ける根拠は件数である — 対象が「**前回のリセット完了以降に作られた接続**」に限られるので上限が小さく、`recalculatePurgeAfter` が相手にする「ゴミ箱内の全項目」のような有界反復を要する規模にならない。ドメインの `revoke` を1件ずつ通すほうが不変条件の適用も自然である。
+
+### Consequences
+
+- 良い点: `AiClientConnectionRepository` が**6メソッドのまま**動かない。**#13 の実装チェックリストが参照する `DOM-identity-023`〜`028` が指す要素が変わらない**（AC-9 / AC-15 の前提そのものである）。
+- 良い点: 「一括操作は専用メソッド」という規則を件数の根拠つきで例外化したので、次に同じ判断が要るときの問いが「規模が有界反復を要するか」に固定される。
+- トレードオフ: ユースケースの手順が1行から4段になり、`spec/usecases/identity.md` の記述が長くなる。
+- 波及: `spec/usecases/identity.md`（`executePasswordReset` 手順6-4）、`spec/inventory/usecase.md`。
+
+## ADR-064: `account` の OCC `version` に本 spec の範囲では書き手を置かない
+
+### Status
+
+Proposed
+
+### Context
+
+`AccountStore` は3メソッド（`find` / `advanceSessionEpoch` / `advanceResetVersion`）で **`save` 相当を持たない。** `account` テーブルの `status` / `deleted_at` / `caller_token` を書く操作も `spec/usecases/**` に1つも無い。退会は要件にもシナリオにも存在せず、#35 の受け入れ基準にも入っていない。この状態のまま OCC の全数表に `account` を載せておくと、「規則はあるが適用する操作が無い」列として残る。
+
+### Decision
+
+**`version` 列は落とさない。** 設計 第4.1.1節が集約ルート3つの `version` を確定させており、列の有無は本 Issue の裁量ではない。代わりに **「本 spec の範囲では `account` に条件付き更新を発行する操作が無い」と明記する。** 書き手が現れるのは #37 の DO RPC 側（退会・コーディネーター予約の確定）である。
+
+### Consequences
+
+- 良い点: `P-10` と OCC の全数表が維持され、テーブル定義の全数宣言に穴が開かない。
+- 良い点: **#37 が「使う規則はあるが使う操作が無い」で手を止めない。** 書き手の所在が spec の側から名指しされる。
+- トレードオフ: spec に「今は誰も書かない列」の説明が1段落増える。#37 が着地したら消す記述である。
+- 波及: `spec/database/index.md`（`account` の節と OCC 全数表）、`spec/domains/identity.md`（`AccountStore` の契約）。
+
+## ADR-065: 濫用抑止の3規則を `spec/domains/identity.md` に置き、具体値は運用側へ送る
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第6.2.2節 (a) は「**3つの存在自体は本節で固定する**」と書いている（天井・時間減衰・非加算）。ところが `spec/` 側にこの3つが1つも無く、**マニュアルテストの TC-40 だけが先行して「ロックアウト」を検証する形**になっていた。手順書が仕様の正本になっている状態である。
+
+### Decision
+
+**`spec/domains/identity.md` の `CredentialMapping` の項に3規則と脱出経路2本を置く。** 具体値（何回で天井か、減衰の時定数はいくつか）は書かず、運用側の調整項目として送る。設計が固定したのは「3つが存在すること」であって値ではないためである。
+
+### Consequences
+
+- 良い点: 手順書 TC-40 に仕様上の根拠ができ、`spec/manual-tests/` が仕様の正本になっている状態が解消される。
+- 良い点: 値を書かないので、運用調整のたびに spec を直す義務が生まれない。
+- トレードオフ: spec だけを読んでも実装に必要な数値は決まらない。#37 は運用側の設定として持つ必要がある。
+- 波及: `spec/domains/identity.md`（`CredentialMapping`）、`spec/manual-tests/account.md`（TC-40 の根拠参照）、`spec/inventory/domain.md`。
+
+## ADR-066: `purge-trash` の投入点を「ソフトデリート4 + 保持日数変更1」の5つとして全数で固定する
+
+### Status
+
+Proposed
+
+### Context
+
+`purge-trash` の起床を張る記述は、正本（`spec/database/index.md`）と `changeTrashRetentionDays` にしか無く、**ソフトデリート4本（メモ / トピック / ドキュメント / 個別ハードデリート起点の再計算）に届いていなかった。** 設計 第7.4節 (7) は「**投入点の無い周期・反復ジョブは1回完走した時点で恒久停止する**」と断定している。書き落としがそのまま「ゴミ箱が二度と空にならない」に化ける形である。
+
+### Decision
+
+**投入点を数え上げ可能な全数（5つ）として、正本と適用先の両方に書く。** 投入口は UoW コンテキストの `enqueueJob`、材料は `TrashQueryPort.findEarliestPurgeAfter()`、投入は**早める方向にのみ効く**（既存の起床より遅い時刻では張り直さない）。
+
+### Consequences
+
+- 良い点: **書き落としが全数宣言との突合で検出できる。** 「5つ」と宣言したうえで5箇所に書くので、片方だけ増減すると矛盾が読み取れる。
+- トレードオフ: **投入点が増減したら5箇所と全数宣言を同時に直す義務が生まれる。** 機械検査は無く、レビューでしか守れない。
+- 波及: `spec/database/index.md`（`jobs.kind` の全数表の投入点欄）、`spec/usecases/{memo,knowledge,identity}.md`（5箇所）、`spec/domains/trash.md`、`spec/inventory/usecase.md`。
+
+## ADR-067: 「trash は書き込みポートを持たない」原則と起床の投入を両立させる
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-066 が確定させた投入は**書き込み**である。素直に読むと trash 側に書き込み口が要ることになるが、trash ドメインは「書き込みポートを持たず、実体の書き込みは memo / knowledge の各リポジトリが担う」という原則で設計されている。ここに書き込みポートを1本足すと、その一本化が崩れる。
+
+### Decision
+
+**投入口を UoW コンテキストの `enqueueJob` に置き、trash 側は読み側の `findEarliestPurgeAfter` だけを持つ。** 投入を実行するのは memo / knowledge / identity のユースケースであって、trash のユースケースではない。trash が提供するのは「いつ起こすべきか」の材料だけである。
+
+### Consequences
+
+- 良い点: 「trash は書き込みポートを持たない」原則が無傷のまま、投入点の全数（ADR-066）が成立する。
+- 副次的な効果: **`enqueueJob` が `spec/usecases/**` に初めて呼び出し箇所を持つ。** それまでは `UnitOfWorkContext` の定義側にしか現れない名前だった。
+- トレードオフ: 「起床を張るのは誰か」がドメインの名前からは読めない（trash の材料で memo のユースケースが張る）。全数表の投入点欄（ADR-072）がこれを補う。
+- 波及: `spec/domains/trash.md`（`TrashQueryPort` は読み側のみ）、`spec/domains/index.md`（`enqueueJob` の位置づけ）、`spec/usecases/{memo,knowledge,identity}.md`。
+
+## ADR-068: `purge-trash` の再計算フェーズを「起床をまたいで収束する有界反復」に確定する
+
+### Status
+
+Proposed
+
+### Context
+
+同じ反復について3者が食い違っていた — `spec/database/index.md` は「有界」、ドメイン・ユースケースは「空になるまで」、テストケースは「有限回の起床で」。1起床の中で空になるまで回すと読むと、大量のゴミ箱項目で Alarm が時間切れになる。
+
+### Decision
+
+**設計 第7.4節 (iii-b) を正とし、「空になるまで」は起床をまたいだ収束と読む。**
+
+- 1起床の反復は **`maxChunks` で打ち切る**。
+- **削除フェーズへ進むのは、再計算の残件が空になった起床だけ**である。
+- 入力 DTO に `maxChunks` を新設し、既存の `chunkLimit` は**1チャンクの行数**に限定する（2つの上限が別物であることを名前で分ける）。
+
+### Consequences
+
+- 良い点: 3者が同じことを言うようになる。1起床の作業量に上限があるので Alarm の時間切れが構造的に起きない。
+- 良い点: **誤削除防止（保持期限を延ばす方向の変更）が「削除は残件0の起床でのみ」で保たれる。** 再計算が途中の状態で削除フェーズに入る経路が無い。
+- トレードオフ: `pruneExpiredTrashItems` の入力 DTO が1フィールド増える。呼び出し側（Alarm ハンドラ）が2つの上限を渡すことになる。
+- 波及: `spec/database/index.md`、`spec/domains/trash.md`、`spec/usecases/trash.md`、`spec/testcases/trash/pruneExpiredTrashItems.md`、`spec/inventory/{usecase,test}.md`。
+
+## ADR-069: trash の読み取り系ユースケースからユーザー実在確認を外す
+
+### Status
+
+Proposed
+
+### Context
+
+`TrashQueryPort` から `retentionDays` が落ちた結果、trash の読み取り系は `UserRepository.findById` を経由しなくなった。ところが**エラーケース表の「ユーザー不在は `NotFoundError`」の行だけが残っていた。** 到達できない発生源が表に載っている状態である。
+
+### Decision
+
+**実在確認は行わないと明文化する。** 未初期化の Durable Object は**空のゴミ箱として振る舞う** — `listTrash` は空配列、`emptyTrash` は `deletedCount: 0` を返す。
+
+### Consequences
+
+- 良い点: **テナント分離を到達可能性に寄せた設計と整合する。** DO のスタブが選ばれた時点で分離は済んでおり、中で「そのユーザーが居るか」を再検査する理由が無い。
+- 良い点: `NotFoundError` の発生源が trash の読み取り系から消え、エラーケース表が実際に到達し得るものだけになる。
+- トレードオフ: 存在しないユーザー ID で呼んでも成功応答が返る。認証済みセッション由来の `userId` しか入らないので実害は無いが、防御的なコードを書く実装者には直感に反する。
+- 波及: `spec/usecases/trash.md`（エラーケース表）、`spec/domains/trash.md`、`spec/testcases/trash/{listTrash,emptyTrash}.md`、`spec/inventory/{usecase,test}.md`。
+
+## ADR-070: `jobs.operation_key` を「単一 TEXT 主キー = UUIDv7」規則の第2の例外として明示する
+
+### Status
+
+Proposed
+
+### Context
+
+1ラウンド目の修正で ID 規則が**排他形**（「単一 TEXT 主キーは UUIDv7 である」）になり、例外は `password_reset_tokens.token_id` **だけ**と全数で宣言された。ところが `jobs.operation_key` も単一 TEXT 主キーであり、しかも**決定的導出値**（ジョブの同一性から導く）である。宣言が嘘になっている。
+
+### Decision
+
+**例外を2件の全数とし、`operation_key` は「生成せず、ジョブの同一性から決定的に導く」と定める。**
+
+### Consequences
+
+- 良い点: **収束規則 (1)(2)(3) と `provider_idempotency_key` の導出、`requestPasswordReset` の連打収束が実装可能になる。** どれも「同じ入力から同じキーが出る」ことに依存しており、UUIDv7 では成立しない。
+- 良い点: 例外が全数宣言のまま保たれる。3件目が要るときは同じ場所を直すことになる。
+- トレードオフ: ID 規則の宣言に例外が2件並ぶ。1件のときより「規則」としての強さが下がる。
+- 波及: `spec/database/index.md`（ID 規則と `jobs` の節）。
+
+## ADR-071: `payload_digest` の射程を実行可能集合に限定し、収束規則の優先を digest 規則へも及ぼす
+
+### Status
+
+Proposed
+
+### Context
+
+`payload_digest` の列定義が**無条件形**（「同じ `operation_key` で `payload` が違えば弾く」）で書かれており、1ラウンド目で足した収束規則 (2)(3)（`done` / `poison` からの再投入を許す規則）と**同じ入力に逆の指示を出していた。** どちらに従うかが文面から決まらない。
+
+### Decision
+
+**digest 規則の射程を `status IN ('pending','running')` に限定する。** `done` / `poison` への再投入は収束規則 (2)(3) が定めるものであり、digest の不一致で弾かない。あわせて優先規則を「収束規則は (1) と digest 規則の**両方に**優先する」へ拡張する。
+
+### Consequences
+
+- 良い点: **`poison` からの復旧手順が一意に決まる。** 別ペイロードでの再投入が規則の衝突なく通る。
+- 良い点: digest 規則が本来の役割（実行待ち・実行中の行に対する取り違え防止）に収まる。
+- トレードオフ: 列定義に状態条件が入り、読み手は `status` の意味を先に知っている必要がある。
+- 波及: `spec/database/index.md`（`jobs.payload_digest` の列定義と収束規則の節）。
+
+## ADR-072: `jobs.kind` の全数表に投入点欄を持たせ、欄の非空を不変条件とする
+
+### Status
+
+Proposed
+
+### Context
+
+投入点の全数を「表へ委譲する」と決めていたのに、**表にその欄が無かった。** 実測で `purge-trash` と `sweep-orphan-mapping` の投入点は `spec/` 全域で 0 件だった。設計 第7.4節 (7) の断定（投入点の無い反復ジョブは1回で恒久停止する）に照らすと、この2種は仕様上「起きないジョブ」である。
+
+### Decision
+
+**設計 第7.4節の正本表と同じく、`spec/database/index.md` の `kind` 全数表に投入点を欄として持たせる。`kind` を足したら欄も同時に埋める**（欄の非空を不変条件とする）。
+
+### Consequences
+
+- 良い点: **「投入されるが二度と起きないジョブ」が表の空白として検出できる。** 散文に散らしていたときは、どこにも書かれていないことが読み取れなかった。
+- 良い点: ADR-066 / ADR-067 が確定させた投入点（`purge-trash` の5つ、`sweep-orphan-mapping` の1つ）の置き場が決まる。
+- トレードオフ: 表が1列広くなり、投入点が複数ある `kind` はセルが長くなる。
+- 波及: `spec/database/index.md`（`jobs.kind` 全数表）、`CLAUDE.md`（4類型の表は種別だけを持つ — 全数と投入点の正本は `spec/database/index.md` 側。ADR-054 と同じ形）。
+
+## ADR-073: 前方互換点3本の材料寿命は DB spec が持ち、#45 への委譲は巻き戻し手順に限る
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/database/index.md` が「材料の寿命は書かない（#45 へ委譲する）」と宣言する一方、**同じファイルが寿命規則を3本持っていた。** 宣言と実態が矛盾している。ADR-009 が引いた線（`spec/` に書けるのは一様な終端と利用者から観測できる結果まで）を、寿命規則に対して過剰に適用した結果である。
+
+### Decision
+
+**宣言側を実態に合わせる。** 材料の寿命は前方互換点の一部であり、テーブル定義と同じ場所に持つのが正しい。**#45 の射程は「段の順序・原子性境界・終端モードの印・後始末の再試行上限」に限る。**
+
+### Consequences
+
+- 良い点: `.thread/34/handoff.md` 第3節の4点が**すべて spec に残る。** 委譲の宣言で消える材料が無くなる。
+- 良い点: **#45 の射程は狭まらない。** 巻き戻し手順そのものは引き続き #45 が持つ。
+- トレードオフ: 「#45 へ委譲する」の意味が「一切書かない」から「巻き戻し手順だけ書かない」に変わるので、#45 側が受け取る前提を読み直す必要がある。
+- 波及: `spec/database/index.md`（委譲宣言と前方互換点3本）。
+
+## ADR-074: `CLAUDE.md` の UoW コンテキスト名簿は DO クラス別に書く
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第4.3節の対応表は「DO クラス」列を持つ。ところが `CLAUDE.md` への転記でこの列が落ち、**2つの DO クラスのストアが1つのコンテキストの名簿として並んでいた。** 同じ項が「`run` takes no scope argument: **the Durable Object is the scope**」と断定しているので、**同じ文の中で衝突する** — 1つのスコープに2クラス分のストアが載ることになる。
+
+### Decision
+
+**名簿を DO クラス別に分けて書く**（User Data DO は `credentialLocatorStore`、Identity Directory DO は `resetTokenStore` と `rotationCheckpointStore`）。**全数の正本は `spec/database/index.md`** であり、`CLAUDE.md` は列挙と構造だけを持つ（ADR-054）。
+
+### Consequences
+
+- 良い点: 宣言（DO がスコープである）と名簿が同じ文の中で整合する。
+- トレードオフ: **ストア名簿には機械検査が無い。** `P-9` / `P-10` に相当する検査を作れないので、**この整合はレビューでしか守れない。**
+- 波及: `CLAUDE.md`（Key concepts の Unit of Work 項）。
+
+## ADR-075: `CLAUDE.md` の OCC 形は per-table の形を断定せず `spec/database/index.md` を指す
+
+### Status
+
+Proposed
+
+### Context
+
+`CLAUDE.md` の Retry strategy が **`WHERE id = ? AND version = ?` を唯一の形として断定**していた。ところが単一行テーブル（`account` / `user_settings`）には `id` が無く、この形は当てはまらない。テーブルの形が増えるたびに `CLAUDE.md` が嘘になる構造である。
+
+### Decision
+
+**`CLAUDE.md` には「`version` で条件づける／`id` はテーブルが持つ場合のみ」までを書き、per-table の形は `spec/database/index.md` を正本として指す。** ADR-054（員数を書かず正本を指す）と同じ形である。
+
+### Consequences
+
+- 良い点: テーブルの形が増えても `CLAUDE.md` が嘘にならない。直すのは正本1箇所になる。
+- トレードオフ: `CLAUDE.md` だけを読んでも具体的な `UPDATE` 文の形は決まらない。
+- 波及: `CLAUDE.md`（Key concepts の Retry strategy 項）。
+
+## ADR-076: 新設ユースケースの台帳 ID は末尾 append（`UC-identity-016`）にする
+
+### Status
+
+Proposed
+
+### Context
+
+`linkSsoCredential`（ADR-062）は `spec/usecases/identity.md` の**節の並びでは `unlinkSsoCredential` の直前**に置くのが読み下しとして自然である（連携を追加してから解除する）。ところが台帳 ID をそこへ挿入すると `UC-identity-015`（`unlinkSsoCredential`）以降が全部ずれる。
+
+### Decision
+
+**節の並び順と台帳 ID の採番は別物として扱う。** ADR-011 に従い、identity 群の**末尾へ append** して `UC-identity-016` とする。
+
+### Consequences
+
+- 良い点: **`UC-identity-015` が指す要素が動かない。** #10 / #13 の参照が静かに取り違わることがない（AC-14 / AC-15 は「実在する」ことしか見ないので、ずれても検出できない）。
+- トレードオフ: 台帳の並びと `spec/usecases/identity.md` の節の並びが一致しなくなる。ADR-011 が既に受け入れているトレードオフである。
+- 波及: `spec/inventory/usecase.md`。
+
+## ADR-077: マニュアルテストの SSO 連携追加は2つ目の Google アカウントを要求する
+
+### Status
+
+Proposed
+
+### Context
+
+`linkSsoCredential`（ADR-062）の手順書を書くにあたり、既存 TC が使っている Google アカウントをそのまま連携追加に使うと、**必ず `SSO_IDENTITY_ALREADY_REGISTERED` になる**（その主体は既にアカウントに紐づいている）。正常系が1本も組めない。
+
+### Decision
+
+**テストデータに「SSO 連携追加用 Google アカウント（既存とは別）」を追加し、正常系と重複拒否を別々の TC が担当する。** 用意できない場合は当該 TC を対象外として備考に記録する運用を、**前提条件に明記する。**
+
+### Consequences
+
+- 良い点: 正常系と異常系がどちらも実行可能な手順として書ける。
+- トレードオフ: **環境要件が1つ増える。** 実行者が2つ目の Google アカウントを用意できないと当該 TC が回らない。対象外として記録する運用でこれを吸収する。
+- 波及: `spec/manual-tests/account.md`（前提条件・テストデータ・TC）、`spec/manual-tests/index.md`（件数）。
+
+## ADR-078: `#L` を動かさない編集方針（行内書き換えと末尾 append に限る）
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/inventory/test.md` の「定義場所」欄は `#L{行番号}` を持ち、その参照は **838 件**ある。テストケースファイルの途中に行を挿入すると、**以降の全参照がずれる。** 2ラウンド目は既存ケースの修正と新設の両方を含むので、編集の形を決めておかないと台帳側の追従が全面的な再計算になる。
+
+### Decision
+
+**既存ケースの修正はすべて行内書き換えで行い、新設は各表の末尾 append に限定する（途中挿入をしない）。** ADR-011 の欠番規約（削除した ID は繰り上げない）と同じ思想を、行番号に対して適用したものである。
+
+### Consequences
+
+- 良い点: **台帳側の追従が「要点欄の書き換え」と「末尾行の追加」だけで済む。** 既存の `#L` は動かないので、機械検証（`P-8`）で全件一致を確認できる。
+- 良い点: 差分が小さくなり、レビューで実際の変更点が読める。
+- トレードオフ: テストケースファイルの中で、ケースの並びが論理的な順序と一致しなくなることがある（新設は必ず末尾に付く）。
+- 波及: `spec/testcases/**`、`spec/inventory/test.md`。
