@@ -106,7 +106,7 @@ Issue #35 の対応項目2 は「同一 User DO 内で本体データと FTS5 �
 
 ## ADR-004: FTS5 の日本語対応は「方針と機構」まで spec に書き、実測値は #37 へ委ねる
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格（実測に依存する値を spec に固定しない規則として）
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -139,7 +139,7 @@ Issue #35 の対応項目3 は「日本語検索に使う FTS5 tokenizer の選�
 
 ## ADR-005: `CLAUDE.md` は実装に先行して新構成で断定し、移行中であることを1箇所に集約して注記する
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -177,7 +177,7 @@ Issue #35 の対応項目6 は「Reference runtimes、Unit of Work、Outbox / do
 
 ## ADR-006: `spec/database/index.md` に設計 第4.1.1節のテーブル全数を写す
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -1094,7 +1094,7 @@ steps.md ステップ16 は `spec/manual-tests/search.md` に「**FTS5 の新し
 
 ## ADR-034: `spec/index.md` の件数は台帳の実測行数を正本とし、概数表記をやめる
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -1638,7 +1638,7 @@ Proposed
 
 ## ADR-054: `CLAUDE.md` は非集約ストアの員数を数値で持たない
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -1682,7 +1682,7 @@ Proposed
 
 ## ADR-056: `CLAUDE.md` の「Key concepts」導入文を、実体のある項と `spec/` が正本の項に分ける
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -1892,7 +1892,7 @@ Proposed
 
 ## ADR-065: 濫用抑止の3規則を `spec/domains/identity.md` に置き、具体値は運用側へ送る
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格（具体値を運用側へ送る規則として）
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -2100,7 +2100,7 @@ Proposed
 
 ## ADR-074: `CLAUDE.md` の UoW コンテキスト名簿は DO クラス別に書く
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
@@ -2122,7 +2122,7 @@ Proposed
 
 ## ADR-075: `CLAUDE.md` の OCC 形は per-table の形を断定せず `spec/database/index.md` を指す
 
-→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+（昇格しない — ドキュメントの書き方の規約であり、覆してもシステムの振る舞いは変わらない。規約の実体は `CLAUDE.md` / `spec/` 側が持つ）
 
 ### Status
 
