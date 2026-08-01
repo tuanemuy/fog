@@ -709,3 +709,78 @@ Proposed
 - 良い点: **遡及適用（保持日数を短くすると既存項目にも効く）という利用者から見た結果は変わらない。** 変わるのは実現手段（毎回算出 → 変更と同一トランザクションで一括再計算）だけである。
 - トレードオフ: **ソフトデリート系のユースケースに「保持日数を読む」手順が1つ増える。** `spec/usecases/{memo,knowledge}.md` の該当箇所に `UserSettingsRepository.find()` を足した。
 - 波及: `spec/inventory/{domain,adapter}.md` の `TrashQueryPort` / `softDelete` 系の行（ステップ12）、`spec/testcases/trash/listTrash.md` の `expiresAt` の根拠（ステップ15）。
+
+## ADR-021: `user_id` を先頭から落とした索引は名前からも `user` を外す
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第4.4節は「`memos_timeline_idx` などの複合索引も先頭の `user_id` が落ちて単純になる」と書いているだけで、**索引名をどうするかを決めていない。** 実物には列名を名前に畳んだ索引が4本ある — `acc_user_connected_idx`（`user_id`, `connected_at`）/ `topics_user_live_idx`（`user_id`, `status`, `name`）/ `docs_user_updated_idx`（`user_id`, `updated_at`）/ `prt_user_idx`（`user_id`）。列が消えたあとも名前を残すと、`spec/database/index.md` を単独で読む #37 が「まだ `user_id` 列がある」と読む余地が残る。
+
+一方 `memos_timeline_idx` / `memos_trash_idx` / `docs_topic_active_idx` のように名前に `user` を含まない索引は、列が減っても名前が嘘にならない。
+
+### Decision
+
+**名前に `user` を含む4本だけを改名する。** `acc_user_connected_idx` → `acc_connected_idx` / `topics_user_live_idx` → `topics_live_idx` / `docs_user_updated_idx` → `docs_updated_idx` / `prt_user_idx` → `prt_credential_idx`（こちらは引き方そのものが `user_id` から `credential_id` へ変わるので、名前も引き方に合わせる）。**`user` を含まない索引名は変えない** — 設計 第4.4節が `memos_timeline_idx` を名指しで「そのまま残る索引」として扱っている。
+
+**期限切れ索引3本（`memos_expired_idx` / `topics_expired_idx` / `docs_expired_idx`）は改名ではなく置き換えである。** 全ユーザー横断の JOIN ごと消え、代わりに自 DO の `purge_after` を引く `memos_purge_idx` / `topics_purge_idx` / `docs_purge_idx` が入る（設計 第7.5節）。
+
+### Consequences
+
+- 良い点: 索引名が引き方と一致し、`spec/database/index.md` だけを読んで実テーブルを組める（ADR-006 の狙い）。
+- トレードオフ: **`spec/inventory/adapter.md` の索引名を含む行がステップ12 の更新対象に増える。** 実測で `ADP-ai-client-connections-001` / `ADP-topics-001` / `ADP-documents-001` / `ADP-password-reset-tokens-001` / `ADP-identity-009` / `ADP-knowledge-006` の6行が旧名を持つ。**ただしこれらの行は `user_id` 列の記述も持つのでどのみち改訂対象であり、新規に増える作業ではない。**
+- 波及: ステップ12（`spec/inventory/adapter.md` の要点欄）。
+
+## ADR-022: 両クラスに現れる `jobs` / `_meta` は User Data DO 側に一度だけ定義し、Identity Directory 側は差分だけを書く
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第4.1.1節は `jobs` と `_meta` を **User Data DO と Identity Directory DO の両方**に置いている（21セル / 名前の異なり数は 19）。`spec/database/index.md` を DO 2部構成にすると、同じテーブルの節が2つできる。
+
+素朴に両方へ全列を書くと、(i) 12列の表が2つになって片方だけ直される事故が起きる、(ii) 見出しが重複してアンカーが曖昧になり `P-8`（台帳の「定義場所」欄の実在検査）の指し先が決まらない。
+
+### Decision
+
+**列の全数は User Data DO 側の節に一度だけ書き、Identity Directory 側の節は「同じ12列・同じインデックス・同じ規則」と述べたうえで違う点（`kind` の値域・自 locator の形）だけを書く。** 見出しは `### jobs（Identity Directory DO）` / `### _meta（Identity Directory DO）` とし、無印の `### jobs` / `### _meta` と衝突させない。
+
+**`jobs.kind` の全数表は `jobs` の節に置き、所有 DO クラスを列に持たせる**（12種を1つの表で覆う）。設計 第4.1.1節は `kind` を DO クラス別に2箇所へ分けて書いているが、`spec/` 側で分けると `P-9`（12種が `CLAUDE.md` と本ファイルの両方にあること）の突き合わせ先が2つになり、第7.7節 項2 の「4類型が12種を漏れなく1回ずつ覆う」という不変条件も表をまたいで確認する形になる。
+
+### Consequences
+
+- 良い点: 12列の正本が1つに保たれる。`P-10` の `jobs` / `_meta` は名前の異なり数で数えるので、この形でも通る。
+- 良い点: `jobs.kind` の全数が1つの表になり、`CLAUDE.md` の4類型表（ステップ17）と1対1で突き合わせられる。
+- トレードオフ: **Identity Directory DO の節だけを読むと `jobs` の列が分からない。** 節に「User Data DO 側と同じ12列」と明記して参照先を固定した。
+
+## ADR-023: `search_entries` の列は本ファイルで確定させ、原文とトピック名は持たせない
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第4.1.1節は `search_entries` について「FTS5 projection（external-content）。`search_entries` の PK は `rowid INTEGER PRIMARY KEY`、`id TEXT` は UNIQUE 制約付きの別列」としか書いていない。**列の全数を design 側の正本が持つのは認証・saga・ジョブ系だけ**なので、`search_entries` の列は `spec/database/index.md` が決めることになる。決めるべき点が3つあった。
+
+1. インデックスに入れるテキストは NFKC 正規化後の値だが、**スニペットは正規化前の原文から組み立てる**（設計 第7.2節）。原文をどこから引くか。
+2. トピック名を projection に複製するか（第7.2.1節は「正規化した事実の join で結ぶ」と決めている）。
+3. `sourceOfDocumentIds` / `sourceMemoIds`（active な相手のみ）の置き場。現行 `spec/database/index.md` は「FTS 側の付随カラムまたは併設テーブル」と両論併記で残していた。
+
+### Decision
+
+- **原文は持たない。** `search_entries.title` / `body` には NFKC 正規化 + `trim()` 済みの値だけを入れ、スニペットの材料になる原文は本体テーブル（`memos.body` / `documents.title` / `documents.body`）から引く。同じ DO の中にあるので追加の往復が発生しない。
+- **トピック名は複製しない。** `topic_id` だけを持ち、問い合わせ時に `topics` と join する（第7.2.1節の「事実 join」）。トピックのリネームが検索結果へ即座に反映されるのはこのためである。
+- **出典リンクの相手側 ID は `search_entries.source_ids`（JSON 配列）に持つ。** 併設テーブル案は採らない — 第4.1.1節がテーブル全数の正本であり、そこに無いテーブルを17番目として足すと AC-7 と矛盾する（ADR-013 がスナップショットについて採った線と同じ）。索引を張らない付随カラムなので、テーブルを増やす理由が無い。
+
+### Consequences
+
+- 良い点: `search_entries` が「1エントリ1行」に閉じ、テーブル数が第4.1.1節の全数から動かない。
+- 良い点: **domains/search.md の `IndexEntry` の各フィールドに対応する列が1対1で決まる**ので、ステップ12 が `ADP-search-entries-001` の要点欄を書ける。
+- トレードオフ: **`source_ids` は JSON 文字列なので SQL からは絞り込めない。** 結果 DTO への載せ替え専用の列であり、絞り込みに使う必要が無いことは domains/search.md の検索の規則から確認できる（絞り込みは topic だけである）。
+- 波及: ステップ12（`spec/inventory/adapter.md` に `ADP-search-entries-001` を新設し、`ADP-search-fts-001` を external-content 構成へ書き換える）。
