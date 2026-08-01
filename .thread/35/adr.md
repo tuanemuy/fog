@@ -2,6 +2,8 @@
 
 ## ADR-001: `SearchIndexPort` を `query` 1本へ縮小し、書き込み側をポートにしない
 
+→ `.adr/005-search-projection-inside-write-transaction.md` に昇格
+
 ### Status
 
 Proposed
@@ -66,6 +68,8 @@ Issue #10 の実装チェックリストは `DOM-SEARCH-001 SearchQuery — NFKC
 
 ## ADR-003: Outbox consumer 経由のインデックス維持を廃止し、`maintainSearchIndex` をユースケースごと削除する
 
+→ `.adr/005-search-projection-inside-write-transaction.md` に昇格
+
 ### Status
 
 Proposed
@@ -102,6 +106,8 @@ Issue #35 の対応項目2 は「同一 User DO 内で本体データと FTS5 �
 
 ## ADR-004: FTS5 の日本語対応は「方針と機構」まで spec に書き、実測値は #37 へ委ねる
 
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格（実測に依存する値を spec に固定しない規則として）
+
 ### Status
 
 Proposed
@@ -132,6 +138,8 @@ Issue #35 の対応項目3 は「日本語検索に使う FTS5 tokenizer の選�
 ---
 
 ## ADR-005: `CLAUDE.md` は実装に先行して新構成で断定し、移行中であることを1箇所に集約して注記する
+
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
 
 ### Status
 
@@ -168,6 +176,8 @@ Issue #35 の対応項目6 は「Reference runtimes、Unit of Work、Outbox / do
 ---
 
 ## ADR-006: `spec/database/index.md` に設計 第4.1.1節のテーブル全数を写す
+
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
 
 ### Status
 
@@ -397,6 +407,8 @@ Proposed
 
 ## ADR-012: 検索のページングを不透明カーソル方式に一本化し、第7.2.1節の4点を適用先まで届ける
 
+→ `.adr/006-opaque-cursor-search-pagination.md` に昇格
+
 ### Status
 
 Proposed
@@ -441,6 +453,8 @@ Proposed
 - 波及: `spec/usecases/search.md` の出力 DTO も `PaginationResult`（`count` を持つ）のままでよいかが問題になる。**カーソル方式でも総件数は返せる**（スナップショットに固定した集合の件数）ので DTO の形は変えない、と決める。これも第7.2.1節が #35 へ委譲した領分である。
 
 ## ADR-013: 検索スナップショットの物理定義は `spec/` で確定させず #37 へ預ける
+
+→ `.adr/006-opaque-cursor-search-pagination.md` に昇格
 
 ### Status
 
@@ -598,6 +612,8 @@ Proposed
 
 ## ADR-017: 検索の出力に不透明カーソルを1フィールド足す
 
+→ `.adr/006-opaque-cursor-search-pagination.md` に昇格
+
 ### Status
 
 Proposed
@@ -630,6 +646,8 @@ ADR-012 は不透明カーソル方式に一本化し、波及の項で「出力
 
 ## ADR-018: エンティティの `userId` フィールドは残し、落とすのはポート引数だけにする
 
+→ `.adr/007-tenant-isolation-inside-durable-object.md` に昇格
+
 ### Status
 
 Proposed
@@ -657,6 +675,8 @@ Proposed
 
 ## ADR-019: `UserRepository` の分割先を `CredentialMappingRepository` / `UserSettingsRepository` と命名し、パスワード変更をエンティティ遷移から外す
 
+→ `.adr/008-identity-split-and-non-aggregate-stores.md` に昇格
+
 ### Status
 
 Proposed
@@ -682,6 +702,8 @@ Proposed
 - 波及: `spec/inventory/{domain,adapter,test}.md` と `spec/testcases/identity/*` の `authMethod` / `SsoUser` / `PasswordUser` 前提（ステップ12・14・15）。
 
 ## ADR-020: 保持期限の保存化を `TrashQueryPort` と `softDelete` のシグネチャまで届かせる
+
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格
 
 ### Status
 
@@ -759,6 +781,8 @@ Proposed
 - トレードオフ: **Identity Directory DO の節だけを読むと `jobs` の列が分からない。** 節に「User Data DO 側と同じ12列」と明記して参照先を固定した。
 
 ## ADR-023: `search_entries` の列は本ファイルで確定させ、原文とトピック名は持たせない
+
+→ `.adr/005-search-projection-inside-write-transaction.md` に昇格
 
 ### Status
 
@@ -1070,6 +1094,8 @@ steps.md ステップ16 は `spec/manual-tests/search.md` に「**FTS5 の新し
 
 ## ADR-034: `spec/index.md` の件数は台帳の実測行数を正本とし、概数表記をやめる
 
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+
 ### Status
 
 Proposed
@@ -1135,6 +1161,8 @@ ADR-028 は同じ形（イベント名だけで走査語に掛からない行）
 - 波及: `.thread/35/step14-checklist.md` の #19 / #22 / #23 の「実際に適用したもの」欄と「台帳」欄。台帳（`spec/inventory/test.md`）は既に正しいので変更しない。
 
 ## ADR-036: `userId スコープ` の書き換えを読み取り専用ユースケースのテストケースにも及ぼす
+
+→ `.adr/007-tenant-isolation-inside-durable-object.md` に昇格
 
 ### Status
 
@@ -1258,6 +1286,8 @@ Proposed
 
 ## ADR-041: 非集約ストアの書き込み口を各テーブルの節と台帳に置き、`resetTokenStore` の別名を spec 側で対応させる
 
+→ `.adr/008-identity-split-and-non-aggregate-stores.md` に昇格（非集約ストアの契約とポート名の扱いとして）
+
 ### Status
 
 Proposed
@@ -1280,6 +1310,8 @@ Proposed
 - 波及: `spec/inventory/adapter.md` の該当6行。**`spec/domains/identity.md` に `credential_locators` の書き込みポートが無い件と、`spec/usecases/identity.md` に locator を記録する段が無い件は本 ADR の射程外**（別担当への申し送り）。
 
 ## ADR-042: `jobs` の再投入収束規則3つを spec に置き、再武装する5種は名指しで列挙する
+
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
 
 ### Status
 
@@ -1304,6 +1336,8 @@ Proposed
 
 ## ADR-043: `purge-trash` の再計算フェーズの自己消尽述語は `user_settings` の節に置く
 
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格
+
 ### Status
 
 Proposed
@@ -1323,6 +1357,8 @@ Proposed
 - 波及: `spec/inventory/adapter.md` の `ADP-user-settings-001` / `ADP-migration-progress-001`。
 
 ## ADR-044: `search_entries` の物理形は `spec/database/index.md` を正本とし、`'delete'` の構文もここに置く
+
+→ `.adr/005-search-projection-inside-write-transaction.md` に昇格（物理形の正本の所在として）
 
 ### Status
 
@@ -1369,6 +1405,8 @@ Proposed
 
 ## ADR-046: 期限切れ項目の列挙を `TrashQueryPort.listItemsToPurge` として置き直す
 
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格
+
 ### Status
 
 Proposed
@@ -1395,6 +1433,8 @@ ADR-020 は `TrashQueryPort.listExpiredItems` を削除した（全ユーザー�
 ---
 
 ## ADR-047: `purgeAfter` の一括再計算の書き込み口を memo / knowledge の3リポジトリに置く
+
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格
 
 ### Status
 
@@ -1424,6 +1464,8 @@ ADR-020 は保持日数の変更を「同一トランザクションでゴミ箱
 
 ## ADR-048: `CredentialRef` に `usableForLogin` を足す
 
+→ `.adr/008-identity-split-and-non-aggregate-stores.md` に昇格
+
 ### Status
 
 Proposed
@@ -1452,6 +1494,8 @@ Proposed
 ---
 
 ## ADR-049: 非集約ストアをドメイン側の契約として置き、中間状態の語彙に上流のアンカーを与える
+
+→ `.adr/008-identity-split-and-non-aggregate-stores.md` に昇格
 
 ### Status
 
@@ -1487,6 +1531,8 @@ Proposed
 
 ## ADR-050: 不透明カーソルの検証を「形式」と「中身・期限」に分ける
 
+→ `.adr/006-opaque-cursor-search-pagination.md` に昇格
+
 ### Status
 
 Proposed
@@ -1516,6 +1562,8 @@ Proposed
 
 ## ADR-051: 「すべて失効」と「SSO 連携の解除」を独立したユースケースとして新設する
 
+→ `.adr/013-sso-credential-linking-scope.md` に昇格（画面が約束した操作の受け皿と一括操作の扱いとして）
+
 ### Status
 
 Proposed
@@ -1544,6 +1592,8 @@ Proposed
 
 ## ADR-052: 「ポートの同期契約」の例外は列挙であって導出規則ではない、と書く
 
+→ `.adr/011-synchronous-port-contract-exceptions.md` に昇格
+
 ### Status
 
 Proposed
@@ -1566,6 +1616,8 @@ Proposed
 
 ## ADR-053: `search_entries` の物理形はデータベース設計に一本化する
 
+→ `.adr/005-search-projection-inside-write-transaction.md` に昇格
+
 ### Status
 
 Proposed
@@ -1585,6 +1637,8 @@ Proposed
 - 波及: `spec/domains/search.md`（実装制約2）。
 
 ## ADR-054: `CLAUDE.md` は非集約ストアの員数を数値で持たない
+
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
 
 ### Status
 
@@ -1627,6 +1681,8 @@ Proposed
 - 波及: `spec/pages/index.md` P-13。
 
 ## ADR-056: `CLAUDE.md` の「Key concepts」導入文を、実体のある項と `spec/` が正本の項に分ける
+
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
 
 ### Status
 
@@ -1744,6 +1800,8 @@ Proposed
 
 ## ADR-061: リセット完了時に新しいセッションを確立する
 
+→ `.adr/012-new-session-on-password-reset-completion.md` に昇格
+
 ### Status
 
 Proposed
@@ -1767,6 +1825,8 @@ Proposed
 
 ## ADR-062: SSO 連携の追加（`linkSsoCredential`）を spec に載せる
 
+→ `.adr/013-sso-credential-linking-scope.md` に昇格
+
 ### Status
 
 Proposed
@@ -1787,6 +1847,8 @@ Proposed
 - 波及: `spec/domains/identity.md`（スコープ外の限定）、`spec/usecases/identity.md`（`linkSsoCredential` 節）、`spec/testcases/identity/linkSsoCredential.md`（新設）、`spec/pages/index.md` P-13、`spec/inventory/{usecase,test,frontend}.md`、`spec/manual-tests/account.md`、`.thread/35/{plan,coverage,testing}.md`（件数とファイル数）。
 
 ## ADR-063: リセット完了時の AI 接続一括失効に専用ポートを置かない
+
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格（一括操作に専用メソッドを置くかを規模で決める規則として）
 
 ### Status
 
@@ -1830,6 +1892,8 @@ Proposed
 
 ## ADR-065: 濫用抑止の3規則を `spec/domains/identity.md` に置き、具体値は運用側へ送る
 
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格（具体値を運用側へ送る規則として）
+
 ### Status
 
 Proposed
@@ -1851,6 +1915,8 @@ Proposed
 
 ## ADR-066: `purge-trash` の投入点を「ソフトデリート4 + 保持日数変更1」の5つとして全数で固定する
 
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
+
 ### Status
 
 Proposed
@@ -1870,6 +1936,8 @@ Proposed
 - 波及: `spec/database/index.md`（`jobs.kind` の全数表の投入点欄）、`spec/usecases/{memo,knowledge,identity}.md`（5箇所）、`spec/domains/trash.md`、`spec/inventory/usecase.md`。
 
 ## ADR-067: 「trash は書き込みポートを持たない」原則と起床の投入を両立させる
+
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
 
 ### Status
 
@@ -1891,6 +1959,8 @@ ADR-066 が確定させた投入は**書き込み**である。素直に読む�
 - 波及: `spec/domains/trash.md`（`TrashQueryPort` は読み側のみ）、`spec/domains/index.md`（`enqueueJob` の位置づけ）、`spec/usecases/{memo,knowledge,identity}.md`。
 
 ## ADR-068: `purge-trash` の再計算フェーズを「起床をまたいで収束する有界反復」に確定する
+
+→ `.adr/009-stored-purge-after-and-bulk-recalculation.md` に昇格
 
 ### Status
 
@@ -1917,6 +1987,8 @@ Proposed
 
 ## ADR-069: trash の読み取り系ユースケースからユーザー実在確認を外す
 
+→ `.adr/007-tenant-isolation-inside-durable-object.md` に昇格
+
 ### Status
 
 Proposed
@@ -1937,6 +2009,8 @@ Proposed
 - 波及: `spec/usecases/trash.md`（エラーケース表）、`spec/domains/trash.md`、`spec/testcases/trash/{listTrash,emptyTrash}.md`、`spec/inventory/{usecase,test}.md`。
 
 ## ADR-070: `jobs.operation_key` を「単一 TEXT 主キー = UUIDv7」規則の第2の例外として明示する
+
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
 
 ### Status
 
@@ -1959,6 +2033,8 @@ Proposed
 
 ## ADR-071: `payload_digest` の射程を実行可能集合に限定し、収束規則の優先を digest 規則へも及ぼす
 
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
+
 ### Status
 
 Proposed
@@ -1979,6 +2055,8 @@ Proposed
 - 波及: `spec/database/index.md`（`jobs.payload_digest` の列定義と収束規則の節）。
 
 ## ADR-072: `jobs.kind` の全数表に投入点欄を持たせ、欄の非空を不変条件とする
+
+→ `.adr/010-job-enqueue-points-and-reenqueue-rules.md` に昇格
 
 ### Status
 
@@ -2022,6 +2100,8 @@ Proposed
 
 ## ADR-074: `CLAUDE.md` の UoW コンテキスト名簿は DO クラス別に書く
 
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
+
 ### Status
 
 Proposed
@@ -2041,6 +2121,8 @@ Proposed
 - 波及: `CLAUDE.md`（Key concepts の Unit of Work 項）。
 
 ## ADR-075: `CLAUDE.md` の OCC 形は per-table の形を断定せず `spec/database/index.md` を指す
+
+→ `.adr/014-spec-and-claude-md-source-of-truth.md` に昇格
 
 ### Status
 
