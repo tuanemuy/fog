@@ -879,3 +879,136 @@ ADR-022 は `spec/database/index.md` について「列の全数は User Data DO
 - 良い点: `spec/database/index.md` の 21 セルすべてに台帳の行が1対1で対応する。#37 がどちらの節を読むべきかを台帳から決められる。
 - 良い点: `P-10`（テーブル名の異なり数 19 で数える検査）とも矛盾しない — あちらは名前を数え、台帳はセルを数えるという役割の違いがそのまま残る。
 - トレードオフ: **台帳の行数（86行）が第4.1.1節のテーブル数と一致しない。** スキーマ行は 21 セル + 廃止行1（`ADP-users-001`。ADR-024）で 22 行になる。
+
+## ADR-027: `executePasswordReset.md` に濫用抑止3ケースを足さない
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第11.1節のテストケース表は `spec/testcases/identity/executePasswordReset.md` の指示欄を「**同上**」とだけ書いている（`design.md:2423`）。直前の行は `changePassword.md` で、そこには (B) に加えて「credential 変更 saga の中間状態3値」「`sessionEpoch` の前進」「**濫用抑止のケースを3つ**（旧パスワードの照合失敗が `failedAttempts` を進める / `nextAttemptAllowedAt` 未到達の変更試行が明示的に拒否される / 照合成功で `failedAttempts` が0に戻る）」「前進不能時の終端」が並んでいる。
+
+「同上」を字義どおり写すと、リセット経路にも濫用抑止3ケースを足すことになる。**ところがリセットには旧パスワードの照合が存在しない。** 本人確認を担うのはトークンであり（`spec/usecases/identity.md` の executePasswordReset 手順2）、`PasswordHasher.verify` を呼ぶ手順が1つも無い。設計 第6.2.2節 (a) も「`failedAttempts` を**進める**側の全数は2本」と断定し、その2本を **login step 7 の `report-login-result`** と**パスワード変更 phase 0 の `report-verify-result`** に限定している。リセットはそのどちらでもない。
+
+### Decision
+
+**「同上」を「(B) + 中間状態 + `sessionEpoch` の前進 + 終端」までと読み、濫用抑止3ケースは足さない。** 代わりに、リセット固有の観測結果である「`resetVersion` の前進による直近世代の AI クライアント接続の失効」を1ケース足す（第5.4節 (i)）。
+
+**リセットは濫用抑止と無関係ではない** — 第6.2.2節 (a) は「リセットの完走が `failedAttempts` を0に戻す」を**脱出経路 (i)** として定義している。ただしこれは「進める側」ではなく「0へ戻す側」であり、しかも観測できるのは**ログイン側**である。したがって落とし先は `spec/manual-tests/account.md` の TC-40（ロックアウトと2本の脱出経路）であって、`executePasswordReset.md` ではない。
+
+### Consequences
+
+- 良い点: 存在しない手順（旧パスワード照合）に対する期待値をテストケースに書かずに済む。#37 が「リセットでも `verify` を呼ぶのか」と読む余地が消える。
+- トレードオフ: **設計の「同上」と `spec/` の記述が1箇所ずれる。** ずれの根拠は本 ADR であり、PR 本文にも明記する（ADR-009 / ADR-010 / ADR-011 と同じ扱い）。
+- 波及: 脱出経路 (i) の検証は `spec/manual-tests/account.md` TC-40 が負う（ステップ15c）。`spec/inventory/test.md` の `TC-executePasswordReset-017`〜`-020` は4件であって7件ではない。
+
+## ADR-028: 設計の表が挙げていないイベント期待行にも (A) / (B) を適用する
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第11.1節「改訂する — テストケース」の表は、ファイルごとに「ヒット行と内容」を挙げたうえで (A) / (B) / (C) を指定している。**この「ヒット行」は語彙走査（`V-3`）と `イベント` という語の目視で拾った行である。**
+
+ところが実測すると、**イベント名を直接書いていて `イベント` という語も走査語も含まない行**が実在する。全数は次の11行である。
+
+- `trash/emptyTrash.md:10`（`document.sourceLinksChanged` が発行される）
+- `trash/hardDeleteTrashItem.md` の `:7` / `:8` / `:9` / `:11` / `:12`（`memo.hardDeleted` / `document.hardDeleted` / `topic.hardDeleted` / `memo.sourceLinksChanged` が収集される）
+- `trash/restoreDocument.md` の `:22` / `:24` / `:37`（`topic.restored` / `document.restored` / `topic.created` が収集される）
+- `trash/restoreTopic.md` の `:7` / `:10`（`topic.restored` / `document.restored` が収集される）
+
+第7.3節は「イベントは transport としても業務表現としても残らない」と断定しているので、これらを残すと**改訂後の `spec/` にイベント期待が11行生き残る**。しかも `V-3` にも `イベント` の grep にも掛からないので、完了ゲートで検出できない。
+
+### Decision
+
+**設計の表の「ヒット行」を網羅と読まず、対象ファイルの全行をイベント期待の観点で読み直す。** 上の11行には、表と同じ基準で (A)（projection の期待へ読み替え）を適用した。**(C) は使わない** — いずれも業務上意味のある正常系であり、機構が消えるだけで振る舞いは残るからである。
+
+判定に迷う余地はほぼ無い。**イベント名が指しているのは「そのトランザクションで何が起きたか」であり、DO 構成ではそれが projection の更新に1対1で対応する**（`spec/domains/search.md`「インデックスの維持」の契機表がその対応の正本である）。トピックだけは例外で、エントリを持たないので「projection の更新は発生しない」と書く。
+
+### Consequences
+
+- 良い点: 改訂後の `spec/testcases/**` にイベント期待が1行も残らない（`grep -rn 'イベント' spec/testcases` が 0 行）。
+- 良い点: `.thread/35/step14-checklist.md` の該当行に「設計の表が挙げていない」と明記したので、レビューが設計と突き合わせたときに差分の理由が辿れる。
+- トレードオフ: **ステップ14 の作業量が設計の表より増える。** ただし増えたのは4ファイル11行で、いずれも同じ表（インデックスの維持の契機表）から機械的に導ける。
+
+## ADR-029: FTS5 新設ケースのうち「ゴミ箱除外」は既存ケースの書き換えで満たし、二重に作らない
+
+### Status
+
+Proposed
+
+### Context
+
+steps.md ステップ13 は `spec/testcases/search/search.md` に FTS5 の新しいケースを9系統足せと指示している。そのうち **(viii) ゴミ箱除外**は、実測で既存の `:17`（「キーワードに一致するメモ・ドキュメントがゴミ箱内にある → ヒットしない」。`TC-search-011`）と完全に同じ検証点である。違うのは根拠の書き方だけで、旧記述は「インデックスから remove 済み」、新設計では「ソフトデリートと同一トランザクションで projection から除去済み」になる。
+
+同じ問題を ADR-012 が (vi)（ページ間の重複・欠落）について既に処理しており、steps.md も「(vi) は `:24` の読み替えの拡張として書き、二重に作らない」と明記している。
+
+### Decision
+
+**(viii) は既存 `TC-search-011` の根拠の書き換えで満たし、新設ケースを作らない。** 新設するのは (i)〜(vii) と (ix) に対応する **11ケース**（`TC-search-033`〜`-043`）で、内訳は「投稿直後のヒット」+ trigram / 短語フォールバック / NFKC 2件（全角半角・合成済み結合文字列）/ `bm25` / 安定順位 / 原文スニペット / `TOPIC_NOT_FOUND` 2件（未知・ゴミ箱内）/ 不正カーソルである。
+
+**(vii) を2ケースに割った**のは、未知のトピックとゴミ箱内のトピックが別の状態（行が無い / 行はあるが `trashed`）から同じエラーへ落ちることを、片方だけの実装で通させないためである。
+
+### Consequences
+
+- 良い点: 同じ検証点の重複行が台帳に生まれない。`TC-search-011` の連番が動かないので、この行を参照する側（#10 の検索チェックリスト）が影響を受けない。
+- トレードオフ: **steps.md の「9系統」と実際の新設数（11ケース）が一致しない。** 内訳の対応は本 ADR が正本である。
+
+## ADR-030: `spec/manual-tests/account.md` の新規 TC は種別セクションの末尾へ置き、番号の単調性を犠牲にする
+
+### Status
+
+Proposed
+
+### Context
+
+ステップ15c は `spec/manual-tests/account.md` に3系統（ロックアウトの再現と2本の脱出経路 / リセット完了後の直近世代の接続の失効 / リセット完了画面の必須導線）を足す。**このファイルは `## 正常系` / `## 異常系` / `## 境界値` の3セクションに分かれており、`spec/manual-tests/index.md` の件数表がその3区分の内訳を持つ**（account は 11 / 22 / 4 = 37）。区分の集計元は各 TC の `**種別**:` 行である。
+
+新設の3件は種別が割れる — 必須導線と自動失効は正常系、ロックアウトは異常系である。既存は TC-01〜TC-37 が文書順に単調増加しているので、次の2つを同時には満たせない。
+
+- **(a) 番号を単調に保つ** — 新規3件を文書末尾（境界値セクションの後）へまとめて置く。種別セクションと種別ラベルが食い違う
+- **(b) 種別セクションの整合を保つ** — 正常系2件を `## 正常系` の末尾（TC-11 の直後）に、異常系1件を `## 異常系` の末尾（TC-33 の直後）に置く。文書順は 01〜11, 38, 39, 12〜33, 40, 34〜37 になる
+
+### Decision
+
+**(b) を採る。** 理由は2つある。
+
+1. **既存 TC の番号を1つも動かさない**（`ai.md` が `account.md` を手順の前提として参照しており、`index.md` の推奨実行順序もこのファイルを起点にしている）。番号を詰め直す案は採らない。
+2. **セクションは実行順序の単位である。** マニュアルテストは上から順に実行する運用で、正常系を通してから異常系へ進む。正常系の TC を境界値セクションの後ろに置くと、実行順序そのものが崩れる。**番号は識別子であって順序ではない**（台帳 ID の欠番規約と同じ理屈。ADR-011）。
+
+### Consequences
+
+- 良い点: 件数表の3区分（ステップ16.5 が数え直す）が `**種別**:` の集計とそのまま一致する。**改訂後の実測は 40 件 = 正常系 13 / 異常系 23 / 境界値 4** である。
+- トレードオフ: **文書内の TC 番号が単調でなくなる。** 目次を持たないファイルなので実害は小さいが、番号順に読もうとすると引っかかる。
+- 波及: ステップ16.5 への申し送りは「account.md が 37 → 40（正常系 +2 / 異常系 +1）」である。合計は 192 → 195 に、実行記録欄の分母も同じ値になる（ステップ16 が `search.md` に足す分は別途加算する）。
+
+## ADR-031: テストケースでは saga / 濫用抑止の列を camelCase で書き、`spec/database/index.md` の snake_case と対にする
+
+### Status
+
+Proposed
+
+### Context
+
+`P-7` は `spec/testcases/identity/loginWithPassword.md` に `credentialVersion|nextAttemptAllowedAt|changeState`、`listAiClientConnections.md` に `createdAtResetVersion`、`requestPasswordReset.md` に `operationKey` を要求する（すべて camelCase）。一方 `spec/database/index.md` は同じものを `credential_version` / `next_attempt_allowed_at` / `change_state` / `created_at_reset_version` / `operation_key` と snake_case の列名で定義している。**`spec/domains/identity.md` と `spec/usecases/identity.md` はどちらの綴りも持たず、「セッションの世代を進める」「ログイン失敗と同じ回数カウンタ」のように散文で書いている**（ステップ7・9 の担当者の判断）。
+
+つまりテストケースが camelCase を導入すると、その語は `spec/` の中で `spec/database/index.md` の snake_case 列とだけ対応する。逆に snake_case で書くと `P-7` は通るが（`purge_after` の行は実際にそう書かれている）、テストケースの既存の書き方（`trashedWith` / `latestRevision` / `revokedAt` など、DTO・エンティティのフィールドはすべて camelCase）と揃わない。
+
+### Decision
+
+**保持期限だけ snake_case、それ以外は camelCase で書く。**
+
+- **`purge_after`** は `spec/testcases/trash/listTrash.md` で snake_case のまま使う。`P-7` の第6行がその綴りで測っており、かつ **`purgeAfter`（保存された値そのもの。`expiresAt` に載る）と `purge_after`（再計算とインデックスの対象になる列）を書き分けられる**という利点がある。ADR-020 が `TrashedMemo` 等に `purgeAfter: Date` を足しているので、両方が同じ文脈に現れる。
+- **`changeState` / `credentialVersion` / `nextAttemptAllowedAt` / `failedAttempts` / `sessionEpoch` / `resetVersion` / `createdAtResetVersion` / `operationKey`** は camelCase で書く。これらはテストケースの中では「利用者・実装者から見た状態の名前」として現れており、`trashedWith` 等と同じ扱いが自然である。
+
+**綴りの対応表は作らない。** 対応は1対1で機械的（camelCase ↔ snake_case）であり、表を作るとその表自体が同期対象になる。
+
+### Consequences
+
+- 良い点: `P-7` の10本がステップの指示語のまま通る（ADR-015 の原則を崩さない）。
+- トレードオフ: **`spec/` の中で同じものが2通りの綴りで現れる。** `spec/database/index.md` を単独で読む #37 が `changeState` を grep しても列定義に当たらない（当たるのは `change_state`）。両方を引くのは実装者にとって自然な操作なので受容する。
+- 波及: `spec/inventory/test.md` の要点欄も同じ規則で書く（`purge_after` の再計算だけ snake_case、他は camelCase）。

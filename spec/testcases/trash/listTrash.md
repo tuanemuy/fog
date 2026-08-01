@@ -12,11 +12,11 @@
 | ゴミ箱に 25 件ある | `page: 2, limit: 10` で取得する | 11〜20 件目（削除日時降順）が返る。`totalCount: 25`、`page: 2`、`limit: 10` | |
 | ゴミ箱に 25 件ある | `page: 4, limit: 10`（範囲を超えたページ）で取得する | `items` は空配列。`totalCount: 25`。エラーにならない | |
 | ゴミ箱が空 | 一覧を取得する | `items: []`、`totalCount: 0`。エラーにならない（空状態の表示は UI の責務） | |
-| ユーザーの `trashRetentionDays` が 30（既定） | `trashedAt` が既知の項目を含む一覧を取得する | 各項目の `expiresAt` が `trashedAt + 30日`（`RetentionPolicy.expiresAt`）と一致する | |
-| 項目がゴミ箱にある状態でユーザーが `trashRetentionDays` を 30 → 7 に短縮済み（境界値: 遡及適用） | 一覧を取得する | 既存項目の `expiresAt` も `trashedAt + 7日` で算出される（保存値ではなく照会時算出。遡及適用） | |
-| 項目がゴミ箱にある状態でユーザーが `trashRetentionDays` を 30 → 60 に延長済み | 一覧を取得する | 既存項目の `expiresAt` も `trashedAt + 60日` で算出される | |
+| ユーザーの `trashRetentionDays` が 30（既定） | `trashedAt` が既知の項目を含む一覧を取得する | 各項目の `expiresAt` にはソフトデリート時に保存された `purgeAfter`（= `trashedAt + 30日`。`RetentionPolicy.expiresAt` で算出したもの）がそのまま載る | |
+| 項目がゴミ箱にある状態でユーザーが `trashRetentionDays` を 30 → 7 に短縮済み（境界値: 遡及適用） | 一覧を取得する | 既存項目の `expiresAt` も `trashedAt + 7日` になる。**根拠は照会時の再算出ではなく、変更と同一トランザクションでゴミ箱内全項目の `purge_after` が再計算され `purge-trash` の起床が張り直されたことである**（利用者から見た遡及適用の結果は変わらない） | |
+| 項目がゴミ箱にある状態でユーザーが `trashRetentionDays` を 30 → 60 に延長済み | 一覧を取得する | 既存項目の `expiresAt` も `trashedAt + 60日` になる（同じく `purge_after` の一括再計算による） | |
 | `trashRetentionDays: 1`（最小値）の項目がゴミ箱にある | 一覧を取得する | `expiresAt = trashedAt + 1日` となり、`expiresAt > trashedAt` を満たす | |
-| 他ユーザーのゴミ箱に項目がある | 自ユーザーで一覧を取得する | 他ユーザーの項目は一切含まれない（userId スコープによるテナント分離） | |
+| 他ユーザーのゴミ箱に項目がある | 自ユーザーで一覧を取得する | 他ユーザーの項目は一切含まれない。保証は列条件ではなく到達可能性による — 自分の Durable Object の中に他ユーザーの行が原理的に存在しない | |
 | — | `page: 0` で取得する | バリデーションエラー | |
 | — | `page: 1.5`（非整数）で取得する | バリデーションエラー | |
 | — | `limit: 0` で取得する | バリデーションエラー | |

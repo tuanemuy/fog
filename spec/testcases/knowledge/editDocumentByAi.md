@@ -12,7 +12,7 @@
 | 本文が空文字の active ドキュメントが存在する（エッジケース: 空本文への AI 編集） | `mode: "replaceAll"`, `body: "初稿"` で編集する | 正常に編集される（`oldText` 非空必須のためパッチは空本文に適用不能であり、replaceAll が唯一の AI 編集経路） | |
 | 本文が空文字の active ドキュメントが存在する | `mode: "patch"` で任意のパッチを適用する | `oldText` が空本文中に見つからず `BusinessRuleError(PatchTargetNotFound)` | |
 | 本文非空の active ドキュメントが存在する | `mode: "replaceAll"`, `body: ""` で編集する | 空本文への置換として正常に受理され、新リビジョンが積まれる（境界値: replaceAll と空本文） | |
-| active ドキュメントが存在する | 現在値と同一の結果になる編集（replaceAll で同一全文、または適用結果が同一のパッチ）を行う | `changed: false`。リビジョンは積まれずイベントも発行されない（不変条件 5） | |
+| active ドキュメントが存在する | 現在値と同一の結果になる編集（replaceAll で同一全文、または適用結果が同一のパッチ）を行う | `changed: false`。リビジョンは積まれず、インデックスエントリも作り直されない（不変条件 5） | |
 | active ドキュメントが存在する | `changeReason` を省略して編集する | `ValidationError`。既定値は補完されない（requirements 4.5: AI は変更理由必須。S-AI-04 異常系） | |
 | active ドキュメントが存在する | `changeReason` に空白のみ（trim 後空）を渡す | `ValidationError`（補完しない） | |
 | 本文 `"AAA"` の active ドキュメント。AI の取得後に本文が変更され `oldText` が存在しない（エッジケース: パッチ 0 一致） | `patches: [{ oldText: "ZZZ", newText: "X" }]` で編集する | `BusinessRuleError(PatchTargetNotFound)`。ドキュメントは変更されない。AI は `get` で最新を取り直して再試行する | |

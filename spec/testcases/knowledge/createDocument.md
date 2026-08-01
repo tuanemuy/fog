@@ -4,7 +4,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| `active` トピックと active メモ 2 件が存在する | `title` / `body` / `sourceMemoIds`（2 件）/ `changeReason: "初稿"` で作成する | `ActiveDocument`（`version: 0`, `latestRevision: 1`）、リビジョン #1（全文スナップショット・`actor`・`changeReason: "初稿"`）、SourceLink 2 件が同一 UoW で保存され、`document.created` イベントが記録される | |
+| `active` トピックと active メモ 2 件が存在する | `title` / `body` / `sourceMemoIds`（2 件）/ `changeReason: "初稿"` で作成する | `ActiveDocument`（`version: 0`, `latestRevision: 1`）、リビジョン #1（全文スナップショット・`actor`・`changeReason: "初稿"`）、SourceLink 2 件が同一 UoW で保存される。同じ `transactionSync` の中で当該ドキュメントのエントリが `search_entries` / `search_fts` に作られ、出典メモ 2 件のエントリも作り直される（`sourceOfDocumentIds` の反映） | |
 | `active` トピックが存在する | `sourceMemoIds: []`（空配列）で作成する | 出典なしで正常に作成される（出典は任意。S-DT-04）。SourceLink は 0 件 | |
 | `active` トピックが存在する | `changeReason` を省略して作成する | application 層が既定値「作成」を補完し、リビジョン #1 の `changeReason` は「作成」になる（人間 UI / AI 共通。「なぜ」が空のリビジョンを存在させない） | |
 | `active` トピックが存在する | `changeReason` に空白のみ（trim 後空）を渡して作成する | 「作成」が補完され正常に作成される | |
@@ -26,6 +26,6 @@
 | `sourceMemoIds` の要素に空文字が含まれる | 作成する | `BusinessRuleError`（MemoId の構築違反） | |
 | トピック取得後、並行する `trashTopic` が先にトピックを `save` 済み（エッジケース: トピック touch の OCC 競合） | 作成を実行する | 手順 6 のトピック touch（`TopicRepository.save`）が 0 行更新となり `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。ドキュメントは作成されず、「trashed トピック配下の active ドキュメント」は生まれない。利用者は再試行 | |
 | トピック取得後、並行する `updateTopic`（アーカイブ切替等）が先に `save` 済み | 作成を実行する | 同様に touch が `ConflictError` となり作成されない（OCC による直列化） | |
-| 正常に作成が完了した | 作成先トピックの状態を確認する | トピックの `version` が 1 進んでいるが、内容は不変でトピックのイベントは発行されていない（touch は内容変更ではない） | |
+| 正常に作成が完了した | 作成先トピックの状態を確認する | トピックの `version` が 1 進んでいるが、内容は不変である（touch の意味は version のインクリメントだけであり、内容変更ではない） | |
 | AI トークンで認証（MCP `create_document`） | `changeReason` 付きで作成する | 人間 UI と同一の振る舞いで作成される（S-AI-03） | |
 | `active` トピックが存在する | `insertSourceLinks` で DB 例外が発生する | `SystemError(DatabaseError)`。UoW 全体がロールバックされる | |

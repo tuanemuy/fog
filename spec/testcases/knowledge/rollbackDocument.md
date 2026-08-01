@@ -4,10 +4,10 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| リビジョン 1〜3 を持つ active ドキュメント（`latestRevision: 3`。#1 と #3 は内容が異なる） | `revisionNumber: 1`, `changeReason: "AI の編集を取り消す"` でロールバックする | リビジョン #1 と同内容（タイトル・本文）の**新リビジョン #4** が積まれ `changed: true`, `latestRevision: 4`。既存リビジョン #1〜#3 は削除されない（履歴は線形のまま）。`document.edited` イベントが記録される | |
+| リビジョン 1〜3 を持つ active ドキュメント（`latestRevision: 3`。#1 と #3 は内容が異なる） | `revisionNumber: 1`, `changeReason: "AI の編集を取り消す"` でロールバックする | リビジョン #1 と同内容（タイトル・本文）の**新リビジョン #4** が積まれ `changed: true`, `latestRevision: 4`。既存リビジョン #1〜#3 は削除されない（履歴は線形のまま）。同じ `transactionSync` の中で当該ドキュメントのエントリが `search_entries` / `search_fts` に作り直される | |
 | リビジョン 1〜3 を持つ active ドキュメント | `changeReason` を省略して `revisionNumber: 2` へロールバックする | 「リビジョン2の内容に戻す」が補完され、新リビジョンの `changeReason` になる | |
 | リビジョン 1〜3 を持つ active ドキュメント | `changeReason` に空白のみ（trim 後空）を渡す | 既定値が補完され正常にロールバックされる | |
-| 現在の内容がリビジョン #2 と同一の active ドキュメント | `revisionNumber: 2` へロールバックする | `changed: false`。リビジョンは積まれずイベントも発行されない（不変条件 5） | |
+| 現在の内容がリビジョン #2 と同一の active ドキュメント | `revisionNumber: 2` へロールバックする | `changed: false`。リビジョンは積まれず、インデックスエントリも作り直されない（不変条件 5） | |
 | `latestRevision: 3` の active ドキュメント | `revisionNumber: 3`（最新自身）へロールバックする | 現在の内容と同一のため `changed: false`（エッジケース: 最新への戻し） | |
 | リビジョン 1 のみの active ドキュメント | `revisionNumber: 1` へロールバックする | 現在の内容と同一のため `changed: false`（境界値: 最初のリビジョン） | |
 | AI クライアントの編集でリビジョン #2 が積まれた active ドキュメント | 人間ユーザーが `revisionNumber: 1` へロールバックする | 新リビジョンの `actor` は人間ユーザーとして記録される（「AI が何をしても人間が復元できる」S-DT-06） | |
