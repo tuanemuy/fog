@@ -101,7 +101,7 @@
 - **変更内容:** 設計 第11.1節（`design.md:2291-2318`）の4手段を再実行し、`spec/` の非 review Markdown が **101 件**、語彙走査のヒットが **62 件**、未ヒットが **39 件**であることを確認する。差があればファイルが増減しているので、増えた分を第11.1節の判定表へ追加する。
   - **結果を `.thread/35/coverage.md` に materialize する。** 形式は `| ファイル | 判定（改訂 / 影響なし） | 対応ステップ | 拾った手段 |` の1行 = 1ファイルの表で、**101 行すべてを埋める**（判定は設計 第11.1節の一覧から写す）。
   - **設計の判定を上書きする分は台帳側に理由を書く。** 着手時点では `spec/manual-tests/index.md`（設計では「影響なし」（`design.md:2487`）→ adr.md **ADR-010** により「改訂（ステップ16.5）」）の1件だけを見込んでいた。**最終的な上書きは9件になった** — レビューで `userId スコープ` の残存が読み取り専用ユースケースのテストケース8件から見つかったため（adr.md **ADR-036**）。**最新の内訳は `.thread/35/coverage.md` 冒頭を正とする。**
-  - `spec/testcases/search/maintainSearchIndex.md` の行には「**削除**」と書く。着手時点の見込みでは完了後のファイル数は **100** だが、**レビューで新設ユースケース2件のテストケースファイルが増えたため最終値は 102**（adr.md **ADR-059**）。
+  - `spec/testcases/search/maintainSearchIndex.md` の行には「**削除**」と書く。着手時点の見込みでは完了後のファイル数は **100** だが、**レビューで新設ユースケース3件（`revokeAllAiClientConnections` / `unlinkSsoCredential` / `linkSsoCredential`）のテストケースファイルが増えたため最終値は 103**（adr.md **ADR-059** / **ADR-062**）。
   - `.thread/35/**` は AC-17 の差分ホワイトリストに入っているので、成果物制約に抵触しない。
 - **理由:** 設計 第11.1節が「#35 は同じ4つを再実行して、本節の一覧に漏れが無いことを確認する」と明示的に要求している（AC-16）。`.thread/35/research.md` 第3節に実測済みの結果があるので、差分だけを見ればよい。**台帳を手元のメモに留めるとステップ19 の項3 が事後に検証できない**ので、成果物として残す。
 
@@ -316,7 +316,7 @@
   - **競合相手の差し替え** — 「並行する pruner」は「並行する `purge-trash` ジョブ」へ。
   - **`changePassword.md` の「前進不能時の終端」ケースは #45 の境界で切る。** 設計 第11.1節（`design.md:2422`）は「`resume-credential-change` が前進不能を確定したときに **`changeState` / `changeOrigin` / `pendingVerifier` / `operationId` が `null` へ戻り**、旧パスワードでログインできる」ケースを足せと書いているが、**`.thread/34/handoff.md` は #45 の切り出しがまだ design.md に反映されていないと明言している**（第2節末尾・第3節ステップ1）。**書いてよいのは利用者から観測できる結果までである** — 「中間状態のあいだは旧新どちらのパスワードも通らない」「終端が確定して中間状態が解除されれば旧パスワードでログインできる」の2点。**どの列が `null` へ戻るかという巻き戻し手順、段の順序、原子性境界、終端モードの印、後始末失敗時の再試行上限、起点別の (i)/(ii) の使い分けは書かない**（adr.md ADR-009）。
   - **設計が明示的に「ケースを足せ」と言っている箇所**: `changePassword.md`（credential 変更 saga の中間状態 3値 / `sessionEpoch` の前進 / 濫用抑止3ケース / 前進不能時の終端 — **上の境界に従う**）、`registerOrLoginWithSso.md`（signup saga の phase 順）、`revokeAiClientConnection.md`（`:8` を **(C)** にして「`status = 'revoked'` の次のリクエストで DO 内ガードが拒否する」へ置き換え）、`changeTrashRetentionDays.md`（変更と同一トランザクションで全項目の `purge_after` を再計算し Alarm を張り直す）、`pruneExpiredTrashItems.md`（起動契機を cron から `purge-trash` ジョブへ、`listExpiredItems` を自 DO の `purge_after` 索引へ、ユーザー横断ケースを **(C)** 削除）。
-- **適用結果の記録:** **30行ぶんのチェックリストを `.thread/35/step14-checklist.md` に作り、ファイル・行・設計の指定（(A)/(B)/(C)）・実際に適用したもの・`spec/inventory/test.md` 側の要点欄も直したか、を1行ずつ埋める。** 「(A) にすべき行を (B) で処理した」（= projection の期待が抜けた）は V-3 では絶対に落ちないので、これが唯一の防御になる。**最後の列はステップ15.5 の入力である** — (A) / (B) で生き残ったケースにも台帳側に `Outbox` / `pruner` を持つ要点欄が実測で7件ある（`spec/inventory/test.md` の `:138` `TC-registerWithPassword-001` / `:165` `TC-revokeAiClientConnection-002` / `:396` `TC-delete-002` / `:503` `TC-postMemo-003` / `:516` `TC-post_memo-003` / `:569` `TC-softDeleteMemo-002` / `:754` `TC-restoreDocument-032`）。
+- **適用結果の記録:** **32行ぶんのチェックリストを `.thread/35/step14-checklist.md` に作り、ファイル・行・設計の指定（(A)/(B)/(C)）・実際に適用したもの・`spec/inventory/test.md` 側の要点欄も直したか、を1行ずつ埋める。** 「(A) にすべき行を (B) で処理した」（= projection の期待が抜けた）は V-3 では絶対に落ちないので、これが唯一の防御になる。**最後の列はステップ15.5 の入力である** — (A) / (B) で生き残ったケースにも台帳側に `Outbox` / `pruner` を持つ要点欄が実測で7件ある（`spec/inventory/test.md` の `:138` `TC-registerWithPassword-001` / `:165` `TC-revokeAiClientConnection-002` / `:396` `TC-delete-002` / `:503` `TC-postMemo-003` / `:516` `TC-post_memo-003` / `:569` `TC-softDeleteMemo-002` / `:754` `TC-restoreDocument-032`）。
 - **ケース追加の共通規約:** ステップ13 の「新設ケースは表の末尾に append する」に従う。
 - **理由:** AC-3。イベントを期待値に持つケースは全件が対象になるが、一律 (C) にすると業務上意味のある正常系まで消える。
 
@@ -425,6 +425,6 @@
   4. **目次・件数の同期（AC-18）** — `spec/index.md` の転記数値 grep が 0 行。`spec/manual-tests/index.md` の件数表・合計・実行記録の分母が実測と一致。
   5. **#10 / #13 の ID 照合** — `MISSING:` が 0 行。
   6. **機械ゲート** — `pnpm lint` / `pnpm format:check` が exit 0。`git diff --name-status main...HEAD` が `spec/**/*.md` / `CLAUDE.md` / `.thread/35/**` 以外を含まない。
-  7. **目視レビュー** — ステップ15 の9ファイル（`P-7` の裏づけつき）、`.thread/35/step14-checklist.md` の30行が全件埋まっていること（**最終列「台帳の要点欄も直したか」を含む**）、`spec/inventory/test.md` の `#L` 抜き取り10件、`spec/domains/search.md` の残った節が削った節を参照していないこと。
+  7. **目視レビュー** — ステップ15 の9ファイル（`P-7` の裏づけつき）、`.thread/35/step14-checklist.md` の32行が全件埋まっていること（**最終列「台帳の要点欄も直したか」を含む**）、`spec/inventory/test.md` の `#L` 抜き取り10件、`spec/domains/search.md` の残った節が削った節を参照していないこと。
 - **結果を PR 本文に貼る。**
 - **理由:** AC-1〜AC-3 / AC-16 / AC-17 / AC-18 / AC-19。「旧前提が残っていない」は目視では保証できない。

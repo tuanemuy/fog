@@ -1696,7 +1696,7 @@ ADR-039 は読み取り専用ユースケース `listAiClientConnections` の期
 - 良い点: 読み取り専用ユースケースの期待値表に書き込み操作が戻らない。振る舞いの自動検証は新設ユースケース側で復活する。
 - 波及: `spec/testcases/identity/revokeAllAiClientConnections.md` / `spec/inventory/test.md`。ADR-039 の Consequences に続報として追記済み。
 
-## ADR-059: 新設ユースケースのテストケースは新規ファイルで足し、`spec/` のファイル数を 102 とする
+## ADR-059: 新設ユースケースのテストケースは新規ファイルで足し、`spec/` のファイル数を増やす
 
 ### Status
 
