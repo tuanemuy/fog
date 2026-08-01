@@ -21,7 +21,7 @@
 | userId | `string` | required | `UserId.create` で検証（認証済みユーザー / トークンの所有ユーザーを渡す）。**対象 Durable Object の選択に使い、`SearchQuery` には渡さない** |
 | keyword | `string` | required | `SearchQuery.create` に委譲: trim 後に非空、最大 500 文字 |
 | topicId | `string` | optional | 指定時は `TopicId.create` で検証。スコープ絞り込みに用いる |
-| cursor | `string` | optional | 続きを読むときに前のページが返した値をそのまま渡す。**未指定が先頭ページである**。不正・期限切れは `SearchQuery.create` が拒否する |
+| cursor | `string` | optional | 続きを読むときに前のページが返した値をそのまま渡す。**未指定が先頭ページである**。形式（非空の不透明文字列）は `SearchQuery.create` が、中身と有効期限は `SearchIndexPort.query` が検証する（どちらも `InvalidCursor`） |
 | limit | `number` | required | 1〜100 の整数（listTrash と同形式） |
 
 入力DTOはプリミティブのみで構成する（DTO 規約）。**ページ番号を受け取る入口は持たない** — ページ間の変更で重複・欠落が出ないよう、続きの取得は不透明カーソルに一本化する（domains/search.md「検索の規則」）。
@@ -63,8 +63,8 @@
 ### 処理フロー
 
 1. `input.userId` から対象のユーザー単位 Durable Object を選ぶ（`UserId.create` で検証する。以降の処理はその中で走るので、`userId` を引数として持ち回らない）。指定があれば `TopicId.create(input.topicId)` で ID 値オブジェクトを構築する
-2. `SearchQuery.create({ keyword, topicId, limit, cursor })` で検索クエリ値オブジェクトを構築する。keyword の trim・非空・最大長、`limit` の範囲、`cursor` の妥当性の検証はここ（ドメイン）で行われる
-3. `SearchIndexPort.query(searchQuery)` を呼ぶ。ユーザー境界・ゴミ箱除外・アーカイブ込み・トピック絞り込み・安定順位・カーソルの契約はポートの契約（domains/search.md「検索の規則」）が担う
+2. `SearchQuery.create({ keyword, topicId, limit, cursor })` で検索クエリ値オブジェクトを構築する。keyword の trim・非空・最大長、`limit` の範囲、`cursor` の**形式**の検証はここ（ドメイン）で行われる。**`cursor` の中身と有効期限はここでは判定しない** — 解釈がポートの実装に閉じており、値オブジェクトの構築は現在時刻を持たないためである（domains/search.md）
+3. `SearchIndexPort.query(searchQuery)` を呼ぶ。ユーザー境界・ゴミ箱除外・アーカイブ込み・トピック絞り込み・安定順位・カーソルの契約はポートの契約（domains/search.md「検索の規則」）が担う。**カーソルの中身と有効期限の判定もここで行われ、失敗は `SearchQuery.create` と同じ `InvalidCursor` になる**（利用者から見た結果は「先頭から検索し直す」で変わらない）
 4. **所属トピック名の解決（結果整形）**: 結果内の `type: "document"` 項目の `topicId` を重複除去し、`TopicRepository.listByIds(topicIds)` で一括解決して（N+1 にしない）、各項目の出力DTOに `topicName` を含める（P-11 / S-SE-01 の「所属トピック」表示用）。AI 向け presentation の出力は従来どおり `topicId` のみで `topicName` は露出しない。名前解決は表示補助（ID → 名前の参照解決）であり、検索結果の要約・言い換え・再構成には当たらない — 「事実データのみ」の原則と矛盾しない
 5. 結果を `SearchResultItemDto` へ射影し、ポートが返した `nextCursor` をそのまま添えて返す。上記トピック名の付与以外に、フィールドの追加・削除・加工は行わない
 

@@ -54,3 +54,4 @@
 | 保持期限間近（`expiresAt` 直前）のドキュメント（境界値: 期限内はいつでも復元可能） | 復元を実行する | 期限内であれば通常どおり復元される | |
 | `purge-trash` ジョブ / ハードデリートとの並行実行で UoW 内の再取得・save が競合する | 復元を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` | |
 | リポジトリ / ポートで DB 例外が発生する | 復元を実行する | `SystemError(DatabaseError)`。トランザクションはロールバックされる | |
+| ゴミ箱内のドキュメントが `purgeAfter` を保持している（3 分岐のいずれでも共通） | 復元を実行する | `Document.restore` により `trashedAt` / `trashedWith` とともに `purgeAfter` が落ちる。落とさないと `purge-trash` の駆動源が過去へ固定される（trash.md「保持期限」） | |

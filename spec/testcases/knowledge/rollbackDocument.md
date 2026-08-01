@@ -17,7 +17,7 @@
 | active ドキュメントが存在する | `changeReason` を改行入り / 201 文字で指定する | `BusinessRuleError`（`ChangeReasonMultiline` / `ChangeReasonTooLong`） | |
 | ドキュメントが存在しない ID | ロールバックする | `NotFoundError` | |
 | ドキュメントがゴミ箱内 | ロールバックする | `findById` が active のみ返すため `NotFoundError` | |
-| 他ユーザー所有のドキュメント ID | ロールバックする | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のドキュメント ID | ロールバックする | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | （防衛線）`Document.rollback` に別ドキュメントのリビジョンが渡った | ロールバックを実行する | `BusinessRuleError(RevisionDocumentMismatch)`（通常は手順 3 の検索キーにより到達しない） | |
 | `findById` 後、並行編集が先にコミットした | ロールバックを実行する | `save` の 0 行更新または `insertRevision` の一意制約違反により `ConflictError` | |
 | active ドキュメントが存在する | `insertRevision` で DB 例外が発生する | `SystemError(DatabaseError)`。UoW 全体がロールバックされる | |

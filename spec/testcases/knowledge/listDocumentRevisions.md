@@ -9,6 +9,6 @@
 | 作成直後（リビジョン 1 のみ）のドキュメント | 履歴一覧を取得する | 1 件のみ返る（境界値: ドキュメントが存在すれば必ず 1 件以上。差分・ロールバック操作を出さない制御は presentation の責務） | |
 | ゴミ箱内ドキュメント（ソフトデリート済み） | 履歴一覧を取得する | `findByIdIncludingTrashed` により正常に履歴が返る（人間 UI はゴミ箱内ドキュメントの履歴も閲覧可。エッジケース） | |
 | ドキュメントが存在しない ID（ハードデリート済み含む） | 履歴一覧を取得する | `NotFoundError`（ハードデリートで履歴ごと消えている） | |
-| 他ユーザー所有のドキュメント ID | 履歴一覧を取得する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のドキュメント ID | 履歴一覧を取得する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |
 | active ドキュメントが存在する | `DocumentRepository.listRevisions` で DB 例外が発生する | `SystemError(DatabaseError)` | |

@@ -6,8 +6,8 @@
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| DOM-identity-001 | User エンティティ | spec/domains/identity.md#User | 認証方式の判別可能ユニオンを持たない。保有クレデンシャルの非 PII 要約集合（`{ credentialId, kind, label }`。1件以上）と trashRetentionDays・OCC version を持ち、email / passwordHash / provider / providerSubject は持たない。registerWithPassword / registerWithSso / addCredential / removeCredential（`kind: "sso"` のみ受け、最後のログイン手段の解除は BusinessRuleError）/ changeTrashRetentionDays を純関数ファクトリで提供する。パスワードの変更・リセットは本エンティティの遷移ではない |
-| DOM-identity-002 | AiClientConnection エンティティ | spec/domains/identity.md#AiClientConnection | active / revoked の直和型（revokedAt は revoked のみ）。create / revoke（active のみ・不可逆）/ recordUsage（OCC 非対象のベストエフォート更新）を提供する |
+| DOM-identity-001 | User エンティティ | spec/domains/identity.md#User | 認証方式の判別可能ユニオンを持たない。保有クレデンシャルの非 PII 要約集合（`{ credentialId, kind, label, usableForLogin }`。1件以上）と trashRetentionDays・OCC version を持ち、email / passwordHash / provider / providerSubject は持たない。registerWithPassword / registerWithSso / addCredential / removeCredential（`kind: "sso"` のみ受け、**解除後に `usableForLogin` が真の要素が残らなければ** BusinessRuleError(LastCredentialRemoval)）/ changeTrashRetentionDays を純関数ファクトリで提供する。**「ログイン手段の数」は `usableForLogin` が真である要素の `credentialId` の異なり数**であり、要素数でも `kind` でも決まらない。パスワードの変更・リセットは本エンティティの遷移ではない |
+| DOM-identity-002 | AiClientConnection エンティティ | spec/domains/identity.md#AiClientConnection | active / revoked の直和型（revokedAt は revoked のみ）。**createdAtResetVersion（作成時点の resetVersion。生成後は不変）**を持ち、リセット完了時の自動失効の対象はこの値が前進前の resetVersion と等しい接続だけである。create / revoke（active のみ・不可逆）/ recordUsage（OCC 非対象のベストエフォート更新）を提供する |
 | DOM-identity-003 | UserId 値オブジェクト | spec/domains/identity.md#UserId | ブランド型。trim 後非空を create で検証し、違反は BusinessRuleError を throw する |
 | DOM-identity-004 | AiClientConnectionId 値オブジェクト | spec/domains/identity.md#AiClientConnectionId | ブランド型。trim 後非空の不透明文字列として検証する |
 | DOM-identity-005 | Email 値オブジェクト | spec/domains/identity.md#Email | canonical 化の唯一の出所。trim → 構造チェック → 最後の `@` で分割 → local 部は非 ASCII 拒否・lowercase のみ（NFKC を掛けない）→ domain 部は NFKC + lowercase + punycode → 再結合、の順で正規化する。長さ上限 320 を正規化の前後で2回見る。違反は InvalidEmail |
@@ -19,7 +19,7 @@
 | DOM-identity-011 | Actor 値オブジェクト | spec/domains/identity.md#Actor | UserActor / AiClientActor の直和型。Actor.user / Actor.aiClient ファクトリを提供し、AiClientActor は clientName をスナップショットとして持つ |
 | DOM-identity-012 | TokenScope 値オブジェクト | spec/domains/identity.md#TokenScope | HumanScope / AiScope の直和型。AiPermission（read/write）⊂ HumanPermission（+hardDelete/trash/history）で、allows(scope, permission) が human 全許可・ai は AiPermission のみを返す |
 | DOM-identity-018 | UserSettingsRepository.insert | spec/domains/identity.md#UserSettingsRepository | ユーザー単位設定側の User の初回永続化（version 0）。同期契約 |
-| DOM-identity-019 | UserSettingsRepository.save | spec/domains/identity.md#UserSettingsRepository | ExpectedVersion による OCC 更新。不一致は ConflictError("OPTIMISTIC_LOCK_FAILURE") |
+| DOM-identity-019 | UserSettingsRepository.save | spec/domains/identity.md#UserSettingsRepository | ExpectedVersion による OCC 更新。不一致は ConflictError("OPTIMISTIC_LOCK_FAILURE")。**単一行なので条件付き更新に `id` 述語を持たない**（条件は version だけ） |
 | DOM-identity-020 | UserSettingsRepository.find | spec/domains/identity.md#UserSettingsRepository | 自分の Durable Object の User を返す。初期化前は null。**findById(id) は持たない**（DO 内に1人分しか存在しないため） |
 | DOM-identity-021 | CredentialMappingRepository.findByEmail | spec/domains/identity.md#CredentialMappingRepository | canonical 化済みメールで解決（登録の一意性検証・パスワードログイン・リセット依頼）。該当なしは null。認証情報側（Identity Directory）に置く |
 | DOM-identity-022 | CredentialMappingRepository.findBySsoIdentity | spec/domains/identity.md#CredentialMappingRepository | (provider, providerSubject) で解決。該当なしは null。一意性違反は予約の獲得で ConflictError として判定する |
@@ -36,6 +36,15 @@
 | DOM-identity-033 | MailSender.sendPasswordResetMail | spec/domains/identity.md#MailSender | リセットリンクメールを送る。宛先実在性起因の失敗をユーザー応答に反映しない。**トランザクションの外で動くため Promise 契約のまま残る** |
 | DOM-identity-034 | CredentialId 値オブジェクト | spec/domains/identity.md#CredentialId | ブランド型。IdGenerator が採番し、メールアドレスからも鍵からも導出しない（保管方式や鍵世代が変わっても値が変わらないことが目的）。設定画面へ出してよい非 PII の値 |
 | DOM-identity-035 | CredentialMappingRepository.findByCredentialId | spec/domains/identity.md#CredentialMappingRepository | credentialId で解決（解除・リセットトークンの対象特定用）。該当なしは null |
+| DOM-identity-036 | CredentialMapping のフィールド | spec/domains/identity.md#CredentialMappingRepository | `credentialId` / `userId` / `kind` / `usableForLogin`（ログイン手段になり得るかの**判定の権威**）/ `credentialVersion`（パスワード差し替えごとに +1。ログインの到達性検査で照合する）/ `changeState`（`null` \| `"pending"` \| `"advanced"` の3値）/ `changeOrigin`（`"password-change"` \| `"reset"`。**行へ永続化する**ので再開時にも起点が決まる）/ `failedAttempts` / `nextAttemptAllowedAt`（ログイン失敗と現在パスワード照合の失敗が同じカウンタを進める）を持つ |
+| DOM-identity-037 | 認証情報側への書き込み操作 | spec/domains/identity.md#CredentialMappingRepository | 手続きの各段が呼ぶ操作を名前と契約で固定する: `reserveCredential`（予約の獲得。既存の有効行があれば ConflictError）/ `activateReservation`（予約の確定と `usableForLogin` の確定）/ `cancelReservation`（敗北した予約の除去。無ければ成功）/ `beginCredentialChange`（保留の検証材料を書き `changeState` を `"pending"` に。同一トランザクションで未使用リセットトークンを全無効化）/ `promoteVerifier`（`changeState` が `"advanced"` のときだけ昇格し `changeState` / `changeOrigin` を null へ戻す）/ `deleteMapping`（写像行とリセットトークン行の除去。無ければ成功）。**単一のメソッドには畳まない**が、契約はここで確定している |
+| DOM-identity-038 | AccountStore.find | spec/domains/identity.md#AccountStore | `status`（active/deleting/deleted）・`sessionEpoch`・`resetVersion` を返す。**`User` 集約には畳まない**が、`account` テーブルは OCC の `version` を持つ集約ルート側であり非集約ストアには数えない。前進メソッドは `ExpectedVersion` を取らない。初期化前は null |
+| DOM-identity-039 | AccountStore.advanceSessionEpoch | spec/domains/identity.md#AccountStore | セッションの世代を1つ進める。**進める操作は4つだけ**（パスワード変更 / リセット完了 / SSO 連携の解除 / 退会）で、**SSO 連携の追加では進めない**。既存セッションは次のリクエストで失効する |
+| DOM-identity-040 | AccountStore.advanceResetVersion | spec/domains/identity.md#AccountStore | リセット世代を1つ進め、進めた後の値を返す。**リセットの完了だけで進む**（通常のパスワード変更・SSO の連携と解除では進めない）。`sessionEpoch` で代用しない |
+| DOM-identity-041 | CredentialLocatorStore.list / findByCredentialId | spec/domains/identity.md#CredentialLocatorStore | 保有クレデンシャルの逆引き（`credentialId` / `kind` / 不透明な写像材料 / `credentialVersion` / `usableForLogin` / `label`）。**ログインの到達性検査の権威**であり、**照合は `credentialId` だけを見て写像材料の世代を含めない**。原本も検証材料も持たない |
+| DOM-identity-042 | CredentialLocatorStore.record | spec/domains/identity.md#CredentialLocatorStore | upsert。既存があれば `credentialVersion` / `usableForLogin` / `label` を上書きする。**`credentialVersion` は `credentialId` 単位で単調非減少**（引数と既存の最大値のうち大きいほう）。**既存行があれば何もしない no-op にしてはならない**（記録が空振りすると到達性検査が利用者を締め出す） |
+| DOM-identity-043 | CredentialLocatorStore.advanceCredentialVersion | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の `credentialVersion` を1つ進める。**その credential のすべての行に同時に効く**（1つだけ更新すると認証情報側との食い違いが残る） |
+| DOM-identity-044 | CredentialLocatorStore.deleteByCredentialId | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の行をすべて消す。「無ければ成功」の冪等操作。SSO 連携の解除・退会が使う（消す前に写像材料を控える。消した後は認証情報側の行へ辿り着けない） |
 
 ## memo
 
@@ -59,7 +68,8 @@
 | DOM-memo-022 | MemoRepository.findTimelineAround | spec/domains/memo.md#MemoRepository | 日付 / メモ ID アンカーで前後を含む初期ページと olderCursor / newerCursor を返す（日付にメモがなければ最近接、対象不在は空結果） |
 | DOM-memo-023 | MemoRepository.listRevisions | spec/domains/memo.md#MemoRepository | 全リビジョンを revisionNumber 昇順で返す。不在は空配列 |
 | DOM-memo-024 | MemoRepository.findRevision | spec/domains/memo.md#MemoRepository | 単一リビジョン取得。なければ null |
-| DOM-memo-025 | MemoRepository.listTrashed | spec/domains/memo.md#MemoRepository | trashed メモを trashedAt 降順・Versioned 付きで返す。TrashQueryPort アダプターの内部実装（UNION 枝）専用でユースケースから直接呼ばない。**期限切れ列挙メソッドは置かない**（`purgeAfter` の索引を引くのは自 DO の Alarm ジョブ） |
+| DOM-memo-025 | MemoRepository.listTrashed | spec/domains/memo.md#MemoRepository | trashed メモを trashedAt 降順・Versioned 付きで返す。TrashQueryPort アダプターの内部実装（UNION 枝）専用でユースケースから直接呼ばない。**期限切れ列挙メソッドは置かない**（`purgeAfter` の索引を引くのは `TrashQueryPort.listItemsToPurge` で、それを呼ぶのは自 DO の Alarm ジョブ） |
+| DOM-memo-026 | MemoRepository.recalculatePurgeAfter | spec/domains/memo.md#MemoRepository | 保持日数変更に伴う `purgeAfter` の一括更新。`purgeAfter` が retentionDays からの算出値と一致しない trashed 行を limit 件まで書き換え、`{ updatedCount, hasMore }` を返す。**OCC トークンを取らず version も進めない**（派生値の追随）。**進捗はカーソルではなく作業述語が表す**ので残件を別に永続化しない。active な行には触れない |
 
 ## knowledge
 
@@ -107,16 +117,18 @@
 | DOM-knowledge-053 | DocumentRepository.listSourceLinksByMemo | spec/domains/knowledge.md#DocumentRepository | メモ ID → 参照元ドキュメントのリンク一覧 |
 | DOM-knowledge-054 | DocumentRepository.listSourceLinksByMemos | spec/domains/knowledge.md#DocumentRepository | メモ ID 群 → リンクの一括逆引き（タイムライン 1 ページ分を 1 クエリ化） |
 | DOM-knowledge-055 | DocumentRepository.deleteSourceLinksByMemo | spec/domains/knowledge.md#DocumentRepository | メモのハードデリートに伴うリンク消去（ADR-003、同一 UoW・冪等）。**userId を第一引数に取らず、documents 側 JOIN によるスコープ規則も持たない**（到達可能性で閉じる） |
+| DOM-knowledge-056 | TopicRepository.recalculatePurgeAfter | spec/domains/knowledge.md#TopicRepository | 保持日数変更に伴う `purgeAfter` の一括更新（契約は `MemoRepository` の同名メソッドと同じ。OCC トークンを取らず version も進めず、残件の有無を返す） |
+| DOM-knowledge-057 | DocumentRepository.recalculatePurgeAfter | spec/domains/knowledge.md#DocumentRepository | 同上（ゴミ箱内ドキュメントが対象） |
 
 ## search
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| DOM-search-001 | SearchQuery 値オブジェクト | spec/domains/search.md#SearchQuery | keyword（trim 後非空 EmptyKeyword・500文字以内 KeywordTooLong）・任意 topicId・limit（1〜100）・任意 cursor を持ち create で検証する。**userId はフィールドに持たない**（DO 選択で消費済み）。不正・期限切れの cursor は InvalidCursor |
+| DOM-search-001 | SearchQuery 値オブジェクト | spec/domains/search.md#SearchQuery | keyword（trim 後非空 EmptyKeyword・500文字以内 KeywordTooLong）・任意 topicId・limit（1〜100）・任意 cursor を持ち create で検証する。**userId はフィールドに持たない**（DO 選択で消費済み）。**cursor は「非空の不透明文字列であること」（形式）だけを見る** — 中身と有効期限は SearchIndexPort.query の判定であり、create は復号も現在時刻の参照もしない。どちらの違反も InvalidCursor |
 | DOM-search-002 | SearchResultItem 値オブジェクト | spec/domains/search.md#SearchResultItem | memo / document の直和型。snippet 非空、事実データのみ（要約・再構成禁止）、type + id で同一性（重複ヒットは 1 件に統合） |
 | DOM-search-003 | IndexEntry 値オブジェクト | spec/domains/search.md#IndexEntry | memo / document の直和型で、`search_entries` の1行に対応する projection の値。削除済み対象から構築禁止、sourceOfDocumentIds / sourceMemoIds は相手が active な ID のみ含める（ゴミ箱の存在事実を露出させない） |
-| DOM-search-004 | SearchIndexPort.query | spec/domains/search.md#SearchIndexPort | **唯一のメソッドであり同期契約**（`Promise` を返さない）。全文一致を `bm25` と安定 tie-breaker（`timestamp DESC, type, id`）で順位付けした単一結果を返す。検索の規則（到達可能性による境界・ゴミ箱除外・アーカイブはヒット・optional 単一 topic 絞り込み・事実データのみ・カーソル）を満たし、0 件は空の SearchPage。**書き込み側はポートではない**（本体を書くトランザクション内の projection 処理へ畳まれる） |
-| DOM-search-013 | SearchCursor 値オブジェクト | spec/domains/search.md#SearchQuery | 不透明な文字列。中身の解釈は SearchIndexPort の実装に閉じ、利用者・ユースケースは解釈せず次の要求へそのまま渡す。有効期限を持ち、期限切れは InvalidCursor |
+| DOM-search-004 | SearchIndexPort.query | spec/domains/search.md#SearchIndexPort | **唯一のメソッドであり同期契約**（`Promise` を返さない）。全文一致を `bm25` と安定 tie-breaker（`timestamp DESC, type, id`）で順位付けした単一結果を返す。検索の規則（到達可能性による境界・ゴミ箱除外・アーカイブはヒット・optional 単一 topic 絞り込み・事実データのみ・カーソル）を満たし、0 件は空の SearchPage。**カーソルの中身と有効期限の判定はここが担う**（不正・期限切れは InvalidCursor、未知・ゴミ箱内トピックは TOPIC_NOT_FOUND）。**書き込み側はポートではない**（本体を書くトランザクション内の projection 処理へ畳まれる） |
+| DOM-search-013 | SearchCursor 値オブジェクト | spec/domains/search.md#SearchQuery | 不透明な文字列。中身の解釈は SearchIndexPort の実装に閉じ、利用者・ユースケースは解釈せず次の要求へそのまま渡す。有効期限を持ち、**期限切れの判定はポートの実装が行う**（期限切れは InvalidCursor） |
 | DOM-search-014 | SearchPage 値オブジェクト | spec/domains/search.md#SearchPage | `PaginationResult<SearchResultItem>` に `nextCursor?: SearchCursor` を添えた形。count はスナップショットに固定した集合の総件数。続きが無ければ nextCursor は undefined |
 
 ## trash
@@ -126,10 +138,12 @@
 | DOM-trash-001 | TrashItem 値オブジェクト | spec/domains/trash.md#TrashItem | memo / document / topic の直和の読み取り専用ビュー。**expiresAt は保存値（各エンティティの `purgeAfter`）をそのまま返す**、topic は setDocumentIds を持つ。ドメイン層は型定義のみでファクトリを置かない |
 | DOM-trash-002 | RestorePolicy ドメインサービス | spec/domains/trash.md#RestorePolicy | 純関数 decideDocumentRestore がトピック現況（active / trashed / hardDeleted）から restoreAlone / restoreWithTopic / selectDestination の 3 分岐を判定する |
 | DOM-trash-003 | HardDeletePolicy ドメインサービス | spec/domains/trash.md#HardDeletePolicy | 純関数 expandTargets が TrashItem を種別ごとの消去対象 ID 集合（HardDeletePlan）に展開する。トピックは setDocumentIds を含め、個別削除分は含めない |
-| DOM-trash-004 | RetentionPolicy ドメインサービス | spec/domains/trash.md#RetentionPolicy | 純関数。expiresAt = trashedAt + retentionDays、isExpired は expiresAt < now。**算出結果は保存する**（ソフトデリートで `purgeAfter` に設定し、復元で必ず null へ戻す）。保持日数の変更は同一トランザクションでゴミ箱内全項目の `purgeAfter` を再計算し、遡及適用を成立させる |
+| DOM-trash-004 | RetentionPolicy ドメインサービス | spec/domains/trash.md#RetentionPolicy | 純関数。expiresAt = trashedAt + retentionDays、**isExpired は保存値を入力に取る（`isExpired(purgeAfter, now)`）**。**算出結果は保存する**（ソフトデリートで `purgeAfter` に設定し、復元で必ず null へ戻す）。判定の権威は保存値であり、保持日数の変更直後は再計算が済むまで算出値と一致しない。保持日数の変更は同一トランザクションでゴミ箱内全項目の `purgeAfter` を再計算し、遡及適用を成立させる |
 | DOM-trash-005 | TrashQueryPort.listTrashItems | spec/domains/trash.md#TrashQueryPort | ゴミ箱一覧を削除日時降順・ページング付きで返す。**retentionDays 引数を取らず** expiresAt には保存済みの purgeAfter を載せ、topic の setDocumentIds を trashedWith から射影して埋める |
 | DOM-trash-006 | TrashQueryPort.findTrashItem | spec/domains/trash.md#TrashQueryPort | TrashItemRef による単一取得（復元・ハードデリートの対象確認用）。ゴミ箱にない場合は null |
 | DOM-trash-007 | TrashQueryPort.countTrashItems | spec/domains/trash.md#TrashQueryPort | ゴミ箱の総件数を返す（「空にする」の件数確認 S-TR-04 用） |
+| DOM-trash-008 | TrashQueryPort.listItemsToPurge | spec/domains/trash.md#TrashQueryPort | 自 DO のゴミ箱から**保存された `purgeAfter` が now を過ぎた項目**を limit 件まで `purgeAfter` 昇順で返す（`purge-trash` ジョブの駆動源）。**`userId` を取らず、全ユーザー横断で舐めるメソッドも持たない**。引き方は `purgeAfter` の索引であり、`trashedAt` と保持日数からの算出ではない |
+| DOM-trash-009 | TrashQueryPort.findEarliestPurgeAfter | spec/domains/trash.md#TrashQueryPort | ゴミ箱内の `purgeAfter` の最小値（無ければ null）。ソフトデリート・保持日数変更・ジョブ完了時の再武装が、次の起床時刻の材料として読む |
 
 ## export
 

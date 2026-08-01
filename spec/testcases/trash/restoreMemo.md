@@ -11,7 +11,8 @@
 | — | `memoId` に空文字（trim 後非空違反）を渡す | バリデーションエラー（`MemoId.create` の形式違反） | |
 | 指定 ID のメモが存在しない | 復元を実行する | `NotFoundError` | |
 | 指定 ID のメモが `status: "active"`（ゴミ箱にない） | 復元を実行する | `NotFoundError` | |
-| 指定 ID のメモが他ユーザー所有でゴミ箱にある | 復元を実行する | `NotFoundError`（userId スコープにより不在扱い） | |
+| 指定 ID のメモが他ユーザー所有でゴミ箱にある | 復元を実行する | `NotFoundError`（到達可能性により不在扱い — 自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | 指定 ID のメモがハードデリート済み（行不在） | 復元を実行する | `NotFoundError` | |
 | 取得後 save までの間に並行リクエスト（別の復元またはハードデリート）が version を進める | 復元を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。トランザクションはロールバックされ、projection も更新されない | |
 | `MemoRepository` で DB 例外が発生する | 復元を実行する | `SystemError(DatabaseError)`。トランザクションはロールバックされる | |
+| メモが `status: "trashed"` で `purgeAfter` を保持したままゴミ箱にある | 復元を実行する | `Memo.restore` により `trashedAt` とともに `purgeAfter` が落ちる。落とさないと `purge-trash` の駆動源が過去へ固定され起床が止まらなくなる（不変条件 8。trash.md「保持期限」） | |

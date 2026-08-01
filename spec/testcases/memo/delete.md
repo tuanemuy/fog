@@ -16,3 +16,4 @@
 | 読み取り後、save までの間に他書き込みが割り込む | 削除する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。AI クライアントは再試行する | |
 | 失効・スコープ外の AI トークン | 削除を試みる | identity / プレゼンテーション境界で認可エラー。本ユースケースには到達しない | |
 | — | `save` で DB 例外が発生する | `SystemError(DatabaseError)`。ロールバックされ状態遷移・インデックスエントリの除去のいずれも起きない | |
+| `trashRetentionDays: 30` のユーザーの active なメモが存在する | `type: "memo"` と `id` を指定して削除する | 人間 UI と同じく `purgeAfter` に `RetentionPolicy.expiresAt(now, 30)` の算出結果が保存される（不変条件 8。trash.md「保持期限」） | |

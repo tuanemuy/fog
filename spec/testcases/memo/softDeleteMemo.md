@@ -15,3 +15,4 @@
 | — | `memoId` を空文字でソフトデリートする | バリデーションエラー（`MemoId.create` の非空制約） | |
 | 読み取り後、save までの間に他書き込み（AI の編集等）が割り込む | ソフトデリートする | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再試行する | |
 | — | `save` で DB 例外が発生する | `SystemError(DatabaseError)`。ロールバックされ状態遷移・インデックスエントリの除去のいずれも起きない | |
+| `trashRetentionDays: 30` のユーザーの active なメモが存在する | ソフトデリートする | `purgeAfter` に `RetentionPolicy.expiresAt(now, 30)` の算出結果が保存される。`trashed` であることと `purgeAfter` を持つことは同値である（不変条件 8。trash.md「保持期限」） | |

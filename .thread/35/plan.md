@@ -19,7 +19,7 @@ Issue 本文の受け入れ条件7項目を起点に、**grep か目視で検証
 |---|---|---|---|
 | AC-1 | `V-1`（ベクトル / embedding / RRF / Vectorize / ハイブリッド / 意味検索 / `search_embeddings`）が `spec/**/*.md`（`review/` と `spec/adr/` を除く）で **0 行**になる | 受け入れ条件1 | 2,3,4,5,6,8,10,12,13,15.5,16 |
 | AC-2 | `V-2`（`D1` / `libSQL` / `Turso` / `PendingBatch` / `_occ_guard`）が同じ射程で **0 行**になり、`V-2c`（除外した2ファイルの旧ランタイム語）も **0 行**になる | 受け入れ条件1 | 7,10,12,13,16 |
-| AC-3 | `V-3`（`Outbox` / `collectEvents` / `consumer` / `relay` / `DLQ` / `pruner` / `processed_events` / `IndexerReadPort` / `EmbeddingPort` / `maintainSearchIndex`）が同じ射程で **0 行**になる。**射程から外すのは `spec/index.md` の ADR 一覧表の `005` 行1行だけ**である — リンク先ファイル名 `005-search-index-via-outbox.md` が走査語 `Outbox` に当たるためで、この行は AC-13 / `V-5` が「同一行に `superseded` の注記があること」で別途ゲートする（adr.md ADR-014） | 受け入れ条件1・対応項目2 | 2,5,6,7,8,9,10,11,12,13,14,15.5,16 |
+| AC-3 | `V-3`（`Outbox` / `collectEvents` / `consumer` / `relay` / `DLQ` / `pruner` / `processed_events` / `IndexerReadPort` / `EmbeddingPort` / `maintainSearchIndex`）が同じ射程で **0 行**になる。**射程から外すのは `spec/index.md` の ADR 一覧表の `005` 行1行だけ**である — リンク先ファイル名 `005-search-index-via-outbox.md` が走査語 `Outbox` に当たるためで、この行は AC-13 / `V-5` が「同一行に `superseded` の注記があること」で別途ゲートする（adr.md ADR-014）。**あわせて `V-3b`（第7.3節で消えるドメインイベント 24 件の名前を直接走査する）も同じ射程で 0 行**である — `V-3` の走査語はイベント名を1つも含まないため、`document.edited` のようにイベント名だけを書いた期待値は `V-3` では構造的に検出できない（adr.md ADR-035） | 受け入れ条件1・対応項目2 | 2,5,6,7,8,9,10,11,12,13,14,15.5,16 |
 | AC-4 | `spec/requirements.md` 4.4 の先頭行が「SQLite FTS5 による全文検索」を定義し、4.5 の `search` が「全文検索。トピックによる絞り込み可」になっている。「検索方式の選択をAIに委ねない」は**残っている**（`P-11` の2本で測る。**残す側は `V-*` では絶対に検出できない** — 負の検証は「消えたこと」しか測れないので、削り落としても誰も気づかない） | 受け入れ条件2 前半 | 2 |
 | AC-5 | `spec/requirements.md` 5.1 または 5.3 に「ユーザー単位の SQLite-backed Durable Object への**物理分離**」「分離の保証は列条件ではなく**到達可能性**」「1 DO あたり 10 GB」が入っている | 受け入れ条件2 後半 | 2 |
 | AC-6 | `spec/domains/search.md` の `SearchIndexPort` が **`query` 1メソッドのみ**を持ち、`Promise` を返さない。`upsertMemo` / `upsertDocument` / `removeMemo` / `removeDocument` / `IndexerReadPort` / `EmbeddingPort` が `spec/` 全域で 0 行。加えて「検索の規則」節に設計 第7.2.1節の4点が載っている（`bm25` による順位と安定 tie-breaker `timestamp DESC, type, id` / optional 単一 topic filter と `TOPIC_NOT_FOUND` / スナップショットページング / 削除・復元時の projection 同期）— `P-2` の後半3本で確認する | 受け入れ条件3（**設計 第11.1節による訂正後の文言**）・対応項目3 | 5,7,8,9,10,12,13,14,15.5 |
@@ -33,9 +33,9 @@ Issue 本文の受け入れ条件7項目を起点に、**grep か目視で検証
 | AC-13 | **無注記の `ADR-005` 参照が0本**である — `ADR-005` / `005-search-index-via-outbox` を含む行（`review/` と `spec/adr/005` 本体を除く）のうち、同一行に `.adr/003` / `.adr/004` / `superseded` のいずれも持たない行が **0 行**（`V-5`）。**ステップ11 が負うのはリンク6本とステップ5〜10 の射程内だけ**で、`spec/inventory/{domain,test}.md` / `spec/manual-tests/search.md:128` / `spec/testcases/search/search.md:28` の4件はそれぞれ 12 / 15.5 / 16 / 13 が閉じる（対応ステップ欄が全ファイルを覆っているのはこのため）。**`spec/adr/004` 側は測らない** — 実測で `004-domain-boundaries.md` はステータス行も本文も supersede ポインタを持たず（ステータスは「承認済み」。ポインタを持つのは `005` だけ）、Issue 対応項目4 が前提にしている「#34 で付けた supersede ポインタ」が 004 には存在しない。**004 を参照する 15 行のうち改訂後に嘘になるのは `spec/database/index.md:35` の1件だけ**で、それはステップ10a が扱う（ドメイン境界そのものは変えない — ステップ6） | 対応項目4 | 5,6,7,8,9,10,11,12,13,15.5,16 |
 | AC-14 | #10 の実装チェックリストの ID がすべて改訂後の `spec/inventory/` に**実在**し、内容が一致している（`gh issue view 10` の各 ID を台帳へ grep して全件ヒット） | 受け入れ条件7 | 18 |
 | AC-15 | #13 の実装チェックリストから、第7.3節で消える `DOM-identity-016` / `DOM-identity-017` / `TC-revokeAiClientConnection-002` が除かれ、残る行が改訂後の台帳に実在する | 設計 第11.1節の追加指示 | 18 |
-| AC-16 | `spec/` の非 review Markdown すべてに判定があり（改訂 / 影響なし）、設計 第11.1節の一覧に載っていないファイルが存在しない。**ファイル数は着手前 101 / 完了後 100**（`spec/testcases/search/maintainSearchIndex.md` の削除1件のみ。新設ファイルは無い）。判定台帳は `.thread/35/coverage.md` に成果物として残す | 設計 第11.1節「#35 は同じ4つを再実行して漏れが無いことを確認する」 | 1,15,19 |
+| AC-16 | `spec/` の非 review Markdown すべてに判定があり（改訂 / 影響なし）、設計 第11.1節の一覧に載っていないファイルが存在しない。**ファイル数は着手前 101 / 完了後 102**（`spec/testcases/search/maintainSearchIndex.md` の削除1件と、新設ユースケース2件分の `spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential}.md` の追加。adr.md ADR-051 / ADR-059）。判定台帳は `.thread/35/coverage.md` に成果物として残す | 設計 第11.1節「#35 は同じ4つを再実行して漏れが無いことを確認する」 | 1,15,19 |
 | AC-17 | `pnpm lint` / `pnpm format:check` が exit 0。`git diff --name-status main...HEAD` が `spec/**/*.md`・`CLAUDE.md`・`.thread/35/**` 以外を含まない | プロジェクト規約・Issue のスコープ | 19 |
-| AC-18 | **本 Issue 自身の編集で嘘になる件数・構成の散文が同期されている** — `grep -n '9テーブル\|SQLite系\|52ユースケース\|192ケース\|約750ケース' spec/index.md` が **0 行**になり、`spec/manual-tests/index.md` の件数表の各行・合計が各ファイルの実測 TC 数（`grep -cE '^#+ TC-[0-9]+'`）と一致し、実行記録欄の分母も同じ値になっている | 対応項目5（「設計から自動生成・転記された全参照」） | 16.5 |
+| AC-18 | **本 Issue 自身の編集で嘘になる件数・構成の散文が同期されている** — `grep -n '9テーブル\|SQLite系\|52ユースケース\|192ケース\|約750ケース' spec/index.md` が **0 行**になり、**`spec/index.md` の件数が台帳の実測と一致する（`53ユースケース` / `814ケース` / `39シナリオ` / マニュアルテスト `201ケース`。adr.md ADR-034 の「台帳の実測行数を正本とする」規約による）**。あわせて `spec/manual-tests/index.md` の件数表の各行・合計が各ファイルの実測 TC 数（`grep -cE '^#+ TC-[0-9]+'`）と一致し、実行記録欄の分母も同じ値になっている | 対応項目5（「設計から自動生成・転記された全参照」） | 16.5 |
 | AC-19 | **手段4 の9ファイルが実際に改訂されている**ことが機械検査で確認できる（`P-7` の各行がヒットする）。目視レビューの補助ではなく完了ゲートの一項目として扱う。**`P-7` は9ファイルを1本ずつ固定する10本**（`loginWithPassword.md` が2本 + 残り8ファイルが1本ずつ。`spec/inventory/frontend.md` はステップ12 で処理される）で、**ディレクトリ指定や複数ファイルの OR は使わない** — 束ねると片方だけ改訂しても通る | 設計 第11.1節「改訂する — 手段4 でのみ拾えたもの」 | 15 |
 
 ## スコープ
@@ -74,7 +74,7 @@ Issue #35 の「対応項目1〜7」にも「受け入れ条件7項目」にも�
 - **`spec/database/index.md:35` はどの負の検証にも掛からない。** 「trash / **search** / export ドメインは自前のテーブルを持たない（ADR-004）」「セッション・OAuth トークン等の**認証インフラは本設計のスコープ外**（後述）」という2つの宣言を持つ1行で、`V-1`〜`V-10` のどの語にも当たらない。**改訂を完璧にやっても AC-7（`search_entries` / `search_fts` をテーブルとして書く・認証系テーブルを列の全数まで書く）と正面から矛盾する宣言が同じファイルに残る。** ステップ10a が `:355-357` の同趣旨の宣言だけを消す形になっていたので、`:35` を明示的に対象へ加えてある。
 - **設計 第4.3節の「不要になる」判定は、必ず「箇所」欄まで読む。** 第11.1節の削除リストは台帳 ID だけを並べているので、リストだけを読むと**スキーマ行の全削除に読める**。実際に行18（`ADP-memos-001` / `ADP-topics-001` / `ADP-documents-001`）の「箇所」欄は**期限切れ部分索引3本と `users` との全ユーザー JOIN** であり、テーブル行ではない。**行を削除すると `spec/inventory/adapter.md` から主要3テーブルが消え、`purge_after` 列の追加先も失われる。** 同じ表の行9 / 行16 / 行17 / 行22 / 行24 は行全体が消えて正しく、**行18 だけが例外である。** これは `.thread/34/handoff.md` 第4節が警告した破れ方そのもの。
 - **台帳の「定義場所」欄はアンカー（`{file}#{見出し}` / `#L{n}`）を持つ。** ステップ10 が `spec/database/index.md` の節構成を DO 2部構成へ変え、ステップ8 が `spec/usecases/search.md#maintainSearchIndex` を消すので、**残す行のアンカーも大量に指し先を失う。** `P-8` で機械検査する（着手前は 0 件で、これを維持する）。
-- **`spec/index.md` の「進捗」「成果物」節と `spec/manual-tests/index.md` の件数表は、本 Issue 自身の編集で嘘になる。** 「SQLite系・9テーブル」「52ユースケース」「約750ケース」「192ケース」はどれも V-1〜V-3 のどの語にも掛からないので機械検査で落ちない。**ステップ16.5 で最後に数え直す**（AC-18）。
+- **`spec/index.md` の「進捗」「成果物」節と `spec/manual-tests/index.md` の件数表は、本 Issue 自身の編集で嘘になる。** 「SQLite系・9テーブル」「52ユースケース」「約750ケース」「192ケース」はどれも V-1〜V-3 のどの語にも掛からないので機械検査で落ちない。**ステップ16.5 で最後に数え直す**（AC-18）。**しかも一度数え直しても古くなる** — 本ラウンドでユースケースが 51 → 53 に増えた（adr.md ADR-051）ので、ステップ16.5 が書いた `51ユースケース` / `782ケース` も、それ以前から残っている `43シナリオ` も嘘になる。**正本は台帳の実測**（`53` / `814` / `39`）である。
 - **`spec/domains/search.md` は 271 行のうち大半が消える。** 「インデックス更新フロー」節・`IndexerReadPort` 節・`EmbeddingPort` 節を丸ごと削るので、残る節（ユビキタス言語 / `IndexEntry` / 検索の規則）との整合が崩れやすい。`IndexEntry` は消さずに「projection の1行」として書き直す（`search_entries` の行に対応する）。
 - **新しく書く文言が負の検証の走査語に当たることがある。** とくに **`埋め込み`** — 設計 第7.1節は「`search_entries` / `search_fts` は本体テーブルと同一の**埋め込み** SQLite に置かれる」と書いており、ステップ10 / 5 でこの言い回しを写すのは自然だが、`V-1` は `埋め込み` を走査語に持つので**正しい記述がベクトル残存として誤検出される。** 走査語のほうは削れない（`spec/` の旧記述は「埋め込みベクトル」「埋め込み生成」という形で残っている）ので、**書く側で「DO 内蔵の SQLite」「同一 DO 内の SQLite」と言い換える**（adr.md ADR-016）。
 - **`spec/database/index.md` は削除だけでなく追記のほうが重い。** 403 行の前提（共有 SQLite + `user_id` 列による論理分離）ごと入れ替えたうえで、設計 第4.1.1節の 21 テーブル・第9章の migration 方針・FTS5 tokenizer 方針を足す。**現行の「認証インフラテーブルはスコープ外」宣言（`:355-357`）が消える**ので、認証系テーブルの記述先がこのファイルになる。**削除側（10a）だけ済ませて追記（10b / 10c）を飛ばしても、`V-*` と `P-1`〜`P-9` は全部通る** — この中間状態を検出する唯一の検査が `P-10` である。
@@ -100,6 +100,7 @@ Issue #35 の「対応項目1〜7」にも「受け入れ条件7項目」にも�
 | V-2 | 16 行（V-2a 12 + V-2b 12。重複を除いた実体が 16 行） | 0 行 |
 | V-2c | 4 行（すべて `spec/manual-tests/trash.md` の「テスト環境の DB」） | 0 行 |
 | V-3 | 296 行（除外前は 297 行。`spec/index.md:42` の ADR 一覧表の `005` 行1行を射程から外した数。adr.md ADR-014） | 0 行 |
+| V-3b | 279 行（43 ファイル） | 0 行 |
 | V-4 | 92 行 | 0 行 |
 | V-5 | 26 行（`ADR-005` / `005-search-index-via-outbox` を含む行は全 26 行で、**現状はその全部が無注記**） | 0 行 |
 | V-6 | 2 行（`Reference runtimes` 1 + `drizzleSqlite` 1。**2コマンドの合計である**） | 0 行 |
@@ -159,6 +160,15 @@ grep -rniE 'libSQL|Turso|PendingBatch|occ_guard|wrangler|Cloudflare|共有 ?(DB|
 grep -rniE 'Outbox|collectEvents|consumer|relay|DLQ|pruner|processed_events|IndexerReadPort|EmbeddingPort|maintainSearchIndex|EventDraft|ドメインイベント' spec --include='*.md' | SCOPE \
   | grep -v '^spec/index\.md:[0-9]*:| \[005\]'
 
+# V-3b ドメインイベント名の直接記述（AC-3）— 期待 0 行
+# V-3 の走査語はイベント名を1つも含まないので、`document.edited` のように
+# イベント名だけを書いた期待値は V-3 では構造的に検出できない（実際に4行が生き残った。
+# adr.md ADR-035）。第7.3節で消える 24 件を名指しで走査する。
+# -i は付けない（イベント名は camelCase で確定しているので、緩めると誤検出が増える）。
+# 末尾の \b が `document.editedAt` のようなフィールド名を除外する
+grep -rnE '\b(identity|memo|topic|document)\.(userRegistered|passwordChanged|trashRetentionChanged|aiClientConnected|aiClientRevoked|created|edited|trashed|restored|hardDeleted|sourceLinksChanged|updated|archived|unarchived)\b' \
+  spec --include='*.md' | SCOPE
+
 # V-4 SearchIndexPort の書き込みメソッド（AC-6）— 期待 0 行
 grep -rnE 'upsertMemo|upsertDocument|removeMemo|removeDocument|listExpiredItems' spec --include='*.md' | SCOPE
 
@@ -196,6 +206,8 @@ grep -nw 'page' spec/usecases/search.md spec/testcases/search/search.md spec/pag
 **V-2 が `spec/manual-tests/{search,trash}.md` を射程から外す根拠。** この2ファイルの `\bD1\b` は **10 行すべてがテストデータのドキュメント名**であり、Cloudflare D1 とは無関係である。内訳は `spec/manual-tests/search.md` の `:37` / `:44` / `:47` / `:70` / `:188` / `:189`（6行。いずれも `D-D1` というテスト用ドキュメント ID。`\bD1\b` は直前が非単語文字の `D-D1` にも当たる）と、`spec/manual-tests/trash.md` の `:97` / `:98` / `:99` / `:157`（4行。「D1を個別削除」「D1の「復元」」等のテスト用ドキュメント名）。**テストデータ名の改名は本 Issue のスコープ外**であり、パターンだけでは `D1（出典にメモ…` と `D1（interactive tx なし）` を分離できないため、ファイル単位で外したうえで V-2c を当てる。
 
 **`V-3` が `spec/index.md` の ADR 一覧表の `005` 行を射程から外す根拠。** 除外するのは **1行だけ**である（実測で `spec/index.md` の `V-3` ヒットはこの行だけ）。`spec/index.md:42` は ADR 索引の行 `| [005](./adr/005-search-index-via-outbox.md) | 検索インデックスの更新方式 |` で、**走査語 `Outbox` に当たっているのはリンク先のファイル名だけ**である。ADR 本文もファイル名も本 Issue では変えない（対応項目4・adr.md ADR-007）一方、design `:2444` と AC-13 は「この表に `005` の superseded を反映する」＝**行を残す**ことを要求しているので、行を残す限り `V-3` は構造的に 0 にならない。**基準は緩めていない** — この行の内容は `V-5` が「同一行に `.adr/003` / `.adr/004` / `superseded` のいずれかがあること」で測っており、除外しても無注記のまま残せば `V-5` で落ちる。**除外パターンは行頭のセルの形（`| [005](...)`）に一致するので、ステップ11 はこのセルの形を保ったまま注記を足す**（adr.md ADR-014）。**併記側でファイル名 `005-search-index-via-outbox` を書かない**のもこのためで、書けば `V-3` のヒットが増える。
+
+**`V-3b` を足した根拠。** `V-3` の走査語（`Outbox` / `collectEvents` / … / `ドメインイベント`）は**イベント名を1つも含まない**。したがって「`document.edited` が記録される」のようにイベント**名**だけを書いた期待値は、`V-3` が 0 行でも生き残る。レビューで実際に4行（`spec/testcases/knowledge/editDocumentByAi.md:7` / `trashTopic.md:9` / `updateTopic.md:8` `:12`）が見つかっており、構造的な穴である（adr.md ADR-028 / ADR-035）。**走査対象は第7.3節で消える 24 件の実名**（`identity.*` 5 / `memo.*` 6 / `topic.*` 7 / `document.*` 6）で、`spec/inventory/domain.md` の削除対象行と1対1に対応する。**着手前 279 行 / 43 ファイル → 完了時 0 行**（本追加時点の実測は 0 行）。`V-3` の走査語のほうは触らない（ADR-014 と同じ形で、検査を1本足して測る）。
 
 **Issue コメント（PR #39 引き継ぎ）第3項との対応。** コメントの `grep -rniE '\b(aws|gcp|lambda|turso|libsql)\b|node\.js|cloud run|pub/sub|dynamodb|sqs' spec/` は**実測 7 行 / 4 ファイル**である（コメント見出しの「6 行」は数え落とし。コメント本文の表自体は7箇所を列挙している）。**V-2 はこの grep の上位互換**であり、コメントが「有効な設計」として挙げた5行（`spec/database/index.md:3` / `:341` / `:349` / `:350` / `spec/inventory/adapter.md:22`）はすべてステップ10 / 12 に落ちている。「改訂不要」とした `spec/database/review/{002,003}.md` は ADR-007 により射程外。
 
@@ -314,6 +326,12 @@ grep -n 'search — 全文検索' spec/requirements.md              # 着手前 
 # spec/index.md の転記数値 — 期待 0 行（着手前は 6 行）
 grep -n '9テーブル\|SQLite系\|52ユースケース\|192ケース\|約750ケース' spec/index.md
 
+# spec/index.md に書く件数の正本は台帳の実測行数（ADR-034）。
+# 本ラウンドでユースケースが2つ増えた（ADR-051）ので、置き換え後の値も動く
+grep -cE '^\| `?UC-' spec/inventory/usecase.md                # 53（旧 51）
+grep -cE '^\| `?TC-' spec/inventory/test.md                   # 814（旧 782）
+grep -rhoE 'S-[A-Z]{2}-[0-9]{2}' spec/scenario/*.md | sort -u | wc -l  # 39（spec/index.md の「43シナリオ」は旧値）
+
 # spec/manual-tests/index.md の件数表が実測と一致すること
 for f in account timeline document search trash ai settings; do
   printf '%s %s\n' "$f" "$(grep -cE '^#+ TC-[0-9]+' spec/manual-tests/$f.md)"
@@ -328,10 +346,10 @@ grep -n '合計' spec/manual-tests/index.md   # 表の合計行が上の値と�
 
 ### カバレッジの再走査（AC-16）
 
-設計 第11.1節の再現手順をそのまま実行し、判定の付いていないファイルが無いことを確認する。**ファイル数は着手前 101 / 完了後 100 で、差の1件は `spec/testcases/search/maintainSearchIndex.md` の削除である**（新設ファイルは無い。追加はすべて既存ファイルへの節・行追加）。100 以外になったらファイルが増減しているので、増えた分を第11.1節の判定表と `.thread/35/coverage.md` へ追加する。
+設計 第11.1節の再現手順をそのまま実行し、判定の付いていないファイルが無いことを確認する。**ファイル数は着手前 101 / 完了後 102 で、差は `spec/testcases/search/maintainSearchIndex.md` の削除1件と新設2件**（`spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential}.md`。新設ユースケース2つの受け皿で、`spec/testcases/` の「1ユースケース1ファイル」構成を保つための追加である。adr.md ADR-059）。それ以外の追加はすべて既存ファイルへの節・行追加である。102 以外になったらファイルが増減しているので、増えた分を第11.1節の判定表と `.thread/35/coverage.md` へ追加する。
 
 ```bash
-find spec -name '*.md' | grep -v '/review/' | wc -l          # 着手前 101 / 完了後 100
+find spec -name '*.md' | grep -v '/review/' | wc -l          # 着手前 101 / 完了後 102
 grep -rlE 'Outbox|outbox|consumer|ベクトル|埋め込み|ハイブリッド|collectEvents|pruner|D1|libSQL|Turso|Vectorize|RRF|PendingBatch|occ_guard|UnitOfWork|indexer|embedding|イベント|Queue' \
   spec --include='*.md' | grep -v '/review/' | wc -l         # 改訂後は 0 に近い残数（V-1〜V-3 で個別に 0 を確認済み）
 

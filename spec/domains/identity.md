@@ -48,12 +48,18 @@ fog のアカウント。**認証方式の判別可能ユニオンは持たな�
 | updatedAt | `Date` | required |
 
 ```ts
-/** 保有クレデンシャルの非 PII 要約。設定画面の一覧に出せるのはこの3つだけ */
+/**
+ * 保有クレデンシャルの非 PII 要約。
+ * 同一性を表す値として設定画面の一覧に出せるのは credentialId / kind / label の3つだけで、
+ * usableForLogin はそれ自体が識別子ではない可否フラグである（原本も主体 ID も含まない）
+ */
 export type CredentialRef = Readonly<{
   credentialId: CredentialId;
   kind: "email" | "sso";
   /** kind: "sso" なら provider 名（"google" / "apple"）、kind: "email" なら空文字 */
   label: string;
+  /** 単独でログイン手段として成立するか。kind: "sso" は常に true、kind: "email" は検証材料を持つときだけ true */
+  usableForLogin: boolean;
 }>;
 
 export type User = Readonly<{
@@ -69,6 +75,7 @@ export type User = Readonly<{
 - **`email` はフィールドに持たない。** 原本は認証情報側に暗号化して保持され、本人が自分のアドレスを見る経路（設定画面）でだけ1件ずつ復号される
 - **`passwordHash` / `provider` / `providerSubject` もフィールドに持たない。** パスワードの検証材料と SSO 主体は認証情報側の関心事である
 - `credentials` は表示と解除操作の材料である。**解除操作を出してよいのは `kind: "sso"` の要素だけ**で、`kind: "email"` の解除経路は本設計に存在しない（後述の不変条件）
+- **`usableForLogin` は「その要素だけでログインできるか」を表す。** 判定の権威は認証情報側（パスワードの検証材料を持つか）にあり、要約はその結果を写す。**`false` から `true` へ遷移させる経路は本設計に存在しない**（SSO 専用アカウントにパスワードを設定する経路が無いため。後述の不変条件）。この値があることで「最後のログイン手段か」の判定が `User` の状態だけで決まり、パスワード変更 UI の表示判定（pages P-13）も同じ材料で行える
 
 #### 振る舞い
 
@@ -91,7 +98,8 @@ export const User = {
 
   /**
    * クレデンシャルの解除。kind: "sso" のみ受け付ける。
-   * 解除後に1件も残らない場合は BusinessRuleError(LastCredentialRemoval)。
+   * 解除後に usableForLogin が true の要素が1件も残らない場合は
+   * BusinessRuleError(LastCredentialRemoval)。
    */
   removeCredential: (user: User, credentialId: CredentialId, now: Date): User;
 
@@ -106,14 +114,14 @@ export const User = {
 
 - 各ファクトリの処理内容: `params` の生文字列から値オブジェクト（`UserId.create` 等）を構築し、`version: 0`（変更系は `version + 1`）、`createdAt` / `updatedAt` を設定して次状態を返す。`now` と `id` は引数で受け、ドメイン内で `new Date()` / ID生成は行わない
 - **パスワードの変更・リセットは本エンティティの遷移ではない。** 検証材料を持つのは認証情報側なので、変更はそちらを書き換える手続き（usecases/identity.md）として表現される。ユーザー単位設定側の `User` は変わらない
-- **SSO 初回登録でもメールのクレデンシャルが1件置かれる。** メールアドレスの一意性を認証方式をまたいで効かせるためであり、この要素は**ログイン手段ではない**（パスワードの検証材料を持たないため）
+- **SSO 初回登録でもメールのクレデンシャルが1件置かれる。** メールアドレスの一意性を認証方式をまたいで効かせるためであり、この要素は**ログイン手段ではない**（パスワードの検証材料を持たないため。`usableForLogin: false`）
 
 #### 不変条件
 
 - メールアドレスは全ユーザー間で一意（S-AC-01 異常系）。一意性の権威は認証情報側の credential 行であり、登録は予約を取ってから進む。重複は `ConflictError("EMAIL_ALREADY_REGISTERED")`
 - メール一意性は**認証方式をまたいで**適用する。SSO 初回サインイン時に IdP から得たメールが既存アカウントのものと一致する場合、既存アカウントへの自動リンクは行わず `EMAIL_ALREADY_REGISTERED` とする（UI はパスワードログインへの導線を示す）。逆も同様である
 - `(provider, providerSubject)` の組も全ユーザー間で一意。重複は `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`
-- **`credentials` は常に1件以上で、そのうち少なくとも1件はログイン手段である。** 最後のログイン手段を解除する操作は `BusinessRuleError` で拒否する。数えるのは要素数ではなく**ログイン手段になり得るクレデンシャルの `credentialId` の異なり数**である（同じクレデンシャルが移行中に複数の表現を持ちうるため、要素数で数えるとログイン手段が0のアカウントを作れてしまう）
+- **`credentials` は常に1件以上で、そのうち少なくとも1件は `usableForLogin: true` である。** 最後のログイン手段を解除する操作は `BusinessRuleError` で拒否する。数えるのは要素数ではなく**`usableForLogin` が真である要素の `credentialId` の異なり数**である（同じクレデンシャルが複数の表現を持ちうるため、要素数で数えるとログイン手段が0のアカウントを作れてしまう。`usableForLogin` を見ないと SSO 専用アカウントのメール要素まで数に入る）
 - **`kind: "email"` の解除経路は存在しない**（`removeCredential` が `kind: "sso"` のみを受ける）。メールクレデンシャルを失うとアドレス表示・パスワードリセット・パスワード変更のすべてが成立しなくなり、追加し直す経路も無いため
 - **SSO 専用アカウントにパスワードを設定する経路は無い。** メールの要素は一意性の予約としてのみ置かれており、ログイン手段へ昇格する遷移を本設計は持たない
 - `trashRetentionDays` は常に有効値（1以上の整数）。`TrashRetentionDays` の生成時バリデーションで保証
@@ -139,6 +147,7 @@ OAuth 2.1 の認可フローでユーザーが AI クライアントに許可を
 | clientName | `ClientName` | required。認可リクエストが名乗るクライアント表示名 |
 | connectedAt | `Date` | required。許可した日時 |
 | lastUsedAt | `Date \| null` | optional。この接続のトークンで最後に API が呼ばれた日時。未使用なら null |
+| createdAtResetVersion | `number` | required。**作成時点の `resetVersion`**（後述の `AccountStore`）。リセット完了時の自動失効の射程を決める材料で、生成後は変わらない |
 | version | `number` | required。OCC 用。生成時 0 |
 | createdAt | `Date` | required |
 | updatedAt | `Date` | required |
@@ -165,7 +174,12 @@ export type AiClientConnection =
 export const AiClientConnection = {
   /** 認可画面で「許可する」が押されたときに生成（S-AC-05） */
   create: (
-    params: { id: string; userId: UserId; clientName: string },
+    params: {
+      id: string;
+      userId: UserId;
+      clientName: string;
+      createdAtResetVersion: number;   // 呼び出し時点の AccountStore の resetVersion
+    },
     now: Date,
   ): ActiveAiClientConnection;
 
@@ -194,6 +208,7 @@ export const AiClientConnection = {
 #### 不変条件
 
 - `status: "revoked"` は終端状態。失効した接続を再有効化することはできない。再利用したい場合は新しい認可フローで新しい接続を作る（S-AC-06 エッジケース。`revoke` が `ActiveAiClientConnection` しか受けないことで型保証）
+- `createdAtResetVersion` は生成時に固定され、以後の遷移で書き換わらない。**リセット完了を契機とする自動失効の対象は `createdAtResetVersion` が前進前の `resetVersion` と等しい接続だけ**であり、それより後に作られた接続は残る（通常のパスワード変更では `resetVersion` が動かないので対象が空になる）
 - `lastUsedAt` は `connectedAt` 以降の日時（`recordUsage` が単調に進める）
 - 失効済み接続に紐づくトークンでの API 呼び出しは認可エラーになる。この判定はアダプター（認可ミドルウェア）が `AiClientConnectionRepository.findActiveById` の結果に基づいて行う
 
@@ -351,7 +366,7 @@ export const TokenScope = {
 
 ## ポート
 
-すべてドメイン型を受け渡す。外部データのデコード（検証・変換）はアダプター境界の責務。リポジトリはテンプレートの `TransactionalRepository<TEntity, TId>` と同じ OCC 規約（insert / save + `ExpectedVersion` トークン、0 行更新 → Conflict）に従う。**全メソッドは同期契約であり `Promise` を返さない。例外は `PasswordHasher` と `MailSender` の2つだけである**（どちらもトランザクションの外で動く。domains/index.md「ポートの同期契約」）。
+すべてドメイン型を受け渡す。外部データのデコード（検証・変換）はアダプター境界の責務。リポジトリはテンプレートの `TransactionalRepository<TEntity, TId>` と同じ OCC 規約（insert / save + `ExpectedVersion` トークン、0 行更新 → Conflict）に従う。**全メソッドは同期契約であり `Promise` を返さない。例外は `PasswordHasher` と `MailSender` の2つだけで、これは列挙であって導出規則ではない**（domains/index.md「ポートの同期契約」）。
 
 **`UserRepository` は2つに割れる。** `User` 集約が「認証情報の所有者」と「ユーザー単位設定の所有者」の2つの関心事を抱えていたためで、物理境界が分かれた以上ポートも分かれる。
 
@@ -359,6 +374,8 @@ export const TokenScope = {
 |---|---|---|
 | `CredentialMappingRepository` | 認証情報側（Identity Directory） | メール・SSO 主体の一意性、パスワードの検証材料、`userId` の解決 |
 | `UserSettingsRepository` | ユーザー単位設定側（User Data DO） | `User`（クレデンシャル集合の要約・`trashRetentionDays`・OCC） |
+
+**`User` 集約に畳まないストアが2つある。** `AccountStore`（アカウントの状態と失効の権威）と `CredentialLocatorStore`（保有クレデンシャルの逆引き）で、どちらも `User` の一部ではないので `UserSettingsRepository` には畳まない。**ただし `spec/database/index.md` の「非集約ストア」の分類に入るのは `CredentialLocatorStore` の側だけである** — `account` は OCC の `version` を持つ集約ルート側のテーブルで、非集約ストアの全数（`jobs` / `operations` / `migration_progress` / `credential_locators` / `password_reset_tokens` / `rotation_checkpoints` / `_meta` の7つ）にも、その書き込み口の全数（6ストア・7メソッド）にも入らない。**畳まないことと非集約であることは別である。** 物理的な置き場と列は `spec/database/index.md` が正本で、本節が定めるのは**ドメインから見た名前と契約**である。
 
 ### CredentialMappingRepository
 
@@ -381,12 +398,37 @@ export interface CredentialMappingRepository {
 }
 ```
 
-- `CredentialMapping` は `{ credentialId, userId, kind, usableForLogin }` と検証材料からなる。**検証材料の照合そのものはこのポートでは行わない** — 計算は `PasswordHasher` が担い、実行位置はトランザクションの外である
+- `CredentialMapping` が持つのは次のフィールドである。**検証材料の照合そのものはこのポートでは行わない** — 計算は `PasswordHasher` が担い、実行位置はトランザクションの外である
+
+  | フィールド | 意味 |
+  |---|---|
+  | `credentialId` | 世代に依存しないクレデンシャルの同一性（`CredentialId`） |
+  | `userId` | 写像先のユーザー |
+  | `kind` | `"email"` / `"sso"` |
+  | `usableForLogin` | 単独でログイン手段として成立するか。判定はこちら側が権威で、`CredentialRef` と `CredentialLocatorStore` はその結果を写す |
+  | `credentialVersion` | クレデンシャルの世代番号。パスワードの差し替えごとに1つ進み、ログイン時の到達性検査で `CredentialLocatorStore` 側の値と一致することを要求する |
+  | `changeState` | 変更手続きの中間状態。`null`（進行中でない）/ `"pending"`（旧材料を無効化済み）/ `"advanced"`（ユーザー単位設定側への反映が済んだ）の3値 |
+  | `changeOrigin` | 変更手続きの起点。`"password-change"`（パスワード変更）/ `"reset"`（リセット完了）。**手続きの途中で再開しても起点が決まる**ように行へ永続化する |
+  | `failedAttempts` / `nextAttemptAllowedAt` | 濫用抑止の試行回数と次に試行できる時刻。ログイン失敗と現在パスワード照合の失敗が同じカウンタを進める |
+
 - エラーケース:
   - 一意性違反 → `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`。**事前チェックではなく予約の獲得で判定する**（同時登録のレースはこちらで捕捉される）
   - DB 例外 → `SystemError(DatabaseError)`
   - 該当なしはエラーではなく `null`
-- **登録・変更・解除の手順そのものは単一のメソッドに畳めない。** 認証情報側とユーザー単位設定側の2つを跨ぐため、順序と再開の規則を持つ手続きとして usecases/identity.md に書く
+- **登録・変更・解除の手順そのものは単一のメソッドに畳めない。** 認証情報側とユーザー単位設定側の2つを跨ぐため、順序と再開の規則を持つ手続きとして usecases/identity.md に書く。**ただし各段が呼ぶ書き込み操作の名前と契約はここで固定する** — 畳まないことと契約を書かないことは別である。
+
+  | 操作 | 段 | 効果 | 冪等性・条件 |
+  |---|---|---|---|
+  | `reserveCredential` | 予約の獲得 | canonical に対する予約行を書き、`credentialId` を確定する | 既存の有効な行があれば `ConflictError`。同じ手続き ID の再送は同じ行に収束する |
+  | `activateReservation` | 予約の確定 | 予約行を有効な写像へ昇格し、`usableForLogin` を確定する | 同じ手続き ID の行にだけ効く |
+  | `cancelReservation` | 予約の取り消し | 敗北した手続きの予約行を取り除く | 「無ければ成功」の冪等操作 |
+  | `beginCredentialChange` | 検証材料の差し替え開始 | 新しい検証材料を保留として書き、`changeState` を `"pending"` に、`changeOrigin` を起点の値にする。**同じトランザクションでそのクレデンシャル宛の未使用リセットトークンをすべて無効化する** | 旧検証材料での照合はこの瞬間から拒否される |
+  | `promoteVerifier` | 検証材料の昇格 | 保留の検証材料を正本にし、`credentialVersion` を揃え、`changeState` / `changeOrigin` を `null` へ戻す。**同じトランザクションで `failedAttempts` を 0 に、`nextAttemptAllowedAt` を過去へ戻す**（濫用抑止からの脱出経路） | `changeState` が `"advanced"` のときだけ通す |
+  | `deleteMapping` | 解除・退会 | 対象 `credentialId` の写像行と、そのクレデンシャル宛のリセットトークン行を消す | 「無ければ成功」の冪等操作 |
+
+  **これらは `CredentialMappingRepository` のメソッドではない。** 手続きの各段が認証情報側へ発行する操作であり、`find*` の3本のようにドメイン型を返す読み取りとは性質が違う（実装形は `spec/database/index.md` と #37 が決める）。ここで固定するのは名前・効果・冪等性の3つだけである。
+
+  **中間状態のあいだは旧新どちらのパスワードでもログインできない**（fail closed）。前進不能が確定した場合の終端は一様である（記録を残して運用へエスカレーションする）。**終端の具体的な手順は [#45](https://github.com/tuanemuy/fog/issues/45) が定める。**
 
 ### UserSettingsRepository
 
@@ -404,9 +446,81 @@ export interface UserSettingsRepository {
 ```
 
 - **`findById(id)` を持たない。** `userId` は Durable Object の選択で消費済みであり、その DO の中には1人分の設定しか存在しないため（domains/index.md「テナント分離」）
+- **単一行なので `save` の条件付き更新に `id` 述語を持たない**（条件は OCC の `version` だけである。`spec/database/index.md`）
 - エラーケース:
   - `save` の OCC 不一致 → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
   - DB 例外 → `SystemError(DatabaseError)`
+
+### AccountStore
+
+- 目的: アカウントの状態と失効の権威を保持する。**`User` 集約の一部ではない** — セッションの失効は設定の変更ではないためである
+- 置き場: ユーザー単位設定側（User Data DO）。単一行。**`account` テーブルは OCC の `version` を持つ側であり、非集約ストアには数えない**（`spec/database/index.md`）
+
+```ts
+export type AccountState = Readonly<{
+  status: "active" | "deleting" | "deleted";
+  /** セッション失効の唯一の権威。単調増加 */
+  sessionEpoch: number;
+  /** パスワードリセットの完了だけで進む単調増加カウンタ */
+  resetVersion: number;
+}>;
+
+export interface AccountStore {
+  find(): AccountState | null;
+
+  /** セッションの世代を1つ進める（既存セッションは次のリクエストで失効する） */
+  advanceSessionEpoch(): void;
+
+  /** リセット世代を1つ進める。進めた後の値を返す */
+  advanceResetVersion(): number;
+}
+```
+
+- **`sessionEpoch` を進める操作は4つだけである** — パスワードの変更、パスワードリセットの完了、SSO 連携の解除、退会。**SSO 連携の追加では進めない**（認証手段が増えるだけで既存セッションの信頼性が下がらないため）
+- **`resetVersion` はリセットの完了だけで進む。** 通常のパスワード変更・SSO の連携と解除では進めない。AI クライアント接続の自動失効の射程がこの値で決まるので、`sessionEpoch` で代用しない（侵害と復旧のあいだにパスワード変更が1回でも挟まると、失効させたい接続が対象から外れる）
+- **セッションの照合そのものはアダプター（認証ミドルウェア）の責務である。** ドメインが持つのは「世代を進める」という遷移と、その値が失効の唯一の権威であるという規則だけである
+- **2つの前進メソッドは `ExpectedVersion` を取らず `version` も進めない。** 単調増加カウンタの前進であって設定の更新ではないので、OCC の条件を付けない単独文で書く（`ai_client_connections` の `recordUsage` と同じ扱い。`spec/database/index.md`）
+- エラーケース: DB 例外 → `SystemError(DatabaseError)`
+
+### CredentialLocatorStore
+
+- 目的: 保有クレデンシャルの逆引き。**ログインの到達性検査の権威**であり、SSO 連携の解除・退会のときに認証情報側の写像を消すための唯一の逆引き情報でもある。原本（メールアドレス）も検証材料も持たない
+- 置き場: ユーザー単位設定側（User Data DO）
+
+```ts
+export type CredentialLocator = Readonly<{
+  credentialId: CredentialId;
+  kind: "email" | "sso";
+  /** 認証情報側の行へ辿り着くための不透明な写像材料。中身の解釈はアダプターに閉じる（spec/database/index.md） */
+  mapping: string;
+  credentialVersion: number;
+  usableForLogin: boolean;
+  label: string;
+}>;
+
+export interface CredentialLocatorStore {
+  /** 自分の Durable Object の保有クレデンシャルを全件返す */
+  list(): readonly CredentialLocator[];
+
+  /** credentialId で引く。不在は null */
+  findByCredentialId(credentialId: CredentialId): CredentialLocator | null;
+
+  /** 記録（upsert）。既存があれば credentialVersion / usableForLogin / label を上書きする */
+  record(locator: CredentialLocator): void;
+
+  /** その credentialId の credentialVersion を1つ進める */
+  advanceCredentialVersion(credentialId: CredentialId): void;
+
+  /** その credentialId の行をすべて消す。「無ければ成功」の冪等操作 */
+  deleteByCredentialId(credentialId: CredentialId): void;
+}
+```
+
+- **到達性の照合は `credentialId` だけを見る。** 写像材料の世代を判定に含めない — 同じクレデンシャルについて複数の写像材料が並存しうるためである。**`record` / `advanceCredentialVersion` / `deleteByCredentialId` はいずれも `credentialId` 単位で、その credential のすべての行に同時に効く**（1つだけ更新すると認証情報側との食い違いが残る）
+- **`credentialVersion` は `credentialId` 単位で単調非減少である。** `record` は引数の値と既存の最大値のうち大きいほうを書く。**既存行があれば何もしない no-op にしてはならない** — 記録が空振りすると到達性検査が利用者を締め出す
+- **`usableForLogin` / `label` は引数の値でそのまま上書きする**（判定の権威は認証情報側にある）
+- **`User.credentials` はこのストアの射影である。** `usableForLogin` が真である行の `credentialId` の異なり数が「ログイン手段の数」であり、`User` の不変条件が数えるのと同じ値である
+- エラーケース: DB 例外 → `SystemError(DatabaseError)`
 
 ### AiClientConnectionRepository
 
@@ -515,8 +629,10 @@ export interface MailSender {
 - ★ approveAiClientAuthorization — OAuth 認可の許可。AiClientConnection を作成する（S-AC-05）
 - ★ denyAiClientAuthorization — OAuth 認可の拒否。接続は作らず、拒否をアダプターへ伝える（S-AC-05 異常系）
 - ★ listAiClientConnections — 接続済み AI クライアントの一覧（S-AC-06）
+- ★ revokeAllAiClientConnections — active な接続をすべて失効させる（リセット完了画面の必須導線。pages P-03）。`revokeAiClientConnection` を一覧の全件へ適用する形だが、部分失敗の扱い（記録して続行し、全体を中断しない）を持つので独立したユースケースとして定義する
+- ★ unlinkSsoCredential — SSO 連携の解除（pages P-03 / P-13）。`User.removeCredential` の遷移と、`CredentialLocatorStore` / 認証情報側の写像の除去からなる手続きである。対象が `kind: "sso"` であることと、最後のログイン手段でないことをドメイン側で検査する
 - ★ revokeAiClientConnection — 接続の失効（S-AC-06）。対象 `connectionId` は設定画面からの外部入力だが、引くのは自分の Durable Object の中だけなので `AiClientConnectionRepository.findById(connectionId)` で足りる。不在は NotFound（到達可能性による構造的保証。ユースケース側の `connection.userId` 照合は不要）。取得結果が active なら `AiClientConnection.revoke` → `save`
 - ★ changeTrashRetentionDays — ゴミ箱保持期限の変更（S-ST-01）
-- ★ getCurrentUser — 現在のユーザー情報の読み取り（設定画面 P-13 の表示用）。email・**保有クレデンシャルの一覧**（要素は `credentialId` / `kind` / `label` の3つ組。パスワード変更 UI の表示判定にも使う: `kind: "email"` のログイン手段が無ければ非表示 S-AC-07）・trashRetentionDays を返す。人間 UI 専用の読み取りユースケース
+- ★ getCurrentUser — 現在のユーザー情報の読み取り（設定画面 P-13 の表示用）。email・**保有クレデンシャルの一覧**（要素は `credentialId` / `kind` / `label` / `usableForLogin`。パスワード変更 UI の表示判定にも使う: `usableForLogin` が真の `kind: "email"` の要素が無ければ非表示 S-AC-07）・trashRetentionDays を返す。人間 UI 専用の読み取りユースケース
 
 補足: getCurrentUser の戻り値は表示用 DTO（view）であり、パスワードの検証材料等の資格情報は含めない。**`provider` / `providerSubject` も返さない**（`label` は provider 名までで subject を含まない）。`email` の取得は認証情報側の原本を本人の自己参照として1件だけ復号する経路であり、一覧表示のために複数件をまとめて復号する経路は開かない。

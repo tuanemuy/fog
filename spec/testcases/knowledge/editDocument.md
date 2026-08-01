@@ -19,7 +19,7 @@
 | active ドキュメントが存在する | `changeReason` を改行入り / 201 文字で指定して保存する | `BusinessRuleError`（`ChangeReasonMultiline` / `ChangeReasonTooLong`） | |
 | ドキュメントが存在しない ID | 保存する | `NotFoundError` | |
 | ドキュメントがゴミ箱内 | 保存する | `findById` が active のみ返すため `NotFoundError`（不変条件 6） | |
-| 他ユーザー所有のドキュメント ID | 保存する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のドキュメント ID | 保存する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |
 | 手順 3 の version 判定は通過したが、`save` までの間に別の編集がコミットされた（レア） | 保存を実行する | `save` の 0 行更新または `insertRevision` の `(documentId, revisionNumber)` 一意制約違反により `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再取得して再試行 | |
 | active ドキュメントが存在する | `insertRevision` で DB 例外が発生する | `SystemError(DatabaseError)`。UoW 全体がロールバックされる | |

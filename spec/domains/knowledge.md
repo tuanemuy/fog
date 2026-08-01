@@ -24,6 +24,7 @@
 | Change Reason | 変更理由 | リビジョンに必須の一行サマリ（「なぜ」） |
 | Rollback | ロールバック | 過去リビジョンと同内容の新リビジョンを積む操作。履歴は削除しない |
 | Actor | 操作主体 | 人間ユーザーまたは AI クライアント。identity ドメインが定義する型を利用する |
+| TrashRetentionDays | ゴミ箱保持日数 | identity ドメインが定義する値オブジェクト。`purgeAfter` の一括再計算の入力として参照する（算出規則は trash の `RetentionPolicy`） |
 
 ## 他ドメインからの参照型
 
@@ -170,7 +171,7 @@ export type LiveTopic = ActiveTopic | ArchivedTopic;
 | `archive` | `(topic: ActiveTopic, now: Date) => ArchivedTopic` | `archived` へ遷移。`version + 1` | なし（アーカイブ済みトピックの内容も検索にヒットするので、配下ドキュメントのエントリを除去してはならない） |
 | `unarchive` | `(topic: ArchivedTopic, now: Date) => ActiveTopic` | `active` へ遷移。`version + 1` | なし |
 | `softDelete` | `(topic: LiveTopic, purgeAfter: Date, now: Date) => TrashedTopic` | `trashed` へ遷移。`trashedAt: now`、`wasArchived: topic.status === "archived"`、`version + 1`。**単独では呼ばず、必ず `TopicTrashService.trashTopicSet` 経由で配下ドキュメントとセットで使う** | 配下ドキュメントのエントリを同一トランザクションで除去する（トピック自体のエントリは無い） |
-| `restore` | `(topic: TrashedTopic, now: Date) => LiveTopic` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `wasArchived` を落とす。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | 復元した配下ドキュメントのエントリを同一トランザクションで作り直す |
+| `restore` | `(topic: TrashedTopic, now: Date) => LiveTopic` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `purgeAfter` / `wasArchived` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | 復元した配下ドキュメントのエントリを同一トランザクションで作り直す |
 
 不正な遷移（`trashed` の rename、`archived` の archive 等）は引数型で表現不能にする。ハードデリートは後続エンティティが存在しないためドメインに関数を置かず、trash ドメインのユースケースがポートで直接消去する（実装規約に従う）。
 
@@ -231,7 +232,7 @@ export type DocumentEditOutcome =
 | `edit` | `(document: ActiveDocument, params: { revisionId: string; title: string; body: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | パッチ適用後（または人間 UI の全文編集後）の**全文**を受け取り、値オブジェクト構築後に現在値と比較する。タイトル・本文とも同一なら `unchanged` を返し、リビジョンを積まない（S-DT-05 異常系）。差分があれば `title` / `body` を差し替え、`latestRevision + 1`、`version + 1`、新リビジョン（全文スナップショット）を生成する。パッチ形式の編集は application 層が `DocumentPatch.apply(document.body, patch)` で全文を得てから本メソッドを呼び、全文置換（`edit_document` の replaceAll）は受領した全文をそのまま渡す。**パッチ適用・全文受領の差はユースケース層で吸収され、本メソッドは常に適用後の全文を受ける** | 変更があった場合のみ、永続化と同一トランザクションでエントリを作り直す |
 | `rollback` | `(document: ActiveDocument, target: DocumentRevision, params: { revisionId: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | `target.documentId !== document.id` なら `RevisionDocumentMismatch` を throw。target のタイトル・本文で `edit` と同じ手順を実行する（過去リビジョンと同内容の**新リビジョン**を積む方式。履歴は削除しない）。現在の内容と同一なら `unchanged` | `edit` と同じ |
 | `softDelete` | `(document: ActiveDocument, trashedWith: TopicId \| null, purgeAfter: Date, now: Date) => TrashedDocument` | `trashed` へ遷移。`trashedAt: now`。`trashedWith` が非 null の場合 `document.topicId` と一致しなければ `TrashedWithMismatch` を throw（セット削除は所属トピック経由でのみ起こり得る）。個別削除のユースケースは `null` を渡し、セット削除は `TopicTrashService` が `topic.id` を渡す。`purgeAfter` は `RetentionPolicy.expiresAt` の算出結果を application 層が渡す。`version + 1` | 永続化と同一トランザクションでエントリを除去し、出典メモのエントリを作り直す |
-| `restore` | `(document: TrashedDocument, now: Date) => ActiveDocument` | `active` へ戻す。`trashedAt` / `trashedWith` を落とす。`version + 1`。**復元先トピック（`document.topicId`）が存在しゴミ箱内でないことの保証は呼び出し側（trash ドメインのユースケース / `TopicTrashService.restoreTopicSet`）の責務**。所属トピックがゴミ箱内ならトピックごとセット復元、ハードデリート済みなら `moveToTopic` で復元先を差し替えてから復元する（ADR-001） | 永続化と同一トランザクションでエントリを作り直し、出典メモのエントリも作り直す |
+| `restore` | `(document: TrashedDocument, now: Date) => ActiveDocument` | `active` へ戻す。`trashedAt` / `purgeAfter` / `trashedWith` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**復元先トピック（`document.topicId`）が存在しゴミ箱内でないことの保証は呼び出し側（trash ドメインのユースケース / `TopicTrashService.restoreTopicSet`）の責務**。所属トピックがゴミ箱内ならトピックごとセット復元、ハードデリート済みなら `moveToTopic` で復元先を差し替えてから復元する（ADR-001） | 永続化と同一トランザクションでエントリを作り直し、出典メモのエントリも作り直す |
 | `moveToTopic` | `(document: TrashedDocument, destinationTopicId: TopicId, now: Date) => TrashedDocument` | 復元先トピックの差し替え（ADR-001: 所属トピックがハードデリート済みのドキュメントの復元時に、ユーザーが選択した既存 or 新規トピックを設定する）。`topicId` を差し替え、`trashedWith` を `null` にする（元トピックとのセット関係は消滅している）。`version + 1`。ゴミ箱内の移動であり、ゴミ箱内の項目はインデックスに載っていないので影響しない。直後に `restore` を呼ぶ前提の中間状態 | なし |
 
 `create` の第一リビジョンにも `changeReason` を記録する（「なぜ」が空のリビジョンを存在させない。既定値「作成」の補完は application 層）。
@@ -412,11 +413,18 @@ export interface TopicRepository {
    * 存在しない（ハードデリート済み）ID は結果に含めない。
    */
   listByIds(ids: readonly TopicId[]): readonly Versioned<Topic>[];
+
+  // --- 保持日数変更に伴う purgeAfter の一括再計算（trash.md「保持期限」） ---
+  recalculatePurgeAfter(
+    retentionDays: TrashRetentionDays,
+    limit: number,
+  ): Readonly<{ updatedCount: number; hasMore: boolean }>;
 }
 ```
 
 - `findById` は **ゴミ箱外（`LiveTopic`）のみ**返す。trashed は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示等）は `findByIdIncludingTrashed` を使う（人間 UI の読み取り経路と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない）。`delete` はハードデリート（アダプターが同一トランザクションで行を消す）
-- 保持期限切れ項目の処理は本ポートに列挙メソッドを置かない。各項目の `purgeAfter` を索引で引くのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- 保持期限切れ項目の**列挙**は本ポートに置かない。各項目の `purgeAfter` を索引で引くのは trash の `TrashQueryPort.listItemsToPurge` であり、それを呼ぶのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- `recalculatePurgeAfter` は保持日数変更に伴う一括更新の書き込み口である。ゴミ箱内のトピックのうち `purgeAfter` が `retentionDays` から算出される値と一致しない行を `limit` 件まで更新し、残件の有無を返す。**OCC トークンを取らず `version` も進めない**（派生値の追随であって業務上の変更ではない）。進捗はカーソルではなく作業述語が表す
 - エラーケース: 共通のみ
 
 ### DocumentRepository
@@ -500,11 +508,18 @@ export interface DocumentRepository {
    * memo ハードデリートのユースケース（trash ドメイン）が同一 UoW で呼ぶ。冪等。
    */
   deleteSourceLinksByMemo(memoId: MemoId): void;
+
+  // --- 保持日数変更に伴う purgeAfter の一括再計算（trash.md「保持期限」） ---
+  recalculatePurgeAfter(
+    retentionDays: TrashRetentionDays,
+    limit: number,
+  ): Readonly<{ updatedCount: number; hasMore: boolean }>;
 }
 ```
 
 - `findById` は **active のみ**返す。trashed は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示のほか、出典リンクの「削除済み」表示等の人間 UI の読み取り経路）は `findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使う（AI 向けユースケースでは使用しない）。`delete` はハードデリートで、**アダプターは同一トランザクションで当該ドキュメントの全リビジョンと全出典リンク（documentId 側）も消去する**（4.3「履歴ごとの完全消去」+ ADR-003）
-- 保持期限切れ項目の処理は本ポートに列挙メソッドを置かない。各項目の `purgeAfter` を索引で引くのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- 保持期限切れ項目の**列挙**は本ポートに置かない。各項目の `purgeAfter` を索引で引くのは trash の `TrashQueryPort.listItemsToPurge` であり、それを呼ぶのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- `recalculatePurgeAfter` は保持日数変更に伴う一括更新の書き込み口である。契約は `TopicRepository` の同名メソッドと同じ（`purgeAfter` が算出値と一致しないゴミ箱内ドキュメントを `limit` 件まで更新し、残件の有無を返す。OCC トークンを取らず `version` も進めない）
 - 一覧系のうち書き込み（save / delete）に接続するもの（`listActiveByTopic` / `listTrashedByTopic` / `listTrashedByUser`）は `Versioned<...>` で OCC トークンを伴って返す（memo 側の `listTrashed` と同規約。セット削除・セット復元・トピックハードデリートのフローが読み直しなしで書き込める）
 - 出典メモの表示情報（本文スニペット・投稿日時・削除済みか）は memo ドメインの読み取りポートから取得する。本ポートはリンク（ID の組）だけを返す
 - エラーケース: 共通に加え、`insertRevision` の `(documentId, revisionNumber)` 一意制約違反 → `ConflictError`（同時編集の競合として扱う）

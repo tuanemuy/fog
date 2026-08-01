@@ -19,7 +19,7 @@
 | `active` トピックが存在する | `changeReason` をちょうど 200 文字で指定して作成する | 正常に作成される（境界値） | |
 | 作成先トピックが存在しない ID | 作成する | `NotFoundError`。ドキュメントは作成されない | |
 | 作成先トピックがゴミ箱内 | 作成する | `NotFoundError`（S-AI-03 異常系。ゴミ箱内トピック配下に作成させない） | |
-| 作成先トピックが他ユーザー所有 | 作成する | userId スコープにより `NotFoundError` | |
+| 作成先トピックが他ユーザー所有 | 作成する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーのトピックが存在しない） | |
 | `sourceMemoIds` の 1 件が存在しないメモ ID（他は active） | 作成する | `NotFoundError` で全体が失敗し、ドキュメント・リビジョン・リンクとも作成されない（1 件でも不正なら全体失敗。部分的に壊れた状態を作らない） | |
 | `sourceMemoIds` の 1 件がゴミ箱内メモ（他は active）（エッジケース: 出典の一部が trashed） | 作成する | `listActiveByIds` の結果に含まれないため `NotFoundError` で全体失敗。AI にゴミ箱内の存在事実も漏らさない（S-AI-03 異常系） | |
 | `sourceMemoIds` の 1 件が他ユーザー所有のメモ | 作成する | `NotFoundError` で全体失敗（存在しない / ゴミ箱内 / 他ユーザーを区別しない） | |

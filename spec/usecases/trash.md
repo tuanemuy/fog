@@ -310,7 +310,7 @@ destination（直和）:
 
 保持期限切れ（`purgeAfter < now`）のゴミ箱項目を自動でハードデリートする（S-TR-05）。**自分のユーザー単位 Durable Object の `purge-trash` ジョブから実行される**（`spec/database/index.md`）。ユーザー操作はなく、いかなる外部インターフェースにも公開しない。全ユーザーを1バッチで舐める定期実行ワーカーは存在しない。期限内の項目には一切触れない（「期限内であればいつでも復元できる」の保証）。
 
-**起動契機は cron ではなくジョブの起床である。** ソフトデリートと保持日数の変更が「ゴミ箱内の `purgeAfter` の最小値」で起床時刻を張り、ジョブは完了トランザクションの中で駆動源を読み直して次回を張り直す（domains/trash.md「保持期限」）。
+**起動契機は cron ではなくジョブの起床である。** ソフトデリートと保持日数の変更が「ゴミ箱内の `purgeAfter` の最小値」（`TrashQueryPort.findEarliestPurgeAfter`）で起床時刻を張り、ジョブは完了トランザクションの中で同じ駆動源を読み直して次回を張り直す（domains/trash.md「保持期限」）。
 
 ### 入力DTO
 
@@ -331,8 +331,8 @@ destination（直和）:
 ### 処理フロー
 
 1. `now = clock.now()` を取得する
-2. **保持日数の変更に伴う `purgeAfter` の再計算に残件があれば、空になるまで先に進める**（延長方向の変更で誤削除が起きないよう、再計算フェーズが必ず先である。domains/trash.md「保持期限」）
-3. 自分の Durable Object の索引から `purgeAfter < now` のゴミ箱項目を `chunkLimit` 件まで取得する
+2. **保持日数の変更に伴う `purgeAfter` の再計算に残件があれば、空になるまで先に進める** — `UserSettingsRepository.find()` の `trashRetentionDays` を入力に `MemoRepository.recalculatePurgeAfter` / `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter` を、3つとも `hasMore` が偽になるまで呼ぶ（延長方向の変更で誤削除が起きないよう、再計算フェーズが必ず先である。domains/trash.md「保持期限」）。**残件はカーソルではなく作業述語が表す**ので、進捗を別に永続化しない
+3. 自分の Durable Object の索引から `purgeAfter < now` のゴミ箱項目を `chunkLimit` 件まで取得する（`TrashQueryPort.listItemsToPurge(now, chunkLimit)`）
 4. 各項目を `HardDeletePolicy.expandTargets(item)` で `HardDeletePlan` に展開する（期限切れトピックは自身の `setDocumentIds` から展開され、配下ドキュメントごと消去される。追加のポート照会は不要）
 5. 項目ごとに UnitOfWork 内で実行する:
    1. 消去前に影響先を確定する: メモは `DocumentRepository.listSourceLinksByMemo`、ドキュメントは `DocumentRepository.listSourceLinksByDocument`

@@ -18,7 +18,7 @@
 | Retention Period | 保持期限 | ソフトデリートからハードデリートまでの猶予日数。既定30日、ユーザー設定（identity ドメイン）で変更可能。変更は既存のゴミ箱項目にも遡及適用される |
 | Cascade Delete (Set Delete) | セット削除 | トピックのソフトデリート時に配下ドキュメントも一緒に削除されること。復元・ハードデリートもセットで扱われる |
 | Cascade Restore (Set Restore) | セット復元 | セット削除されたトピックと配下ドキュメントを一括で復元すること |
-| Expiration | 期限切れ | `trashedAt + retentionDays` が現在時刻を過ぎた状態。`purge-trash` ジョブによる自動ハードデリートの対象 |
+| Expiration | 期限切れ | **保存された `purgeAfter` が現在時刻を過ぎた状態。** `purge-trash` ジョブによる自動ハードデリートの対象。判定の権威は保存値であり、`trashedAt + retentionDays` の算出結果ではない（保持日数の変更直後は再計算が済むまで両者が一致しない） |
 | Empty Trash | 空にする | ゴミ箱内の全項目を一括ハードデリートする操作 |
 
 ## エンティティ
@@ -175,17 +175,21 @@ export const RetentionPolicy = {
   expiresAt: (trashedAt: Date, retentionDays: TrashRetentionDays): Date =>
     new Date(trashedAt.getTime() + retentionDays * 86_400_000),
 
-  /** 期限切れ判定: trashedAt + retentionDays < now */
-  isExpired: (trashedAt: Date, retentionDays: TrashRetentionDays, now: Date): boolean =>
-    RetentionPolicy.expiresAt(trashedAt, retentionDays).getTime() < now.getTime(),
+  /** 期限切れ判定: 保存された purgeAfter が now を過ぎたか */
+  isExpired: (purgeAfter: Date, now: Date): boolean =>
+    purgeAfter.getTime() < now.getTime(),
 };
 ```
+
+**`isExpired` は保存値を入力に取る。** 期限を保存する形にした以上、判定の権威は `purgeAfter` であり、`trashedAt` と `retentionDays` から算出し直すと保持日数の変更直後（再計算が済むまで）に保存値と食い違う。列挙そのものは索引で引くので（後述「保持期限」）、この関数の用途は単一項目の判定である。
 
 **算出規則そのものは変えない。変えるのは結果の持ち方である。**
 
 - **期限は保存する**（各エンティティの `purgeAfter`）。次に起こすべき時刻を索引で引く必要があるためで、毎回算出する形では「最も早い期限」を求められない
 - **`trashed` であることと `purgeAfter` を持つことは同値である。** ソフトデリートで設定し、復元で必ず `null` へ戻す。戻さないと復元済みの行が過去の期限を保持し続ける
 - **保持期限を短く変更した場合も、既にゴミ箱にある項目に適用される**（S-TR-05）。変更と**同一トランザクションで**ゴミ箱内全項目の `purgeAfter` を再計算し、新しい最も早い期限で次回の起床を張り直す。件数は利用者1人分なので一括更新で足り、大きい場合はチャンクに分けて進める
+  - **書き込み口は各ドメインの Repository の `recalculatePurgeAfter(retentionDays, limit)` である**（memo / knowledge の3ポート。上記「書き込みポートについて」）。**進捗はカーソルではなく作業述語が表す** — 「まだ再計算していない項目」＝「`purgeAfter` が新しい保持日数から算出される値と一致しない項目」であり、更新した項目はその場で述語から外れるので、残件の有無だけを戻り値に持てば次のチャンクは先頭から始めてよい。保持日数が再計算の途中でもう一度変わっても、述語が新しい値に対して定義され直されるだけで先頭からやり直しにはならない
+  - **算出規則の正本は `RetentionPolicy.expiresAt` である。** アダプターは一括更新のために同じ規則を持つが、規則を変えるときは両方を動かす（同じ規則を2箇所に持つことの明示的な受容である）
 - **延長方向の変更では、再計算が済むまで削除を進めない。** 再計算前の項目は古い（短い）期限を持っているので、順序を決めないと利用者が延ばしたはずの項目が消える。削除が次の起床へ遅れるのは安全側である（保持期限は「少なくともこの期間は保持する」規定である）
 
 ## ポート
@@ -207,6 +211,15 @@ export interface TrashQueryPort {
 
   /** ゴミ箱の総件数（「空にする」確認の件数表示、S-TR-04 に使う） */
   countTrashItems(): number;
+
+  /**
+   * 自分の Durable Object のゴミ箱から、保存された purgeAfter が now を過ぎた項目を
+   * limit 件まで返す（purgeAfter の昇順）。purge-trash ジョブの駆動源。
+   */
+  listItemsToPurge(now: Date, limit: number): readonly TrashItem[];
+
+  /** ゴミ箱内の purgeAfter の最小値。無ければ null（次の起床時刻の材料） */
+  findEarliestPurgeAfter(): Date | null;
 }
 ```
 
@@ -217,13 +230,14 @@ export interface TrashQueryPort {
 
 **`retentionDays` は引数から落ちる。** `expiresAt` が保存値になったので、照会のたびに設定値を渡して算出し直す必要がない。
 
-**全ユーザー横断で期限切れを列挙するメソッドは持たない。** 各 Durable Object の中には自分のユーザーの期限しか無く、横断して舐める相手が存在しないためである（後述「保持期限」）。memo / knowledge のリポジトリにも cutoff 日時ベースの期限切れ列挙メソッドを置かない。
+**期限切れの列挙は自分の Durable Object に閉じる。`userId` を引数に取らず、全ユーザー横断で舐めるメソッドも持たない。** 各 Durable Object の中には自分のユーザーの期限しか無く、横断する相手が存在しないためである（後述「保持期限」）。**引き方は `purgeAfter` の索引であり、`trashedAt` と保持日数からの算出ではない。** memo / knowledge のリポジトリ側には期限切れの列挙メソッドを置かない — ゴミ箱の横断ビューを読む契約は本ポートに一本化されており、二重定義にしないためである。
 
 ### 書き込みポートについて（設計判断）
 
 trash 独自の書き込みポートは持たない。
 
 - 復元は memo の `Memo.restore(...)`、knowledge の `Document.restore(...)` / `TopicTrashService.restoreTopicSet(...)` といった各エンティティ・ドメインサービスの状態遷移として実行し、永続化は各ドメインの Repository（`MemoRepository` / `DocumentRepository` / `TopicRepository`）の `save` を使う
+- **保持日数の変更に伴う `purgeAfter` の一括再計算も各ドメインの Repository が担う**（`MemoRepository.recalculatePurgeAfter` / `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter`）。ゴミ箱内の全項目を `find` → `save` で回す形は採らない — 項目ごとに OCC トークンが要り、「同一トランザクションで一括更新する」という要求と噛み合わないためである（後述「保持期限」）
 - ハードデリートは各 Repository のハードデリート用メソッドを使う。`MemoRepository.hardDelete(id, expectedVersion)` の契約は**メモ本体と全リビジョンの消去のみ**であり、出典リンク（knowledge のテーブル）は含まない。出典リンクの消去は、trash のユースケースが**同一 UnitOfWork 内で** knowledge の `DocumentRepository.deleteSourceLinksByMemo(memoId)` を併せて呼ぶことで行う（ADR-003 の同期方式。オーケストレーションは trash のユースケースの責務）。ドキュメント / トピックのハードデリートは knowledge の `DocumentRepository.delete` / `TopicRepository.delete`（アダプターが同一トランザクションでリビジョンと documentId 側の出典リンクも消去する契約）を使う
 - 理由: 削除状態の所有者は memo / knowledge であり（ADR-004）、書き込み経路を各ドメインに一本化することで、不変条件（リビジョンとの整合、出典リンクの消去、OCC）の実施箇所を分散させない。trash が独自の書き込みポートを持つと、同一テーブルへの書き込み契約が二重定義になる
 - したがって trash のユースケースは、`TrashQueryPort`（読み取り）+ memo / knowledge の Repository（書き込み、UnitOfWork 経由）+ trash のドメインサービス（規則）を組み合わせる構成になる
@@ -235,14 +249,14 @@ trash 独自の書き込みポートは持たない。
 **期限の持ち方と起床の張り方:**
 
 1. ソフトデリート時に `RetentionPolicy.expiresAt` を算出して `purgeAfter` に保存する
-2. 同じトランザクションで「ゴミ箱内の `purgeAfter` の最小値」を求め、それが現在予定されている起床より早ければ `purge-trash` ジョブを投入する。**投入は早める方向にのみ効く**
+2. 同じトランザクションで「ゴミ箱内の `purgeAfter` の最小値」を求め（`TrashQueryPort.findEarliestPurgeAfter`）、それが現在予定されている起床より早ければ `purge-trash` ジョブを投入する。**投入は早める方向にのみ効く**
 3. `purge-trash` は完了トランザクションの中で駆動源（ゴミ箱内の `purgeAfter` の最小値）を読み直し、対象が残っていれば自分の次回時刻をそこへ設定して待機状態へ戻す。**これが無いと1回目の完走で終了し、次の期限が来ても二度と起きない**
 4. 復元時は `purgeAfter` を `null` へ戻す。戻さないと駆動源が過去へ固定され、起床が止まらなくなる
 
 **ジョブのフロー:**
 
-1. 再計算の残件（`trashRetentionDays` 変更に伴う `purgeAfter` の一括再計算）があれば、空になるまで先に進める
-2. 期限切れ項目（`purgeAfter` が現在時刻を過ぎたもの）を自分の Durable Object の索引から引く
+1. 再計算の残件（`trashRetentionDays` 変更に伴う `purgeAfter` の一括再計算）があれば、空になるまで先に進める（各 Repository の `recalculatePurgeAfter` を残件が無くなるまで呼ぶ）
+2. 期限切れ項目（`purgeAfter` が現在時刻を過ぎたもの）を自分の Durable Object の索引から引く（`TrashQueryPort.listItemsToPurge(now, chunkLimit)`）
 3. 各項目について `HardDeletePolicy.expandTargets(item)` で `HardDeletePlan` に展開する（期限切れトピックは自身の `setDocumentIds` から展開され、配下ドキュメントごと消去される。追加のポート照会は不要）
 4. 項目ごとに UnitOfWork 内で実行する:
    - 消去前に影響先を確定する: メモの消去では `DocumentRepository.listSourceLinksByMemo` で当該メモを出典とするドキュメント ID 群、ドキュメントの消去では `DocumentRepository.listSourceLinksByDocument` で出典メモ ID 群を取得する

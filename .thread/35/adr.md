@@ -933,7 +933,7 @@ Proposed
 
 - 良い点: 改訂後の `spec/testcases/**` にイベント期待が1行も残らない（`grep -rn 'イベント' spec/testcases` が 0 行）。
 - 良い点: `.thread/35/step14-checklist.md` の該当行に「設計の表が挙げていない」と明記したので、レビューが設計と突き合わせたときに差分の理由が辿れる。
-- トレードオフ: **ステップ14 の作業量が設計の表より増える。** ただし増えたのは4ファイル11行で、いずれも同じ表（インデックスの維持の契機表）から機械的に導ける。
+- トレードオフ: **ステップ14 の作業量が設計の表より増える。** 増えたのは**7ファイル15行**である（本 ADR が初版で挙げた上の4ファイル11行に、レビュー 001 B-001 が拾った knowledge 系3ファイル4行が加わる。ADR-035）。いずれも同じ表（インデックスの維持の契機表）から機械的に導ける。
 
 ## ADR-029: FTS5 新設ケースのうち「ゴミ箱除外」は既存ケースの書き換えで満たし、二重に作らない
 
@@ -1100,3 +1100,632 @@ Proposed
 - 良い点: AC-18 の `grep -n '9テーブル\|SQLite系\|52ユースケース\|192ケース\|約750ケース' spec/index.md` が 0 行になり、置き換え後の数値もすべて `grep -c` で再現できる。
 - トレードオフ: **`spec/index.md` がテストケースを1件足すたびに古くなる。** 概数のほうが寿命は長かった。ただし台帳（`spec/inventory/test.md`）を直さずにテストケースだけ足す運用は既に禁じられているので、索引の更新はその作業に1行足すだけである。
 - 波及: ステップ16.5 の実行結果（51 / 782 / 199）。**`spec/index.md` の Phase 3 行と成果物節の両方**を同じ数値で直す（片方だけ直すと同じファイルの中で食い違う）。
+- 続報: **本ラウンドでユースケースが2つ増えた**（ADR-051）ため、上の 51 / 782 は既に古い。再実測は **53ユースケース / 814ケース / 199マニュアルケース**である。あわせて成果物節の `43シナリオ` も実測（`grep -rhoE 'S-[A-Z]{2}-[0-9]{2}' spec/scenario/*.md | sort -u | wc -l` = **39**）と合っていない — こちらは本 Issue 以前からの旧値だが、本 ADR が定めた「台帳の実測を正本とする」規約の射程にある。
+
+## ADR-035: イベント名だけを書いた期待値4行にも (A) / (B) を適用し、ADR-028 の全数を訂正する
+
+### Status
+
+Proposed
+
+### Context
+
+レビュー 001（`review-001-testcases.md` B-001 / `review-001-domain-usecase.md` B-001）が、ステップ14 の取り残しを4行検出した。
+
+- `spec/testcases/knowledge/updateTopic.md:8` — 「`topic.updated` が記録される」
+- `spec/testcases/knowledge/updateTopic.md:12` — 「`topic.archived` / `topic.unarchived` が各 1 件記録される」
+- `spec/testcases/knowledge/trashTopic.md:9` — 「`document.trashed` は発行されない」
+- `spec/testcases/knowledge/editDocumentByAi.md:7` — 「`document.edited` が記録される」
+
+4行とも `V-3` の走査語（`Outbox` / `collectEvents` / … / `ドメインイベント`）を1つも含まないので、AC-3 の負の検証は 0 行のまま通っていた。**しかも `spec/inventory/test.md` の対応4行（`:276` / `:395` / `:407` / `:411`）は既に projection の表現へ同期済みで、台帳とテストケース本体が正面から食い違っていた。** #10 / #13 の実装チェックリストは台帳 ID 由来なので、実装者は台帳を見て通したつもりで本文を読むと別のことが書いてある — ADR-011 が防ごうとした静かな取り違えと同じ事故形である。
+
+ADR-028 は同じ形（イベント名だけで走査語に掛からない行）を trash 系 11 行についてだけ洗い出しており、knowledge 系を射程に入れていなかった。
+
+### Decision
+
+**ADR-028 の基準をそのまま適用する。** 台帳側の表現に本文を合わせる形で、`editDocumentByAi.md:7` は (A)（同じ `transactionSync` の中でエントリが作り直される）、残り3行は (B)（イベント期待を落とす。`updateTopic.md:8` と `trashTopic.md:9` には「エントリを持たない / 配下が 0 件なので projection の更新は発生しない」を添える）とした。
+
+**あわせて ADR-028 の「増えたのは4ファイル11行」を「7ファイル15行」へ訂正する。** 実数は emptyTrash 1 + hardDeleteTrashItem 5 + restoreDocument 3 + restoreTopic 2 + editDocumentByAi 1 + trashTopic 1 + updateTopic 2 = 15 行 / 7 ファイルである。`.thread/35/step14-checklist.md:49` の「3ファイル」も同じ数え違いだったので同時に直した（列挙は初版から4ファイルあった）。
+
+### Consequences
+
+- 良い点: 台帳とテストケース本体の食い違いが消え、`spec/domains/knowledge.md` に定義の無い識別子を期待値に持つ行が 0 になる。
+- トレードオフ: `V-3` はこの再発を検出できない。**イベント名を直接走査する検査（`V-3b`）を完了ゲートに足す必要がある**が、`.thread/35/testing.md` は本作業の担当範囲外なので追加は別担当へ送る。
+- 波及: `.thread/35/step14-checklist.md` の #19 / #22 / #23 の「実際に適用したもの」欄と「台帳」欄。台帳（`spec/inventory/test.md`）は既に正しいので変更しない。
+
+## ADR-036: `userId スコープ` の書き換えを読み取り専用ユースケースのテストケースにも及ぼす
+
+### Status
+
+Proposed
+
+### Context
+
+設計 第11.1節は読み取り系14件を「影響なし」と判定し、「`userId` スコープの読み替えは `spec/domains/index.md` の改訂で一括して効くので個々のテストケースは触らない」としていた。ところが改訂後の `spec/domains/index.md` は「DO 内のリポジトリ・ポートは `userId` を引数に取らない」「構造的保証の在り処は**到達可能性**である」「**例外は無い**」と書き切っている。
+
+一方で本 PR は `spec/testcases/trash/listTrash.md:19` / `search/search.md:19` / `identity/revokeAiClientConnection.md:8` を到達可能性の表現へ**書き換えている**。結果として同じ保証の説明が corpus 内で2通りになり、境界は「設計の表に載っていたか」でしかなかった。しかも残っていた 18 行のうち 10 行は**書き込み系**で、設計の免除理由（「読み取り専用でイベント・インデックス・非同期反映のいずれにも触れない」）がそもそも当たらない。
+
+### Decision
+
+**`spec/testcases/**` の 18 行と `spec/inventory/test.md` の 15 行を、すべて到達可能性の表現へ書き換える。** 手本は `listTrash.md:19` の「保証は列条件ではなく到達可能性による — 自分の Durable Object の中に他ユーザーの行が原理的に存在しない」である。読み取り専用ユースケースの8ファイル（`knowledge/{getDocument,getTopic,listDocumentRevisions,listDocumentSourceMemos,listDocumentsReferencingMemo,diffDocumentRevisions}.md` / `memo/{getTimeline,diffMemoRevisions}.md`）も対象に含める — **これらは旧テナント分離機構を本文に持つので「影響なし」は誤判定である。**
+
+`spec/usecases/memo.md:369` の同種の1行は上流であり本作業の担当範囲外なので、報告に回す。
+
+### Consequences
+
+- 良い点: 「消えた機構（第一引数の `userId`）」を期待値の根拠に名指しする行が `spec/testcases/**` と `spec/inventory/test.md` から消え、#37 が存在しない引数付きクエリを探す事故が無くなる。
+- トレードオフ: 設計の「影響なし」判定を8ファイル分上書きするので、`.thread/35/coverage.md` の判定と AC-16 のファイル数内訳（改訂 73 / 影響なし 28 → 改訂 81 / 影響なし 20）が同時に動く。**`coverage.md` は担当範囲外なので、是正は報告に回す。**
+- 波及: 語彙走査で拾えない形なので、完了ゲートに `grep -rn 'userId スコープ' spec --include='*.md' | grep -v /review/` を1本足すと再発を防げる。
+
+## ADR-037: `trashed ⇔ purgeAfter` の検証は設定側4件・解除側3件を末尾 append で足す
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/memo.md:76`（不変条件 8）と `spec/domains/trash.md:187` が新設した「`trashed` であることと `purgeAfter` を持つことは同値。ソフトデリートで設定し、復元で必ず `null` へ戻す」に、テストケースが1件も無かった（`review-001-domain-usecase.md` W-003）。`grep -rn 'purgeAfter' spec/testcases` は identity / trash の一部（`changeTrashRetentionDays` / `pruneExpiredTrashItems` / `listTrash`）にしか当たらない。
+
+`spec/domains/trash.md:240` は「戻さないと駆動源が過去へ固定され、起床が止まらなくなる」と、落とし忘れが機能停止に直結すると自ら書いている箇所である。
+
+### Decision
+
+**同値の両側を1件ずつ測る。** 設定側4件（`memo/softDeleteMemo.md` / `memo/delete.md` / `knowledge/trashDocument.md` / `knowledge/trashTopic.md`）に「`purgeAfter` に `RetentionPolicy.expiresAt(now, retentionDays)` の算出結果が保存される」を、解除側3件（`trash/{restoreMemo,restoreDocument,restoreTopic}.md`）に「復元で `purgeAfter` が落ちる」を足す。
+
+**片側だけにしない。** 「復元で落ちる」だけを測ると設定漏れ（`purge-trash` が永久に起きない）を、「設定される」だけを測ると解除漏れ（起床が止まらない）を取り逃す。不変条件が同値である以上、検査も両側に要る。
+
+**配置は各表の末尾 append**（ADR-011 / ADR-030 と同じ規約）。`restoreDocument.md` は4つの表を持つが、`purgeAfter` の解除は3分岐すべてに共通なので「共通・異常系」の表の末尾に置く。台帳の新規 ID は `TC-softDeleteMemo-012` / `TC-delete-013` / `TC-trashDocument-011` / `TC-trashTopic-014` / `TC-restoreMemo-012` / `TC-restoreDocument-034` / `TC-restoreTopic-014`。
+
+### Consequences
+
+- 良い点: `spec/inventory/test.md` の行数が 782 → 788 になり（W-001 の削除1件を含む）、`purge-trash` の駆動源に関わる不変条件が実装チェックリストに現れる。
+- トレードオフ: 正常系のケースが表の末尾（異常系のあと）に並ぶので、表の内部で種別が単調でなくなる。ADR-030 と同じトレードオフを受け入れる — 既存行を動かさないことのほうが台帳 ID の安定に効く。
+- 波及: 追加はすべて表の末尾なので、既存行の `#L` は1つも動かない。
+
+## ADR-038: マニュアルテストの TC 番号は振り直さず、実行順の規則を目次に1行置く
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/manual-tests/search.md` は TC-18〜20 が TC-01〜07 の直後（正常系の末尾）に、`account.md` は TC-38 / TC-39 が正常系の末尾に、TC-40 が異常系の末尾に入っている。種別セクションへの配置も件数表も正しいが、**文書内の並び順と番号順が一致しない**ため「TC-08 を飛ばしたか？」の疑いが実行のたびに発生する（`review-001-testcases.md` W-003）。
+
+提案は (a) 文書順に振り直す / (b) 目次に「記載順に実行する」と1行足す、の二択だった。
+
+### Decision
+
+**(b) を採る。** 理由は3つ。
+
+1. **振り直しは相互参照を広く動かす。** `account.md` の TC-38 は `:169` / `:593` / `:629` から、TC-40 は `:24` / `:590` から参照されており、`search.md` も同様にカバレッジ表を持つ。番号を詰めると同一 PR 内で機械的に追随できるとはいえ、**既存 TC の番号が全部動く**ので、実行記録を持っている読み手が過去の記録と突き合わせられなくなる。
+2. **別観点のレビューは末尾採番を「規約どおり」と評価している**（`review-001-requirements.md` の「TC 番号の採番規約も守られている…既存 TC の番号は1つも動いていない」）。振り直すと片方の指摘を直しながらもう片方を壊す。
+3. **番号は台帳と紐づいていない**ので、どちらを選んでも静かな取り違えは起きない。であれば変更量の小さいほうを採る。
+
+`spec/manual-tests/index.md` の「実行順序の推奨」の直後に「各ファイルの中は番号順ではなく記載順に実行する。飛んでいる番号は同じファイルの別セクションにある」を1段落だけ置く。
+
+### Consequences
+
+- 良い点: 「番号順とも記載順とも読める」状態が消える。件数表・実行記録の分母（199）は動かない。
+- トレードオフ: 追加ケースが増えるほど番号の飛びは増える。飛びが読み手の負担になったら、そのときに一度だけ全ファイルを振り直す（そのコストは今払わない）。
+
+## ADR-039: 読み取り専用ユースケースのテストケースから書き込み期待を外し、受け皿は既存のマニュアルテストに求める
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/testcases/identity/listAiClientConnections.md:17` は「リセット完了画面から**「すべて失効」を実行する** → すべて `revoked` になる」を期待値に置いていた。しかし `listAiClientConnections` は `spec/usecases/identity.md` で「読み取りのみ。UoW 不要」「エラーケースは DB 例外のみ」と定義されており、**この契約では実行も検証もできないケースが台帳 ID 付きで固定される**（`review-001-requirements.md` W-001）。設計 `design.md:2462` がこのファイルへ指示したのはリセット完了による**自動失効の観測**であり、他3行（`:14`〜`:16`）はその指示どおりである。
+
+### Decision
+
+**当該行を削除し、`TC-listAiClientConnections-011` を欠番のまま残す**（ADR-011）。
+
+**受け皿は新設しない。** `spec/manual-tests/account.md` の TC-38 手順3（「(b) の一覧で「すべて失効」を実行する → 一覧の全接続が失効済みになる」）が同じ振る舞いを既に検証しており、`:223` の「自動失効が切るのは直近世代だけである。必要なら TC-38 の「すべて失効」で利用者が明示的に切る」が TC-39 との関係も説明している。**一括失効のユースケースが `spec/usecases/` に無い**という指摘（`review-001-requirements.md` B-002）は上流の担当であり、そこが決まるまで下流にテストケースを置かないほうが食い違いを増やさない。
+
+### Consequences
+
+- 良い点: 読み取り専用ユースケースの期待値表から書き込み操作が消える。振る舞い自体の検証は失われない（マニュアルテスト側に残る）。
+- トレードオフ: 一括失効の自動テストは、B-002 の受け皿が決まるまで存在しない。**受け皿ができたら `TC-listAiClientConnections-011` ではなく新しいユースケースの表へ採番する**（欠番は復活させない）。
+- 続報: **受け皿は `TC-revokeAllAiClientConnections-002` に決まった。** 本ラウンドで `revokeAllAiClientConnections` が新設された（ADR-051）ことで B-002 が解消したため、当該期待値をそのユースケースの表へ置き直した（ADR-058）。`TC-listAiClientConnections-011` は欠番のままである。
+
+## ADR-040: 主キーの形は3通りと単一行の4分類で書き、複合 UNIQUE を PK へ昇格させる
+
+### Status
+
+Proposed
+
+### Context
+
+改訂で共通方針の「**ID**: すべて `TEXT` 主キー」に「例外は `search_entries`」という排他句を新設したが、実際に単一 `TEXT` 主キーを持たないテーブルは 9〜10 ある（複合 PK 4つ・単一行3つ・`credential_locators` / `credential_mappings`）。さらに後者2つは節に主キーの宣言が1行も無く、**共通方針だけを読んだ #37 が `id TEXT PK` を発明しうる**状態だった。設計 第4.1.1節は列の全数を宣言しているので、そこに無い列を足すと同一性の権威が二重になる。
+
+### Decision
+
+1. **共通方針の排他句を「主キーの形は3通り（単一 `TEXT` / 複合キー / `search_entries` の `rowid INTEGER PRIMARY KEY`）＋単一行はそもそも置かない」へ書き替え、各テーブルの節を正本と明記する。** あわせて「節に無いサロゲートの `id` 列を足してよいという読み方はしない」を断定する。
+2. **`credential_locators` の `cl_credential_uq`（`credential_id`, `generation`）と `credential_mappings` の `cm_credential_uq`（`kind`, `hmac`）を UNIQUE から PRIMARY KEY へ昇格させる。** どちらも設計 第4.1.1節が「一意性はこの組で取る」と決めた組であり、同一性そのものである。
+3. **索引名は変えない。** 昇格させても表の「名前」欄には `cl_credential_uq` / `cm_credential_uq` を残し、台帳と「主要クエリとインデックスの対応」からの参照を生かす（名前付きの主キー制約として読む）。
+
+### Consequences
+
+- 良い点: 「例外は `search_entries` だけ」という誤った排他宣言が消え、9〜10 テーブルすべてが共通方針と矛盾しなくなる。
+- 良い点: **`credential_locators` / `credential_mappings` に主キーの宣言ができる。** #37 が設計に無い `id` 列を発明する経路が閉じる。
+- トレードオフ: SQLite では複合 PK が自動索引（`sqlite_autoindex_*`）になるので、名前で参照し続ける書き方は厳密には制約名の宣言に依存する。実装が別名を採る場合でも spec の参照先は「その組の一意制約」であって索引の物理名ではない。
+- 波及: `spec/inventory/adapter.md` の `ADP-credential-locators-001` / `ADP-credential-mappings-001`、`spec/database/index.md` の主要クエリ表2行。
+
+## ADR-041: 非集約ストアの書き込み口を各テーブルの節と台帳に置き、`resetTokenStore` の別名を spec 側で対応させる
+
+### Status
+
+Proposed
+
+### Context
+
+`CLAUDE.md` は UoW コンテキストが持つ書き込み口（`enqueueJob` / `recordOperation` / `updateOperation` / `setMigrationCursor` と `credentialLocatorStore` / `resetTokenStore` / `rotationCheckpointStore`）を「これが全数である」と断定しているが、**この7語は `spec/` に1件も無い**。とくに `credential_locators` は「到達性検査の権威」と宣言されながら、行を書く経路が spec のどこにも無かった。ADR-006 は「`spec/` が単独で読める」ことを目標に置いている。加えて `resetTokenStore` は spec 側では `PasswordResetTokenPort` という別名で存在し、同じものに2つの名前が並んでいた。
+
+### Decision
+
+1. **非集約ストア6つの各節に「書き込み口」を1行ずつ置く**（`jobs` / `operations` / `migration_progress` / `credential_locators` / `password_reset_tokens` / `rotation_checkpoints`）。内容は設計 第4.1.1節の非集約ストア表と同じで、書き込み箇所の全数もそこに書く。**`_meta` は「口を持たない唯一の非集約ストア」と明記する。**
+2. **「OCC の `version` を持つ / 持たない」節に全数の1行を置く** — 口を持つのは6ストア・7メソッドである（`operations` だけ2つ）。
+3. **`resetTokenStore` の節に「ドメイン側のポート名は `PasswordResetTokenPort` で、同じものを指す」を書く。** 名前を片方へ寄せるのではなく対応を1行で示す（ドメイン層のポート名を DB 側の都合で変えない）。
+
+### Consequences
+
+- 良い点: #37 が `spec/` だけを読んで「どの経路がこの表に行を書くか」を決められる。
+- 良い点: 同じものに2つの名前が並ぶ状態が、対応関係の明示で閉じる。
+- トレードオフ: **口の名前が `spec/database/index.md` と `CLAUDE.md` の2箇所に載る。** 全数の宣言は `CLAUDE.md` 側に残るので、口を足すときは両方を直す必要がある。
+- 波及: `spec/inventory/adapter.md` の該当6行。**`spec/domains/identity.md` に `credential_locators` の書き込みポートが無い件と、`spec/usecases/identity.md` に locator を記録する段が無い件は本 ADR の射程外**（別担当への申し送り）。
+
+## ADR-042: `jobs` の再投入収束規則3つを spec に置き、再武装する5種は名指しで列挙する
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/database/index.md` は `operation_key` の欄に「同じキーの再投入は既存行に収束する」としか書いておらず、設計 第7.4節が「それだけでは `kind` によって逆向きの更新が要求される」と自ら書いて置いた3規則のうち、(1) 早める方向のみ しか spec に着地していなかった。(2) `poison` の復帰と (3) `done` の復帰対象は spec 全域に無い。同節は claim の CAS 文・backoff・prune・再武装まで同じ深さで書いているので、線引きの問題ではなく取り残しである。
+
+### Decision
+
+1. **`jobs` の節に収束規則3つを置く。** (1) `next_run_at` は早める方向にのみ / (2) `poison` は `pending` へ戻して `attempt` を 0 に / (3) `done` を戻すのは再武装する5種だけ。**`status` 別の (2)(3) が (1) に優先する**ことも書く（`done` / `poison` は `next_run_at` が `NULL` なので方向が定義されない）。
+2. **5種は `purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `sweep-orphan-mapping` / `rotate-encryption` と名指しで書く。** レビューは「類型欄から引ける」としていたが**実際には引けない** — 全数表の類型は4類型（外部 I/O / 期限処理 / 一括処理 / cross-DO saga の前進）であり、`sweep-orphan-mapping` は cross-DO saga、`rotate-encryption` は一括処理に分類されているので、期限処理3種しか拾えない。
+3. **既存の再武装の1行も同じ5種の名指しへ書き替える。** 改訂前は「期限処理と一部の一括処理は」と書いており、`sweep-orphan-mapping` が落ちていた。
+
+### Consequences
+
+- 良い点: 設計が失敗モードまで書いた2件（(A)(B) の周期ジョブが1回完走で停止する / `send-mail` の同窓連打で起床回数が依頼回数に比例する）が spec 側で閉じる。
+- 良い点: 再武装する5種の全数が、類型欄の読み替えではなく名指しで固定される。
+- トレードオフ: 12種の分類が「4類型」と「再武装するか否か」の2軸になるので、`kind` を足すときに見る表が1つ増える。
+- 波及: `spec/inventory/adapter.md` の `ADP-jobs-001`。
+
+## ADR-043: `purge-trash` の再計算フェーズの自己消尽述語は `user_settings` の節に置く
+
+### Status
+
+Proposed
+
+### Context
+
+`migration_progress` の節は「`purge-trash` は作業述語そのものが進捗を表す」と結論だけを断定していたが、設計 第7.5節はその根拠を「再計算の述語を**自己消尽する形**で書くこと」に置いている。spec 側には述語の形も「自己消尽しない UPDATE を足してはならない」という禁止も無く、素朴に `WHERE status = 'trashed'` で回すと述語が縮まずに完了しない。あわせて「保持期間を変えると同一トランザクションで全件再計算する」（`user_settings`）と「ジョブに再計算フェーズがある」（`kind` 全数表）をつなぐ「件数が大きい場合はチャンク分割へ落ちる」の一文も欠けていた。
+
+### Decision
+
+**述語は `user_settings` の節に置く。** 再計算の契機（`trash_retention_days` の変更）を書いている節が、`memos` / `topics` / `documents` の3つに分散させずに済む唯一の場所だからである。内容は (a) 件数が大きい場合はチャンク分割へ落ちる、(b) 述語は `WHERE status = 'trashed' AND purge_after <> <新しい値で算出した値>`、(c) 述語が単調に縮むことが永続カーソルを持たない唯一の根拠、(d) 自己消尽しない UPDATE を足してはならない、の4点。**`kind` 全数表の用途欄と `migration_progress` の節から参照する。**
+
+### Consequences
+
+- 良い点: 「結論だけがあって根拠が無い」状態が閉じ、`migration_progress` の除外根拠が spec の中で自己完結する。
+- トレードオフ: ジョブの作業述語が `jobs` の節ではなく `user_settings` の節にある。参照を2箇所から張ることで補う。
+- 波及: `spec/inventory/adapter.md` の `ADP-user-settings-001` / `ADP-migration-progress-001`。
+
+## ADR-044: `search_entries` の物理形は `spec/database/index.md` を正本とし、`'delete'` の構文もここに置く
+
+### Status
+
+Proposed
+
+### Context
+
+external-content FTS5 の更新は「旧値で delete → 新値で insert」と書かれているが、**その delete が特殊コマンド構文**（`INSERT INTO search_fts(search_fts, rowid, ...) VALUES('delete', ...)`）であることは spec のどこにも無かった。素直に `DELETE FROM search_fts WHERE rowid = ?` と書くと、同じ節が警告している「例外が上がらず索引だけが黙って壊れる」に落ちる。加えて `search_entries` の PK の形が `spec/domains/search.md` と `spec/database/index.md` の二重管理になっており、片方だけを直すと静かに食い違う（ADR-004 / ADR-015 が tokenizer について一本化したのと同じ理由が当たる）。
+
+### Decision
+
+1. **`search_fts` の節に `'delete'` の構文を SQL フェンスでそのまま置き、`DELETE FROM ...` と書くと壊れることを明記する。**
+2. **`search_entries` の節に「この表の物理形（主キーの取り方・列の型・索引）を決めるのは本ファイルであり、`spec/domains/search.md` ではない」と書く。** あわせて `rowid INTEGER PRIMARY KEY` を採る理由（安定した INTEGER rowid / VACUUM で再採番されない）と、別列を surrogate にする場合の UNIQUE + 索引の必須要件、`rowid` を DO の外の DTO に出さないことを置く。
+
+### Consequences
+
+- 良い点: 実行時に何のシグナルも出さない失敗モードに対して、踏み外さないための具体が spec に載る。
+- 良い点: 物理形の正本が1箇所に決まる。
+- 波及: **`spec/domains/search.md:224-227` の「制約2（PK の形）」は参照へ落とす必要がある**（別担当）。制約1（旧値 delete → 新値 insert）はドメイン側の projection 契約として残してよい。`spec/inventory/adapter.md` の `ADP-search-fts-001`。
+
+## ADR-045: コーディネーター予約行と `account.caller_token` の寿命を否定形で書く
+
+### Status
+
+Proposed
+
+### Context
+
+`.thread/34/handoff.md` 第3節は「#37 が落としてはいけない前方互換点」を4点挙げ、落とすと **#45 がどう設計しても後から入れられなくなる**と書いている。1番目（`operations.target_locators`）と4番目（`change_state` の3値）は spec に着地していたが、**2番目（コーディネーター予約行を終端の各段が終わるまで消さない）はどのファイルにも無く**、消す側の規則（`cm_reservation_idx` を作業述語に持つ `sweep-reservations`）だけが書かれていた。3番目（`account.caller_token`）は肯定形「退会の完走時に消す」だけで、「それ以外では消さない」を言っていなかった。
+
+### Decision
+
+1. **`credential_mappings` の節に「終端の後始末が終わるまで予約行を消さない」を1行置く。** 材料は `locators` / `candidate_user_id` / `caller_token` であることを明記し、**掃除と終端の関係の具体（どの段でどの行を消すか）は #45 が決めるので本ファイルには書かない**と続ける。`operations.target_locators`（既存）と同じ形である。
+2. **`account.caller_token` の説明を否定形へ揃える** — 「消すのは退会の完走時だけであり、それ以外の経路では消さない」。
+
+### Consequences
+
+- 良い点: handoff が名指しした4点が spec 側で揃う。予約行を先に消す実装を spec が止められるようになる。
+- 良い点: **#45 の射程には触れていない** — 巻き戻し手順・段構成・終端モードの印・材料寿命の具体・再試行上限・受け口の割り当てはいずれも書いていない。
+- トレードオフ: 「終端の後始末」が何段あるかを spec は言わないので、#37 は「消さない」だけを守る形になる。#45 が決まるまでは予約行が期限後も残りうる（可用性ではなく容量の問題であり、認可は開かない）。
+- 波及: `spec/inventory/adapter.md` の `ADP-credential-mappings-001` / `ADP-account-001`。
+
+---
+
+## ADR-046: 期限切れ項目の列挙を `TrashQueryPort.listItemsToPurge` として置き直す
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-020 は `TrashQueryPort.listExpiredItems` を削除した（全ユーザー横断のバッチが消えたため）。ところが `spec/usecases/trash.md` の `pruneExpiredTrashItems` 手順3 は「自分の Durable Object の索引から `purgeAfter < now` のゴミ箱項目を `chunkLimit` 件まで取得する」を要求し続けており、**その読み取りに対応するポートがどこにも無い**。`spec/domains/{trash,memo,knowledge}.md` は3ドメイン一致で「期限切れ列挙メソッドを置かない」と拒否しているので、application 層がポート無しで DB を引く形が残っていた。`spec/testcases/trash/pruneExpiredTrashItems.md` には「列挙自体が DB 例外で失敗する」というエラーケースだけが存在する。
+
+### Decision
+
+**`TrashQueryPort` に自 DO スコープの列挙を戻す。名前は `listItemsToPurge(now, limit)` とする。**
+
+- **`listExpiredItems` という旧名には戻さない。** plan.md の負の検証 `V-4` が走査語に `listExpiredItems` を持っており、旧名で戻すと「全ユーザー横断のポートが復活した」ことと区別できない。**走査語を落とすより名前を変えるほうが安い** — 検査は「旧設計が残っていないこと」を測る道具であり、新設計の都合で緩めるものではない。
+- **置き場は `TrashQueryPort` である。** memo / knowledge 側に戻すと3ドメインの「置かない」宣言と正面から衝突し、ゴミ箱の横断ビューを読む契約が二重定義になる。`listTrashItems` / `findTrashItem` と同じく、UNION で射影するアダプターの1メソッドとして自然に収まる。
+- あわせて起床時刻の材料として **`findEarliestPurgeAfter()`** も置く。ソフトデリート・保持日数変更・ジョブ完了時の再武装が「ゴミ箱内の `purgeAfter` の最小値」を読むと3箇所で書かれているのに、その読み取りにも契約が無かった。
+
+### Consequences
+
+- 良い点: `pruneExpiredTrashItems` の全手順がポート契約から辿れるようになり、`TC-pruneExpiredTrashItems-016`（列挙の失敗）が指す呼び出しが実在する。
+- 良い点: **`userId` を取らないことと「横断して舐めない」ことが署名に現れる。**
+- トレードオフ: `TrashQueryPort` のメソッドが3本から5本に増える。読み取り専用という性質は変わらない。
+- 波及: `spec/inventory/domain.md` に `DOM-trash-008` / `DOM-trash-009` を末尾 append した。**`spec/inventory/adapter.md` 側にも `TrashQueryPort` の実装行（`ADP-trash-004` は欠番のため新規採番）が要る** — 本 ADR の担当範囲外なので引き継ぐ。
+
+---
+
+## ADR-047: `purgeAfter` の一括再計算の書き込み口を memo / knowledge の3リポジトリに置く
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-020 は保持日数の変更を「同一トランザクションでゴミ箱内全項目の `purgeAfter` を一括再計算する」と決めたが、**その一括更新に対応する書き込み経路がどのポートにも無かった**。`MemoRepository` / `TopicRepository` / `DocumentRepository` は `save(entity, expectedVersion)`（OCC 付きの単体上書き）しか持たず、全項目を `find` → `save` で回すと項目ごとに OCC トークンが要る。`CLAUDE.md` の Unit of Work は書き込み経路を閉じた集合として宣言しているので、規約上この操作を書く場所が存在しない状態だった。
+
+### Decision
+
+**3リポジトリに `recalculatePurgeAfter(retentionDays, limit): { updatedCount, hasMore }` を置く。**
+
+- **trash 側に書き込みポートを新設する形は採らない。** `spec/domains/trash.md`「書き込みポートについて（設計判断）」が「削除状態の所有者は memo / knowledge であり、書き込み経路を各ドメインに一本化する」と決めており、例外を作ると同一テーブルへの書き込み契約が二重定義になる。**再計算は削除状態に属する派生値（`purgeAfter`）の更新なので、この原則の例外にする理由が無い。**
+- **OCC トークンを取らず `version` も進めない。** 保持日数の変更に追随する派生値の書き換えであって業務上の変更ではないので、リビジョンにも OCC にも乗せない。
+- **残件の置き場は作らない。進捗は作業述語が表す。** 「まだ再計算していない項目」＝「`purgeAfter` が新しい保持日数からの算出値と一致しない項目」であり、更新した行はその場で述語から外れる。したがってカーソルを永続化する必要が無く、`hasMore` だけで次のチャンクが決まる。**再計算の途中で保持日数がもう一度変わっても先頭からやり直しにならない**（述語が新しい値に対して定義され直される）。
+- **算出規則の正本は `RetentionPolicy.expiresAt` に置いたままにする。** アダプターは一括更新のために同じ規則を持つので、規則を変えるときは両方を動かす。**この二重持ちは明示的に受容し、ドメイン側に書き残す。**
+
+### Consequences
+
+- 良い点: `changeTrashRetentionDays` と `pruneExpiredTrashItems` の再計算フェーズが、どちらも同じ3メソッドを呼ぶ形に揃う。
+- 良い点: **「残件のカーソルがどこにも無い」という指摘が「作らないことが正しい」に変わる。** 預け先の名指しが不要になるので dangling も生じない。
+- トレードオフ: **算出規則が2箇所（ドメインの純関数とアダプターの一括更新）に現れる。** 単体の算出とチャンク一括更新を1つの実装で書く手段が無いための受容である。
+- 波及: `spec/inventory/domain.md` に `DOM-memo-026` / `DOM-knowledge-056` / `DOM-knowledge-057` を末尾 append した。`spec/inventory/adapter.md` 側の実装行は引き継ぐ。
+
+---
+
+## ADR-048: `CredentialRef` に `usableForLogin` を足す
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/identity.md` の不変条件は「`credentials` は常に1件以上で、そのうち少なくとも1件はログイン手段である。数えるのは**ログイン手段になり得るクレデンシャルの `credentialId` の異なり数**」と書いているのに、`CredentialRef` は `{ credentialId, kind, label }` の3つしか持たず、**「ログイン手段になり得るか」を表す情報が型に無かった**。SSO 専用アカウントは `[sso, email（ログイン手段ではない）]` の2件を持つので、`kind` でも要素数でも判定できない。`spec/pages/index.md` P-13 と `spec/inventory/frontend.md` の `PAGE-settings-005` は既に「`usableForLogin = true` の `kind = 'email'` の要素があるか」で判定すると書いており、**上流に存在しない語を下流が使っている**状態だった。
+
+設計 第6.1.2節 (C5) は「設定画面のクレデンシャル一覧に出すのは `credentialId` / `kind` / `label` の3つだけ」と断定している。
+
+### Decision
+
+**`CredentialRef` に `usableForLogin: boolean` を足し、`getCurrentUser` の出力 DTO にも載せる。**
+
+(C5) の断定と衝突しない、と判断した。(C5) が閉じているのは**同一性を表す値の露出**（SSO subject もメールアドレスも出さない）であって、フィールド数そのものではない。`usableForLogin` は識別子ではなく可否フラグで、`credential_locators.usable_for_login`（第4.1.1節）と1対1に対応する非 PII の真偽値である。
+
+**判定文言を `kind` だけで決まる形へ書き換える案（不変条件を「`kind: "sso"` の要素が2件以上あるときだけ解除できる」にする）は採らない。** 設計 第6.1.1節 (R4) が「数えるのは `usableForLogin = true` かつ active な行の distinct な `credentialId` の個数である」と正本で決めており、`kind` に倒すと (R4) と食い違う。**上流と下流のどちらを動かすかは、正本がどちらを支持しているかで決まる。**
+
+### Consequences
+
+- 良い点: 不変条件が `User` の状態だけで決定可能になり、`removeCredential` が純関数のまま「最後のログイン手段か」を判定できる。
+- 良い点: P-13 / `PAGE-settings-005` の判定条件が、画面へ届く材料と一致する。**SSO 専用アカウントにパスワード変更フォームが出てしまう**破れが閉じる。
+- トレードオフ: `getCurrentUser` の DTO が1フィールド増える。`usableForLogin` の `false → true` の遷移は本設計に存在しないので、値の意味は静的である。
+- 波及: `spec/domains/identity.md`（`CredentialRef` / 不変条件 / `removeCredential` / ユースケース概要）、`spec/usecases/identity.md`（登録2本の要約生成・`getCurrentUser` の DTO と処理フロー）、`spec/inventory/{domain,usecase,frontend}.md`。**`spec/pages/index.md` P-13 は別担当が本 ADR のフィールド名に合わせる。**
+
+---
+
+## ADR-049: 非集約ストアをドメイン側の契約として置き、中間状態の語彙に上流のアンカーを与える
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/database/index.md` は `account`（`session_epoch` / `reset_version` / `caller_token`）と `credential_locators`（`credential_version` / `usable_for_login` / `label`）を定義し、`spec/testcases/identity/**` は同じものを camelCase（`sessionEpoch` / `resetVersion` / `credentialVersion` / `createdAtResetVersion` / `changeState` / `changeOrigin` / `failedAttempts` / `nextAttemptAllowedAt`）で期待値に書いている。ところが **`spec/domains/` と `spec/usecases/` はどちらの綴りも持たず**、「セッションの世代を進める」「作成時点のリセット世代」と散文で書いていた（ADR-031 の記録どおり）。結果として、テストケースが**物理スキーマにしか定義が無い名前**で期待値を書く形になっていた。
+
+同じ穴が書き込み側にもあった。`credential_locators` は「到達性検査の権威・唯一の逆引き情報」と宣言されながら、**書き込みポートも usecase 手順も `spec/` に存在しない**。`CLAUDE.md` の Unit of Work だけが `credentialLocatorStore` を挙げている。
+
+### Decision
+
+**`spec/domains/identity.md` のポート節に非集約ストアを2つ置く。**
+
+- **`AccountStore`** — `status` / `sessionEpoch` / `resetVersion` と、`advanceSessionEpoch()` / `advanceResetVersion()`。
+- **`CredentialLocatorStore`** — `credentialId` / `kind` / 不透明な写像材料 / `credentialVersion` / `usableForLogin` / `label` と、`list` / `findByCredentialId` / `record`（upsert・単調非減少）/ `advanceCredentialVersion` / `deleteByCredentialId`。
+
+**`UserSettingsRepository` に畳まない。** `User` 集約は「設定の所有者」であり、失効の権威（`sessionEpoch`）はその一部ではない。畳むと OCC の対象に入り、セッション失効がユーザー設定の更新と競合する。
+
+**`CredentialMapping` のフィールド（`changeState` / `changeOrigin` / `credentialVersion` / `failedAttempts` / `nextAttemptAllowedAt`）も名前付きで書く。** 認証情報側の物理列と1対1だが、ドメインから見た意味（3値であること・起点を行に永続化する理由・カウンタの共有）はここが正本である。
+
+**書ける範囲は「一様な終端」までに留める。** 中間状態の名前と、そこから観測できる結果（旧新どちらのパスワードでもログインできない）は書くが、**巻き戻し手順・段構成・終端モードの印・材料寿命・再試行上限は書かない**（ADR-009 の線）。終端の具体は #45 を名指しで預ける。
+
+### Consequences
+
+- 良い点: **8語すべてが camelCase 側のアンカーを持つ。** `spec/database/index.md` の snake_case と対になり、#10 / #13 の実装者が値域や意味を確かめるために物理スキーマまで降りる必要が無くなる。
+- 良い点: `credential_locators` に書き込み口ができ、signup / SSO 登録 / パスワード変更 / リセット完了 / SSO 解除の各手順がどのメソッドを呼ぶかを spec だけで辿れる（ADR-006 の狙い）。
+- トレードオフ: **ドメインのポートが5つ増える**（`AccountStore` 3本 + `CredentialLocatorStore` 5本 のうち台帳化したのは7行）。集約ではないストアをドメイン層の契約として書くことになるが、`spec/database/index.md` に契約を預ける形（もう1つの選択肢）だと依存方向が外向きになる。
+- 波及: `spec/inventory/domain.md` に `DOM-identity-036`〜`044` を末尾 append した。**`CLAUDE.md:68` の非集約ストアの列挙に `account` の書き込み口が無く、`resetTokenStore` は spec 側で `PasswordResetTokenPort` という別名を持つ** — どちらも `CLAUDE.md` 側の担当へ引き継ぐ。
+
+---
+
+## ADR-050: 不透明カーソルの検証を「形式」と「中身・期限」に分ける
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/search.md` は3つのことを同時に書いていた。(i) `SearchCursor` は不透明で「中身の解釈は `SearchIndexPort` の実装に閉じる」、(ii) `SearchQuery` のバリデーションルールは「`cursor` が不正**または期限切れ**なら `InvalidCursor`」、(iii) `SearchQuery.create` は `now` を受け取らない。`CLAUDE.md` の「Domain — No I/O, no framework, no ambient time」の下では、`create` は復号もできず現在時刻も持てないので**期限判定は原理的に不可能**である。同じ判定が `SearchIndexPort.query` のエラーケースにも重複して置かれていた。
+
+### Decision
+
+**責務を分けて両方に書く。**
+
+- **`SearchQuery.create` が見るのは形式だけ**（非空の不透明文字列であること）。
+- **中身と有効期限は `SearchIndexPort.query` が判定する。**
+- **どちらも同じ `BusinessRuleError(SearchErrorCode.InvalidCursor)` を返す。** 利用者から見た結果（先頭から検索し直す）は変わらないので、`spec/pages/index.md` P-11 の文言も `spec/testcases/search/search.md` の期待値も分ける必要が無い。
+
+**「期限判定を丸ごとポートへ寄せ、`SearchQuery` から `cursor` の規則を消す」形は採らない。** 空文字のカーソルが transport 境界を通ってポートまで届く経路が残り、値オブジェクトが「構築できた時点で最低限の形が保証される」という性質を失う。
+
+### Consequences
+
+- 良い点: ADR-013（スナップショットの物理形は #37 が決める）と整合する。物理形を知らない層が期限を判定しない。
+- 良い点: **エラーの種類が増えない。** 層が2つになっても利用者が観測する結果は1つである。
+- トレードオフ: 同じエラーコードを返す箇所が2つになる。どちらが返したかは呼び出し側から区別できないが、区別する必要が無い（対処は同じ）。
+- 波及: `spec/domains/search.md`（バリデーションルール・検索の規則・ポートのエラーケース・ユビキタス言語）、`spec/usecases/search.md`（入力 DTO・処理フロー2/3）、`spec/inventory/domain.md`（`DOM-search-001` / `DOM-search-004` / `DOM-search-013`）、`spec/inventory/usecase.md`（`UC-search-001`）。
+
+---
+
+## ADR-051: 「すべて失効」と「SSO 連携の解除」を独立したユースケースとして新設する
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/pages/index.md` P-03 のリセット完了画面と P-13 の設定画面が、本 Issue で2つの操作を新たに約束した — 「覚えの無い SSO 連携をその場で解除できる」と「AI クライアント接続をすべて失効させる」。設計 `design.md:2344` はこの2導線を「画面仕様として #35 へ送る」と決めており、**画面側に書いたこと自体は正しい**。ところが受け皿が無かった — `spec/usecases/identity.md` にあるのは `revokeAiClientConnection`（単体・`connectionId` 必須）だけで、SSO 解除は `User.removeCredential` がドメインにあるだけである。結果として **#10 / #13 型の実装チェックリスト（`spec/inventory/` 由来）にこの2操作が1行も現れない**。
+
+### Decision
+
+**注記で預けず、ユースケースを2本新設する。**
+
+- **`revokeAllAiClientConnections`** — 「`revokeAiClientConnection` の反復適用である」と1行書いて済ませない。**部分失敗の扱い**（1件の競合を記録して続行し、全体を中断しない）と件数の返却が要り、それは反復の呼び出し側が持つ契約だからである。`emptyTrash` が同じ構成の先例になっている。
+- **`unlinkSsoCredential`** — 2つの物理境界をまたぐ手続きで、**順序（ユーザー単位設定側 → 認証情報側）と、その向きにする理由**（逆順は次の連携を誤判定させる／この向きなら残った写像でログインしようとしても到達性検査が拒否する）を書く。ドメイン側の2検査（`kind: "sso"` であること・最後のログイン手段でないこと）も usecase の手順に明示する。
+
+**書ける範囲は ADR-009 の線を守る。** 中間状態から観測できる結果（解除後はその SSO でログインできない）と一様な終端までで、回収の具体は #45 を名指しで預ける。
+
+### Consequences
+
+- 良い点: 画面が約束した操作が台帳に載り、`PAGE-password-reset-004` / `PAGE-settings-007` から受け皿を辿れる。
+- 良い点: `spec/testcases/identity/listAiClientConnections.md` に置かれていた「すべて失効」の期待（読み取り専用ユースケースの契約では実行も検証もできない）に、正しい寄せ先ができる。
+- トレードオフ: **ユースケース数が 51 → 53 に増える。** `spec/index.md` の件数（ADR-034 で実数にした）と `spec/inventory/test.md` の新規ケースが追随を要する。**どちらも本 ADR の担当範囲外なので引き継ぐ。**
+- 波及: `spec/usecases/identity.md`（2節を追加）、`spec/domains/identity.md`（ユースケース概要）、`spec/inventory/usecase.md`（`UC-identity-014` / `UC-identity-015` を末尾 append）、`spec/inventory/frontend.md`（該当2行から参照先を辿れるようにした）。
+
+---
+
+## ADR-052: 「ポートの同期契約」の例外は列挙であって導出規則ではない、と書く
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/index.md` の「ポートの同期契約」は「例外は `PasswordHasher` と `MailSender` の2つで、**どちらもトランザクションの外（request Worker / ジョブ実行）で動くので** `Promise` のまま残る」と書いていた。結論は設計 第8.2.1節の表と一致しているが、**「ので」の部分が判定基準として機能しない** — `ArchiveWriter.write` も Durable Object の外で動くのに同期契約である（`spec/domains/export.md` / `DOM-export-011`）。`spec/` だけを読む #37 がこの一文を基準として適用すると、`ArchiveWriter.write` を `Promise` へ戻す。
+
+### Decision
+
+**理由を実際の線へ差し替え、例外が列挙であることを明記する。**
+
+残る理由は「**暗号計算と外部 I/O であり、実装できる API が非同期しか無い**」ことである。あわせて「**トランザクションの外で動くことは `Promise` の根拠にならない**」を反例（`ArchiveWriter.write`）つきで書き、新しいポートを足すときの判定を「非同期 API しか無いか」に固定する。
+
+### Consequences
+
+- 良い点: 判定基準が実際に判定できる形になり、`spec/domains/export.md` と食い違わなくなる。
+- 良い点: 例外を増やしたくなったときの問いが「外で動くか」ではなく「同期で書けるか」になる。後者のほうが厳しい。
+- 波及: `spec/domains/index.md`（横断事項）、`spec/domains/identity.md`（ポート節の冒頭が同じ言い回しを持っていた）。
+
+## ADR-053: `search_entries` の物理形はデータベース設計に一本化する
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/search.md` の実装制約2 と `spec/database/index.md` の `search_entries` 節が、**同じ主キー設計を両方で宣言していた。** 一方 `spec/database/index.md` は「この表の物理形を決めるのは本ファイルであり `spec/domains/search.md` ではない」と既に明記している。宣言が2箇所にあると、片方だけを直したときに**どちらが正本か文面からは判定できない**。ADR-004 / ADR-015 が tokenizer について一本化したのと同じ形の二重管理である。
+
+### Decision
+
+**ドメイン側から実装制約2 を削除し、「物理形の正本は `spec/database/index.md`」という1段落に置き換える。** projection 契約（旧値で delete → 新値で insert）はドメイン側に残す — これは「インデックスの維持」の契機と1対1で対応する**契約**であって物理形ではない。
+
+### Consequences
+
+- 良い点: DDL の変更が1箇所で閉じる。`spec/database/index.md` を直せばドメイン側は自動的に追随する。
+- トレードオフ: ドメイン側から `rowid` の語が消えるので、`spec/domains/search.md` だけを読んでも主キーの形は分からない。ただし `ADP-search-entries-001` / `ADP-search-fts-001` が同内容をアンカー付きで保持しているので、台帳から1ホップで辿れる。
+- 波及: `spec/domains/search.md`（実装制約2）。
+
+## ADR-054: `CLAUDE.md` は非集約ストアの員数を数値で持たない
+
+### Status
+
+Proposed
+
+### Context
+
+`CLAUDE.md` に「6ストア・7メソッド」と**員数を焼き込む**と、`spec/database/index.md` の全数表と食い違ったときに**両方が嘘になる**。どちらが正本かは文面からは決まらず、片方を直した人がもう片方の存在に気づかない限り差は残り続ける。
+
+### Decision
+
+**`CLAUDE.md` には3つだけを書く** — (1) ストアの列挙、(2) 例外構造（`operations` が2本・`_meta` が0本）、(3)「全数の正本は `spec/database/index.md`」。**員数は書かない。**
+
+`jobs.kind` について既に採っている書き方（種別を列挙し、全数表は `spec/database/index.md` 側に置く）と同じ形である。
+
+### Consequences
+
+- 良い点: 名簿が動いても `CLAUDE.md` が嘘にならない。追加・削除で直すのは列挙1箇所だけになる。
+- トレードオフ: `CLAUDE.md` を読んだだけでは「これで全部か」を数で確認できない。正本へのポインタで代替する。
+- 波及: `CLAUDE.md`（Key concepts）。**本 ADR は `CLAUDE.md` を担当する別ステップへの申し送りであり、`.thread/35/` 側では記録だけを持つ。**
+
+## ADR-055: 試行制限の開示方針の非対称を画面仕様の断定として置く
+
+### Status
+
+Proposed
+
+### Context
+
+設計が #35 へ渡した画面文言（試行制限に達したことと再試行可能時刻を**利用者に開示する**）は、`spec/testcases/identity/changePassword.md` にしか降りていなかった。ところが**未認証のログイン経路（P-01）は逆に非開示**である（存在推測を与えないため）。開示方針が反転していることがどこにも書かれていないと、実装者は先に読んだほう（P-01）の文言へ倒れる。
+
+### Decision
+
+**`spec/pages/index.md` P-13 の状態に「P-01 とは開示方針が反転する」まで明示的に書く。** 目的は非対称そのものの記録ではなく、**実装者が P-01 の文言へ倒れるのを止めること**である。理由（P-13 は認証済みの本人しか到達できないので、開示しても他人の存在を漏らさない）も1行添える。
+
+### Consequences
+
+- 良い点: 開示方針の非対称が仕様として保護される。テストケース側（`changePassword.md`）と画面仕様が同じことを言う。
+- トレードオフ: 画面仕様に認可の理屈が1行入る。P-13 の状態記述が純粋な表示仕様でなくなる。
+- 波及: `spec/pages/index.md` P-13。
+
+## ADR-056: `CLAUDE.md` の「Key concepts」導入文を、実体のある項と `spec/` が正本の項に分ける
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-005 は「`CLAUDE.md` は実装に先行して新構成で断定する」と決めた。その結果、Key concepts の導入文「Each of these is enforced in code and documented in library-level JSDoc at the relevant module」が、**#37 完了前に足した新規4項（Durable Objects / `jobs` / Alarm / 10 GB 上限）については嘘になっている。** 読者は JSDoc を探して空振りする。
+
+移行中注記（`### Migration in progress — #37`）は**何が消えるか**を書く節であり、**どこに正本があるか**は書いていない。役割が違うので同じ注記では覆えない。
+
+### Decision
+
+**導入文に例外句を足し、#37 が未着地の項は `spec/` が唯一の正本であることを明示する。** 実体のある項（Unit of Work / Outbox / Retry strategy / Input validation）は従来どおり「code と JSDoc が正本」のままにする。
+
+### Consequences
+
+- 良い点: 読者が JSDoc を探して見つからない空振りが無くなる。ADR-005 の「先行して断定する」は維持したまま、断定の**根拠の所在**だけを正しくする。
+- トレードオフ: **#37 完了時に導入文を戻す作業が1つ増える。** 移行中注記の撤去と同じタイミングなので、その手順に1行足す形で済む。
+- 波及: `CLAUDE.md`（Key concepts の導入文）。ADR-054 と同じく `CLAUDE.md` 担当への申し送りである。
+
+## ADR-057: 削除済み `ADP-trash-004` は欠番のまま残し、新設2メソッドを `-005` / `-006` として末尾 append する
+
+### Status
+
+Proposed
+
+### Context
+
+`ADP-trash-004`（旧 `listExpiredItems`）は ADR-020 で削除された。そこへ ADR-046 が新設した `TrashQueryPort.listItemsToPurge` と `findEarliestPurgeAfter` の2メソッドを載せる必要がある。申し送りは「`004` は欠番なので新規採番に使える」としていたが、**ADR-011 は「削除した ID は欠番のまま繰り上げない／新設は末尾 append」を全台帳 ID に適用すると宣言している。** 欠番へ別の要素を入れるのは繰り上げと同じ事故（同じ ID が別の要素を指す）を起こす。
+
+### Decision
+
+**ADR-011 の規約を申し送りより優先する。** `ADP-trash-004` を欠番のまま空け、`listItemsToPurge` = `ADP-trash-005`、`findEarliestPurgeAfter` = `ADP-trash-006` を**末尾に append** する。
+
+### Consequences
+
+- 良い点: **#10 / #13 のチェックリストが参照する既存 ID が1つも動かない。** 欠番へ別内容を入れると、旧 `ADP-trash-004`（`listExpiredItems`）を指していた参照が静かに別メソッドを指すことになる。
+- トレードオフ: 連番が飛ぶ（`004` が空く）。ADR-011 が既に受け入れているトレードオフである。
+- 波及: `spec/inventory/adapter.md`。
+
+## ADR-058: `TC-listAiClientConnections-011` の受け皿を新設ユースケースの表に採る
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-039 は読み取り専用ユースケース `listAiClientConnections` の期待値表から書き込み期待（「すべて失効」を実行するとすべて `revoked` になる）を外し、**受け皿が決まるまで欠番のまま残す**と決めた。本ラウンドで ADR-051 が `revokeAllAiClientConnections` を独立したユースケースとして新設したので、受け皿が確定した。
+
+### Decision
+
+**`TC-revokeAllAiClientConnections-002` として置き直す。** `TC-listAiClientConnections-011` は**欠番のまま**（ADR-011。欠番は復活させない）。
+
+### Consequences
+
+- 良い点: 読み取り専用ユースケースの期待値表に書き込み操作が戻らない。振る舞いの自動検証は新設ユースケース側で復活する。
+- 波及: `spec/testcases/identity/revokeAllAiClientConnections.md` / `spec/inventory/test.md`。ADR-039 の Consequences に続報として追記済み。
+
+## ADR-059: 新設ユースケースのテストケースは新規ファイルで足し、`spec/` のファイル数を 102 とする
+
+### Status
+
+Proposed
+
+### Context
+
+plan.md AC-16 は「着手前 101 / **完了後 100**」を固定値のゲートにしていた。この数は「新設ファイルは無い」という前提に立っている（差の1件は `spec/testcases/search/maintainSearchIndex.md` の削除だけ）。ところが本ラウンドで ADR-051 がユースケースを2つ新設したので、前提が崩れた。
+
+`spec/testcases/` は「**1ユースケース1ファイル**」の構成で、`spec/inventory/usecase.md` の `UC-*` 行数と `spec/testcases/` のファイル数が一致することを不変条件にしている。
+
+### Decision
+
+**構成を崩さず2ファイルを新設する**（`spec/testcases/identity/{revokeAllAiClientConnections,unlinkSsoCredential}.md`）。既存ファイルへ相乗りさせない。**AC-16 の期待値を 100 → 102 へ更新する。**
+
+### Consequences
+
+- 良い点: 「ユースケース数 = テストケースファイル数」の不変条件が維持される（**53 = 53**）。
+- トレードオフ: 固定値のゲートを1つ書き換えることになる。ただし AC-16 が測っているのは「判定の無いファイルが無いこと」であり、数値はその補助である。
+- 波及: plan.md AC-16・「カバレッジの再走査」節、`.thread/35/coverage.md`（新設2ファイルの判定行と総数）、`.thread/35/testing.md`。
+
+## ADR-060: DB 層の規則のうち、ユースケースから観測できないものにはテストケースを置かない
+
+### Status
+
+Proposed
+
+### Context
+
+本ラウンドで DB 層に4つの規則が確定した — (1) `search_fts` の external-content 更新が「旧値で delete → 新値で insert」の引き算であること（ADR-044）、(2) `purge-trash` の再計算フェーズの自己消尽述語（ADR-043）、(3) `jobs` の再投入収束規則（ADR-042）、(4) `jobs` の複合主キー（ADR-040）。このうち **(3) と (4) は usecase の入出力に一切現れない** — 再投入の収束はジョブ実行機構の内部であり、複合主キーは同じ効果を単一主キー + UNIQUE でも実現できる。
+
+`spec/testcases/` は **usecase 単位**の構成である。観測点を持たない規則をここへ置くと、「どのユースケースを呼ぶと何が起きるか」を書けないまま行だけが増える。
+
+### Decision
+
+**観測点を持つ2件だけをテストケース化する**（(1) は `spec/testcases/search/search.md`、(2) は `spec/testcases/trash/pruneExpiredTrashItems.md`）。**残る2件は台帳（`spec/inventory/adapter.md`）の要点欄に閉じる。**
+
+### Consequences
+
+- 良い点: `spec/testcases/` が usecase 単位である構成を保つ。期待値の書けない行が入らない。
+- トレードオフ: **スキーマ規則の検証が `spec/` の自動テスト定義から漏れる。** 引き取り先は #37 の実装テスト（アダプター層）である。
+- 波及: `spec/inventory/adapter.md` の要点欄。

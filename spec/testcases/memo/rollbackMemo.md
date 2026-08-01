@@ -15,7 +15,7 @@
 | メモが存在しない | 架空の `memoId` でロールバックする | `NotFoundError` | |
 | 対象メモが trashed | ロールバックする | `NotFoundError`（trashed は編集不可のため一律 NotFound。`findById` が active のみ返す） | |
 | 対象メモが他ユーザー所有 | 実在する他ユーザーのメモ ID でロールバックする | `NotFoundError`（テナント分離） | |
-| 別メモのリビジョンが `Memo.rollback` に渡る（防衛線） | `targetRevision.memoId ≠ memo.id` の状態でドメイン関数を呼ぶ | `BusinessRuleError(RevisionMismatch)`（userId スコープの `findRevision` を経る限り通常到達しない防衛線） | |
+| 別メモのリビジョンが `Memo.rollback` に渡る（防衛線） | `targetRevision.memoId ≠ memo.id` の状態でドメイン関数を呼ぶ | `BusinessRuleError(RevisionMismatch)`（自ユーザーの Durable Object に閉じた `findRevision` を経る限り通常到達しない防衛線） | |
 | — | `memoId` を空文字でロールバックする | バリデーションエラー（`MemoId.create` の非空制約） | |
 | UoW 内の読み取り後、save までの間に他書き込みが割り込む | ロールバックする | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再試行する | |
 | — | AI トークンで本ユースケース相当の操作を試みる | 到達不可（ロールバックは人間UI専用。公開範囲とトークンスコープで構造的に排除） | |

@@ -366,7 +366,7 @@ RevisionView:
 |---|---|
 | メモが不在・trashed・他ユーザー所有 | `NotFoundError` |
 | 対象リビジョンが不在 | `NotFoundError` |
-| 対象リビジョンが別メモのもの | ビジネスルール違反 `BusinessRuleError(RevisionMismatch)`（ドメインで検出。userId スコープの `findRevision` を経る限り通常到達しない防衛線） |
+| 対象リビジョンが別メモのもの | ビジネスルール違反 `BusinessRuleError(RevisionMismatch)`（ドメインで検出。自分の Durable Object の中だけを引く `findRevision` を経る限り通常到達しない防衛線） |
 | 保存時の OCC 競合 | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再試行 |
 | DB 障害 | `SystemError(DatabaseError)` |
 
@@ -570,7 +570,7 @@ AI によるメモのソフトデリート（S-AI-05）。ソフトデリート�
 
 #### 処理フロー
 
-softDeleteMemo と同一: UoW 内で `findById` → `Memo.softDelete` → `save` → 同一 `transactionSync` での projection 更新。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
+softDeleteMemo と同一（**保持日数の読み取りと `purgeAfter` の算出を含む**）: UoW 内で `findById` → `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` を算出 → `Memo.softDelete(memo, purgeAfter, now)` → `save` → 同一 `transactionSync` での projection 更新。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
 
 #### エラーケース
 

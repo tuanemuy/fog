@@ -71,7 +71,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-changePassword-016 | sessionEpoch の前進 | spec/testcases/identity/changePassword.md#L22 | 変更前に確立していた別セッションが次のリクエストで失効すれば PASS |
 | TC-changePassword-017 | AI クライアント接続の非失効 | spec/testcases/identity/changePassword.md#L23 | パスワード変更では接続が active のまま残れば PASS |
 | TC-changePassword-018 | 旧パスワード照合失敗のカウント | spec/testcases/identity/changePassword.md#L24 | 照合失敗が failedAttempts を進めれば PASS（ログイン失敗と同じカウンタ） |
-| TC-changePassword-019 | nextAttemptAllowedAt 未到達の明示拒否 | spec/testcases/identity/changePassword.md#L25 | ダミー材料へ倒さず明示的に拒否され、検証材料が差し替わらなければ PASS |
+| TC-changePassword-019 | nextAttemptAllowedAt 未到達の明示拒否 | spec/testcases/identity/changePassword.md#L25 | ValidationError("TOO_MANY_ATTEMPTS") で明示的に拒否され（ダミー材料へ倒さない）、検証材料が差し替わらなければ PASS |
 | TC-changePassword-020 | 照合成功でのカウンタリセット | spec/testcases/identity/changePassword.md#L26 | failedAttempts が 0 に戻れば PASS |
 | TC-changePassword-021 | 終端後の旧パスワードでのログイン | spec/testcases/identity/changePassword.md#L27 | 中間状態が解除されれば旧パスワードでログインでき、終端が記録として残れば PASS（手順は #45） |
 | TC-changeTrashRetentionDays-001 | 変更の正常系 | spec/testcases/identity/changeTrashRetentionDays.md#L7 | trashRetentionDays 更新・version+1 で void 正常終了なら PASS |
@@ -111,7 +111,8 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-executePasswordReset-018 | sessionEpoch の前進 | spec/testcases/identity/executePasswordReset.md#L24 | 完了前に確立していた別セッションが次のリクエストで失効すれば PASS |
 | TC-executePasswordReset-019 | resetVersion 前進による自動失効 | spec/testcases/identity/executePasswordReset.md#L25 | 前回のリセット完了以降に作られた接続だけが revoked になれば PASS |
 | TC-executePasswordReset-020 | 終端後の旧パスワードでのログイン | spec/testcases/identity/executePasswordReset.md#L26 | 中間状態が解除されれば旧パスワードでログインできれば PASS（手順は #45） |
-| TC-getCurrentUser-001 | メールのクレデンシャルのみのアカウント | spec/testcases/identity/getCurrentUser.md#L7 | userId/email/credentials/trashRetentionDays が返り credentials が {credentialId, kind, label} の3つ組なら PASS |
+| TC-executePasswordReset-021 | credentialVersion の前進 | spec/testcases/identity/executePasswordReset.md#L27 | 完走後に新パスワードでログインでき、locator 側の credentialVersion が認証情報側と一致して到達性検査を通れば PASS |
+| TC-getCurrentUser-001 | メールのクレデンシャルのみのアカウント | spec/testcases/identity/getCurrentUser.md#L7 | userId/email/credentials/trashRetentionDays が返り credentials が {credentialId, kind, label, usableForLogin} の4フィールドなら PASS |
 | TC-getCurrentUser-002 | SSO+メールのクレデンシャル集合 | spec/testcases/identity/getCurrentUser.md#L8 | credentials に2件返り kind:"sso" の label が provider 名なら PASS |
 | TC-getCurrentUser-003 | 検証材料の非露出 | spec/testcases/identity/getCurrentUser.md#L9 | 出力 DTO に検証材料が含まれず credentialId は含まれれば PASS |
 | TC-getCurrentUser-004 | SSO 主体情報の非露出 | spec/testcases/identity/getCurrentUser.md#L10 | 出力 DTO に provider/providerSubject が含まれなければ PASS |
@@ -132,7 +133,6 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-listAiClientConnections-008 | リセット完了による自動失効 | spec/testcases/identity/listAiClientConnections.md#L14 | createdAtResetVersion が前進前の resetVersion と等しい接続だけが revoked になれば PASS |
 | TC-listAiClientConnections-009 | 変更を挟んだ自動失効 | spec/testcases/identity/listAiClientConnections.md#L15 | あいだにパスワード変更を挟んでも対象から外れなければ PASS（基準は credentialVersion ではない） |
 | TC-listAiClientConnections-010 | パスワード変更では失効しない | spec/testcases/identity/listAiClientConnections.md#L16 | resetVersion が進まないため接続が active のまま残れば PASS |
-| TC-listAiClientConnections-011 | 「すべて失効」の適用範囲 | spec/testcases/identity/listAiClientConnections.md#L17 | 自動失効の対象外だった古い接続も含めてすべて revoked になれば PASS |
 | TC-loginWithPassword-001 | ログインの正常系 | spec/testcases/identity/loginWithPassword.md#L7 | 正しい資格情報で userId が返れば PASS |
 | TC-loginWithPassword-002 | メール正規化後の一致 | spec/testcases/identity/loginWithPassword.md#L8 | 大文字混在・前後空白付きメールでもログイン成功すれば PASS |
 | TC-loginWithPassword-003 | 未登録メール | spec/testcases/identity/loginWithPassword.md#L9 | ValidationError("INVALID_CREDENTIALS")。未登録でもダミー材料で同じ計算量を通せば PASS |
@@ -203,6 +203,28 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-revokeAiClientConnection-008 | 失効の不可逆性 | spec/testcases/identity/revokeAiClientConnection.md#L13 | 再有効化不可で新しい認可フローが必要なことが確認できれば PASS |
 | TC-revokeAiClientConnection-009 | save DB 例外 | spec/testcases/identity/revokeAiClientConnection.md#L14 | SystemError・ロールバック・接続 active のままなら PASS |
 | TC-revokeAiClientConnection-010 | 失効後の DO 内ガード | spec/testcases/identity/revokeAiClientConnection.md#L15 | 次のリクエストで DO 内ガードが status を直読みして拒否すれば PASS（失効の伝播経路を持たない） |
+| TC-revokeAllAiClientConnections-001 | 一括失効の正常系 | spec/testcases/identity/revokeAllAiClientConnections.md#L7 | active 3件がすべて revoked になり revokedCount:3 / failedCount:0 が返れば PASS |
+| TC-revokeAllAiClientConnections-002 | リセット完了画面からの一括失効 | spec/testcases/identity/revokeAllAiClientConnections.md#L8 | 自動失効の射程外だった古い接続も含め active な全件が revoked になれば PASS |
+| TC-revokeAllAiClientConnections-003 | revoked 混在時の冪等性 | spec/testcases/identity/revokeAllAiClientConnections.md#L9 | 既に revoked の接続を no-op として数えず revokedCount が active 件数だけになれば PASS |
+| TC-revokeAllAiClientConnections-004 | 接続0件 | spec/testcases/identity/revokeAllAiClientConnections.md#L10 | revokedCount:0 / failedCount:0 が返りエラーにならなければ PASS |
+| TC-revokeAllAiClientConnections-005 | 個別 OCC 競合での部分失敗 | spec/testcases/identity/revokeAllAiClientConnections.md#L11 | 競合した1件を記録して続行し、残りが失効して failedCount:1 が返れば PASS |
+| TC-revokeAllAiClientConnections-006 | 部分失敗後の再実行 | spec/testcases/identity/revokeAllAiClientConnections.md#L12 | 失効済みが対象に現れず残件だけが消化されれば PASS |
+| TC-revokeAllAiClientConnections-007 | listByUserId DB 例外 | spec/testcases/identity/revokeAllAiClientConnections.md#L13 | SystemError となり1件も失効しなければ PASS |
+| TC-revokeAllAiClientConnections-008 | userId 形式不正 | spec/testcases/identity/revokeAllAiClientConnections.md#L14 | UserId.create の BusinessRuleError となり接続が失効しなければ PASS |
+| TC-unlinkSsoCredential-001 | SSO 解除の正常系 | spec/testcases/identity/unlinkSsoCredential.md#L7 | 要素の除去・save・deleteByCredentialId・advanceSessionEpoch と認証情報側の写像行/リセットトークン行の消去が行われれば PASS |
+| TC-unlinkSsoCredential-002 | 解除後の SSO ログイン | spec/testcases/identity/unlinkSsoCredential.md#L8 | 解除した SSO 主体でログインできなければ PASS |
+| TC-unlinkSsoCredential-003 | sessionEpoch の前進 | spec/testcases/identity/unlinkSsoCredential.md#L9 | 解除前に確立していた別セッションが次のリクエストで失効すれば PASS |
+| TC-unlinkSsoCredential-004 | 中間状態での SSO ログイン | spec/testcases/identity/unlinkSsoCredential.md#L10 | 認証情報側が未了でも逆引きが先に消えているためログインできなければ PASS（壊れる向きが片方向） |
+| TC-unlinkSsoCredential-005 | deleteMapping の冪等性 | spec/testcases/identity/unlinkSsoCredential.md#L11 | 再実行が「無ければ成功」として正常終了すれば PASS |
+| TC-unlinkSsoCredential-006 | ログイン手段が残る解除 | spec/testcases/identity/unlinkSsoCredential.md#L12 | SSO 2件のうち片方の解除が成功すれば PASS |
+| TC-unlinkSsoCredential-007 | kind:"email" の解除拒否 | spec/testcases/identity/unlinkSsoCredential.md#L13 | BusinessRuleError で拒否されれば PASS（メールクレデンシャルの解除経路は存在しない） |
+| TC-unlinkSsoCredential-008 | 最後のログイン手段の解除拒否 | spec/testcases/identity/unlinkSsoCredential.md#L14 | BusinessRuleError(LastCredentialRemoval) となり、usableForLogin が偽のメール要素を数に入れなければ PASS |
+| TC-unlinkSsoCredential-009 | クレデンシャル不在 | spec/testcases/identity/unlinkSsoCredential.md#L15 | NotFoundError("CREDENTIAL_NOT_FOUND") なら PASS |
+| TC-unlinkSsoCredential-010 | ユーザー不在 | spec/testcases/identity/unlinkSsoCredential.md#L16 | NotFoundError("USER_NOT_FOUND") なら PASS |
+| TC-unlinkSsoCredential-011 | OCC 競合 | spec/testcases/identity/unlinkSsoCredential.md#L17 | ConflictError("OPTIMISTIC_LOCK_FAILURE") で解除されなければ PASS |
+| TC-unlinkSsoCredential-012 | credentialId 形式不正 | spec/testcases/identity/unlinkSsoCredential.md#L18 | CredentialId.create の BusinessRuleError なら PASS |
+| TC-unlinkSsoCredential-013 | save DB 例外 | spec/testcases/identity/unlinkSsoCredential.md#L19 | SystemError・ロールバックで逆引きも写像も消えなければ PASS |
+| TC-unlinkSsoCredential-014 | 前進不能時の終端 | spec/testcases/identity/unlinkSsoCredential.md#L20 | 一様な終端に落ち記録が残り運用へエスカレーションされれば PASS（手順は #45） |
 | TC-createDocument-001 | 作成の正常系 | spec/testcases/knowledge/createDocument.md#L7 | ActiveDocument・リビジョン#1・SourceLink 2件が同一 UoW で保存され、同じ transactionSync で当該ドキュメントと出典メモ 2 件のエントリが projection に反映されれば PASS |
 | TC-createDocument-002 | 出典なし作成 | spec/testcases/knowledge/createDocument.md#L8 | sourceMemoIds:[] で SourceLink 0件のまま正常作成されれば PASS |
 | TC-createDocument-003 | changeReason 省略時の既定値 | spec/testcases/knowledge/createDocument.md#L9 | 「作成」が補完されリビジョン#1 の changeReason になれば PASS |
@@ -218,7 +240,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-createDocument-013 | changeReason 200文字境界 | spec/testcases/knowledge/createDocument.md#L19 | ちょうど200文字で正常作成されれば PASS |
 | TC-createDocument-014 | トピック不在 | spec/testcases/knowledge/createDocument.md#L20 | NotFoundError・非作成なら PASS |
 | TC-createDocument-015 | ゴミ箱内トピックへの作成 | spec/testcases/knowledge/createDocument.md#L21 | NotFoundError になれば PASS（ゴミ箱内トピック配下に作らせない） |
-| TC-createDocument-016 | 他ユーザートピックへの作成 | spec/testcases/knowledge/createDocument.md#L22 | userId スコープにより NotFoundError なら PASS |
+| TC-createDocument-016 | 他ユーザートピックへの作成 | spec/testcases/knowledge/createDocument.md#L22 | 到達可能性により NotFoundError なら PASS |
 | TC-createDocument-017 | 出典の一部不在で全体失敗 | spec/testcases/knowledge/createDocument.md#L23 | NotFoundError で全体失敗しドキュメント・リビジョン・リンクとも非作成なら PASS |
 | TC-createDocument-018 | 出典の一部がゴミ箱内 | spec/testcases/knowledge/createDocument.md#L24 | listActiveByIds に含まれず NotFoundError で全体失敗すれば PASS |
 | TC-createDocument-019 | 出典の一部が他ユーザー所有 | spec/testcases/knowledge/createDocument.md#L25 | 区別なしの NotFoundError で全体失敗すれば PASS |
@@ -249,7 +271,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-diffDocumentRevisions-005 | 同一番号の二点指定 | spec/testcases/knowledge/diffDocumentRevisions.md#L11 | ValidationError なら PASS |
 | TC-diffDocumentRevisions-006 | 存在しないリビジョン番号 | spec/testcases/knowledge/diffDocumentRevisions.md#L12 | 一方でも不在なら NotFoundError で PASS |
 | TC-diffDocumentRevisions-007 | ドキュメント不在 | spec/testcases/knowledge/diffDocumentRevisions.md#L13 | NotFoundError なら PASS |
-| TC-diffDocumentRevisions-008 | 他ユーザー所有 | spec/testcases/knowledge/diffDocumentRevisions.md#L14 | userId スコープで NotFoundError なら PASS |
+| TC-diffDocumentRevisions-008 | 他ユーザー所有 | spec/testcases/knowledge/diffDocumentRevisions.md#L14 | 到達可能性により NotFoundError なら PASS |
 | TC-diffDocumentRevisions-009 | revisionNumber 0 | spec/testcases/knowledge/diffDocumentRevisions.md#L15 | BusinessRuleError(InvalidRevisionNumber) なら PASS |
 | TC-diffDocumentRevisions-010 | revisionNumber 非整数 | spec/testcases/knowledge/diffDocumentRevisions.md#L16 | BusinessRuleError(InvalidRevisionNumber) なら PASS |
 | TC-diffDocumentRevisions-011 | documentId 空文字 | spec/testcases/knowledge/diffDocumentRevisions.md#L17 | BusinessRuleError(InvalidDocumentId) なら PASS |
@@ -269,7 +291,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-editDocument-013 | changeReason 不正 | spec/testcases/knowledge/editDocument.md#L19 | 改行入り/201文字が対応する BusinessRuleError になれば PASS |
 | TC-editDocument-014 | ドキュメント不在 | spec/testcases/knowledge/editDocument.md#L20 | NotFoundError なら PASS |
 | TC-editDocument-015 | ゴミ箱内ドキュメントの編集 | spec/testcases/knowledge/editDocument.md#L21 | findById が active のみ返し NotFoundError なら PASS |
-| TC-editDocument-016 | 他ユーザー所有 | spec/testcases/knowledge/editDocument.md#L22 | userId スコープで NotFoundError なら PASS |
+| TC-editDocument-016 | 他ユーザー所有 | spec/testcases/knowledge/editDocument.md#L22 | 到達可能性により NotFoundError なら PASS |
 | TC-editDocument-017 | documentId 空文字 | spec/testcases/knowledge/editDocument.md#L23 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-editDocument-018 | save 直前の割り込み競合 | spec/testcases/knowledge/editDocument.md#L24 | 0 行更新または一意制約違反で ConflictError("OPTIMISTIC_LOCK_FAILURE") なら PASS |
 | TC-editDocument-019 | insertRevision DB 例外 | spec/testcases/knowledge/editDocument.md#L25 | SystemError(DatabaseError)・UoW 全体ロールバックなら PASS |
@@ -295,7 +317,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-editDocumentByAi-020 | changeReason 200文字境界 | spec/testcases/knowledge/editDocumentByAi.md#L26 | 正常編集されれば PASS |
 | TC-editDocumentByAi-021 | ドキュメント不在 | spec/testcases/knowledge/editDocumentByAi.md#L27 | NotFoundError なら PASS |
 | TC-editDocumentByAi-022 | ゴミ箱内は存在しない扱い | spec/testcases/knowledge/editDocumentByAi.md#L28 | NotFoundError で存在事実も漏らさなければ PASS |
-| TC-editDocumentByAi-023 | 他ユーザー所有 | spec/testcases/knowledge/editDocumentByAi.md#L29 | userId スコープで NotFoundError なら PASS |
+| TC-editDocumentByAi-023 | 他ユーザー所有 | spec/testcases/knowledge/editDocumentByAi.md#L29 | 到達可能性により NotFoundError なら PASS |
 | TC-editDocumentByAi-024 | documentId 空文字 | spec/testcases/knowledge/editDocumentByAi.md#L30 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-editDocumentByAi-025 | 人間編集との競合 | spec/testcases/knowledge/editDocumentByAi.md#L31 | 0 行更新または一意制約違反で ConflictError なら PASS |
 | TC-editDocumentByAi-026 | save DB 例外 | spec/testcases/knowledge/editDocumentByAi.md#L32 | SystemError(DatabaseError)・UoW 全体ロールバックなら PASS |
@@ -304,7 +326,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-getDocument-003 | 出典一覧の非包含 | spec/testcases/knowledge/getDocument.md#L9 | 出典メモ一覧が含まれなければ PASS（listDocumentSourceMemos の責務） |
 | TC-getDocument-004 | ドキュメント不在 | spec/testcases/knowledge/getDocument.md#L10 | NotFoundError なら PASS |
 | TC-getDocument-005 | ゴミ箱内の非取得 | spec/testcases/knowledge/getDocument.md#L11 | findById が active のみ返し NotFoundError なら PASS |
-| TC-getDocument-006 | 他ユーザー所有 | spec/testcases/knowledge/getDocument.md#L12 | userId スコープで NotFoundError（存在の有無も漏らさない）なら PASS |
+| TC-getDocument-006 | 他ユーザー所有 | spec/testcases/knowledge/getDocument.md#L12 | 到達可能性により NotFoundError（存在の有無も漏らさない）なら PASS |
 | TC-getDocument-007 | documentId 空文字 | spec/testcases/knowledge/getDocument.md#L13 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-getDocument-008 | AI 経由の取得 | spec/testcases/knowledge/getDocument.md#L14 | MCP get(type:"document") が人間 UI と同一結果になれば PASS |
 | TC-getDocument-009 | findById DB 例外 | spec/testcases/knowledge/getDocument.md#L15 | SystemError(DatabaseError) なら PASS |
@@ -319,7 +341,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-getTopic-009 | 配下のゴミ箱内ドキュメント除外 | spec/testcases/knowledge/getTopic.md#L15 | documents に active のみ含まれれば PASS |
 | TC-getTopic-010 | トピック不在 | spec/testcases/knowledge/getTopic.md#L16 | NotFoundError なら PASS |
 | TC-getTopic-011 | ゴミ箱内トピック | spec/testcases/knowledge/getTopic.md#L17 | NotFoundError なら PASS（詳細は trash ドメインの責務） |
-| TC-getTopic-012 | 他ユーザー所有 | spec/testcases/knowledge/getTopic.md#L18 | userId スコープで NotFoundError なら PASS |
+| TC-getTopic-012 | 他ユーザー所有 | spec/testcases/knowledge/getTopic.md#L18 | 到達可能性により NotFoundError なら PASS |
 | TC-getTopic-013 | topicId 空文字 | spec/testcases/knowledge/getTopic.md#L19 | BusinessRuleError(InvalidTopicId) なら PASS |
 | TC-getTopic-014 | メモ一括取得 DB 例外 | spec/testcases/knowledge/getTopic.md#L20 | SystemError(DatabaseError) なら PASS |
 | TC-listDocumentRevisions-001 | 履歴一覧の正常系 | spec/testcases/knowledge/listDocumentRevisions.md#L7 | revisionNumber 昇順のメタデータのみ（全文なし）と latestRevision が返れば PASS |
@@ -327,7 +349,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-listDocumentRevisions-003 | 初版のみの履歴 | spec/testcases/knowledge/listDocumentRevisions.md#L9 | 1 件のみ返れば PASS（存在すれば必ず 1 件以上） |
 | TC-listDocumentRevisions-004 | ゴミ箱内ドキュメントの履歴 | spec/testcases/knowledge/listDocumentRevisions.md#L10 | findByIdIncludingTrashed で正常に履歴が返れば PASS |
 | TC-listDocumentRevisions-005 | ドキュメント不在 | spec/testcases/knowledge/listDocumentRevisions.md#L11 | NotFoundError なら PASS（ハードデリートは履歴ごと消える） |
-| TC-listDocumentRevisions-006 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentRevisions.md#L12 | userId スコープで NotFoundError なら PASS |
+| TC-listDocumentRevisions-006 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentRevisions.md#L12 | 到達可能性により NotFoundError なら PASS |
 | TC-listDocumentRevisions-007 | documentId 空文字 | spec/testcases/knowledge/listDocumentRevisions.md#L13 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-listDocumentRevisions-008 | listRevisions DB 例外 | spec/testcases/knowledge/listDocumentRevisions.md#L14 | SystemError(DatabaseError) なら PASS |
 | TC-listDocumentSourceMemos-001 | 出典一覧の正常系 | spec/testcases/knowledge/listDocumentSourceMemos.md#L7 | memoId/snippet/postedAt/deleted:false/linkedAt を持つ 2 件が返れば PASS |
@@ -339,7 +361,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-listDocumentSourceMemos-007 | 一括取得（N+1 回避） | spec/testcases/knowledge/listDocumentSourceMemos.md#L13 | listByIdsIncludingTrashed の 1 クエリで取得されれば PASS |
 | TC-listDocumentSourceMemos-008 | ゴミ箱内ドキュメントの出典一覧 | spec/testcases/knowledge/listDocumentSourceMemos.md#L14 | findByIdIncludingTrashed で正常に返れば PASS |
 | TC-listDocumentSourceMemos-009 | ドキュメント不在 | spec/testcases/knowledge/listDocumentSourceMemos.md#L15 | NotFoundError なら PASS |
-| TC-listDocumentSourceMemos-010 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentSourceMemos.md#L16 | userId スコープで NotFoundError なら PASS |
+| TC-listDocumentSourceMemos-010 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentSourceMemos.md#L16 | 到達可能性により NotFoundError なら PASS |
 | TC-listDocumentSourceMemos-011 | documentId 空文字 | spec/testcases/knowledge/listDocumentSourceMemos.md#L17 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-listDocumentSourceMemos-012 | メモ一括取得 DB 例外 | spec/testcases/knowledge/listDocumentSourceMemos.md#L18 | SystemError(DatabaseError) なら PASS |
 | TC-listDocumentsReferencingMemo-001 | 参照元一覧の正常系 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L7 | documentId/title/topicId/deleted:false/linkedAt を持つ 2 件が返れば PASS |
@@ -349,7 +371,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-listDocumentsReferencingMemo-005 | 一括取得（N+1 回避） | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L11 | listByIdsIncludingTrashed の 1 クエリで取得されれば PASS |
 | TC-listDocumentsReferencingMemo-006 | メモ自身がソフトデリート済み | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L12 | findByIdIncludingTrashed で正常に返れば PASS |
 | TC-listDocumentsReferencingMemo-007 | メモ不在 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L13 | NotFoundError なら PASS |
-| TC-listDocumentsReferencingMemo-008 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L14 | userId スコープで NotFoundError なら PASS |
+| TC-listDocumentsReferencingMemo-008 | 他ユーザー所有 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L14 | 到達可能性により NotFoundError なら PASS |
 | TC-listDocumentsReferencingMemo-009 | memoId 空文字 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L15 | MemoId 構築違反で BusinessRuleError なら PASS |
 | TC-listDocumentsReferencingMemo-010 | listSourceLinksByMemo DB 例外 | spec/testcases/knowledge/listDocumentsReferencingMemo.md#L16 | SystemError(DatabaseError) なら PASS |
 | TC-listTopics-001 | 一覧の正常系 | spec/testcases/knowledge/listTopics.md#L7 | active トピックが安定順序で返り documents に配下 active がグルーピングされれば PASS |
@@ -376,7 +398,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-rollbackDocument-011 | changeReason 不正 | spec/testcases/knowledge/rollbackDocument.md#L17 | 改行入り/201文字が対応する BusinessRuleError になれば PASS |
 | TC-rollbackDocument-012 | ドキュメント不在 | spec/testcases/knowledge/rollbackDocument.md#L18 | NotFoundError なら PASS |
 | TC-rollbackDocument-013 | ゴミ箱内ドキュメント | spec/testcases/knowledge/rollbackDocument.md#L19 | NotFoundError なら PASS |
-| TC-rollbackDocument-014 | 他ユーザー所有 | spec/testcases/knowledge/rollbackDocument.md#L20 | userId スコープで NotFoundError なら PASS |
+| TC-rollbackDocument-014 | 他ユーザー所有 | spec/testcases/knowledge/rollbackDocument.md#L20 | 到達可能性により NotFoundError なら PASS |
 | TC-rollbackDocument-015 | 別ドキュメントのリビジョン防衛線 | spec/testcases/knowledge/rollbackDocument.md#L21 | BusinessRuleError(RevisionDocumentMismatch) なら PASS |
 | TC-rollbackDocument-016 | 並行編集との競合 | spec/testcases/knowledge/rollbackDocument.md#L22 | 0 行更新または一意制約違反で ConflictError なら PASS |
 | TC-rollbackDocument-017 | insertRevision DB 例外 | spec/testcases/knowledge/rollbackDocument.md#L23 | SystemError(DatabaseError)・UoW 全体ロールバックなら PASS |
@@ -385,11 +407,12 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-trashDocument-003 | リンク・履歴の保持 | spec/testcases/knowledge/trashDocument.md#L9 | 出典リンク・リビジョンが消えなければ PASS（可逆） |
 | TC-trashDocument-004 | ドキュメント不在 | spec/testcases/knowledge/trashDocument.md#L10 | NotFoundError なら PASS |
 | TC-trashDocument-005 | 二重削除 | spec/testcases/knowledge/trashDocument.md#L11 | 既に trashed のドキュメントへの再削除が NotFoundError になれば PASS |
-| TC-trashDocument-006 | 他ユーザー所有 | spec/testcases/knowledge/trashDocument.md#L12 | userId スコープで NotFoundError なら PASS |
+| TC-trashDocument-006 | 他ユーザー所有 | spec/testcases/knowledge/trashDocument.md#L12 | 到達可能性により NotFoundError なら PASS |
 | TC-trashDocument-007 | documentId 空文字 | spec/testcases/knowledge/trashDocument.md#L13 | BusinessRuleError(InvalidDocumentId) なら PASS |
 | TC-trashDocument-008 | 並行操作との競合 | spec/testcases/knowledge/trashDocument.md#L14 | save 0 行更新で ConflictError("OPTIMISTIC_LOCK_FAILURE") なら PASS |
 | TC-trashDocument-009 | AI 経由の削除 | spec/testcases/knowledge/trashDocument.md#L15 | MCP delete(type:"document") が人間 UI と同一の振る舞いになれば PASS |
 | TC-trashDocument-010 | save DB 例外 | spec/testcases/knowledge/trashDocument.md#L16 | SystemError(DatabaseError)・ロールバックで状態遷移もエントリ除去も起きなければ PASS |
+| TC-trashDocument-011 | purgeAfter の保存 | spec/testcases/knowledge/trashDocument.md#L17 | RetentionPolicy.expiresAt の算出結果が purgeAfter に保存されれば PASS（trashed ⇔ purgeAfter） |
 | TC-trashTopic-001 | セット削除の正常系 | spec/testcases/knowledge/trashTopic.md#L7 | トピック trashed + 配下が trashedWith=topic.id で trashed になり、配下 2 件のエントリが同一 transactionSync で除去されれば PASS |
 | TC-trashTopic-002 | archived トピックの削除 | spec/testcases/knowledge/trashTopic.md#L8 | wasArchived:true で trashed になれば PASS |
 | TC-trashTopic-003 | 配下 0 件のセット削除 | spec/testcases/knowledge/trashTopic.md#L9 | トピックのみ trashed・trashedDocumentIds:[] で配下のエントリ除去が起きなければ PASS |
@@ -397,12 +420,13 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-trashTopic-005 | trashedWith の一致 | spec/testcases/knowledge/trashTopic.md#L11 | セット削除された全配下の trashedWith が topic.id と一致すれば PASS |
 | TC-trashTopic-006 | トピック不在 | spec/testcases/knowledge/trashTopic.md#L12 | NotFoundError なら PASS |
 | TC-trashTopic-007 | 二重削除 | spec/testcases/knowledge/trashTopic.md#L13 | 既に trashed のトピックへの再削除が NotFoundError になれば PASS |
-| TC-trashTopic-008 | 他ユーザー所有 | spec/testcases/knowledge/trashTopic.md#L14 | userId スコープで NotFoundError なら PASS |
+| TC-trashTopic-008 | 他ユーザー所有 | spec/testcases/knowledge/trashTopic.md#L14 | 到達可能性により NotFoundError なら PASS |
 | TC-trashTopic-009 | topicId 空文字 | spec/testcases/knowledge/trashTopic.md#L15 | BusinessRuleError(InvalidTopicId) なら PASS |
 | TC-trashTopic-010 | トピック save の競合 | spec/testcases/knowledge/trashTopic.md#L16 | 0 行更新で ConflictError となりトピック・ドキュメントとも不変なら PASS |
 | TC-trashTopic-011 | 配下ドキュメント save の競合 | spec/testcases/knowledge/trashTopic.md#L17 | ConflictError で UoW 全体ロールバック・部分セット削除が残らなければ PASS |
 | TC-trashTopic-012 | AI 経由の削除 | spec/testcases/knowledge/trashTopic.md#L18 | MCP delete(type:"topic") が人間 UI と同一のセット削除になれば PASS |
 | TC-trashTopic-013 | save DB 例外 | spec/testcases/knowledge/trashTopic.md#L19 | SystemError(DatabaseError)・ロールバックで状態遷移もエントリ除去も起きなければ PASS |
+| TC-trashTopic-014 | purgeAfter の保存 | spec/testcases/knowledge/trashTopic.md#L20 | トピックと配下ドキュメントに同一の purgeAfter が保存されれば PASS |
 | TC-updateTopic-001 | rename の正常系 | spec/testcases/knowledge/updateTopic.md#L7 | 名前変更・version+1・status 不変で、検索結果のトピック名が join により次の検索から新しい名前で解決されれば PASS |
 | TC-updateTopic-002 | description 変更 | spec/testcases/knowledge/updateTopic.md#L8 | 説明文変更・version+1 なら PASS |
 | TC-updateTopic-003 | description null 明示指定 | spec/testcases/knowledge/updateTopic.md#L9 | 説明文が削除され null になれば PASS（省略との区別） |
@@ -416,7 +440,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-updateTopic-011 | 全フィールド省略 | spec/testcases/knowledge/updateTopic.md#L17 | presentation 層スキーマで ValidationError なら PASS |
 | TC-updateTopic-012 | トピック不在 | spec/testcases/knowledge/updateTopic.md#L18 | NotFoundError なら PASS |
 | TC-updateTopic-013 | ゴミ箱内トピック | spec/testcases/knowledge/updateTopic.md#L19 | NotFoundError なら PASS（ゴミ箱内は編集不可） |
-| TC-updateTopic-014 | 他ユーザー所有 | spec/testcases/knowledge/updateTopic.md#L20 | userId スコープで NotFoundError なら PASS |
+| TC-updateTopic-014 | 他ユーザー所有 | spec/testcases/knowledge/updateTopic.md#L20 | 到達可能性により NotFoundError なら PASS |
 | TC-updateTopic-015 | topicId 空文字 | spec/testcases/knowledge/updateTopic.md#L21 | BusinessRuleError(InvalidTopicId) なら PASS |
 | TC-updateTopic-016 | name 不正各種 | spec/testcases/knowledge/updateTopic.md#L22 | 空/改行入り/101文字が対応する BusinessRuleError・トピック不変なら PASS |
 | TC-updateTopic-017 | name 100文字境界 | spec/testcases/knowledge/updateTopic.md#L23 | 正常更新されれば PASS |
@@ -437,6 +461,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-delete-010 | 割り込み書き込みの競合 | spec/testcases/memo/delete.md#L16 | ConflictError("OPTIMISTIC_LOCK_FAILURE") なら PASS |
 | TC-delete-011 | 失効・スコープ外トークン | spec/testcases/memo/delete.md#L17 | 境界で認可エラーとなりユースケースに到達しなければ PASS |
 | TC-delete-012 | save DB 例外 | spec/testcases/memo/delete.md#L18 | SystemError(DatabaseError)・ロールバックなら PASS |
+| TC-delete-013 | purgeAfter の保存 | spec/testcases/memo/delete.md#L19 | AI 経路でも purgeAfter が人間 UI と同じ値で保存されれば PASS |
 | TC-diffMemoRevisions-001 | 二点取得の正常系 | spec/testcases/memo/diffMemoRevisions.md#L7 | base/target の RevisionView（全文スナップショット含む）が返り差分計算はされなければ PASS |
 | TC-diffMemoRevisions-002 | 逆順指定 | spec/testcases/memo/diffMemoRevisions.md#L8 | 指定どおりの base/target で返れば PASS |
 | TC-diffMemoRevisions-003 | AI 編集リビジョンの actor | spec/testcases/memo/diffMemoRevisions.md#L9 | actor が { kind:"aiClient", clientName } で返れば PASS |
@@ -445,7 +470,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-diffMemoRevisions-006 | 同一番号の二点指定 | spec/testcases/memo/diffMemoRevisions.md#L12 | ValidationError なら PASS |
 | TC-diffMemoRevisions-007 | 存在しない番号 | spec/testcases/memo/diffMemoRevisions.md#L13 | NotFoundError なら PASS |
 | TC-diffMemoRevisions-008 | メモ不在 | spec/testcases/memo/diffMemoRevisions.md#L14 | NotFoundError なら PASS |
-| TC-diffMemoRevisions-009 | 他ユーザー所有 | spec/testcases/memo/diffMemoRevisions.md#L15 | userId スコープで NotFoundError なら PASS |
+| TC-diffMemoRevisions-009 | 他ユーザー所有 | spec/testcases/memo/diffMemoRevisions.md#L15 | 到達可能性により NotFoundError なら PASS |
 | TC-diffMemoRevisions-010 | baseRevisionNumber 0 | spec/testcases/memo/diffMemoRevisions.md#L16 | BusinessRuleError(InvalidRevisionNumber) なら PASS |
 | TC-diffMemoRevisions-011 | 負数・非整数 | spec/testcases/memo/diffMemoRevisions.md#L17 | BusinessRuleError(InvalidRevisionNumber) なら PASS |
 | TC-diffMemoRevisions-012 | memoId 空文字 | spec/testcases/memo/diffMemoRevisions.md#L18 | バリデーションエラーなら PASS |
@@ -609,6 +634,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-softDeleteMemo-009 | memoId 空文字 | spec/testcases/memo/softDeleteMemo.md#L15 | バリデーションエラーなら PASS |
 | TC-softDeleteMemo-010 | 割り込み書き込みの競合 | spec/testcases/memo/softDeleteMemo.md#L16 | ConflictError("OPTIMISTIC_LOCK_FAILURE") なら PASS |
 | TC-softDeleteMemo-011 | save DB 例外 | spec/testcases/memo/softDeleteMemo.md#L17 | SystemError(DatabaseError)・ロールバックなら PASS |
+| TC-softDeleteMemo-012 | purgeAfter の保存 | spec/testcases/memo/softDeleteMemo.md#L18 | RetentionPolicy.expiresAt の算出結果が purgeAfter に保存されれば PASS（trashed ⇔ purgeAfter） |
 | TC-update_memo-001 | AI 全文更新の正常系 | spec/testcases/memo/update_memo.md#L7 | result:"saved" で新本文・latestRevisionNumber:2（全文置換のみ・パッチ非対応）なら PASS |
 | TC-update_memo-002 | AI actor のリビジョンと projection 更新 | spec/testcases/memo/update_memo.md#L8 | AI actor の新リビジョンが記録され、同じ transactionSync でエントリが作り直されれば PASS |
 | TC-update_memo-003 | postedAt 不変 | spec/testcases/memo/update_memo.md#L9 | postedAt が変わらなければ PASS |
@@ -664,6 +690,8 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-search-041 | 未知トピックの指定 | spec/testcases/search/search.md#L43 | NotFoundError(TOPIC_NOT_FOUND) となり空結果を返さなければ PASS |
 | TC-search-042 | ゴミ箱内トピックの指定 | spec/testcases/search/search.md#L44 | NotFoundError(TOPIC_NOT_FOUND) となり空結果を返さなければ PASS |
 | TC-search-043 | 不正・期限切れカーソル | spec/testcases/search/search.md#L45 | BusinessRuleError(SearchErrorCode.InvalidCursor) なら PASS |
+| TC-search-044 | カーソル検証の責任分割 | spec/testcases/search/search.md#L46 | 形式不正は SearchQuery.create が落として query が呼ばれず、期限切れは query が判定し、どちらも同じ InvalidCursor になれば PASS |
+| TC-search-045 | 編集後に旧語が索引に残らない | spec/testcases/search/search.md#L47 | 編集直後に新語でヒットし旧語でヒットしなければ PASS（同一トランザクションでの引き算と挿入） |
 | TC-emptyTrash-001 | 全消去の正常系 | spec/testcases/trash/emptyTrash.md#L7 | 全項目が hardDeleteTrashItem と同一手順（影響先確定→OCC 再取得→ハードデリート→リンク消去→projection 更新）で消去され deletedCount が返れば PASS |
 | TC-emptyTrash-002 | セット展開の重複除去 | spec/testcases/trash/emptyTrash.md#L8 | 展開と単独項目の二重出現が和集合で除去され各対象が一度だけ消去されれば PASS |
 | TC-emptyTrash-003 | ページ送りでの全件取得 | spec/testcases/trash/emptyTrash.md#L9 | ページサイズ超の項目もページ送りで全件消去されれば PASS |
@@ -731,6 +759,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-pruneExpiredTrashItems-015 | 項目ごとの UoW 分離 | spec/testcases/trash/pruneExpiredTrashItems.md#L20 | 失敗項目のみロールバックされ他は確定していれば PASS |
 | TC-pruneExpiredTrashItems-016 | 期限切れ項目の列挙の DB 例外 | spec/testcases/trash/pruneExpiredTrashItems.md#L21 | SystemError(DatabaseError) で実行終了し次回の起床に委ねれば PASS |
 | TC-pruneExpiredTrashItems-017 | chunkLimit 不正 | spec/testcases/trash/pruneExpiredTrashItems.md#L22 | 0 または非整数でバリデーションエラーなら PASS |
+| TC-pruneExpiredTrashItems-018 | 再計算中の保持日数の再変更 | spec/testcases/trash/pruneExpiredTrashItems.md#L23 | 作業述語が新しい値で定義され直すだけで先頭からやり直さず、有限回の起床で残件が空になれば PASS（永続カーソルを持たない） |
 | TC-restoreDocument-001 | restoreAlone の正常系 | spec/testcases/trash/restoreDocument.md#L9 | トピック touch → restore → save が同一 UoW で行われ restored/restoredTopicId:null、同じトランザクションでエントリが作り直されれば PASS |
 | TC-restoreDocument-002 | archived トピックへの単独復元 | spec/testcases/trash/restoreDocument.md#L10 | archived も存命扱いで restoreAlone になれば PASS |
 | TC-restoreDocument-003 | 復元による「削除済み」表示の解消 | spec/testcases/trash/restoreDocument.md#L11 | リンク保持のため追加操作なしで表示が解消されれば PASS |
@@ -764,6 +793,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-restoreDocument-031 | 期限間近の復元可能性 | spec/testcases/trash/restoreDocument.md#L54 | 期限内なら通常どおり復元されれば PASS |
 | TC-restoreDocument-032 | purge-trash ジョブ等との並行競合 | spec/testcases/trash/restoreDocument.md#L55 | ConflictError("OPTIMISTIC_LOCK_FAILURE") なら PASS |
 | TC-restoreDocument-033 | DB 例外 | spec/testcases/trash/restoreDocument.md#L56 | SystemError(DatabaseError)・ロールバックなら PASS |
+| TC-restoreDocument-034 | purgeAfter の解除 | spec/testcases/trash/restoreDocument.md#L57 | 3 分岐のいずれでも復元で purgeAfter が落ちれば PASS |
 | TC-restoreMemo-001 | 復元の正常系 | spec/testcases/trash/restoreMemo.md#L7 | ActiveMemo へ遷移・保存され memoId が返れば PASS |
 | TC-restoreMemo-002 | 元の位置への復帰 | spec/testcases/trash/restoreMemo.md#L8 | postedAt 不変でタイムラインの元の位置に戻れば PASS |
 | TC-restoreMemo-003 | 出典メモの復元 | spec/testcases/trash/restoreMemo.md#L9 | リンク保持のまま復元され、同一トランザクションで当該メモと出典先ドキュメントのエントリが作り直されれば PASS |
@@ -771,10 +801,11 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-restoreMemo-005 | memoId 空文字 | spec/testcases/trash/restoreMemo.md#L11 | バリデーションエラーなら PASS |
 | TC-restoreMemo-006 | メモ不在 | spec/testcases/trash/restoreMemo.md#L12 | NotFoundError なら PASS |
 | TC-restoreMemo-007 | active メモの復元要求 | spec/testcases/trash/restoreMemo.md#L13 | NotFoundError なら PASS |
-| TC-restoreMemo-008 | 他ユーザー所有 | spec/testcases/trash/restoreMemo.md#L14 | userId スコープで NotFoundError なら PASS |
+| TC-restoreMemo-008 | 他ユーザー所有 | spec/testcases/trash/restoreMemo.md#L14 | 到達可能性により NotFoundError なら PASS |
 | TC-restoreMemo-009 | ハードデリート済み | spec/testcases/trash/restoreMemo.md#L15 | NotFoundError なら PASS |
 | TC-restoreMemo-010 | 並行操作との競合 | spec/testcases/trash/restoreMemo.md#L16 | ConflictError・ロールバックで projection も更新されなければ PASS |
 | TC-restoreMemo-011 | リポジトリ DB 例外 | spec/testcases/trash/restoreMemo.md#L17 | SystemError(DatabaseError)・ロールバックなら PASS |
+| TC-restoreMemo-012 | purgeAfter の解除 | spec/testcases/trash/restoreMemo.md#L18 | 復元で trashedAt とともに purgeAfter が落ちれば PASS（起床の駆動源が過去へ固定されない） |
 | TC-restoreTopic-001 | セット復元の正常系 | spec/testcases/trash/restoreTopic.md#L7 | トピックと配下 2 件が同一 UoW で復元され restoredDocumentIds が返り、配下のエントリが作り直されれば PASS |
 | TC-restoreTopic-002 | active への復帰 | spec/testcases/trash/restoreTopic.md#L8 | wasArchived:false のトピックが active に戻れば PASS |
 | TC-restoreTopic-003 | archived への復帰 | spec/testcases/trash/restoreTopic.md#L9 | wasArchived:true のトピックが archived に戻れば PASS |
@@ -788,3 +819,4 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{ユ
 | TC-restoreTopic-011 | listTrashedByTopic 不整合の防衛 | spec/testcases/trash/restoreTopic.md#L17 | BusinessRuleError(TrashedWithMismatch) なら PASS |
 | TC-restoreTopic-012 | 並行操作（ハードデリート・purge-trash ジョブ・別の復元）との競合 | spec/testcases/trash/restoreTopic.md#L18 | ConflictError で UoW 全体ロールバック・部分復元なしなら PASS |
 | TC-restoreTopic-013 | リポジトリ DB 例外 | spec/testcases/trash/restoreTopic.md#L19 | SystemError(DatabaseError)・ロールバックなら PASS |
+| TC-restoreTopic-014 | purgeAfter の解除 | spec/testcases/trash/restoreTopic.md#L20 | トピック・配下ドキュメントとも purgeAfter が落ちれば PASS |

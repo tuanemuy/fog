@@ -240,6 +240,7 @@ export type MemoRevision = Readonly<{
 
 - `UserId` — identity ドメイン
 - `Actor` — identity ドメイン（人間ユーザー / AIクライアントのトークン識別。リビジョンの「誰が」）
+- `TrashRetentionDays` — identity ドメイン（`purgeAfter` の一括再計算の入力。算出規則は trash の `RetentionPolicy`）
 
 ## ドメインサービス
 
@@ -299,6 +300,12 @@ export interface MemoRepository {
 
   // --- ゴミ箱向け読み取り（trash の TrashQueryPort アダプターの内部実装専用。ユースケースから直接呼ばない） ---
   listTrashed(): readonly Versioned<TrashedMemo>[];
+
+  // --- 保持日数変更に伴う purgeAfter の一括再計算（trash.md「保持期限」） ---
+  recalculatePurgeAfter(
+    retentionDays: TrashRetentionDays,
+    limit: number,
+  ): Readonly<{ updatedCount: number; hasMore: boolean }>;
 }
 ```
 
@@ -319,8 +326,9 @@ export interface MemoRepository {
 | listRevisions | 指定メモの全リビジョンを `revisionNumber` 昇順で返す。メモが存在すれば必ず 1 件以上 | メモ不存在時は空配列（存在確認は呼び出し側の責務） |
 | findRevision | 単一リビジョン取得（ロールバック・差分表示用）。なければ null | DB 障害 → `SystemError(DatabaseError)` |
 | listTrashed | trashed メモを `trashedAt` 降順で返す（ゴミ箱一覧用）。**`TrashQueryPort` アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない**（ゴミ箱一覧の読み取り契約は trash の `TrashQueryPort` に一本化されており、本メソッドはその実装素材。読み取り契約の二重定義ではない） | 同上 |
+| recalculatePurgeAfter | ゴミ箱内のメモのうち、`purgeAfter` が `retentionDays` から算出される値と一致しない行を `limit` 件まで一括更新する（**OCC トークンを取らない。`version` も進めない** — 派生値の追随であって業務上の変更ではないため）。戻り値の `hasMore` が残件の有無で、進捗はカーソルではなく作業述語が表す（trash.md「保持期限」）。**active な行には触れない**（`purgeAfter` を持つのは trashed だけである） | 同上 |
 
-保持期限切れ項目の処理（自動ハードデリート。S-TR-05）は本ポートには列挙メソッドを置かない。各項目の `purgeAfter` を索引で引くのは自分の Durable Object の Alarm ジョブであり（trash.md「保持期限」）、そこで得た ID に対し `findByIdIncludingTrashed` で OCC トークン付きの対象を個別再取得してハードデリートする。
+保持期限切れ項目の処理（自動ハードデリート。S-TR-05）は本ポートには列挙メソッドを置かない。各項目の `purgeAfter` を索引で引くのは trash の `TrashQueryPort.listItemsToPurge` であり、それを呼ぶのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）。そこで得た ID に対し `findByIdIncludingTrashed` で OCC トークン付きの対象を個別再取得してハードデリートする。**`recalculatePurgeAfter` は列挙ではなく一括更新の書き込み口であり、この規則の例外ではない**（読み取り契約は `TrashQueryPort` に一本化したままである）。
 
 ポートはドメイン型（ブランド VO・直和型エンティティ）を受け渡す。行データからのデコード（ブランド再構築・状態判別）はアダプター境界の責務で、不整合な行は `SystemError(DataIntegrityError)` にマップする。
 

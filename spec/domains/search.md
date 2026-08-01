@@ -10,7 +10,7 @@
 |---|---|---|
 | Full-text Search | 全文検索 | キーワードの全文一致でメモとドキュメントを横断して返す単一の検索。方式の選択を利用者（人間・AI）に委ねない |
 | Search Query | 検索クエリ | 検索の入力。キーワード・任意のトピック絞り込み・取得件数・任意のカーソルからなる |
-| Search Cursor | 検索カーソル | ページの続きを読むための不透明な値。同じカーソルからは同じ集合が読め、有効期限を持つ |
+| Search Cursor | 検索カーソル | ページの続きを読むための不透明な値。同じカーソルからは同じ集合が読め、有効期限を持つ。期限の判定はポートの実装が担う |
 | Search Result Item | 検索結果項目 | 検索結果の1件。事実データのみで構成され、要約・再構成を含まない |
 | Snippet | スニペット | 結果項目に含める原文の抜粋。全文は返さない（短いメモは実質全文になり得る）。切り詰め方式は実装詳細 |
 | Index Entry | インデックスエントリ | 検索対象1件に対応する projection の値。本体（メモ / ドキュメント）の最新状態から導かれる |
@@ -41,7 +41,7 @@
 - `keyword` は trim 後に空文字なら `BusinessRuleError(SearchErrorCode.EmptyKeyword)`（シナリオ S-SE-01: キーワード未入力の間は検索を実行しない、に対応する構造的な保証）
 - `keyword` の最大長は 500 文字。超過は `BusinessRuleError(SearchErrorCode.KeywordTooLong)`。**これは transport 境界の DoS 対策としての入力長制限であり、索引の実装機構から導いた値ではない**（機構を替えても動かない）
 - `limit` が範囲外ならバリデーションエラー
-- `cursor` が不正または期限切れなら `BusinessRuleError(SearchErrorCode.InvalidCursor)`
+- `cursor` は**非空の不透明文字列であること**（形式のみ）。違反は `BusinessRuleError(SearchErrorCode.InvalidCursor)`。**中身が有効か・期限が切れていないかは `SearchQuery.create` では判定しない** — カーソルの解釈は `SearchIndexPort` の実装に閉じており、値オブジェクトの構築は現在時刻を持たないためである。判定は `SearchIndexPort.query` が行い、**同じ `BusinessRuleError(SearchErrorCode.InvalidCursor)` を返す**（利用者から見た結果は「先頭から検索し直す」で変わらない）
 
 等価性: 全フィールドの値が等しいとき同一。
 
@@ -167,7 +167,7 @@ export type IndexEntry = MemoIndexEntry | DocumentIndexEntry;
 - **順位の同点は `timestamp DESC, type, id` で決定する。** 全文一致のスコアが等しい項目の並びが実行ごとに揺れないことを保証する規則であり、ページ間の重複・欠落を防ぐ前提でもある
 - **ページングは期限付きスナップショットと不透明カーソルで行う。** 最初のクエリで結果の集合を固定し、以後は前のページが返したカーソルから同じ集合の続きを読む。契約は次の3点である
   - 同じカーソルからは同じ集合が読める（ページ間に本体の変更があっても重複・欠落が出ない）
-  - カーソルには有効期限があり、期限切れのカーソルは拒否される（利用者は先頭から検索し直す）
+  - カーソルには有効期限があり、期限切れのカーソルは拒否される（利用者は先頭から検索し直す）。**期限の判定はポートの実装が行う**（形式の検証だけが `SearchQuery.create` の責務である。上記バリデーションルール）
   - カーソルは不透明であり、利用者・ユースケースは中身を解釈しない。ページ番号を指定して任意の位置へ飛ぶ操作は提供しない
   - **スナップショットの物理形（どこに何を置いて固定するか）はこのドメインでは確定させない。** 上の3点が守られる限り実現方法を問わない（`spec/database/index.md`）
 - 一致する結果がない場合は空の結果を返す（エラーではない）
@@ -196,7 +196,7 @@ export interface SearchIndexPort {
 エラーケース:
 
 - `NotFoundError(TOPIC_NOT_FOUND)` — `topicId` が未知、またはゴミ箱内のトピックを指している
-- `BusinessRuleError(SearchErrorCode.InvalidCursor)` — `cursor` が不正、または有効期限を過ぎている
+- `BusinessRuleError(SearchErrorCode.InvalidCursor)` — `cursor` の中身が解釈できない、または有効期限を過ぎている（**形式の検証は `SearchQuery.create` が済ませており、ここが判定するのは中身と期限である**）
 - `SystemError(SearchIndexUnavailable)` — インデックスへの問い合わせ失敗・タイムアウト。retryable。利用者にエラーが返る
 
 ## エラーコード
@@ -221,10 +221,11 @@ export const SearchErrorCode = {
 
 **整合は SQL トリガーではなく projection コードが担う。** 本体を書くリポジトリと同じトランザクションの中で projection 関数が明示的に更新を発行する。整合の責任の所在をコード側に置くほうが、両対応の読み取りや全件再構築と噛み合うためである。
 
-**external-content 構成の FTS5 を採るための実装制約が2つある。** どちらも成否ではなく実装の正しさに直結し、踏み外すと例外が上がらずインデックスだけが黙って壊れる。
+**external-content 構成の FTS5 を採るための実装制約が1つある。** 成否ではなく実装の正しさに直結し、踏み外すと例外が上がらずインデックスだけが黙って壊れる。
 
-1. **更新・削除は「旧値で delete → 新値で insert」の2段で行う。** external-content の FTS5 は本体行の内容を自分で保持しないので、本体を書き換える前に旧内容をインデックスから引き算する必要がある。旧値の読み出しは同じトランザクションの中で行う
-2. **`search_entries` の PK を `rowid INTEGER PRIMARY KEY` にし、`id TEXT` を UNIQUE 制約付きの別列にする。** 素直に単一列 TEXT の `id` を PK にすると、delete コマンドに渡す安定した INTEGER rowid を組み立てられない。`id` と rowid の対応は `search_entries` の中に閉じ、**DO の外の DTO には rowid を出さない**
+- **更新・削除は「旧値で delete → 新値で insert」の2段で行う。** external-content の FTS5 は本体行の内容を自分で保持しないので、本体を書き換える前に旧内容をインデックスから引き算する必要がある。旧値の読み出しは同じトランザクションの中で行う
+
+**この2段を成り立たせる物理形（`search_entries` の主キーの取り方・列の型・索引）を決めるのは `spec/database/index.md` であり、本ファイルではない。** 本ファイルが定めるのは projection の契約までで、DDL レベルの指示は持たない（両側に置くと片方だけが直って静かに食い違う）。
 
 projection 更新の契機は次のとおりである。いずれも本体の書き込みと同一トランザクションで起きる。
 

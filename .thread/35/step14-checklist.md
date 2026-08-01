@@ -29,11 +29,11 @@
 | 16 | `knowledge/createTopic.md` | `:7` / `:20` | 両方 (B) | 指定どおり（トピックはエントリを持たないことを明記） | — |
 | 17 | `knowledge/createDocument.md` | `:7` / `:29` | `:7` (A) / `:29` (B) | 指定どおり | — |
 | 18 | `knowledge/editDocument.md` | `:7` / `:10` | `:7` (A) / `:10` (B) | 指定どおり | — |
-| 19 | `knowledge/editDocumentByAi.md` | `:15` | (B) | 指定どおり | — |
+| 19 | `knowledge/editDocumentByAi.md` | `:15` | (B) | 指定どおり。**加えて `:7`**（`document.edited` が記録される）を (A) — 設計の表が挙げていないが同じイベント期待である（B-001） | 済（`TC-editDocumentByAi-001`） |
 | 20 | `knowledge/rollbackDocument.md` | `:7` / `:10` | `:7` (A) / `:10` (B) | 指定どおり | — |
 | 21 | `knowledge/trashDocument.md` | `:7` / `:16` | `:7` (A) / `:16` (B) | 指定どおり | — |
-| 22 | `knowledge/trashTopic.md` | `:7` / `:19` | `:7` (A) / `:19` (B) | 指定どおり | — |
-| 23 | `knowledge/updateTopic.md` | `:7` `:10` `:11` `:13` `:14` `:15` `:28` | 全件 (B)。`:15` は「rename と archive が順に適用される」だけを残す | 指定どおり。`:7` にはトピック名が join で解決されることを補記 | — |
+| 22 | `knowledge/trashTopic.md` | `:7` / `:19` | `:7` (A) / `:19` (B) | 指定どおり。**加えて `:9`**（`document.trashed` は発行されない）を (B)（B-001） | 済（`TC-trashTopic-003`） |
+| 23 | `knowledge/updateTopic.md` | `:7` `:10` `:11` `:13` `:14` `:15` `:28` | 全件 (B)。`:15` は「rename と archive が順に適用される」だけを残す | 指定どおり。`:7` にはトピック名が join で解決されることを補記。**加えて `:8`**（`topic.updated`）と **`:12`**（`topic.archived` / `topic.unarchived`）を (B)（B-001） | 済（`TC-updateTopic-002` / `-006`） |
 | 24 | `identity/registerWithPassword.md` | `:7` / `:22` | 全件 (B) | (B)。あわせて `PasswordUser` / `SsoUser` / `UserRepository` をクレデンシャル集合と分割後リポジトリの語へ読み替え（ADR-019 の波及） | 済（`TC-registerWithPassword-001`） |
 | 25 | `identity/registerOrLoginWithSso.md` | `:7` / `:9` | (B) + signup saga の phase 順 | (B)。phase 順（Directory 予約2本に勝ってから User Data DO を初期化）を `:7` に反映し、**予約の片方だけ敗北するケース**と**中間状態の観測ケース**を末尾に新設。巻き戻し手順は書かない（ADR-009） | — |
 | 26 | `identity/revokeAiClientConnection.md` | `:7` / `:8` / `:12` / `:15` | `:8` は (C) + 置き換え、残り (B) | `:8` を (C)（行ごと削除）。置き換えケース「`status = 'revoked'` の次のリクエストで DO 内ガードが拒否する」を**末尾に append**（連番は欠番のまま） | 済（`TC-revokeAiClientConnection-002` を欠番化、置き換えを採番） |
@@ -46,4 +46,6 @@
 
 **設計の表は30ファイルを挙げているが、本チェックリストは32行ある。** 差の2行は `search/maintainSearchIndex.md` と `search/search.md`（ステップ13 の担当。設計では同じ表に載っている）で、ステップ14 の対象30ファイルはそれ以外の全部である。
 
-**設計の表が挙げていない行に手を入れたのは3ファイル**（#4 `emptyTrash.md:10` / #5 `hardDeleteTrashItem.md` の5行 / #6 `restoreDocument.md` の3行 / #8 `restoreTopic.md` の2行）。いずれも「`memo.hardDeleted` が収集される」のようにイベント名を直接書いており、`イベント` という語も `V-3` の走査語も含まないため設計の表のヒット行に現れなかった。第7.3節（イベントは transport としても業務表現としても残らない）に照らして (A) を適用した。
+**設計の表が挙げていない行に手を入れたのは7ファイル・15行**（#4 `emptyTrash.md:10` の1行 / #5 `hardDeleteTrashItem.md` の5行 / #6 `restoreDocument.md` の3行 / #8 `restoreTopic.md` の2行 / #19 `editDocumentByAi.md:7` の1行 / #22 `trashTopic.md:9` の1行 / #23 `updateTopic.md:8` `:12` の2行）。いずれも「`memo.hardDeleted` が収集される」のようにイベント名を直接書いており、`イベント` という語も `V-3` の走査語も含まないため設計の表のヒット行に現れなかった。第7.3節（イベントは transport としても業務表現としても残らない）に照らして (A) / (B) を適用した。
+
+**このうち後半4行（#19 / #22 / #23）はレビュー 001 の B-001 で取り残しとして検出された分である。** 初版は前半11行だけを拾い上げて「3ファイル」と数え違えていた（`.thread/35/adr.md` ADR-028 の「4ファイル11行」も同じ数え違い。訂正は ADR-035）。イベント**名**を直接書いた期待値は `V-3` の走査語に1つも当たらないため、検出にはイベント名を直接走査する検査（`V-3b`）が要る（`.thread/35/testing.md` への追加は別担当）。

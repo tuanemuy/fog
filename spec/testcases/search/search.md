@@ -43,3 +43,5 @@
 | 存在しない `topicId` を指定する | 検索する | `NotFoundError(TOPIC_NOT_FOUND)`。空結果を返さない | |
 | ゴミ箱内（ソフトデリート済み）のトピックの `topicId` を指定する | 検索する | `NotFoundError(TOPIC_NOT_FOUND)`。空結果を返さない | |
 | — | 不正な形式、または有効期限を過ぎた `cursor` を渡して検索する | `BusinessRuleError(SearchErrorCode.InvalidCursor)`。利用者は先頭から検索し直す | |
+| — | 形式が不正な `cursor`（空文字）と、形式は正しいが有効期限を過ぎた `cursor` をそれぞれ渡して検索する | どちらも同じ `BusinessRuleError(SearchErrorCode.InvalidCursor)` になる。形式は `SearchQuery.create` が落とすので `SearchIndexPort.query` は呼ばれず、中身と有効期限は `query` が判定するので呼ばれる（検証の責任は分かれているが、利用者から見た結果は同じ） | |
+| 本文に `旧語` を含むメモがインデックス済みで、その本文を `新語` に書き換える | 編集直後に `旧語` と `新語` のそれぞれで検索する | `新語` ではヒットし、`旧語` ではヒットしない。本体更新と同一トランザクションで旧値による索引の引き算と新値の挿入が行われるため、旧語の索引が残らない（引き算を誤ると例外は上がらず索引だけが黙って壊れるので、旧語での非ヒットを必ず確認する） | |

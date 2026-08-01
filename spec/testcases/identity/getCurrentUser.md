@@ -4,7 +4,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| ログイン済みで、クレデンシャル集合が `kind: "email"` の1件だけのアカウント | 現在のユーザー情報を取得する | `userId` / `email` / `credentials` / `trashRetentionDays` が返る。`credentials` は `{ credentialId, kind, label }` の3つ組の配列で、`kind: "email"` の要素を1件持つ（`label` は空文字） | |
+| ログイン済みで、クレデンシャル集合が `kind: "email"` の1件だけのアカウント | 現在のユーザー情報を取得する | `userId` / `email` / `credentials` / `trashRetentionDays` が返る。`credentials` は `{ credentialId, kind, label, usableForLogin }` の4フィールドの配列で、`kind: "email"` の要素を1件持つ（`label` は空文字、`usableForLogin: true`） | |
 | ログイン済みで、クレデンシャル集合が `kind: "sso"` と `kind: "email"` の2件のアカウント | 現在のユーザー情報を取得する | `credentials` に2件が返り、`kind: "sso"` の要素の `label` は provider 名である。`kind: "email"` にログイン手段が無ければ UI はパスワード変更フォームを表示しない | |
 | ログイン済みユーザー | 出力 DTO の内容を検証する | 検証材料（パスワードのハッシュ等）は含まれない。`credentialId` は含まれる — **解除操作の対象指定に使うので、DTO から落とすと解除が書けなくなる** | |
 | SSO 連携を持つログイン済みユーザー | 出力 DTO の内容を検証する | `provider` / `providerSubject`（SSO 主体 ID）は含まれない。`label` は provider 名までで subject を含まない | |

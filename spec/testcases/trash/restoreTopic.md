@@ -17,3 +17,4 @@
 | `DocumentRepository.listTrashedByTopic` の結果に topicId 不一致のドキュメントが混入（防衛的） | 復元を実行する | `BusinessRuleError(TrashedWithMismatch)` | |
 | 取得後 save までの間に並行操作（ハードデリート・`purge-trash` ジョブ・別の復元）がトピックまたは配下ドキュメントの version を進める | 復元を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UoW 全体がロールバックされ、部分復元は発生しない | |
 | リポジトリで DB 例外が発生する | 復元を実行する | `SystemError(DatabaseError)`。トランザクションはロールバックされる | |
+| セット削除されたトピックと配下ドキュメントが `purgeAfter` を保持している | 復元を実行する | トピック・配下ドキュメントとも `purgeAfter` が落ちる。落とし忘れると `purge-trash` の起床が止まらなくなる（trash.md「保持期限」） | |
