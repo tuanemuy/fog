@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 有効な AI トークン | `body` を指定して投稿する | `{ id, body, postedAt }` が返る。`postedAt` は自動付与（`clock.now()`。S-AI-01） | |
 | 有効な AI トークン | 投稿する | 初版リビジョン（`revisionNumber: 1`、`actor: { kind: "aiClient", clientName }` = トークンから解決した AI クライアント）が同一 UoW で記録される（S-TL-05 でクライアント名を区別可能にする） | |
-| 有効な AI トークン | 投稿する | `memo.created` イベントが同一 UoW で Outbox に記録される（search consumer が upsert） | |
+| 有効な AI トークン | 投稿する | 同一 `transactionSync` の中で投稿したメモのエントリが `search_entries` / `search_fts` に作られ、直後の検索からヒットする | |
 | 有効な AI トークン | `body` をちょうど 10,000 文字で投稿する | 正常に作成される（境界値: 上限ちょうどは許容） | |
 | 有効な AI トークン | `body` を 10,001 文字で投稿する | `BusinessRuleError(BodyTooLong)`。メモは作成されない（S-AI-01 異常系） | |
 | 有効な AI トークン | `body` を空文字で投稿する | `BusinessRuleError(EmptyBody)`。メモは作成されない（S-AI-01 異常系） | |

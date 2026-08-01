@@ -37,7 +37,7 @@
 | 項目 | 決定 |
 |---|---|
 | UI形態 | レスポンシブWeb（PC・スマホ両対応の単一画面設計） |
-| 検索UI | 人間用のグローバル検索画面を設ける（メモ・ドキュメント横断のハイブリッド検索） |
+| 検索UI | 人間用のグローバル検索画面を設ける（メモ・ドキュメント横断の全文検索（SQLite FTS5）） |
 | AI接続管理UI | スコープに含める（設定に接続済みAIクライアント一覧と失効操作） |
 | 技術スタック | tanstack-start-template（TanStack Start + React 19 / pnpm monorepo / ヘキサゴナル + DDD） |
 
@@ -45,5 +45,5 @@
 
 - `packages/core` — domain / application / adapters（フレームワーク非依存）
 - `apps/web` — TanStack Start（ルート・コンポーネント・presentation 層）
-- Unit of Work + Outbox / ドメインイベント、ポート & アダプター構成
+- Unit of Work（DO ローカルの同期トランザクション）+ Alarm ジョブ、ポート & アダプター構成
 - MCPサーバーは将来 `apps/*` の新パッケージとして `@repo/core` を再利用する想定

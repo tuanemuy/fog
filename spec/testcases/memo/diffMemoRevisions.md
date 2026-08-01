@@ -12,7 +12,7 @@
 | リビジョン 1〜3 を持つメモが存在する | `baseRevisionNumber: 2`, `targetRevisionNumber: 2`（同一）で取得する | `ValidationError`（二点は異なること） | |
 | リビジョン 1〜3 を持つメモが存在する | `targetRevisionNumber: 4`（存在しない番号）で取得する | `NotFoundError`（いずれか一方でも不在なら NotFound。境界値: 最大番号 + 1） | |
 | メモが存在しない | 架空の `memoId` で取得する | `NotFoundError`（`findRevision` が null を返す） | |
-| 対象メモが他ユーザー所有 | 実在する他ユーザーのメモ ID・リビジョン番号で取得する | `NotFoundError`（テナント分離: リビジョンも userId スコープ） | |
+| 対象メモが他ユーザー所有 | 実在する他ユーザーのメモ ID・リビジョン番号で取得する | `NotFoundError`（テナント分離: リビジョンも自ユーザーの Durable Object に閉じており、他ユーザーの行は原理的に存在しない） | |
 | — | `baseRevisionNumber: 0` で取得する | `BusinessRuleError(InvalidRevisionNumber)`（境界値: 1 未満） | |
 | — | `targetRevisionNumber` に負数・非整数（`1.5`）を指定する | `BusinessRuleError(InvalidRevisionNumber)` | |
 | — | `memoId` を空文字で取得する | バリデーションエラー（`MemoId.create` の非空制約） | |

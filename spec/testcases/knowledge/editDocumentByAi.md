@@ -4,7 +4,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| 本文 `"AAA BBB CCC"` の active ドキュメントが存在する | `mode: "patch"`, `patches: [{ oldText: "BBB", newText: "XXX" }]`, `changeReason` 指定で編集する | 本文が `"AAA XXX CCC"` になり `changed: true`。`latestRevision + 1` の新リビジョン（AI クライアント actor・指定の変更理由）が積まれ、`document.edited` が記録される | |
+| 本文 `"AAA BBB CCC"` の active ドキュメントが存在する | `mode: "patch"`, `patches: [{ oldText: "BBB", newText: "XXX" }]`, `changeReason` 指定で編集する | 本文が `"AAA XXX CCC"` になり `changed: true`。`latestRevision + 1` の新リビジョン（AI クライアント actor・指定の変更理由）が積まれ、同じ `transactionSync` の中で当該ドキュメントのエントリが `search_entries` / `search_fts` に作り直される | |
 | active ドキュメントが存在する | `mode` を省略して `patches` を渡す | 既定モード `patch` として適用される | |
 | 本文 `"AAA BBB"` の active ドキュメントが存在する | hunks 2 件 `[{ oldText: "AAA", newText: "BBB" }, { oldText: "BBB BBB", newText: "CCC" }]` で編集する | hunks は配列順に逐次適用され、後続 hunk は前の置換結果を含む本文に対してマッチする（1 件目適用後の `"BBB BBB"` に 2 件目が一致し、最終本文は `"CCC"`） | |
 | 本文 `"AAA BBB"` の active ドキュメントが存在する | `patches: [{ oldText: "BBB", newText: "" }]` で編集する | `newText` 空文字は該当箇所の削除として適用され、本文は `"AAA "` になる | |
@@ -12,7 +12,7 @@
 | 本文が空文字の active ドキュメントが存在する（エッジケース: 空本文への AI 編集） | `mode: "replaceAll"`, `body: "初稿"` で編集する | 正常に編集される（`oldText` 非空必須のためパッチは空本文に適用不能であり、replaceAll が唯一の AI 編集経路） | |
 | 本文が空文字の active ドキュメントが存在する | `mode: "patch"` で任意のパッチを適用する | `oldText` が空本文中に見つからず `BusinessRuleError(PatchTargetNotFound)` | |
 | 本文非空の active ドキュメントが存在する | `mode: "replaceAll"`, `body: ""` で編集する | 空本文への置換として正常に受理され、新リビジョンが積まれる（境界値: replaceAll と空本文） | |
-| active ドキュメントが存在する | 現在値と同一の結果になる編集（replaceAll で同一全文、または適用結果が同一のパッチ）を行う | `changed: false`。リビジョンは積まれずイベントも発行されない（不変条件 5） | |
+| active ドキュメントが存在する | 現在値と同一の結果になる編集（replaceAll で同一全文、または適用結果が同一のパッチ）を行う | `changed: false`。リビジョンは積まれず、インデックスエントリも作り直されない（不変条件 5） | |
 | active ドキュメントが存在する | `changeReason` を省略して編集する | `ValidationError`。既定値は補完されない（requirements 4.5: AI は変更理由必須。S-AI-04 異常系） | |
 | active ドキュメントが存在する | `changeReason` に空白のみ（trim 後空）を渡す | `ValidationError`（補完しない） | |
 | 本文 `"AAA"` の active ドキュメント。AI の取得後に本文が変更され `oldText` が存在しない（エッジケース: パッチ 0 一致） | `patches: [{ oldText: "ZZZ", newText: "X" }]` で編集する | `BusinessRuleError(PatchTargetNotFound)`。ドキュメントは変更されない。AI は `get` で最新を取り直して再試行する | |
@@ -26,7 +26,7 @@
 | active ドキュメントが存在する | `changeReason` をちょうど 200 文字で編集する | 正常に編集される（境界値） | |
 | ドキュメントが存在しない ID | 編集する | `NotFoundError` | |
 | ドキュメントがゴミ箱内 | 編集する | `NotFoundError`（ゴミ箱内は AI から「存在しない」扱い。存在事実も漏らさない。S-AI-04） | |
-| 他ユーザー所有のドキュメント ID | 編集する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のドキュメント ID | 編集する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |
 | `findById` 後、並行する人間の `editDocument` が先にコミットした | 編集を実行する | `save` の 0 行更新または `insertRevision` の一意制約違反により `ConflictError` | |
 | active ドキュメントが存在する | `DocumentRepository.save` で DB 例外が発生する | `SystemError(DatabaseError)`。UoW 全体がロールバックされる | |

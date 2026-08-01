@@ -3,8 +3,8 @@
 トピック・ドキュメント・出典リンクと、ドキュメントのリビジョン履歴を管理する。
 
 - 上流: [requirements.md](../requirements.md) 2章 / 4.2 / 4.3、[scenario/document.md](../scenario/document.md)、[scenario/ai.md](../scenario/ai.md)、[scenario/trash.md](../scenario/trash.md)
-- 関連 ADR: [ADR-001](../adr/001-restore-document-without-topic.md)（所属トピック消失時の復元）、[ADR-003](../adr/003-source-link-after-hard-delete.md)（ハードデリート後の出典リンク）、[ADR-004](../adr/004-domain-boundaries.md)（topic と document を同一ドメインに置く理由）、[ADR-005](../adr/005-search-index-via-outbox.md)（イベント経由のインデックス更新）
-- コード規約: [docs/backend_implementation_example.md](../../docs/backend_implementation_example.md) に従う（値オブジェクトは unique symbol ブランド型 + `create` ファクトリで `BusinessRuleError` を throw、エンティティは判別可能ユニオン + 純関数ファクトリ、`now: Date` と id は引数で受ける、状態遷移は `WithEventDrafts` を返す）
+- 関連 ADR: [ADR-001](../adr/001-restore-document-without-topic.md)（所属トピック消失時の復元）、[ADR-003](../adr/003-source-link-after-hard-delete.md)（ハードデリート後の出典リンク）、[ADR-004](../adr/004-domain-boundaries.md)（topic と document を同一ドメインに置く理由）、[.adr/003](../../.adr/003-sqlite-fts5-only-search.md)、[.adr/004](../../.adr/004-do-local-commit-and-alarm-jobs.md)（同一トランザクションでのインデックス更新。`spec/adr/005` は superseded）
+- コード規約: [docs/backend_implementation_example.md](../../docs/backend_implementation_example.md) に従う（値オブジェクトは unique symbol ブランド型 + `create` ファクトリで `BusinessRuleError` を throw、エンティティは判別可能ユニオン + 純関数ファクトリ、`now: Date` と id は引数で受ける、状態遷移は次状態のエンティティだけを返す）
 
 ## ユビキタス言語
 
@@ -24,6 +24,7 @@
 | Change Reason | 変更理由 | リビジョンに必須の一行サマリ（「なぜ」） |
 | Rollback | ロールバック | 過去リビジョンと同内容の新リビジョンを積む操作。履歴は削除しない |
 | Actor | 操作主体 | 人間ユーザーまたは AI クライアント。identity ドメインが定義する型を利用する |
+| TrashRetentionDays | ゴミ箱保持日数 | identity ドメインが定義する値オブジェクト。`purgeAfter` の一括再計算の入力として参照する（算出規則は trash の `RetentionPolicy`） |
 
 ## 他ドメインからの参照型
 
@@ -34,6 +35,7 @@
 | `UserId` | identity | 全エンティティの所有者。データは利用者個人に閉じる |
 | `Actor` | identity | リビジョンの「誰が」。人間ユーザー / AI クライアント（トークン識別）の判別可能ユニオン |
 | `MemoId` | memo | 出典リンクの参照先 |
+| `TrashRetentionDays` | identity | `TopicRepository.recalculatePurgeAfter` / `DocumentRepository.recalculatePurgeAfter` の入力（`purgeAfter` の一括再計算。算出規則は trash の `RetentionPolicy`） |
 
 ## 値オブジェクト
 
@@ -130,7 +132,7 @@ export const DocumentPatch = {
 | 名前 | 型 | 制約 |
 |---|---|---|
 | `id` | `TopicId` | required |
-| `userId` | `UserId` | required。所有者。作成後不変 |
+| `userId` | `UserId` | required。所有者。作成後不変。**値は所属する Durable Object の同一性そのものであり、行ごとの絞り込みには用いない**（domains/index.md「テナント分離」） |
 | `name` | `TopicName` | required |
 | `description` | `TopicDescription \| null` | optional。`null` = 説明なし |
 | `version` | `number` | required。OCC 用。生成時 0、状態を変えるたびに +1 |
@@ -142,7 +144,13 @@ export const DocumentPatch = {
 export type ActiveTopic = TopicBase & Readonly<{ status: "active" }>;
 export type ArchivedTopic = TopicBase & Readonly<{ status: "archived" }>;
 export type TrashedTopic = TopicBase &
-  Readonly<{ status: "trashed"; trashedAt: Date; wasArchived: boolean }>;
+  Readonly<{
+    status: "trashed";
+    trashedAt: Date;
+    /** 保持期限。ゴミ箱にある間だけ意味を持つ */
+    purgeAfter: Date;
+    wasArchived: boolean;
+  }>;
 export type Topic = ActiveTopic | ArchivedTopic | TrashedTopic;
 
 /** ゴミ箱行き前の生存状態。多くの操作の受け口 */
@@ -152,21 +160,21 @@ export type LiveTopic = ActiveTopic | ArchivedTopic;
 - `active` → `archived`（archive）/ `archived` → `active`（unarchive）は可逆で AI にも許可される
 - `active | archived` → `trashed`（softDelete）。`wasArchived` に削除時点のアーカイブ状態を保持し、復元時に元の状態へ戻す
 - `trashed` → 元の状態（restore、`wasArchived` に従う）。ハードデリートはエンティティの消滅であり状態ではない
-- `trashedAt` はゴミ箱の保持期限計算（trash ドメイン）の起点
+- `trashedAt` はゴミ箱の保持期限計算（trash ドメイン）の起点。算出結果は `purgeAfter` に保存し、復元で必ず落とす（trash.md「保持期限」）
 
 振る舞い（すべて純関数。`Topic` オブジェクトの静的メソッドとして定義）:
 
-| メソッド | シグネチャ | 処理内容 | 発行イベント |
+| メソッド | シグネチャ | 処理内容 | インデックスへの影響 |
 |---|---|---|---|
-| `create` | `(params: { id: string; userId: UserId; name: string; description: string \| null }, now: Date) => WithEventDrafts<ActiveTopic, TopicEvent>` | 値オブジェクトを構築し `active` なトピックを生成する（`version: 0`）。`description` が `null` ならそのまま `null` | `topic.created` |
-| `rename` | `<T extends LiveTopic>(topic: T, name: string, now: Date) => WithEventDrafts<T, TopicEvent>` | `TopicName.create` を通して名前を変更。`version + 1`、`updatedAt` 更新。status は保存する | `topic.updated` |
-| `changeDescription` | `<T extends LiveTopic>(topic: T, description: string \| null, now: Date) => WithEventDrafts<T, TopicEvent>` | 説明文を変更（`null` で削除）。`version + 1` | `topic.updated` |
-| `archive` | `(topic: ActiveTopic, now: Date) => WithEventDrafts<ArchivedTopic, TopicEvent>` | `archived` へ遷移。`version + 1` | `topic.archived` |
-| `unarchive` | `(topic: ArchivedTopic, now: Date) => WithEventDrafts<ActiveTopic, TopicEvent>` | `active` へ遷移。`version + 1` | `topic.unarchived` |
-| `softDelete` | `(topic: LiveTopic, now: Date) => WithEventDrafts<TrashedTopic, TopicEvent>` | `trashed` へ遷移。`trashedAt: now`、`wasArchived: topic.status === "archived"`、`version + 1`。**単独では呼ばず、必ず `TopicTrashService.trashTopicSet` 経由で配下ドキュメントとセットで使う** | `topic.trashed` |
-| `restore` | `(topic: TrashedTopic, now: Date) => WithEventDrafts<LiveTopic, TopicEvent>` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `wasArchived` を落とす。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | `topic.restored` |
+| `create` | `(params: { id: string; userId: UserId; name: string; description: string \| null }, now: Date) => ActiveTopic` | 値オブジェクトを構築し `active` なトピックを生成する（`version: 0`）。`description` が `null` ならそのまま `null` | なし（トピックはエントリを持たない） |
+| `rename` | `<T extends LiveTopic>(topic: T, name: string, now: Date) => T` | `TopicName.create` を通して名前を変更。`version + 1`、`updatedAt` 更新。status は保存する | なし（検索結果のトピックは join で解決するため、リネームは即座に反映される） |
+| `changeDescription` | `<T extends LiveTopic>(topic: T, description: string \| null, now: Date) => T` | 説明文を変更（`null` で削除）。`version + 1` | なし |
+| `archive` | `(topic: ActiveTopic, now: Date) => ArchivedTopic` | `archived` へ遷移。`version + 1` | なし（アーカイブ済みトピックの内容も検索にヒットするので、配下ドキュメントのエントリを除去してはならない） |
+| `unarchive` | `(topic: ArchivedTopic, now: Date) => ActiveTopic` | `active` へ遷移。`version + 1` | なし |
+| `softDelete` | `(topic: LiveTopic, purgeAfter: Date, now: Date) => TrashedTopic` | `trashed` へ遷移。`trashedAt: now`、`wasArchived: topic.status === "archived"`、`version + 1`。**単独では呼ばず、必ず `TopicTrashService.trashTopicSet` 経由で配下ドキュメントとセットで使う** | 配下ドキュメントのエントリを同一トランザクションで除去し、**除去した各ドキュメントの出典メモのエントリも同じトランザクションで作り直す**（`Document.softDelete` と同じファンアウト。作り直さないと出典メモ側にゴミ箱内ドキュメントの ID が残る。search.md「インデックスの維持」）。トピック自体のエントリは無い |
+| `restore` | `(topic: TrashedTopic, now: Date) => LiveTopic` | `wasArchived` が true なら `archived`、false なら `active` へ戻す。`trashedAt` / `purgeAfter` / `wasArchived` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**必ず `TopicTrashService.restoreTopicSet` 経由で使う** | 復元した配下ドキュメントのエントリを同一トランザクションで作り直し、**その各ドキュメントの出典メモのエントリも同じトランザクションで作り直す**（`Document.restore` と同じファンアウト。search.md「インデックスの維持」） |
 
-不正な遷移（`trashed` の rename、`archived` の archive 等）は引数型で表現不能にする。ハードデリートは後続エンティティが存在しないためドメインに関数を置かず、trash ドメインのユースケースが `TopicEvents.hardDeleted(...)` を直接発行する（実装規約に従う）。
+不正な遷移（`trashed` の rename、`archived` の archive 等）は引数型で表現不能にする。ハードデリートは後続エンティティが存在しないためドメインに関数を置かず、trash ドメインのユースケースがポートで直接消去する（実装規約に従う）。
 
 ### Document
 
@@ -177,7 +185,7 @@ export type LiveTopic = ActiveTopic | ArchivedTopic;
 | 名前 | 型 | 制約 |
 |---|---|---|
 | `id` | `DocumentId` | required |
-| `userId` | `UserId` | required。作成後不変 |
+| `userId` | `UserId` | required。作成後不変。**値は所属する Durable Object の同一性そのものであり、行ごとの絞り込みには用いない**（domains/index.md「テナント分離」） |
 | `topicId` | `TopicId` | required。**ドキュメントは必ずいずれかのトピックに属する。** 変更は `moveToTopic` のみ（ADR-001 の復元先選択用） |
 | `title` | `DocumentTitle` | required |
 | `body` | `DocumentBody` | required（空文字は可） |
@@ -193,6 +201,8 @@ export type TrashedDocument = DocumentBase &
   Readonly<{
     status: "trashed";
     trashedAt: Date;
+    /** 保持期限。ゴミ箱にある間だけ意味を持つ */
+    purgeAfter: Date;
     /** セット削除なら削除元トピックの ID、個別削除なら null */
     trashedWith: TopicId | null;
   }>;
@@ -212,19 +222,19 @@ export type DocumentWithRevision = Readonly<{
 
 export type DocumentEditOutcome =
   | Readonly<{ kind: "unchanged"; document: ActiveDocument }>
-  | (Readonly<{ kind: "edited" }> & WithEventDrafts<DocumentWithRevision, DocumentEvent>);
+  | (Readonly<{ kind: "edited" }> & DocumentWithRevision);
 ```
 
 振る舞い:
 
-| メソッド | シグネチャ | 処理内容 | 発行イベント |
+| メソッド | シグネチャ | 処理内容 | インデックスへの影響 |
 |---|---|---|---|
-| `create` | `(params: { id: string; revisionId: string; userId: UserId; topicId: TopicId; title: string; body: string; actor: Actor; changeReason: string; sourceMemoIds: readonly MemoId[] }, now: Date) => WithEventDrafts<{ document: ActiveDocument; revision: DocumentRevision; sourceLinks: readonly SourceLink[] }, DocumentEvent>` | 値オブジェクトを構築し `active` なドキュメント（`version: 0`, `latestRevision: 1`）、リビジョン #1（全文スナップショット）、`sourceMemoIds` を重複除去した SourceLink 群を生成する。`sourceMemoIds` は空配列可（出典なし作成。S-DT-04）。**`topicId` の実在・非ゴミ箱と `sourceMemoIds` の実在・非ゴミ箱の検証は application 層の責務**（S-AI-03 異常系: 1 件でも不正なら全体を失敗させ、部分的に壊れた状態を作らない） | `document.created` |
-| `edit` | `(document: ActiveDocument, params: { revisionId: string; title: string; body: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | パッチ適用後（または人間 UI の全文編集後）の**全文**を受け取り、値オブジェクト構築後に現在値と比較する。タイトル・本文とも同一なら `unchanged` を返し、リビジョンを積まずイベントも発行しない（S-DT-05 異常系）。差分があれば `title` / `body` を差し替え、`latestRevision + 1`、`version + 1`、新リビジョン（全文スナップショット）を生成する。パッチ形式の編集は application 層が `DocumentPatch.apply(document.body, patch)` で全文を得てから本メソッドを呼び、全文置換（`edit_document` の replaceAll）は受領した全文をそのまま渡す。**パッチ適用・全文受領の差はユースケース層で吸収され、本メソッドは常に適用後の全文を受ける** | `document.edited` |
-| `rollback` | `(document: ActiveDocument, target: DocumentRevision, params: { revisionId: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | `target.documentId !== document.id` なら `RevisionDocumentMismatch` を throw。target のタイトル・本文で `edit` と同じ手順を実行する（過去リビジョンと同内容の**新リビジョン**を積む方式。履歴は削除しない）。現在の内容と同一なら `unchanged` | `document.edited` |
-| `softDelete` | `(document: ActiveDocument, trashedWith: TopicId \| null, now: Date) => WithEventDrafts<TrashedDocument, DocumentEvent>` | `trashed` へ遷移。`trashedAt: now`。`trashedWith` が非 null の場合 `document.topicId` と一致しなければ `TrashedWithMismatch` を throw（セット削除は所属トピック経由でのみ起こり得る）。個別削除のユースケースは `null` を渡し、セット削除は `TopicTrashService` が `topic.id` を渡す。`version + 1` | `document.trashed` |
-| `restore` | `(document: TrashedDocument, now: Date) => WithEventDrafts<ActiveDocument, DocumentEvent>` | `active` へ戻す。`trashedAt` / `trashedWith` を落とす。`version + 1`。**復元先トピック（`document.topicId`）が存在しゴミ箱内でないことの保証は呼び出し側（trash ドメインのユースケース / `TopicTrashService.restoreTopicSet`）の責務**。所属トピックがゴミ箱内ならトピックごとセット復元、ハードデリート済みなら `moveToTopic` で復元先を差し替えてから復元する（ADR-001） | `document.restored` |
-| `moveToTopic` | `(document: TrashedDocument, destinationTopicId: TopicId, now: Date) => TrashedDocument` | 復元先トピックの差し替え（ADR-001: 所属トピックがハードデリート済みのドキュメントの復元時に、ユーザーが選択した既存 or 新規トピックを設定する）。`topicId` を差し替え、`trashedWith` を `null` にする（元トピックとのセット関係は消滅している）。`version + 1`。ゴミ箱内の移動であり検索インデックスに影響しないためイベントは発行しない。直後に `restore` を呼ぶ前提の中間状態 | なし |
+| `create` | `(params: { id: string; revisionId: string; userId: UserId; topicId: TopicId; title: string; body: string; actor: Actor; changeReason: string; sourceMemoIds: readonly MemoId[] }, now: Date) => { document: ActiveDocument; revision: DocumentRevision; sourceLinks: readonly SourceLink[] }` | 値オブジェクトを構築し `active` なドキュメント（`version: 0`, `latestRevision: 1`）、リビジョン #1（全文スナップショット）、`sourceMemoIds` を重複除去した SourceLink 群を生成する。`sourceMemoIds` は空配列可（出典なし作成。S-DT-04）。**`topicId` の実在・非ゴミ箱と `sourceMemoIds` の実在・非ゴミ箱の検証は application 層の責務**（S-AI-03 異常系: 1 件でも不正なら全体を失敗させ、部分的に壊れた状態を作らない） | 永続化と同一トランザクションで当該ドキュメントのエントリを作り、出典メモのエントリも作り直す |
+| `edit` | `(document: ActiveDocument, params: { revisionId: string; title: string; body: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | パッチ適用後（または人間 UI の全文編集後）の**全文**を受け取り、値オブジェクト構築後に現在値と比較する。タイトル・本文とも同一なら `unchanged` を返し、リビジョンを積まない（S-DT-05 異常系）。差分があれば `title` / `body` を差し替え、`latestRevision + 1`、`version + 1`、新リビジョン（全文スナップショット）を生成する。パッチ形式の編集は application 層が `DocumentPatch.apply(document.body, patch)` で全文を得てから本メソッドを呼び、全文置換（`edit_document` の replaceAll）は受領した全文をそのまま渡す。**パッチ適用・全文受領の差はユースケース層で吸収され、本メソッドは常に適用後の全文を受ける** | 変更があった場合のみ、永続化と同一トランザクションでエントリを作り直す |
+| `rollback` | `(document: ActiveDocument, target: DocumentRevision, params: { revisionId: string; actor: Actor; changeReason: string }, now: Date) => DocumentEditOutcome` | `target.documentId !== document.id` なら `RevisionDocumentMismatch` を throw。target のタイトル・本文で `edit` と同じ手順を実行する（過去リビジョンと同内容の**新リビジョン**を積む方式。履歴は削除しない）。現在の内容と同一なら `unchanged` | `edit` と同じ |
+| `softDelete` | `(document: ActiveDocument, trashedWith: TopicId \| null, purgeAfter: Date, now: Date) => TrashedDocument` | `trashed` へ遷移。`trashedAt: now`。`trashedWith` が非 null の場合 `document.topicId` と一致しなければ `TrashedWithMismatch` を throw（セット削除は所属トピック経由でのみ起こり得る）。個別削除のユースケースは `null` を渡し、セット削除は `TopicTrashService` が `topic.id` を渡す。`purgeAfter` は `RetentionPolicy.expiresAt` の算出結果を application 層が渡す。`version + 1` | 永続化と同一トランザクションでエントリを除去し、出典メモのエントリを作り直す |
+| `restore` | `(document: TrashedDocument, now: Date) => ActiveDocument` | `active` へ戻す。`trashedAt` / `purgeAfter` / `trashedWith` を落とす（`trashed` であることと `purgeAfter` を持つことは同値である。trash.md「保持期限」）。`version + 1`。**復元先トピック（`document.topicId`）が存在しゴミ箱内でないことの保証は呼び出し側（trash ドメインのユースケース / `TopicTrashService.restoreTopicSet`）の責務**。所属トピックがゴミ箱内ならトピックごとセット復元、ハードデリート済みなら `moveToTopic` で復元先を差し替えてから復元する（ADR-001） | 永続化と同一トランザクションでエントリを作り直し、出典メモのエントリも作り直す |
+| `moveToTopic` | `(document: TrashedDocument, destinationTopicId: TopicId, now: Date) => TrashedDocument` | 復元先トピックの差し替え（ADR-001: 所属トピックがハードデリート済みのドキュメントの復元時に、ユーザーが選択した既存 or 新規トピックを設定する）。`topicId` を差し替え、`trashedWith` を `null` にする（元トピックとのセット関係は消滅している）。`version + 1`。ゴミ箱内の移動であり、ゴミ箱内の項目はインデックスに載っていないので影響しない。直後に `restore` を呼ぶ前提の中間状態 | なし |
 
 `create` の第一リビジョンにも `changeReason` を記録する（「なぜ」が空のリビジョンを存在させない。既定値「作成」の補完は application 層）。
 
@@ -261,7 +271,7 @@ export type DocumentEditOutcome =
 
 - 同一性: `(documentId, memoId)` の複合。同じ組は 1 つしか存在しない（`Document.create` が重複除去する）。サロゲートキーが必要かはアダプター（DB スキーマ）の実装詳細
 - 生成はドキュメント**作成時**のみ（要件 2章「出典は、ドキュメント作成時に紐付けられる」）。後からの追加・削除の操作は提供しない
-- 参照先メモのソフトデリートではリンクは残る（「削除済みのメモ」として表示。表示制御は読み取り側の責務）。参照先メモの**ハードデリートではリンクごと消える**（ADR-003。trash ドメインのユースケースが `MemoRepository.hardDelete` と**同一 UnitOfWork 内**で `DocumentRepository.deleteSourceLinksByMemo` を呼ぶ同期方式。knowledge がイベントを購読して非同期に消すのではなく、オーケストレーションは trash のユースケースの責務）。ドキュメント自身のハードデリートでもそのドキュメントのリンクは全て消える
+- 参照先メモのソフトデリートではリンクは残る（「削除済みのメモ」として表示。表示制御は読み取り側の責務）。参照先メモの**ハードデリートではリンクごと消える**（ADR-003。trash ドメインのユースケースが `MemoRepository.hardDelete` と**同一 UnitOfWork 内**で `DocumentRepository.deleteSourceLinksByMemo` を呼ぶ同期方式。非同期に消すのではなく、オーケストレーションは trash のユースケースの責務）。ドキュメント自身のハードデリートでもそのドキュメントのリンクは全て消える
 - 振る舞いは持たない（生成と消滅のみの純粋な関連）
 
 ## 不変条件
@@ -275,32 +285,7 @@ export type DocumentEditOutcome =
 7. トピックのソフトデリートは、その時点で `active` な配下ドキュメントのセット削除を伴う（`TopicTrashService` 経由でのみ実行）。セット削除されたドキュメントは `trashedWith = topicId` を持ち、トピックのセット復元で一緒に戻る。個別削除済み（`trashedWith: null`）のドキュメントはセットに含まれない
 8. `trashedWith` が非 null なら `topicId` と一致する
 9. 出典リンクの参照先メモがハードデリートされたら、リンクごと消える。壊れたリンクや「完全に削除されたメモ」の痕跡を残さない（ADR-003）
-10. 全エンティティは単一の `userId` に属し、他ユーザーからは一切見えない。この分離はリポジトリの契約で構造的に強制する: 外部入力の ID を受ける読み取りメソッドはすべて `userId` を第一引数に取り、アダプターが常に `userId` でスコープしたクエリを発行する。他ユーザー所有の ID は実在しても「存在しない」（null / 空）となり、ユースケース層の追加検証に依存しない（domains/index.md「テナント分離」、requirements 5.1）
-
-## ドメインイベント
-
-実装規約に従い、ファクトリは identity-less な `EventDraft` を返す。**ペイロードは対象 ID のみ**（ADR-005: consumer は ID から最新状態を読み直して冪等に upsert / delete するため、本文等は運ばない）。
-
-| イベント型 | ペイロード | 発行契機 |
-|---|---|---|
-| `topic.created` | `{ topicId: TopicId }` | `Topic.create` |
-| `topic.updated` | `{ topicId: TopicId }` | `Topic.rename` / `changeDescription` |
-| `topic.archived` | `{ topicId: TopicId }` | `Topic.archive` |
-| `topic.unarchived` | `{ topicId: TopicId }` | `Topic.unarchive` |
-| `topic.trashed` | `{ topicId: TopicId }` | `Topic.softDelete`（`TopicTrashService.trashTopicSet` 経由） |
-| `topic.restored` | `{ topicId: TopicId }` | `Topic.restore`（`restoreTopicSet` 経由） |
-| `topic.hardDeleted` | `{ topicId: TopicId }` | trash ドメインのユースケースが直接発行 |
-| `document.created` | `{ documentId: DocumentId }` | `Document.create` |
-| `document.edited` | `{ documentId: DocumentId }` | `Document.edit` / `rollback`（ロールバックも編集の一種） |
-| `document.trashed` | `{ documentId: DocumentId }` | `Document.softDelete`（個別・セット共通） |
-| `document.restored` | `{ documentId: DocumentId }` | `Document.restore`（個別・セット共通） |
-| `document.hardDeleted` | `{ documentId: DocumentId }` | trash ドメインのユースケースが直接発行 |
-| `document.sourceLinksChanged` | `{ documentId: DocumentId }` | trash ドメインのユースケースが直接発行（出典メモのハードデリートで当該ドキュメントの出典リンクが消えたとき。消去前に `listSourceLinksByMemo` で確定した影響ドキュメントごとに、リンク消去と同一 UoW で発行）。search consumer が当該ドキュメントを読み直して upsert（`sourceMemoIds` の反映） |
-
-- `aggregateId` は各ペイロードの ID と同値
-- アーカイブ済みトピックの内容は検索にヒットするため、`topic.archived` でインデックスから除去してはならない（consumer 側の注意点。除去するのは trashed / hardDeleted のみ）
-- `document.trashed` / `document.restored` を受けた search consumer は、対象ドキュメント自身の remove / upsert に加え、`listSourceLinksByDocument` で逆引きした出典メモのエントリも再 upsert する（ファンアウト。検索結果の `sourceOfDocumentIds` にゴミ箱内ドキュメントの ID を露出させない。詳細は search.md のインデックス更新フロー）。ソフトデリート・復元のための追加イベントは設けない
-- イベントデコーダ（outbox 行の再水和）は application 層 `application/knowledge/eventDecoders.ts` に置く
+10. 全エンティティは単一の `userId` に属し、他ユーザーからは一切見えない。この分離は物理境界で構造的に強制する: 全エンティティはそのユーザーの Durable Object の中にしか存在せず、他ユーザーの Durable Object へ到達する経路が無い。他ユーザーの ID を渡しても「存在しない」（null / 空）となり、ユースケース層の追加検証に依存しない（domains/index.md「テナント分離」、requirements 5.1）
 
 ## ドメインサービス
 
@@ -314,17 +299,16 @@ export const TopicTrashService = {
   /**
    * トピックと、その時点で active な配下ドキュメントをセットでソフトデリートする。
    * documents は topic 配下の ActiveDocument 全件（取得はユースケースの責務）。
-   * 各ドキュメントは Document.softDelete(doc, topic.id, now) で trashedWith が付く。
+   * 各ドキュメントは Document.softDelete(doc, topic.id, purgeAfter, now) で trashedWith が付く。
    * 個別削除済み（既に trashed）のドキュメントは documents に含めない。
+   * purgeAfter はトピックと配下ドキュメントで同一の値を用いる。
    */
   trashTopicSet: (
     topic: LiveTopic,
     documents: readonly ActiveDocument[],
+    purgeAfter: Date,
     now: Date,
-  ) => WithEventDrafts<
-    Readonly<{ topic: TrashedTopic; documents: readonly TrashedDocument[] }>,
-    TopicEvent | DocumentEvent
-  >, // topic.trashed 1件 + document.trashed をドキュメント数分
+  ) => Readonly<{ topic: TrashedTopic; documents: readonly TrashedDocument[] }>,
 
   /**
    * トピックをセットで復元する。documents は topic 配下（topicId 一致）の
@@ -337,22 +321,19 @@ export const TopicTrashService = {
     topic: TrashedTopic,
     documents: readonly TrashedDocument[],
     now: Date,
-  ) => WithEventDrafts<
-    Readonly<{
-      topic: LiveTopic; // wasArchived に従い active / archived へ
-      restoredDocuments: readonly ActiveDocument[];
-      skippedDocuments: readonly TrashedDocument[]; // 個別削除分。ゴミ箱に残す
-    }>,
-    TopicEvent | DocumentEvent
-  >, // topic.restored 1件 + document.restored を復元数分
+  ) => Readonly<{
+    topic: LiveTopic; // wasArchived に従い active / archived へ
+    restoredDocuments: readonly ActiveDocument[];
+    skippedDocuments: readonly TrashedDocument[]; // 個別削除分。ゴミ箱に残す
+  }>,
 };
 ```
 
 補足:
 
-- 呼び出し元は trash ドメインのユースケース（トピックの復元）と knowledge のユースケース（トピックの削除）。どちらも同一 UoW 内でトピック・全ドキュメントを保存し `collectEvents` する
+- 呼び出し元は trash ドメインのユースケース（トピックの復元）と knowledge のユースケース（トピックの削除）。どちらも同一 UoW 内でトピック・全ドキュメントを保存し、配下ドキュメントの検索インデックスエントリも同じトランザクションで更新する
 - 「ドキュメント個別復元時に所属トピックもゴミ箱内だった」ケース（S-TR-02）は、確認のうえトピックごとセット復元する仕様のため、`restoreTopicSet` をそのまま使う（シグネチャは変えず、対象ドキュメントだけを引き抜く復元経路は設けない）。ただし復元要求対象のドキュメント自身が個別削除（`trashedWith: null`）のため `skippedDocuments` に分類された場合は、trash の restoreDocument ユースケースが**同一 UoW 内で当該ドキュメントを追加で `Document.restore` する**（トピックは直前に復元済みのため不変条件 1 を満たす）。復元を要求した当のドキュメントがゴミ箱に残る結果を作らない
-- トピックのハードデリート時のセット対象は「`trashedWith === topic.id` のゴミ箱内ドキュメント」（個別削除分は対象外。ADR-001 の却下代替案参照）。後続エンティティがないためサービスは設けず、trash ドメインのユースケースがポートで直接消去し、イベントを直接発行する
+- トピックのハードデリート時のセット対象は「`trashedWith === topic.id` のゴミ箱内ドキュメント」（個別削除分は対象外。ADR-001 の却下代替案参照）。後続エンティティがないためサービスは設けず、trash ドメインのユースケースがポートで直接消去する
 
 ## エラーコード
 
@@ -389,7 +370,7 @@ export const KnowledgeErrorCode = {
 
 ## ポート
 
-いずれも `domain/knowledge/ports/` に置き、ドメイン型を受け渡す。外部データのデコード（検証・ブランド再構築）はアダプター境界の責務。OCC はテンプレートの `TransactionalRepository<TEntity, TId>` と同じ規約（`insert` / `save` / `delete` + `ExpectedVersion` トークン、「読まずに書く」を型エラーにする）に従うが、**extends はしない**: テンプレートの `TransactionalRepository` は userId スコープなしの契約（`findById(id)` 等）のため、`(userId, id)` シグネチャの本ドメインのメソッドとは両立せず（必須引数が多い再宣言は `incorrectly extends` の型エラーになる）、独立したインターフェースとして全メソッドを自前宣言する（memo の `MemoRepository` と同方式）。契約の互換部分（save の OCC・0 行更新 → Conflict 等）は同じ規約に従う。
+いずれも `domain/knowledge/ports/` に置き、ドメイン型を受け渡す。外部データのデコード（検証・ブランド再構築）はアダプター境界の責務。OCC はテンプレートの `TransactionalRepository<TEntity, TId>` と同じ規約（`insert` / `save` / `delete` + `ExpectedVersion` トークン、「読まずに書く」を型エラーにする）に従う。**全メソッドは同期契約であり `Promise` を返さない**（domains/index.md「ポートの同期契約」）。
 
 共通エラーケース:
 
@@ -397,7 +378,7 @@ export const KnowledgeErrorCode = {
 - すべてのメソッド: DB 例外 → `SystemError(DatabaseError)`（`mapDbError`）
 - 「見つからない」は `findById` 系が `null` を返し、`NotFoundError` への変換はユースケースの責務
 
-**テナント分離（domains/index.md「テナント分離」）**: 外部入力の ID でエンティティを引く全メソッド、および外部入力起点の ID を直接受ける書き込みメソッド（`deleteSourceLinksByMemo`）は `userId: UserId` を第一引数に取る。アダプターは常に `userId` でスコープしたクエリを発行し、ID が実在しても所有者が異なれば「存在しない」（null / 空配列）として扱う（存在の有無も漏らさない）。所有権検証はこのリポジトリ契約で構造的に保証され、ユースケース層の追加検証（取得後の `entity.userId` 照合）に依存しない。
+**テナント分離（domains/index.md「テナント分離」）**: `userId` はユーザー単位 Durable Object の選択で消費済みなので、どのメソッドも引数に取らない。DO の中に他ユーザーの行が原理的に存在しないため、他ユーザーの ID を渡しても結果は「存在しない」（null / 空配列）になる（存在の有無も漏らさない）。所有権検証は到達可能性により構造的に保証され、ユースケース層の追加検証（取得後の `entity.userId` 照合）に依存しない。
 
 ### TopicRepository
 
@@ -405,45 +386,46 @@ export const KnowledgeErrorCode = {
 
 ```ts
 export interface TopicRepository {
-  // --- 書き込み（TransactionalRepository と同じ OCC 規約。extends はしない） ---
-  insert(topic: ActiveTopic): Promise<void>;
-  save(topic: Topic, expectedVersion: ExpectedVersion<Topic>): Promise<void>;
-  /** ハードデリート（アダプターが同一バッチで行を消す） */
-  delete(id: TopicId, expectedVersion: ExpectedVersion<Topic>): Promise<void>;
+  // --- 書き込み（TransactionalRepository と同じ OCC 規約） ---
+  insert(topic: ActiveTopic): void;
+  save(topic: Topic, expectedVersion: ExpectedVersion<Topic>): void;
+  /** ハードデリート（アダプターが同一トランザクションで行を消す） */
+  delete(id: TopicId, expectedVersion: ExpectedVersion<Topic>): void;
+
+  /** ゴミ箱外（LiveTopic）のみ返す。trashed は null */
+  findById(id: TopicId): Versioned<LiveTopic> | null;
+
+  /** ゴミ箱内も含む全状態の取得。人間 UI の読み取り経路と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない */
+  findByIdIncludingTrashed(id: TopicId): Versioned<Topic> | null;
 
   /**
-   * userId でスコープし、ゴミ箱外（LiveTopic）のみ返す。
-   * trashed・他ユーザー所有は null（テナント分離）。
-   */
-  findById(userId: UserId, id: TopicId): Promise<Versioned<LiveTopic> | null>;
-
-  /** ゴミ箱内も含む全状態の取得（userId でスコープ。他ユーザー所有は null）。人間 UI の読み取り経路と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない */
-  findByIdIncludingTrashed(userId: UserId, id: TopicId): Promise<Versioned<Topic> | null>;
-
-  /**
-   * ユーザーのゴミ箱外トピック一覧（トピック一覧画面・list_topics 用）。
+   * ゴミ箱外トピック一覧（トピック一覧画面・list_topics 用）。
    * includeArchived: false なら active のみ。名前順等の安定順序で返す。
    */
-  listByUser(
-    userId: UserId,
-    options: Readonly<{ includeArchived: boolean }>,
-  ): Promise<readonly LiveTopic[]>;
+  listByUser(options: Readonly<{ includeArchived: boolean }>): readonly LiveTopic[];
 
-  /** ユーザーのゴミ箱内トピック一覧。trash の TrashQueryPort アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない（ゴミ箱一覧の読み取り契約は TrashQueryPort に一本化。本メソッドはその実装素材で、読み取り契約の二重定義ではない） */
-  listTrashedByUser(userId: UserId): Promise<readonly Versioned<TrashedTopic>[]>;
+  /** ゴミ箱内トピック一覧。trash の TrashQueryPort アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない（ゴミ箱一覧の読み取り契約は TrashQueryPort に一本化。本メソッドはその実装素材で、読み取り契約の二重定義ではない） */
+  listTrashedByUser(): readonly Versioned<TrashedTopic>[];
 
   /**
-   * 指定 ID 群のトピックを userId でスコープして一括取得する（表示用の名前解決）。
+   * 指定 ID 群のトピックを一括取得する（表示用の名前解決）。
    * 検索結果（人間 UI）の「所属トピック名」表示が結果件数分の N+1 照会にならず 1 クエリで成立する
    * （search ユースケースが結果整形時に利用する。usecases/search.md）。
-   * 存在しない（ハードデリート済み）ID・他ユーザー所有の ID は結果に含めない。
+   * 存在しない（ハードデリート済み）ID は結果に含めない。
    */
-  listByIds(userId: UserId, ids: readonly TopicId[]): Promise<readonly Versioned<Topic>[]>;
+  listByIds(ids: readonly TopicId[]): readonly Versioned<Topic>[];
+
+  // --- 保持日数変更に伴う purgeAfter の一括再計算（trash.md「保持期限」） ---
+  recalculatePurgeAfter(
+    retentionDays: TrashRetentionDays,
+    limit: number,
+  ): Readonly<{ updatedCount: number; hasMore: boolean }>;
 }
 ```
 
-- `findById` は `userId` でスコープし **ゴミ箱外（`LiveTopic`）のみ**返す。trashed・他ユーザー所有は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04。テナント分離）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示等）は `findByIdIncludingTrashed` を使う（人間 UI の読み取り経路と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない）。`delete` はハードデリート（アダプターが同一バッチで行を消す）
-- 保持期限切れ項目の列挙は本ポートには置かず、trash の `TrashQueryPort.listExpiredItems` に一本化する（trash.md 参照）
+- `findById` は **ゴミ箱外（`LiveTopic`）のみ**返す。trashed は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示等）は `findByIdIncludingTrashed` を使う（人間 UI の読み取り経路と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない）。`delete` はハードデリート（アダプターが同一トランザクションで行を消す）
+- 保持期限切れ項目の**列挙**は本ポートに置かない。各項目の `purgeAfter` を索引で引くのは trash の `TrashQueryPort.listItemsToPurge` であり、それを呼ぶのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- `recalculatePurgeAfter` は保持日数変更に伴う一括更新の書き込み口である。ゴミ箱内のトピックのうち `purgeAfter` が `retentionDays` から算出される値と一致しない行を `limit` 件まで更新し、残件の有無を返す。**OCC トークンを取らず `version` も進めない**（派生値の追随であって業務上の変更ではない）。進捗はカーソルではなく作業述語が表す
 - エラーケース: 共通のみ
 
 ### DocumentRepository
@@ -453,94 +435,92 @@ export interface TopicRepository {
 ```ts
 export interface DocumentRepository {
   // --- 書き込み（TransactionalRepository と同じ OCC 規約。extends はしない） ---
-  insert(document: ActiveDocument): Promise<void>;
-  save(document: Document, expectedVersion: ExpectedVersion<Document>): Promise<void>;
-  /** ハードデリート（アダプターが同一バッチで全リビジョン・全出典リンクも消去する） */
-  delete(id: DocumentId, expectedVersion: ExpectedVersion<Document>): Promise<void>;
+  insert(document: ActiveDocument): void;
+  save(document: Document, expectedVersion: ExpectedVersion<Document>): void;
+  /** ハードデリート（アダプターが同一トランザクションで全リビジョン・全出典リンクも消去する） */
+  delete(id: DocumentId, expectedVersion: ExpectedVersion<Document>): void;
+
+  /** active のみ返す。trashed は null */
+  findById(id: DocumentId): Versioned<ActiveDocument> | null;
+
+  /** ゴミ箱内も含む全状態の取得。人間 UI の読み取り経路（出典リンクの「削除済み」表示・履歴等）と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない */
+  findByIdIncludingTrashed(id: DocumentId): Versioned<Document> | null;
 
   /**
-   * userId でスコープし、active のみ返す。
-   * trashed・他ユーザー所有は null（テナント分離）。
-   */
-  findById(userId: UserId, id: DocumentId): Promise<Versioned<ActiveDocument> | null>;
-
-  /** ゴミ箱内も含む全状態の取得（userId でスコープ。他ユーザー所有は null）。人間 UI の読み取り経路（出典リンクの「削除済み」表示・履歴等）と trash 系ユースケースで使用可。AI 向けユースケースでは使用しない */
-  findByIdIncludingTrashed(userId: UserId, id: DocumentId): Promise<Versioned<Document> | null>;
-
-  /**
-   * 指定 ID 群のドキュメントを userId でスコープして trashed 含め一括取得する（出典表示用）。
+   * 指定 ID 群のドキュメントを trashed 含め一括取得する（出典表示用）。
    * メモの「→ ドキュメントX（削除済み）」表示（S-TL-07。タイトル＋削除済みフラグ）が 1 クエリで成立する。
-   * 存在しない（ハードデリート済み）ID・他ユーザー所有の ID は結果に含めない。使用範囲は findByIdIncludingTrashed と同じ。
+   * 存在しない（ハードデリート済み）ID は結果に含めない。使用範囲は findByIdIncludingTrashed と同じ。
    */
-  listByIdsIncludingTrashed(userId: UserId, ids: readonly DocumentId[]): Promise<readonly Document[]>;
+  listByIdsIncludingTrashed(ids: readonly DocumentId[]): readonly Document[];
 
-  /** トピック配下の active なドキュメント一覧（トピック詳細画面・セット削除の対象取得用）。userId でスコープし、他ユーザー所有のトピック ID には空配列を返す */
-  listActiveByTopic(userId: UserId, topicId: TopicId): Promise<readonly Versioned<ActiveDocument>[]>;
+  /** トピック配下の active なドキュメント一覧（トピック詳細画面・セット削除の対象取得用） */
+  listActiveByTopic(topicId: TopicId): readonly Versioned<ActiveDocument>[];
 
   /**
    * 複数トピック配下の active なドキュメントを一括取得する（`listTopics` の「トピックと配下ドキュメントの一覧」用）。
    * トピック一覧の表示がトピック件数分の N+1 照会にならず 1 クエリで成立する。
-   * userId でスコープし、他ユーザー所有のトピック配下は結果に含めない。
    */
-  listActiveByTopics(userId: UserId, topicIds: readonly TopicId[]): Promise<readonly Versioned<ActiveDocument>[]>;
+  listActiveByTopics(topicIds: readonly TopicId[]): readonly Versioned<ActiveDocument>[];
 
-  /** トピック配下のゴミ箱内ドキュメント一覧（セット復元・トピックハードデリートの対象取得用）。userId でスコープする */
-  listTrashedByTopic(userId: UserId, topicId: TopicId): Promise<readonly Versioned<TrashedDocument>[]>;
+  /** トピック配下のゴミ箱内ドキュメント一覧（セット復元・トピックハードデリートの対象取得用） */
+  listTrashedByTopic(topicId: TopicId): readonly Versioned<TrashedDocument>[];
 
-  /** ユーザーのゴミ箱内ドキュメント一覧。trash の TrashQueryPort アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない（ゴミ箱一覧の読み取り契約は TrashQueryPort に一本化。本メソッドはその実装素材で、読み取り契約の二重定義ではない） */
-  listTrashedByUser(userId: UserId): Promise<readonly Versioned<TrashedDocument>[]>;
+  /** ゴミ箱内ドキュメント一覧。trash の TrashQueryPort アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない（ゴミ箱一覧の読み取り契約は TrashQueryPort に一本化。本メソッドはその実装素材で、読み取り契約の二重定義ではない） */
+  listTrashedByUser(): readonly Versioned<TrashedDocument>[];
 
   /** リビジョンの追記（edit / rollback / create と同一 UoW で呼ぶ。不変・追記のみ） */
-  insertRevision(revision: DocumentRevision): Promise<void>;
+  insertRevision(revision: DocumentRevision): void;
 
-  /** リビジョン履歴（revisionNumber 昇順。履歴一覧・差分表示用）。userId でスコープし、他ユーザーのドキュメントには空配列を返す */
-  listRevisions(userId: UserId, documentId: DocumentId): Promise<readonly DocumentRevision[]>;
+  /** リビジョン履歴（revisionNumber 昇順。履歴一覧・差分表示用） */
+  listRevisions(documentId: DocumentId): readonly DocumentRevision[];
 
-  /** 特定リビジョンの取得（ロールバック・差分表示用）。userId でスコープし、他ユーザーのドキュメントのリビジョンは null */
+  /** 特定リビジョンの取得（ロールバック・差分表示用） */
   findRevision(
-    userId: UserId,
     documentId: DocumentId,
     revisionNumber: RevisionNumber,
-  ): Promise<DocumentRevision | null>;
+  ): DocumentRevision | null;
 
   /** 出典リンクの一括登録（Document.create と同一 UoW で呼ぶ） */
-  insertSourceLinks(links: readonly SourceLink[]): Promise<void>;
+  insertSourceLinks(links: readonly SourceLink[]): void;
 
-  /** ドキュメント ID → 出典メモ一覧（「元になったメモ」領域・関連メモ・検索結果の出典リンク先 ID 用）。userId でスコープする */
-  listSourceLinksByDocument(userId: UserId, documentId: DocumentId): Promise<readonly SourceLink[]>;
+  /** ドキュメント ID → 出典メモ一覧（「元になったメモ」領域・関連メモ・検索結果の出典リンク先 ID 用） */
+  listSourceLinksByDocument(documentId: DocumentId): readonly SourceLink[];
 
   /**
    * ドキュメント ID 群 → 出典リンクの一括逆引き。
    * トピック詳細（getTopic。P-07 / S-DT-02）の「関連メモ = 配下ドキュメントの出典リンク集約」が
    * 配下ドキュメント数分の N+1 照会にならず 1 クエリで成立する
    * （`listSourceLinksByMemos` / `listByIdsIncludingTrashed` と同水準の一括読み取り）。
-   * userId でスコープし、他ユーザー所有のドキュメントのリンクは結果に含めない。
    */
-  listSourceLinksByDocuments(userId: UserId, documentIds: readonly DocumentId[]): Promise<readonly SourceLink[]>;
+  listSourceLinksByDocuments(documentIds: readonly DocumentId[]): readonly SourceLink[];
 
-  /** メモ ID → 参照元ドキュメント一覧（メモ側の「→ ドキュメントX」導線用）。userId でスコープする */
-  listSourceLinksByMemo(userId: UserId, memoId: MemoId): Promise<readonly SourceLink[]>;
+  /** メモ ID → 参照元ドキュメント一覧（メモ側の「→ ドキュメントX」導線用） */
+  listSourceLinksByMemo(memoId: MemoId): readonly SourceLink[];
 
   /**
    * メモ ID 群 → 参照元ドキュメント一覧の一括逆引き。
    * タイムライン1ページ分（最大100件）の「→ ドキュメントX」導線が 1 クエリで成立する
    * （memo の getTimeline が併用する。`listByIdsIncludingTrashed` と同水準の一括読み取り）。
-   * userId でスコープし、他ユーザー所有のメモへのリンクは結果に含めない。
    */
-  listSourceLinksByMemos(userId: UserId, memoIds: readonly MemoId[]): Promise<readonly SourceLink[]>;
+  listSourceLinksByMemos(memoIds: readonly MemoId[]): readonly SourceLink[];
 
   /**
    * 参照先メモのハードデリートに伴うリンク消去（ADR-003）。
    * memo ハードデリートのユースケース（trash ドメイン）が同一 UoW で呼ぶ。冪等。
-   * 書き込み系でも外部入力起点の ID を受けるため userId を第一引数に取り、
-   * アダプターは常に userId でスコープして消去する（他ユーザー所有のリンクには影響しない。テナント分離の構造的保証）。
    */
-  deleteSourceLinksByMemo(userId: UserId, memoId: MemoId): Promise<void>;
+  deleteSourceLinksByMemo(memoId: MemoId): void;
+
+  // --- 保持日数変更に伴う purgeAfter の一括再計算（trash.md「保持期限」） ---
+  recalculatePurgeAfter(
+    retentionDays: TrashRetentionDays,
+    limit: number,
+  ): Readonly<{ updatedCount: number; hasMore: boolean }>;
 }
 ```
 
-- `findById` は `userId` でスコープし **active のみ**返す。trashed・他ユーザー所有は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04。テナント分離）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示のほか、出典リンクの「削除済み」表示等の人間 UI の読み取り経路）は `findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使う（AI 向けユースケースでは使用しない）。`delete` はハードデリートで、**アダプターは同一バッチで当該ドキュメントの全リビジョンと全出典リンク（documentId 側）も消去する**（4.3「履歴ごとの完全消去」+ ADR-003）
-- 保持期限切れ項目の列挙は本ポートには置かず、trash の `TrashQueryPort.listExpiredItems` に一本化する（trash.md 参照）
+- `findById` は **active のみ**返す。trashed は `null`（memo と同じ規約。AI からゴミ箱が「存在しない」扱いになる土台。S-AI-04）。trashed も必要な読み取り（復元・ハードデリート・ゴミ箱表示のほか、出典リンクの「削除済み」表示等の人間 UI の読み取り経路）は `findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使う（AI 向けユースケースでは使用しない）。`delete` はハードデリートで、**アダプターは同一トランザクションで当該ドキュメントの全リビジョンと全出典リンク（documentId 側）も消去する**（4.3「履歴ごとの完全消去」+ ADR-003）
+- 保持期限切れ項目の**列挙**は本ポートに置かない。各項目の `purgeAfter` を索引で引くのは trash の `TrashQueryPort.listItemsToPurge` であり、それを呼ぶのは自分の Durable Object の Alarm ジョブである（trash.md「保持期限」）
+- `recalculatePurgeAfter` は保持日数変更に伴う一括更新の書き込み口である。契約は `TopicRepository` の同名メソッドと同じ（`purgeAfter` が算出値と一致しないゴミ箱内ドキュメントを `limit` 件まで更新し、残件の有無を返す。OCC トークンを取らず `version` も進めない）
 - 一覧系のうち書き込み（save / delete）に接続するもの（`listActiveByTopic` / `listTrashedByTopic` / `listTrashedByUser`）は `Versioned<...>` で OCC トークンを伴って返す（memo 側の `listTrashed` と同規約。セット削除・セット復元・トピックハードデリートのフローが読み直しなしで書き込める）
 - 出典メモの表示情報（本文スニペット・投稿日時・削除済みか）は memo ドメインの読み取りポートから取得する。本ポートはリンク（ID の組）だけを返す
 - エラーケース: 共通に加え、`insertRevision` の `(documentId, revisionNumber)` 一意制約違反 → `ConflictError`（同時編集の競合として扱う）
@@ -549,7 +529,7 @@ export interface DocumentRepository {
 
 詳細は Phase 4 で定義。★ = 人間 UI 専用（AI トークンのスコープに存在しない）。
 
-外部入力の ID を受ける全ユースケース（get / 編集 / 削除 / 復元系）に共通: 対象の所有権はリポジトリの userId スコープ（各メソッドの第一引数に操作主体の `userId` を渡す）により構造的に保証され、他ユーザーの ID は NotFound となる。ユースケースごとの所有権チェックは列挙しない。
+外部入力の ID を受ける全ユースケース（get / 編集 / 削除 / 復元系）に共通: 対象の所有権は到達可能性（ユーザー単位 Durable Object の中に他ユーザーの行が存在しないこと）により構造的に保証され、他ユーザーの ID は NotFound となる。ユースケースごとの所有権チェックは列挙しない。
 
 knowledge ドメインの application 層:
 
@@ -558,7 +538,7 @@ knowledge ドメインの application 層:
 - `trashTopic` — トピックのソフトデリート。`TopicTrashService.trashTopicSet` で配下 active ドキュメントとセット削除（UI / MCP `delete`）
 - `listTopics` — トピックと配下ドキュメントの一覧（UI / MCP `list_topics`。配下ドキュメントは `listActiveByTopics` で一括取得する）
 - `getTopic` ★ — トピック詳細（配下ドキュメント一覧 + 関連メモ = 配下ドキュメントの出典リンク集約。出典リンクは配下ドキュメント ID 群から `listSourceLinksByDocuments` で一括逆引きし、N+1 照会にしない。関連メモの本文・削除済み表示は `MemoRepository.listByIdsIncludingTrashed` で取得。AI には `list_topics` のみで、IncludingTrashed 読み取りを含む本ユースケースは AI に配線しない）
-- `createDocument` — ドキュメント作成。出典メモ ID 群の実在・非ゴミ箱、作成先トピックの実在・非ゴミ箱を検証してから `Document.create`（UI / MCP `create_document`）。出典メモの検証は `MemoRepository.listActiveByIds`（active のみ返す。AI 経路で使用可）で行い、要求 ID のうち結果に含まれないものが 1 件でもあれば全体を失敗させる（存在しない / ゴミ箱内 / 他ユーザー所有はいずれも「結果に含まれない」として一律 NotFound で扱い、AI にゴミ箱内の存在事実も漏らさない。S-AI-03 異常系。`listByIdsIncludingTrashed` は人間 UI の表示用のままで、本検証には使わない）。所有権はリポジトリの userId スコープにより構造的に保証される（`MemoRepository.listActiveByIds` / `TopicRepository.findById` を操作主体の `userId` で呼ぶため、他ユーザーの ID は「実在しない」= NotFound として検出される。ユースケース側での `entity.userId` 照合は不要）。**並行する `trashTopic` / アーカイブ切替とのレース排除（設計判断）**: 同一 UoW 内で作成先トピックを OCC トークン付きで読み、トピックを touch（内容不変のまま `version` をインクリメントする `TopicRepository.save`。イベントは発行しない）してからドキュメントを insert する。これにより並行する `trashTopic`（セット削除対象の確定）等と OCC で直列化され、「ソフトデリート済みトピック配下に active ドキュメントが生まれる」レースを構造的に排除する（usecases/knowledge.md の createDocument 処理フロー）
+- `createDocument` — ドキュメント作成。出典メモ ID 群の実在・非ゴミ箱、作成先トピックの実在・非ゴミ箱を検証してから `Document.create`（UI / MCP `create_document`）。出典メモの検証は `MemoRepository.listActiveByIds`（active のみ返す。AI 経路で使用可）で行い、要求 ID のうち結果に含まれないものが 1 件でもあれば全体を失敗させる（存在しない / ゴミ箱内はいずれも「結果に含まれない」として一律 NotFound で扱い、AI にゴミ箱内の存在事実も漏らさない。S-AI-03 異常系。`listByIdsIncludingTrashed` は人間 UI の表示用のままで、本検証には使わない）。所有権は到達可能性により構造的に保証される（他ユーザーの ID は「実在しない」= NotFound として検出される。ユースケース側での `entity.userId` 照合は不要）。**並行する `trashTopic` / アーカイブ切替とのレース排除（設計判断）**: 同一 UoW 内で作成先トピックを OCC トークン付きで読み、トピックを touch（内容不変のまま `version` をインクリメントする `TopicRepository.save`）してからドキュメントを insert する。これにより並行する `trashTopic`（セット削除対象の確定）等と OCC で直列化され、「ソフトデリート済みトピック配下に active ドキュメントが生まれる」レースを構造的に排除する（usecases/knowledge.md の createDocument 処理フロー）
 - `editDocument` ★ — 全文形式の編集（人間 UI。変更理由省略時は「手動編集」を補完する経路のため、AI に配線すると「変更理由必須」（4.5）が骨抜きになる。編集競合は memo の editMemo と同方式: 入力 `expectedVersion` との不一致を正常応答 `result: "conflict"` + ConflictView で返し、UI が警告 → ユーザー確認のうえ最新 version で再実行する。AI の編集経路は `editDocumentByAi` のみ）
 - `editDocumentByAi` — AI からの編集（MCP `edit_document`。入力は `{ mode: "patch"; patches: DocumentPatch } | { mode: "replaceAll"; body: 全文 }` の判別可能ユニオンで、既定は patch。patch は `DocumentPatch.apply` → `Document.edit`、replaceAll は受領した全文で直接 `Document.edit`。replaceAll はユーザーが明示的に全面書き直しを求めた場合に限る旨をツール定義のガイダンスに明記する。空本文ドキュメントへの編集は replaceAll のみ可。いずれも変更理由必須）
 - `rollbackDocument` ★ — 過去リビジョンの内容で新リビジョンを積む
@@ -571,8 +551,8 @@ knowledge ドメインの application 層:
 
 AI に公開する knowledge のユースケースは `createTopic` / `updateTopic` / `trashTopic` / `listTopics` / `createDocument` / `editDocumentByAi` / `trashDocument` / `getDocument` の 8 つのみであり、requirements 4.5 の AI 公開動詞（`create_topic` / `update_topic` / `delete` / `list_topics` / `create_document` / `edit_document` / `get`）と 1:1 に対応する（`delete` はトピック / ドキュメントの各ソフトデリートに対応）。上記以外（★ 付き）は AI 側 presentation に配線しない。
 
-trash ドメイン側（knowledge のサービス・ポート・イベントファクトリを利用）:
+trash ドメイン側（knowledge のサービス・ポートを利用）:
 
 - `restoreTopic` ★ — `TopicTrashService.restoreTopicSet` でセット復元
 - `restoreDocument` ★ — 個別復元。所属トピックが (a) 存命 → そのまま復元、(b) ゴミ箱内 → 確認のうえ `restoreTopicSet` でトピックごとセット復元し、復元要求対象が `skippedDocuments`（個別削除分）に含まれた場合は同一 UoW 内で追加で `Document.restore`、(c) ハードデリート済み → 復元先選択（既存 / 新規）を受けて `moveToTopic` → `restore`（ADR-001）
-- `hardDeleteTopic` ★ / `hardDeleteDocument` ★ / `emptyTrash` ★ / 保持期限による自動ハードデリート — リビジョン・出典リンクごとの完全消去。`topic.hardDeleted` / `document.hardDeleted` を発行。メモのハードデリート時は、消去前に `listSourceLinksByMemo` で影響ドキュメント ID を確定したうえで `deleteSourceLinksByMemo` を同一 UoW で実行し（ADR-003 の同期方式）、各影響ドキュメントへ `document.sourceLinksChanged` を発行する。ドキュメントのハードデリート時も同様に、消去前に `listSourceLinksByDocument` で出典メモ ID を確定し、各影響メモへ memo の `memo.sourceLinksChanged` を同一 UoW で発行する（検索インデックスの出典関連フィールドの再構築契機）
+- `hardDeleteTopic` ★ / `hardDeleteDocument` ★ / `emptyTrash` ★ / 保持期限による自動ハードデリート — リビジョン・出典リンクごとの完全消去。消去と同一トランザクションで対象のインデックスエントリを除去する。メモのハードデリート時は、消去前に `listSourceLinksByMemo` で影響ドキュメント ID を確定したうえで `deleteSourceLinksByMemo` を同一 UoW で実行し（ADR-003 の同期方式）、各影響ドキュメントのエントリを同じトランザクションで作り直す。ドキュメントのハードデリート時も同様に、消去前に `listSourceLinksByDocument` で出典メモ ID を確定し、各影響メモのエントリを同一 UoW で作り直す（出典関連フィールドの再構築）

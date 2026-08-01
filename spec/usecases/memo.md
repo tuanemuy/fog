@@ -10,7 +10,8 @@ memo ドメインのユースケース定義。
 
 - **公開面**: 各ユースケースに「人間UI ★ / AI API / 両方」を明記する。履歴閲覧（listMemoRevisions / diffMemoRevisions）・ロールバック（rollbackMemo）・タイムライン閲覧系は人間UI専用。AI に公開しないユースケースの排除は二層で保証する（domains/identity.md「TokenScope」、domains/index.md「権限の非対称性」）: `actor` を入力に持つ ★ ユースケースは `actor` の型を `UserActor` に限定して型エラーで排除し、`actor` を持たない ★ ユースケース（listMemoRevisions / diffMemoRevisions 等）は AI 側 presentation（MCP / REST）に配線しないこと（配線分離）＋ AI トークンの認可ミドルウェアの許可ユースケース列挙に含めないことで排除する
 - **操作主体**: `userId` は認証済みセッション（人間UI）または AI トークン（AI API）から解決済みの値を受ける。`actor`（リビジョンの「誰が」）は identity ドメインの `Actor` 型で、同じく認証コンテキストから解決済みの値を受ける。入力DTOには「外部から自由に指定できる値」としては現れない。人間UI専用（★）のユースケースでは `actor` を `Actor` の `UserActor` バリアント（`{ kind: "user" }`）に狭めて受け、`AiClientActor` を渡すことは型エラーとする（AI 側には別ユースケース post_memo / update_memo がある）
-- **テナント分離**: 外部入力の ID を受ける全ユースケースは、リポジトリの userId スコープ（各メソッドの第一引数に操作主体の `userId` を渡す）により所有権が構造的に保証される。他ユーザー所有の ID は NotFound となる。以降、各ユースケースのエラーケースでは個別に再掲しない
+- **テナント分離**: 外部入力の ID を受ける全ユースケースは、到達可能性（`userId` から選んだユーザー単位 Durable Object の中に他ユーザーの行が存在しないこと）により所有権が構造的に保証される。他ユーザーの ID は NotFound となる。以降、各ユースケースのエラーケースでは個別に再掲しない
+- **書き込みは同期コールバックで行う**: 永続化は `UnitOfWorkProvider.run` に渡す**同期**のコールバックの中で完結する（`await` を挟めない）。**変更を外部へ通知する経路は持たない** — 検索インデックスの更新は同じコールバックの中の projection 更新として行う（domains/search.md「インデックスの維持」）
 - **now / id**: ユースケース冒頭で `container.clock.now()` / `container.idGenerator.next()` により解決する。ドメインは `new Date()` / ID 生成をしない
 - **DTO の型**: 出力DTOのフィールドはプリミティブ（string / number / boolean / Date）に射影する。ブランド VO・画面語彙は使わない
 - **MemoView（共通出力射影）**: `{ id: string; body: string; postedAt: Date; updatedAt: Date; latestRevisionNumber: number; version: number }`。`version` は人間UIの編集開始時に OCC トークンとして保持され、editMemo の `expectedVersion` になる
@@ -44,11 +45,11 @@ memo ドメインのユースケース定義。
 #### 処理フロー
 
 1. `now = clock.now()`、`id = idGenerator.next()` を解決する
-2. `Memo.create({ id, userId, body, actor }, now)` を呼ぶ。`{ memo, initialRevision }` と `eventDrafts`（`memo.created`）が返る
+2. `Memo.create({ id, userId, body, actor }, now)` を呼ぶ。`{ memo, initialRevision }` が返る
 3. UnitOfWork 内で:
    1. `MemoRepository.insert(memo)`
    2. `MemoRepository.insertRevision(initialRevision)`
-   3. `collectEvents(eventDrafts)`（Outbox へ。search consumer がインデックスに upsert する）
+   3. 同じ `transactionSync` の中で `search_entries` / `search_fts` の projection を更新する（当該メモのエントリを作る）
 4. `memo` を MemoView に射影して返す
 
 #### エラーケース
@@ -94,9 +95,9 @@ TimelineItemView = MemoView + 次のフィールド:
 
 #### 処理フロー
 
-1. `MemoRepository.findTimelinePage(userId, { cursor, direction, limit, keyword })` で 1 ページ分の active メモと `nextCursor` を取得する
-2. ページ内のメモ ID 群で knowledge の `DocumentRepository.listSourceLinksByMemos(userId, memoIds)` を呼び、出典リンクを 1 クエリで一括逆引きする（N+1 にしない）
-3. リンク先ドキュメント ID 群（重複除去）で knowledge の `DocumentRepository.listByIdsIncludingTrashed(userId, documentIds)` を呼び、タイトルと trashed 状態を取得する（「削除済みのドキュメント」表示のため trashed 込み。人間UI専用の読み取り経路）
+1. `MemoRepository.findTimelinePage({ cursor, direction, limit, keyword })` で 1 ページ分の active メモと `nextCursor` を取得する
+2. ページ内のメモ ID 群で knowledge の `DocumentRepository.listSourceLinksByMemos(memoIds)` を呼び、出典リンクを 1 クエリで一括逆引きする（N+1 にしない）
+3. リンク先ドキュメント ID 群（重複除去）で knowledge の `DocumentRepository.listByIdsIncludingTrashed(documentIds)` を呼び、タイトルと trashed 状態を取得する（「削除済みのドキュメント」表示のため trashed 込み。人間UI専用の読み取り経路）
 4. メモごとに出典リンクを突き合わせて TimelineItemView に射影して返す
 5. 0 件（keyword 絞り込みで一致なしを含む）は `items: []` を返す（エラーにしない。空状態・「見つからなかった」の表示は presentation の責務）
 
@@ -133,7 +134,7 @@ TimelineItemView = MemoView + 次のフィールド:
 
 #### 処理フロー
 
-1. `MemoRepository.findTimelineAround(userId, { kind: "date", date }, { limit, keyword })` でアンカー前後のメモと両方向カーソルを取得する。指定日にメモがなければ前後で最も近いメモの位置が返る（S-TL-03 エッジケース。リポジトリ契約）
+1. `MemoRepository.findTimelineAround({ kind: "date", date }, { limit, keyword })` でアンカー前後のメモと両方向カーソルを取得する。指定日にメモがなければ前後で最も近いメモの位置が返る（S-TL-03 エッジケース。リポジトリ契約）
 2. getTimeline の手順 2〜4 と同様に `listSourceLinksByMemos` → `listByIdsIncludingTrashed` で出典導線を付与する
 3. メモが 0 件なら `items: []`・両カーソル null を返す
 
@@ -173,8 +174,8 @@ TimelineItemView = MemoView + 次のフィールド:
 
 #### 処理フロー
 
-1. `MemoRepository.findByIdIncludingTrashed(userId, memoId)` で対象の存在と状態を判定する（人間UI専用の読み取り経路）。null なら `targetState: "notFound"`、trashed なら `"trashed"` として空結果を返す
-2. active の場合、`MemoRepository.findTimelineAround(userId, { kind: "memo", memoId }, { limit, keyword: null })` で対象メモを含む前後ページと両方向カーソルを取得する
+1. `MemoRepository.findByIdIncludingTrashed(memoId)` で対象の存在と状態を判定する（人間UI専用の読み取り経路）。null なら `targetState: "notFound"`、trashed なら `"trashed"` として空結果を返す
+2. active の場合、`MemoRepository.findTimelineAround({ kind: "memo", memoId }, { limit, keyword: null })` で対象メモを含む前後ページと両方向カーソルを取得する
 3. getTimeline の手順 2〜4 と同様に出典導線を付与し、`targetState: "found"` で返す
 
 #### エラーケース
@@ -225,11 +226,11 @@ ConflictView（警告表示用）:
 
 1. `now = clock.now()` を解決する
 2. UnitOfWork 内で:
-   1. `MemoRepository.findById(userId, memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`
-   2. 取得したメモの `version` が入力 `expectedVersion` と異なる場合、**何も書かずに** `result: "conflict"` を組み立てて返す。`conflict.latestRevision` は `MemoRepository.findRevision(userId, memoId, memo.latestRevisionNumber)` で取得する
+   1. `MemoRepository.findById(memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`
+   2. 取得したメモの `version` が入力 `expectedVersion` と異なる場合、**何も書かずに** `result: "conflict"` を組み立てて返す。`conflict.latestRevision` は `MemoRepository.findRevision(memoId, memo.latestRevisionNumber)` で取得する
    3. 一致する場合、`Memo.edit(memo, { body, actor }, now)` を呼ぶ
       - `newRevision: null`（同一本文）なら何も書かず `result: "unchanged"`（version も上がらない）
-      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)`、`MemoRepository.insertRevision(newRevision)`、`collectEvents(eventDrafts)`（`memo.edited`。search consumer が最新本文を読み直して upsert）を行い `result: "saved"`
+      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)`、`MemoRepository.insertRevision(newRevision)`、および同じ `transactionSync` の中での projection 更新（当該メモのエントリを最新本文で作り直す）を行い `result: "saved"`
 3. 現在のメモを MemoView に射影して返す
 
 #### エラーケース
@@ -268,8 +269,8 @@ ConflictView（警告表示用）:
 
 #### 処理フロー
 
-1. `MemoRepository.findByIdIncludingTrashed(userId, memoId)` で存在確認する（人間UIの履歴閲覧はゴミ箱内メモにも許される読み取り経路）。null なら `NotFoundError`
-2. `MemoRepository.listRevisions(userId, memoId)` で全リビジョンを revisionNumber 昇順で取得する（メモが存在すれば必ず 1 件以上）
+1. `MemoRepository.findByIdIncludingTrashed(memoId)` で存在確認する（人間UIの履歴閲覧はゴミ箱内メモにも許される読み取り経路）。null なら `NotFoundError`
+2. `MemoRepository.listRevisions(memoId)` で全リビジョンを revisionNumber 昇順で取得する（メモが存在すれば必ず 1 件以上）
 3. actor を ActorView に射影して返す
 
 #### エラーケース
@@ -312,7 +313,7 @@ RevisionView:
 
 #### 処理フロー
 
-1. `MemoRepository.findRevision(userId, memoId, baseRevisionNumber)` と `MemoRepository.findRevision(userId, memoId, targetRevisionNumber)` で二点を取得する。いずれかが null なら `NotFoundError`
+1. `MemoRepository.findRevision(memoId, baseRevisionNumber)` と `MemoRepository.findRevision(memoId, targetRevisionNumber)` で二点を取得する。いずれかが null なら `NotFoundError`
 2. それぞれを RevisionView に射影して返す（差分計算はしない）
 
 #### エラーケース
@@ -352,11 +353,11 @@ RevisionView:
 
 1. `now = clock.now()` を解決する
 2. UnitOfWork 内で:
-   1. `MemoRepository.findById(userId, memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（trashed は編集不可のため一律 NotFound）
-   2. `MemoRepository.findRevision(userId, memoId, targetRevisionNumber)` で対象リビジョンを取得する。null なら `NotFoundError`
+   1. `MemoRepository.findById(memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（trashed は編集不可のため一律 NotFound）
+   2. `MemoRepository.findRevision(memoId, targetRevisionNumber)` で対象リビジョンを取得する。null なら `NotFoundError`
    3. `Memo.rollback(memo, { targetRevision, actor }, now)` を呼ぶ
       - `newRevision: null`（現在本文と同一）なら何も書かず `result: "unchanged"`
-      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)`、`MemoRepository.insertRevision(newRevision)`、`collectEvents(eventDrafts)`（`memo.edited`）を行い `result: "rolledBack"`
+      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)`、`MemoRepository.insertRevision(newRevision)`、および同じ `transactionSync` の中での projection 更新を行い `result: "rolledBack"`
 3. 現在のメモを MemoView に射影して返す
 
 #### エラーケース
@@ -365,7 +366,7 @@ RevisionView:
 |---|---|
 | メモが不在・trashed・他ユーザー所有 | `NotFoundError` |
 | 対象リビジョンが不在 | `NotFoundError` |
-| 対象リビジョンが別メモのもの | ビジネスルール違反 `BusinessRuleError(RevisionMismatch)`（ドメインで検出。userId スコープの `findRevision` を経る限り通常到達しない防衛線） |
+| 対象リビジョンが別メモのもの | ビジネスルール違反 `BusinessRuleError(RevisionMismatch)`（ドメインで検出。自分の Durable Object の中だけを引く `findRevision` を経る限り通常到達しない防衛線） |
 | 保存時の OCC 競合 | `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。UI は再試行 |
 | DB 障害 | `SystemError(DatabaseError)` |
 
@@ -390,10 +391,11 @@ RevisionView:
 
 1. `now = clock.now()` を解決する
 2. UnitOfWork 内で:
-   1. `MemoRepository.findById(userId, memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（既に trashed のものも NotFound 扱い）
-   2. `Memo.softDelete(memo, now)` で `TrashedMemo` と `eventDrafts`（`memo.trashed`）を得る
+   1. `MemoRepository.findById(memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（既に trashed のものも NotFound 扱い）
+   2. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`Memo.softDelete(memo, purgeAfter, now)` で `TrashedMemo` を得る
    3. `MemoRepository.save(trashedMemo, expectedVersionトークン)`
-   4. `collectEvents(eventDrafts)`（search consumer がインデックスから除去し、あわせて出典先ドキュメントのエントリを再 upsert する）
+   4. 同じ `transactionSync` の中で projection を更新する（当該メモのエントリを除去し、あわせて出典先ドキュメントのエントリを作り直す）
+   5. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
 
 #### エラーケース
 
@@ -431,7 +433,7 @@ AI がユーザーの代理でメモを投稿する（S-AI-01）。タイムス�
 
 #### 処理フロー
 
-postMemo と同一: `Memo.create` → UoW 内で `MemoRepository.insert` + `insertRevision` + `collectEvents(memo.created)`。人間UIとの差は `actor` の解決元（トークン）のみ。
+postMemo と同一: `Memo.create` → UoW 内で `MemoRepository.insert` + `insertRevision` + 同一 `transactionSync` での projection 更新。人間UIとの差は `actor` の解決元（トークン）のみ。
 
 #### エラーケース
 
@@ -468,10 +470,10 @@ editMemo と異なり `expectedVersion` を受けない: AI は `get` で最新�
 
 1. `now = clock.now()` を解決する
 2. UnitOfWork 内で:
-   1. `MemoRepository.findById(userId, memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（trashed・他ユーザー所有・不在を区別せず、ゴミ箱内の存在事実も漏らさない）
+   1. `MemoRepository.findById(memoId)` で active なメモを OCC トークン付きで取得する。null なら `NotFoundError`（trashed・他ユーザー所有・不在を区別せず、ゴミ箱内の存在事実も漏らさない）
    2. `Memo.edit(memo, { body, actor }, now)` を呼ぶ
       - `newRevision: null` なら何も書かず `result: "unchanged"`
-      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)` + `MemoRepository.insertRevision(newRevision)` + `collectEvents(memo.edited)` で `result: "saved"`
+      - 新リビジョンありなら `MemoRepository.save(memo, expectedVersionトークン)` + `MemoRepository.insertRevision(newRevision)` + 同一 `transactionSync` での projection 更新で `result: "saved"`
 
 #### エラーケース
 
@@ -505,7 +507,7 @@ editMemo と異なり `expectedVersion` を受けない: AI は `get` で最新�
 
 #### 処理フロー
 
-1. `MemoRepository.findTimelinePage(userId, { cursor: null, direction: "older", limit, keyword: null })` で直近の active メモを取得する（trashed は返らない: ゴミ箱は AI から見えない）
+1. `MemoRepository.findTimelinePage({ cursor: null, direction: "older", limit, keyword: null })` で直近の active メモを取得する（trashed は返らない: ゴミ箱は AI から見えない）
 2. 各メモを射影して返す。0 件は空配列
 
 #### エラーケース
@@ -538,7 +540,7 @@ editMemo と異なり `expectedVersion` を受けない: AI は `get` で最新�
 
 #### 処理フロー
 
-1. `MemoRepository.findById(userId, memoId)` で active なメモを取得する。null なら `NotFoundError`（ゴミ箱内は「取得できない」= 存在しない扱い。S-AI-02 エッジケース）
+1. `MemoRepository.findById(memoId)` で active なメモを取得する。null なら `NotFoundError`（ゴミ箱内は「取得できない」= 存在しない扱い。S-AI-02 エッジケース）
 2. 射影して返す
 
 #### エラーケース
@@ -569,7 +571,7 @@ AI によるメモのソフトデリート（S-AI-05）。ソフトデリート�
 
 #### 処理フロー
 
-softDeleteMemo と同一: UoW 内で `findById` → `Memo.softDelete` → `save` → `collectEvents(memo.trashed)`。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
+softDeleteMemo と同一（**保持日数の読み取りと `purgeAfter` の算出、および `purge-trash` の起床の投入を含む**）: UoW 内で `findById` → `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` を算出 → `Memo.softDelete(memo, purgeAfter, now)` → `save` → 同一 `transactionSync` での projection 更新 → 同一 `transactionSync` で `TrashQueryPort.findEarliestPurgeAfter()` を読み、現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。既に trashed のメモは `findById` が null を返すため NotFound（「ゴミ箱の中身は見えない」を貫く）。
 
 #### エラーケース
 

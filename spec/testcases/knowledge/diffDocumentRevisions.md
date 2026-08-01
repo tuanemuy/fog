@@ -11,7 +11,7 @@
 | リビジョン 1〜3 を持つドキュメント | `baseRevisionNumber: 2`, `targetRevisionNumber: 2`（同一）で取得する | `ValidationError`（二点が同一） | |
 | リビジョン 1〜3 を持つドキュメント | `targetRevisionNumber: 4`（存在しない）で取得する | `NotFoundError`（いずれか一方でも不在なら NotFound） | |
 | ドキュメントが存在しない ID（ハードデリート済み含む） | 任意の二点を取得する | `NotFoundError` | |
-| 他ユーザー所有のドキュメントのリビジョン | 二点を取得する | userId スコープにより `findRevision` が `null` を返し `NotFoundError` | |
+| 他ユーザー所有のドキュメントのリビジョン | 二点を取得する | 到達可能性により `findRevision` が `null` を返し `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `baseRevisionNumber: 0` を指定する | `BusinessRuleError(InvalidRevisionNumber)`（境界値: 1 未満） | |
 | — | `revisionNumber` に非整数（`1.5`）を指定する | `BusinessRuleError(InvalidRevisionNumber)` | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |

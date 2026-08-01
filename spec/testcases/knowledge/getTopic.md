@@ -15,6 +15,6 @@
 | トピック配下にゴミ箱内ドキュメントが存在する | トピック詳細を取得する | `documents` には active のみ含まれる（`listActiveByTopic`） | |
 | トピックが存在しない ID | トピック詳細を取得する | `NotFoundError` | |
 | トピックがゴミ箱内（`trashed`） | トピック詳細を取得する | `NotFoundError`（ゴミ箱内トピックの詳細は trash ドメインの責務） | |
-| 他ユーザー所有のトピック ID | トピック詳細を取得する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のトピック ID | トピック詳細を取得する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `topicId` に空文字を渡す | `BusinessRuleError(InvalidTopicId)` | |
 | トピックが存在する | `MemoRepository.listByIdsIncludingTrashed` で DB 例外が発生する | `SystemError(DatabaseError)` | |

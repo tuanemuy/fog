@@ -9,11 +9,11 @@
 ## 共通事項
 
 - **公開面**: 各ユースケースに「人間 UI ★（AI トークンのスコープに存在しない）/ AI API（MCP・REST）/ 両方」を明記する。★ 付きの排除は二層で保証する（domains/identity.md「TokenScope」）: `actor` を入力に持つ ★ ユースケース（editDocument / rollbackDocument）は `actor` の型を `UserActor` に限定して型エラーで排除し、`actor` を持たない ★ ユースケース（getTopic / listDocumentRevisions / diffDocumentRevisions 等）は AI 側 presentation（MCP / REST）に配線しないこと（配線分離）＋ AI トークンの認可ミドルウェアの許可ユースケース列挙に含めないことで排除する
-- **テナント分離**: 外部入力の ID を受ける全ユースケースは、リポジトリの各メソッドに操作主体の `userId` を第一引数で渡す。他ユーザー所有の ID は「存在しない」（null / 空）となり NotFound で扱われるため、ユースケースごとの所有権チェックは記載しない（domains/index.md「テナント分離」）
+- **テナント分離**: `userId` は**対象のユーザー単位 Durable Object を選ぶのに使い、その先のリポジトリ / ポートには渡さない**。対象 ID の所有権は到達可能性により構造的に保証され、他ユーザーの ID は「存在しない」（null / 空）となり NotFound で扱われるため、ユースケースごとの所有権チェックは記載しない（domains/index.md「テナント分離」）
 - **NotFound 変換**: `findById` 系の `null` を `NotFoundError` に変換するのはユースケースの責務。AI 向けユースケースは `findById` / `listActiveByIds` 系（active / Live のみ返す）だけを使い、ゴミ箱内は構造的に「存在しない」扱いになる（S-AI-04）。`findByIdIncludingTrashed` / `listByIdsIncludingTrashed` を使えるのは人間 UI・trash 系ユースケースのみ
 - **OCC**: 書き込みは UoW 内で `findById` 系が返した `ExpectedVersion` トークンを添えて `save` する。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。汎用リトライは設けない
 - **時刻・ID**: `now` は `container.clock.now()`、新規 ID は `container.idGenerator.next()` をユースケース冒頭で解決してドメインへ渡す
-- **イベント**: ドメインの振る舞いが返す `EventDraft` を同一 UoW 内で `collectEvents` に渡す（Outbox 経由。ADR-005）
+- **書き込みは同期コールバックで行う**: 永続化は `UnitOfWorkProvider.run` に渡す**同期**のコールバックの中で完結する（`await` を挟めない）。検索インデックスの更新は同じコールバックの中の projection 更新として行い、変更を外部へ通知する経路は持たない（domains/search.md「インデックスの維持」）
 - **Actor**: リビジョンの「誰が」。人間 UI では認証済みユーザー、AI API ではトークン識別から presentation 層が解決し、入力 DTO の `actor` として渡す。人間 UI 専用（★）のユースケースは `actor` を `Actor` の `UserActor` バリアント（`{ kind: "user" }`）に狭めて受け、`AiClientActor` を渡すことは型エラーとする（AI 側の編集は別ユースケース editDocumentByAi）。両方公開のユースケース（createDocument 等）は `Actor` のまま受ける
 - **DTO**: フィールドはプリミティブ型で表現する（ブランド VO を露出しない）。出力は `view.ts` のヘルパで射影する。**出力DTOの日時は `Date` で表現する**（memo / identity / search / trash と同一規約）。ISO 8601 文字列へのシリアライズは presentation 層の責務
 - **AI 動詞 `get` / `delete` の種別ディスパッチ**: MCP / REST のツール入力スキーマに必須の種別フィールドを定める。`get` は `{ type: "memo" | "document"; id }`、`delete` は `{ type: "memo" | "document" | "topic"; id }`（`type` の語彙は search 結果の `type` と同じ）。presentation 層（MCP ツール / REST ハンドラ）が `type` で対応ユースケースへディスパッチする: `get` → memo の `get`（`type: "memo"`）/ `getDocument`（`type: "document"`）、`delete` → memo の `delete`（`type: "memo"`）/ `trashDocument`（`type: "document"`）/ `trashTopic`（`type: "topic"`）。ID は不透明文字列であり、`type` なしでのディスパッチは行わない
@@ -75,8 +75,8 @@ AI に公開するのは `createTopic` / `updateTopic` / `trashTopic` / `listTop
 ### 処理フロー
 
 1. `now` と新規トピック ID を解決する
-2. `Topic.create({ id, userId, name, description }, now)` で `ActiveTopic` と `topic.created` のイベントドラフトを得る（値オブジェクト構築・検証はドメイン内）
-3. UoW 内で `TopicRepository.insert(topic)`、`collectEvents(drafts)`
+2. `Topic.create({ id, userId, name, description }, now)` で `ActiveTopic` を得る（値オブジェクト構築・検証はドメイン内）
+3. UoW 内で `TopicRepository.insert(topic)`。**トピックはインデックスのエントリを持たない**ので projection の更新は無い（検索結果のトピックは join で解決する）
 4. トピックのビューを返す
 
 ### エラーケース
@@ -114,12 +114,12 @@ AI に公開するのは `createTopic` / `updateTopic` / `trashTopic` / `listTop
 ### 処理フロー
 
 1. `now` を解決し、`TopicId.create(input.topicId)` で検索キーを構築する
-2. UoW 内で `TopicRepository.findById(userId, topicId)`（Live のみ）。`null` なら `NotFoundError`（ゴミ箱内・他ユーザー所有・不存在を区別しない）
-3. 入力に応じてドメインの振る舞いを順に適用し、イベントドラフトを蓄積する:
+2. UoW 内で `TopicRepository.findById(topicId)`（Live のみ）。`null` なら `NotFoundError`（ゴミ箱内・他ユーザー所有・不存在を区別しない）
+3. 入力に応じてドメインの振る舞いを順に適用する:
    - `name` 指定時: `Topic.rename(topic, name, now)`
    - `description` 指定時: `Topic.changeDescription(topic, description, now)`
    - `archived: true` かつ現状態 `active`: `Topic.archive(topic, now)` / `archived: false` かつ現状態 `archived`: `Topic.unarchive(topic, now)`。現状態と同じ指定は何もしない（冪等）
-4. `TopicRepository.save(topic, expectedVersion)`、`collectEvents(drafts)`
+4. `TopicRepository.save(topic, expectedVersion)`。トピック名の変更は検索結果に join で即座に反映されるため、projection の更新は不要
 5. トピックのビューを返す
 
 ### エラーケース
@@ -172,8 +172,8 @@ presentation ごとの `includeArchived` の指定:
 
 ### 処理フロー
 
-1. `TopicRepository.listByUser(userId, { includeArchived })` でトピック一覧を取得する（安定順序）
-2. トピック ID 群を `DocumentRepository.listActiveByTopics(userId, topicIds)` に渡し、配下 active ドキュメントを 1 クエリで一括取得する（N+1 にしない）
+1. `TopicRepository.listByUser({ includeArchived })` でトピック一覧を取得する（安定順序）
+2. トピック ID 群を `DocumentRepository.listActiveByTopics(topicIds)` に渡し、配下 active ドキュメントを 1 クエリで一括取得する（N+1 にしない）
 3. ドキュメントを `topicId` でグルーピングし、ビューに射影して返す。0 件は空配列（エラーにしない）
 
 ### エラーケース
@@ -219,10 +219,10 @@ presentation ごとの `includeArchived` の指定:
 ### 処理フロー
 
 1. `TopicId.create(input.topicId)` で検索キーを構築する
-2. `TopicRepository.findById(userId, topicId)`（Live のみ。ゴミ箱内トピックの詳細は trash ドメインの責務）。`null` なら `NotFoundError`
-3. `DocumentRepository.listActiveByTopic(userId, topicId)` で配下 active ドキュメントを取得する
-4. 配下ドキュメント ID 群を `DocumentRepository.listSourceLinksByDocuments(userId, documentIds)` に渡し、出典リンクを 1 クエリで一括逆引きする（N+1 にしない）
-5. リンクの `memoId` を重複除去し、`MemoRepository.listByIdsIncludingTrashed(userId, memoIds)` で本文・投稿日時・削除状態を取得する。ハードデリート済みメモは結果に含まれない = 表示されない（ADR-003）
+2. `TopicRepository.findById(topicId)`（Live のみ。ゴミ箱内トピックの詳細は trash ドメインの責務）。`null` なら `NotFoundError`
+3. `DocumentRepository.listActiveByTopic(topicId)` で配下 active ドキュメントを取得する
+4. 配下ドキュメント ID 群を `DocumentRepository.listSourceLinksByDocuments(documentIds)` に渡し、出典リンクを 1 クエリで一括逆引きする（N+1 にしない）
+5. リンクの `memoId` を重複除去し、`MemoRepository.listByIdsIncludingTrashed(memoIds)` で本文・投稿日時・削除状態を取得する。ハードデリート済みメモは結果に含まれない = 表示されない（ADR-003）
 6. ビューに射影して返す（配下ドキュメント 0 件・関連メモ 0 件は空配列）
 
 ### エラーケース
@@ -262,11 +262,12 @@ presentation ごとの `includeArchived` の指定:
 ### 処理フロー
 
 1. `now` を解決し、`TopicId.create(input.topicId)` で検索キーを構築する
-2. UoW 内で `TopicRepository.findById(userId, topicId)`（Live のみ）。`null` なら `NotFoundError`
-3. `DocumentRepository.listActiveByTopic(userId, topicId)` で配下 active ドキュメント全件を OCC トークン付きで取得する
-4. `TopicTrashService.trashTopicSet(topic, documents, now)` で `TrashedTopic`・`TrashedDocument[]`（各 `trashedWith = topic.id`）と、`topic.trashed` 1 件 + `document.trashed` ドキュメント数分のイベントドラフトを得る
-5. 同一 UoW 内で `TopicRepository.save(trashedTopic, expectedVersion)`、各ドキュメントを `DocumentRepository.save(trashedDocument, expectedVersion)`、`collectEvents(drafts)`
-6. 削除結果のビューを返す
+2. UoW 内で `TopicRepository.findById(topicId)`（Live のみ）。`null` なら `NotFoundError`
+3. `DocumentRepository.listActiveByTopic(topicId)` で配下 active ドキュメント全件を OCC トークン付きで取得する
+4. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`TopicTrashService.trashTopicSet(topic, documents, purgeAfter, now)` で `TrashedTopic`・`TrashedDocument[]`（各 `trashedWith = topic.id`）を得る
+5. 同一 UoW 内で `TopicRepository.save(trashedTopic, expectedVersion)`、各ドキュメントを `DocumentRepository.save(trashedDocument, expectedVersion)`、および同じ `transactionSync` の中での projection 更新（配下ドキュメントのエントリを除去し、出典メモのエントリを作り直す）を行う
+6. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
+7. 削除結果のビューを返す
 
 ### エラーケース
 
@@ -314,12 +315,12 @@ presentation ごとの `includeArchived` の指定:
 ### 処理フロー
 
 1. `now`、新規ドキュメント ID・リビジョン ID を解決し、`TopicId.create` / `MemoId.create` で検索キーを構築する
-2. UoW 内で `TopicRepository.findById(userId, topicId)`（Live のみ）を **OCC トークン付き**で取得する。`null` なら `NotFoundError`（不存在・ゴミ箱内・他ユーザー所有を区別しない。S-AI-03 異常系）
-3. `sourceMemoIds` を重複除去し、非空なら `MemoRepository.listActiveByIds(userId, memoIds)` で検証する。**要求 ID のうち結果に含まれないものが 1 件でもあれば `NotFoundError` で全体を失敗させる**（存在しない / ゴミ箱内 / 他ユーザー所有はいずれも「結果に含まれない」として一律 NotFound。AI にゴミ箱内の存在事実も漏らさない。`listByIdsIncludingTrashed` は本検証に使わない）
+2. UoW 内で `TopicRepository.findById(topicId)`（Live のみ）を **OCC トークン付き**で取得する。`null` なら `NotFoundError`（不存在・ゴミ箱内・他ユーザー所有を区別しない。S-AI-03 異常系）
+3. `sourceMemoIds` を重複除去し、非空なら `MemoRepository.listActiveByIds(memoIds)` で検証する。**要求 ID のうち結果に含まれないものが 1 件でもあれば `NotFoundError` で全体を失敗させる**（存在しない / ゴミ箱内 / 他ユーザー所有はいずれも「結果に含まれない」として一律 NotFound。AI にゴミ箱内の存在事実も漏らさない。`listByIdsIncludingTrashed` は本検証に使わない）
 4. `changeReason` が省略・trim 後空なら「作成」を補完する
-5. `Document.create({ id, revisionId, userId, topicId, title, body, actor, changeReason, sourceMemoIds }, now)` で `ActiveDocument`・リビジョン #1・SourceLink 群（重複除去済み）と `document.created` のイベントドラフトを得る
-6. **作成先トピックを touch する（設計判断: `trashTopic` / `archiveTopic` とのレース排除）**: 同一 UoW 内で、手順 2 で読んだトピックを `TopicRepository.save(topic, expectedVersion)` で保存し `version` をインクリメントする（内容は変更しない。イベントも発行しない）。これによりドキュメント作成が並行する `trashTopic`（`listActiveByTopic` によるセット削除対象の確定）や `updateTopic` のアーカイブ切替と OCC で直列化され、どちらかが `ConflictError` になる。「ソフトデリート済みトピック配下に active ドキュメントが生まれる」レースを構造的に排除する
-7. 同一 UoW 内で `DocumentRepository.insert(document)`、`insertRevision(revision)`、`insertSourceLinks(links)`、`collectEvents(drafts)`
+5. `Document.create({ id, revisionId, userId, topicId, title, body, actor, changeReason, sourceMemoIds }, now)` で `ActiveDocument`・リビジョン #1・SourceLink 群（重複除去済み）を得る
+6. **作成先トピックを touch する（設計判断: `trashTopic` / `archiveTopic` とのレース排除）**: 同一 UoW 内で、手順 2 で読んだトピックを `TopicRepository.save(topic, expectedVersion)` で保存し `version` をインクリメントする（内容は変更しない）。これによりドキュメント作成が並行する `trashTopic`（`listActiveByTopic` によるセット削除対象の確定）や `updateTopic` のアーカイブ切替と OCC で直列化され、どちらかが `ConflictError` になる。「ソフトデリート済みトピック配下に active ドキュメントが生まれる」レースを構造的に排除する
+7. 同一 UoW 内で `DocumentRepository.insert(document)`、`insertRevision(revision)`、`insertSourceLinks(links)`、および同じ `transactionSync` の中での projection 更新（当該ドキュメントのエントリを作り、出典メモのエントリも作り直す）
 8. ドキュメントのビューを返す
 
 ### エラーケース
@@ -380,11 +381,11 @@ presentation ごとの `includeArchived` の指定:
 ### 処理フロー
 
 1. `now`、新規リビジョン ID を解決し、`DocumentId.create(input.documentId)` で検索キーを構築する
-2. UoW 内で `DocumentRepository.findById(userId, documentId)`（active のみ）を OCC トークン付きで取得する。`null` なら `NotFoundError`
-3. **編集競合検知（S-DT-05 異常系）**: 現在の `document.version !== input.expectedVersion` なら、**何も書かずに** `result: "conflict"` を組み立てて返す。`conflict.latestRevision` は `DocumentRepository.findRevision(userId, documentId, document.latestRevision)` で取得する（editMemo と同構造）
+2. UoW 内で `DocumentRepository.findById(documentId)`（active のみ）を OCC トークン付きで取得する。`null` なら `NotFoundError`
+3. **編集競合検知（S-DT-05 異常系）**: 現在の `document.version !== input.expectedVersion` なら、**何も書かずに** `result: "conflict"` を組み立てて返す。`conflict.latestRevision` は `DocumentRepository.findRevision(documentId, document.latestRevision)` で取得する（editMemo と同構造）
 4. `changeReason` が省略・trim 後空なら「手動編集」を補完する
 5. `Document.edit(document, { revisionId, title, body, actor, changeReason }, now)` を呼ぶ。タイトル・本文とも現在値と同一なら `unchanged` — リビジョンを積まず保存もせず `result: "unchanged"` で返す
-6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、`collectEvents(drafts)` を行い `result: "saved"`
+6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、および同じ `transactionSync` の中での projection 更新を行い `result: "saved"`
 7. 結果のビューを返す
 
 ### エラーケース
@@ -432,12 +433,12 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 
 1. `changeReason` の必須検証（省略・空 → `ValidationError`。補完しない）
 2. `now`、新規リビジョン ID を解決し、`DocumentId.create(input.documentId)` で検索キーを構築する
-3. UoW 内で `DocumentRepository.findById(userId, documentId)`（active のみ）。`null` なら `NotFoundError`（ゴミ箱内は AI から「存在しない」扱い。S-AI-04）
+3. UoW 内で `DocumentRepository.findById(documentId)`（active のみ）。`null` なら `NotFoundError`（ゴミ箱内は AI から「存在しない」扱い。S-AI-04）
 4. モードごとに適用後の全文を得る（モード差はここで吸収する）:
    - `patch`: `DocumentPatch.create(patches)` → `DocumentPatch.apply(document.body, patch)`。各 hunk の `oldText` がその時点の本文中に完全一致でちょうど 1 箇所見つからなければ失敗（0 箇所 → `PatchTargetNotFound`、2 箇所以上 → `PatchTargetAmbiguous`）。いずれかの hunk が失敗したらパッチ全体が失敗し、ドキュメントは変更されない（部分適用しない）
    - `replaceAll`: 受領した `body` をそのまま適用後の全文とする
 5. `Document.edit(document, { revisionId, title: 現行タイトル, body: 適用後の全文, actor, changeReason }, now)` を呼ぶ。現在値と同一なら `unchanged` — リビジョンを積まず `changed: false` で返す
-6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、`collectEvents(drafts)`
+6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、および同じ `transactionSync` の中での projection 更新を行う
 7. 結果のビューを返す
 
 ### エラーケース
@@ -486,11 +487,11 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `now`、新規リビジョン ID を解決し、`DocumentId.create` / `RevisionNumber.create` で検索キーを構築する
-2. UoW 内で `DocumentRepository.findById(userId, documentId)`（active のみ）。`null` なら `NotFoundError`
-3. `DocumentRepository.findRevision(userId, documentId, revisionNumber)` で戻し先リビジョンを取得する。`null` なら `NotFoundError`
+2. UoW 内で `DocumentRepository.findById(documentId)`（active のみ）。`null` なら `NotFoundError`
+3. `DocumentRepository.findRevision(documentId, revisionNumber)` で戻し先リビジョンを取得する。`null` なら `NotFoundError`
 4. `changeReason` が省略・trim 後空なら「リビジョン{n}の内容に戻す」を補完する
 5. `Document.rollback(document, target, { revisionId, actor, changeReason }, now)` を呼ぶ。現在の内容と同一なら `unchanged` — リビジョンを積まず `changed: false` で返す
-6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、`collectEvents(drafts)`（`document.edited` を発行。ロールバックも編集の一種）
+6. `edited` なら同一 UoW 内で `DocumentRepository.save(document, expectedVersion)`、`insertRevision(revision)`、および同じ `transactionSync` の中での projection 更新を行う（ロールバックも編集の一種）
 7. 結果のビューを返す
 
 ### エラーケース
@@ -530,9 +531,10 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `now` を解決し、`DocumentId.create(input.documentId)` で検索キーを構築する
-2. UoW 内で `DocumentRepository.findById(userId, documentId)`（active のみ）。`null` なら `NotFoundError`
-3. `Document.softDelete(document, null, now)` で `TrashedDocument`（`trashedWith: null`）と `document.trashed` のイベントドラフトを得る
-4. `DocumentRepository.save(trashedDocument, expectedVersion)`、`collectEvents(drafts)`
+2. UoW 内で `DocumentRepository.findById(documentId)`（active のみ）。`null` なら `NotFoundError`
+3. `UserSettingsRepository.find()` の `trashRetentionDays` から `RetentionPolicy.expiresAt(now, retentionDays)` で `purgeAfter` を算出し、`Document.softDelete(document, null, purgeAfter, now)` で `TrashedDocument`（`trashedWith: null`）を得る
+4. `DocumentRepository.save(trashedDocument, expectedVersion)`、および同じ `transactionSync` の中での projection 更新（当該ドキュメントのエントリを除去し、出典メモのエントリを作り直す）
+5. **同じ `transactionSync` の中で `purge-trash` の起床を張る** — `TrashQueryPort.findEarliestPurgeAfter()` でゴミ箱内の `purgeAfter` の最小値を読み、それが現在予定されている起床より早ければ `enqueueJob` で `purge-trash` を投入する（**投入は早める方向にのみ効く**。domains/trash.md「保持期限」）。**これを書き落とすと、最初の `purge-trash` が空のゴミ箱で完走した時点で待機状態に落ち、以後どれだけソフトデリートしても自動ハードデリート（S-TR-05）が二度と走らない**
 
 ### エラーケース
 
@@ -576,7 +578,7 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `DocumentId.create(input.documentId)` で検索キーを構築する
-2. `DocumentRepository.findById(userId, documentId)`（active のみ）。`null` なら `NotFoundError`
+2. `DocumentRepository.findById(documentId)`（active のみ）。`null` なら `NotFoundError`
 3. ドキュメントのビューを返す
 
 ### エラーケース
@@ -626,8 +628,8 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `DocumentId.create(input.documentId)` で検索キーを構築する
-2. `DocumentRepository.findByIdIncludingTrashed(userId, documentId)` で存在確認する（人間 UI の読み取り経路。ゴミ箱内ドキュメントの履歴も閲覧可）。`null` なら `NotFoundError`
-3. `DocumentRepository.listRevisions(userId, documentId)` で全リビジョンを `revisionNumber` 昇順で取得する（ドキュメントが存在すれば必ず 1 件以上）
+2. `DocumentRepository.findByIdIncludingTrashed(documentId)` で存在確認する（人間 UI の読み取り経路。ゴミ箱内ドキュメントの履歴も閲覧可）。`null` なら `NotFoundError`
+3. `DocumentRepository.listRevisions(documentId)` で全リビジョンを `revisionNumber` 昇順で取得する（ドキュメントが存在すれば必ず 1 件以上）
 4. メタデータのみをビューに射影して返す
 
 ### エラーケース
@@ -677,7 +679,7 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `DocumentId.create` / `RevisionNumber.create` で検索キーを構築する
-2. `DocumentRepository.findRevision(userId, documentId, baseRevisionNumber)` と `DocumentRepository.findRevision(userId, documentId, targetRevisionNumber)` で二点を取得する。いずれかが `null` なら `NotFoundError`
+2. `DocumentRepository.findRevision(documentId, baseRevisionNumber)` と `DocumentRepository.findRevision(documentId, targetRevisionNumber)` で二点を取得する。いずれかが `null` なら `NotFoundError`
 3. それぞれを `DocumentRevisionView` に射影して返す（差分計算はしない）
 
 ### エラーケース
@@ -726,9 +728,9 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `DocumentId.create(input.documentId)` で検索キーを構築する
-2. `DocumentRepository.findByIdIncludingTrashed(userId, documentId)` で存在確認する（人間 UI の読み取り経路）。`null` なら `NotFoundError`
-3. `DocumentRepository.listSourceLinksByDocument(userId, documentId)` で出典リンク（ID の組）を取得する
-4. リンクの `memoId` 群を `MemoRepository.listByIdsIncludingTrashed(userId, memoIds)` に渡し、本文・投稿日時・削除状態を 1 クエリで取得する（S-DT-07 の表示が 1 クエリで成立する）。結果に含まれない ID（ハードデリート済み）は一覧に載せない（ADR-003）
+2. `DocumentRepository.findByIdIncludingTrashed(documentId)` で存在確認する（人間 UI の読み取り経路）。`null` なら `NotFoundError`
+3. `DocumentRepository.listSourceLinksByDocument(documentId)` で出典リンク（ID の組）を取得する
+4. リンクの `memoId` 群を `MemoRepository.listByIdsIncludingTrashed(memoIds)` に渡し、本文・投稿日時・削除状態を 1 クエリで取得する（S-DT-07 の表示が 1 クエリで成立する）。結果に含まれない ID（ハードデリート済み）は一覧に載せない（ADR-003）
 5. ビューに射影して返す（出典 0 件は空配列。出典が全てハードデリートされた場合も空になり得る）
 
 ### エラーケース
@@ -777,9 +779,9 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 ### 処理フロー
 
 1. `MemoId.create(input.memoId)` で検索キーを構築する
-2. `MemoRepository.findByIdIncludingTrashed(userId, memoId)` で存在確認する（人間 UI の読み取り経路）。`null` なら `NotFoundError`
-3. `DocumentRepository.listSourceLinksByMemo(userId, memoId)` で参照元リンク（ID の組）を取得する
-4. リンクの `documentId` 群を `DocumentRepository.listByIdsIncludingTrashed(userId, documentIds)` に渡し、タイトル・削除状態を 1 クエリで取得する（S-TL-07 の表示が 1 クエリで成立する）。結果に含まれない ID（ハードデリート済み）は一覧に載せない（ADR-003）
+2. `MemoRepository.findByIdIncludingTrashed(memoId)` で存在確認する（人間 UI の読み取り経路）。`null` なら `NotFoundError`
+3. `DocumentRepository.listSourceLinksByMemo(memoId)` で参照元リンク（ID の組）を取得する
+4. リンクの `documentId` 群を `DocumentRepository.listByIdsIncludingTrashed(documentIds)` に渡し、タイトル・削除状態を 1 クエリで取得する（S-TL-07 の表示が 1 クエリで成立する）。結果に含まれない ID（ハードデリート済み）は一覧に載せない（ADR-003）
 5. ビューに射影して返す（参照元 0 件は空配列）
 
 ### エラーケース

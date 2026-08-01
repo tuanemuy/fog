@@ -2,7 +2,9 @@
 
 export ドメインのユースケース定義。対応する上流成果物: [domains/export.md](../domains/export.md)、シナリオ S-ST-02、画面 P-13、ADR-002、ADR-004。
 
-export ドメインはエンティティを持たないため、リポジトリ・UoW・ドメインイベントは登場しない。ユースケースは読み取り専用ポート（`ExportSourceReader`）・純関数のドメインサービス（`ExportRenderer`）・エンコードポート（`ArchiveWriter`）のオーケストレーションに徹する。
+export ドメインはエンティティを持たないため、リポジトリと UoW は登場しない。ユースケースは読み取り専用ポート（`ExportSourceReader`）・純関数のドメインサービス（`ExportRenderer`）・エンコードポート（`ArchiveWriter`）のオーケストレーションに徹する。
+
+**実行位置が2つに分かれる。** 読み出しはユーザー単位 Durable Object の中で1回の `transactionSync` として行い、レンダリングと zip エンコードはリクエストを受ける側で行う（domains/export.md）。
 
 ## exportAllData ★（人間 UI 専用）
 
@@ -41,9 +43,9 @@ export ドメインはエンティティを持たないため、リポジトリ�
 
 1. `now = container.clock.now()` で生成時刻 `exportedAt` を解決する（ドメインは `new Date()` を呼ばない）
 2. `UserId.create(input.userId)`・`ExportRequest.create({ userId, timezone })` で値オブジェクトを構築する。`timezone` が IANA タイムゾーン名として解決できなければ `BusinessRuleError(ExportErrorCode.InvalidTimezone)`
-3. `ExportSourceReader.readAll(userId)` でエクスポート対象データのスナップショット `ExportSource` を読み出す。範囲規則（ゴミ箱除外・最新リビジョンのみ・`sourceMemoIds` からハードデリート済みメモ ID を除外）の充足はポート実装の契約。単一トランザクション（またはスナップショット読み）で一時点の整合を保証する
-4. `ExportRenderer.render(source, exportedAt, request.timezone)` で `ExportArchive` を導出する（純関数）。マニフェスト・メモ日別ファイル・トピックメタ・ドキュメントファイルの生成、スラッグ導出・衝突解決、日別グルーピング、出典の相対パス解決、`ExportSource` の防衛的検査（OrphanDocument）を含む
-5. `ArchiveWriter.write(archive)` で zip エンコードし `ArchiveBinary` を得る
+3. `input.userId` で対象のユーザー単位 Durable Object を選び、その中で `ExportSourceReader.readAll()` を1回の `transactionSync` として実行してスナップショット `ExportSource` を読み出し、値として受け取る。範囲規則（ゴミ箱除外・最新リビジョンのみ・`sourceMemoIds` からハードデリート済みメモ ID を除外）の充足はポート実装の契約。**分割して読まない** — 分けるとスナップショットの一貫性が失われるためで、代わりに**1回のエクスポートで返せる総バイト数に上限を置き、超過は拒否する**（`SystemError` 系）
+4. **リクエストを受ける側で** `ExportRenderer.render(source, exportedAt, request.timezone)` により `ExportArchive` を導出する（純関数）。マニフェスト・メモ日別ファイル・トピックメタ・ドキュメントファイルの生成、スラッグ導出・衝突解決、日別グルーピング、出典の相対パス解決、`ExportSource` の防衛的検査（OrphanDocument）を含む
+5. 同じくリクエストを受ける側で `ArchiveWriter.write(archive)` により zip エンコードし `ArchiveBinary` を得る（CPU を長く使うので Durable Object の中では回さない）
 6. `ArchiveBinary` を出力 DTO に投影して返す
 
 ビジネスロジック（アーカイブ構成・スラッグ規則・出典リンク解決）はすべて `ExportRenderer` と値オブジェクトに置き、ユースケースはポートとドメインサービスを順に呼ぶだけとする。
@@ -57,6 +59,7 @@ export ドメインはエンティティを持たないため、リポジトリ�
 | `ExportSource` 内に `topics` に存在しない `topicId` を持つドキュメントがある | `BusinessRuleError(ExportErrorCode.OrphanDocument)` | ビジネスルール違反（`ExportRenderer.render` の防衛的検査） |
 | 生成した `ExportFile.path` が不正（先頭 `/`・`..` セグメント・空セグメント・拡張子違反等） | `BusinessRuleError(ExportErrorCode.InvalidArchivePath)` | ビジネスルール違反（内部不変条件。発生すれば実装バグ） |
 | `ExportArchive.files` 内で `path` が重複 | `BusinessRuleError(ExportErrorCode.DuplicateArchivePath)` | ビジネスルール違反（内部不変条件。発生すれば実装バグ） |
+| 読み出し結果の総バイト数が上限を超える | `SystemError` 系 | 容量制約（上限値は実装側が持つ運用値） |
 | スナップショット読み出し時の DB 障害 | `SystemError(DatabaseError)` | 外部サービスエラー（`ExportSourceReader`） |
 | zip エンコード失敗 | `SystemError(ArchiveEncodingError)` | 外部サービスエラー（`ArchiveWriter`） |
 

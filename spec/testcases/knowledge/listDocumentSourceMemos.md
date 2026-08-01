@@ -13,6 +13,6 @@
 | 出典メモが複数件あるドキュメント | 出典一覧を取得する | メモの本文・削除状態は `listByIdsIncludingTrashed` の 1 クエリで取得される（N+1 にならない） | |
 | ゴミ箱内ドキュメント（ソフトデリート済み） | 出典一覧を取得する | `findByIdIncludingTrashed` により正常に返る（人間 UI の読み取り経路。エッジケース） | |
 | ドキュメントが存在しない ID（ハードデリート済み含む） | 出典一覧を取得する | `NotFoundError` | |
-| 他ユーザー所有のドキュメント ID | 出典一覧を取得する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のドキュメント ID | 出典一覧を取得する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |
 | ドキュメントが存在する | `MemoRepository.listByIdsIncludingTrashed` で DB 例外が発生する | `SystemError(DatabaseError)` | |

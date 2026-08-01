@@ -2,6 +2,8 @@
 
 [usecases/export.md](../../usecases/export.md) の exportAllData に対するテストケース。アーカイブ構成・スラッグ規則・frontmatter は [domains/export.md](../../domains/export.md)、エクスポート範囲は ADR-002、ハードデリート済み出典の扱いは ADR-003 に従う。
 
+**実行位置の前提。** `ExportSourceReader.readAll` はユーザー単位 Durable Object の中の**1回の `transactionSync`** で完結し、その1回で全データの一貫したスナップショットを読み出す。`ExportRenderer.render` と `ArchiveWriter.write` は request Worker で回る（単一スレッドの Durable Object を長い CPU 仕事で占有させないため）。**1回のエクスポートで返せる総バイト数には上限があり、超過は拒否する。**
+
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | メモ2件（`timezone` 基準で別日）・トピック1件（ドキュメント2件）が存在する | `timezone: "Asia/Tokyo"` でエクスポートする | `filename: fog-export-YYYYMMDD.zip`（日付は `exportedAt` の Asia/Tokyo 表記）・`contentType: "application/zip"`・zip バイナリが返る。ルートは `fog-export-YYYYMMDD/` で、`index.md`・`memos/`（日別2ファイル）・`topics/{topic-slug}/`（`index.md` + ドキュメント2ファイル）を含む | |
@@ -41,3 +43,5 @@
 | `ArchiveWriter.write` で zip エンコードが失敗する | エクスポートする | `SystemError(ArchiveEncodingError)` | |
 | ユーザー A が認証済み、ユーザー B のデータが存在する（テナント分離） | ユーザー A としてエクスポートする | アーカイブにはユーザー A のデータのみが含まれる。他ユーザー ID を外部入力で指定する経路はない | |
 | AI トークンで認証している | exportAllData を呼び出す | 公開インターフェースに含まれず呼び出せない（Web UI 専用。人間セッション以外には公開されない） | |
+| 読み出したデータの総バイト数が1回のエクスポートの上限を超える | エクスポートする | `SystemError` 系で拒否される。zip は生成されず、部分的なアーカイブも返らない（上限値そのものは実装側が持ち、#37 → #38 で決まる） | |
+| 上限に収まるデータ量 | エクスポートする | 読み出しが Durable Object 内の1回の `transactionSync` で完結し、レンダリングと zip 化が request Worker で実行される。読み出し中に他の書き込みが挟まってもアーカイブの内容は一貫している | |

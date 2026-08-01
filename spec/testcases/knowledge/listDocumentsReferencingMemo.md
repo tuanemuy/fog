@@ -11,6 +11,6 @@
 | 参照元ドキュメントが複数件あるメモ | 参照元一覧を取得する | ドキュメントのタイトル・削除状態は `listByIdsIncludingTrashed` の 1 クエリで取得される（N+1 にならない） | |
 | メモ自身がソフトデリート済み | 参照元一覧を取得する | `findByIdIncludingTrashed` により正常に返る（人間 UI の読み取り経路。エッジケース） | |
 | メモが存在しない ID（ハードデリート済み含む） | 参照元一覧を取得する | `NotFoundError`（ハードデリート済みメモはリンクも消えている） | |
-| 他ユーザー所有のメモ ID | 参照元一覧を取得する | userId スコープにより `NotFoundError` | |
+| 他ユーザー所有のメモ ID | 参照元一覧を取得する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `memoId` に空文字を渡す | `BusinessRuleError`（MemoId の構築違反） | |
 | メモが存在する | `DocumentRepository.listSourceLinksByMemo` で DB 例外が発生する | `SystemError(DatabaseError)` | |

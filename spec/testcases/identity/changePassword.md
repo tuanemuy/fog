@@ -1,19 +1,28 @@
 # テストケース: changePassword
 
-[usecases/identity.md](../../usecases/identity.md) の changePassword に対するテストケース。
+[usecases/identity.md](../../usecases/identity.md) の changePassword に対するテストケース。書き込みは認証情報側（Identity Directory）とユーザー単位設定側（User Data DO）の2つの物理境界にまたがるので、中間状態と終端で利用者に何が観測されるかも対象に含める。
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| ログイン済みの `PasswordUser` | 正しい現在パスワードと有効な新パスワード（8〜128文字）で変更する | `passwordHash` が新パスワードのハッシュに置換され、`version` が +1 される。`identity.passwordChanged` イベントが記録される。正常終了（`void`） | |
-| ログイン済みの `PasswordUser` | 新パスワードちょうど8文字で変更する | 正常終了する（境界値: 最低長ちょうどは許容） | |
-| ログイン済みの `PasswordUser` | 新パスワードちょうど128文字で変更する | 正常終了する（境界値: 最大長ちょうどは許容） | |
-| ログイン済みの `PasswordUser` | 新パスワード7文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)`。パスワードは変更されない | |
-| ログイン済みの `PasswordUser` | 新パスワード129文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)` | |
-| ログイン済みの `PasswordUser` | 誤った現在パスワードで変更する | `ValidationError("CURRENT_PASSWORD_MISMATCH")`。パスワードは変更されない | |
-| ログイン済みの `PasswordUser` | 現在パスワードと同じ値を新パスワードとして変更する | 正常終了する（同一値の禁止規則は存在しない） | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 正しい現在パスワードと有効な新パスワード（8〜128文字）で変更する | 認証情報側の検証材料が新パスワードのものへ差し替わり、そのクレデンシャル宛の未使用リセットトークンがすべて無効化される。ユーザー単位設定側では `sessionEpoch` と対象クレデンシャルの `credentialVersion` の**両方**が前進する。正常終了（`void`） | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 新パスワードちょうど8文字で変更する | 正常終了する（境界値: 最低長ちょうどは許容） | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 新パスワードちょうど128文字で変更する | 正常終了する（境界値: 最大長ちょうどは許容） | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 新パスワード7文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)`。パスワードは変更されない | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 新パスワード129文字で変更する | `BusinessRuleError(IdentityErrorCode.PasswordTooWeak)` | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 誤った現在パスワードで変更する | `ValidationError("CURRENT_PASSWORD_MISMATCH")`。パスワードは変更されない | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 現在パスワードと同じ値を新パスワードとして変更する | 正常終了する（同一値の禁止規則は存在しない） | |
 | セッションの `userId` に対応するユーザーが不在 | パスワード変更を実行する | `NotFoundError("USER_NOT_FOUND")` | |
-| ログイン済みの `SsoUser`（エッジケース: UI 上は項目非表示だが防衛的に検証） | パスワード変更を実行する | `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)` | |
-| `PasswordUser`。照合成功後、save までの間に同一ユーザーが別セッションで更新され version が進んでいる（二重変更の競合） | パスワード変更を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` | |
+| ログイン済みの SSO 専用アカウント（クレデンシャル集合に `kind: "email"` のログイン手段が無い。エッジケース: UI 上は項目非表示だが防衛的に検証） | パスワード変更を実行する | `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)` | |
+| 照合成功後、書き込みまでの間に同一クレデンシャルが別セッションから更新されている（二重変更の競合） | パスワード変更を実行する | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` | |
 | `PasswordHasher.verify` の照合計算が失敗する | パスワード変更を実行する | `SystemError` | |
 | `PasswordHasher.hash` が失敗する | パスワード変更を実行する | `SystemError` | |
-| `UserRepository.save` で DB 例外が発生する | パスワード変更を実行する | `SystemError`。トランザクションはロールバックされ、イベントも記録されない | |
+| 認証情報側の書き込みで DB 例外が発生する | パスワード変更を実行する | `SystemError`。トランザクションはロールバックされ、検証材料は差し替わらない | |
+| `changeState` が `'pending'` のあいだ（認証情報側の差し替えが済み、ユーザー単位設定側が未了） | 旧パスワード / 新パスワードのそれぞれでログインする | どちらも通らない。クレデンシャル行が存在してもログイン照合はダミー材料へ倒れ、`ValidationError("INVALID_CREDENTIALS")` になる | |
+| `changeState` が `'advanced'` のあいだ | 旧パスワード / 新パスワードのそれぞれでログインする | 同上。`changeState` の値域は `null` / `'pending'` / `'advanced'` の3値であり、`null` でない値はどちらもダミー材料へ倒す（`'advanced'` は変更の適用が locator 側へ届いたことを記録する値） | |
+| パスワード変更が完走した | 変更前に確立していた別セッションでリクエストを送る | `sessionEpoch` が前進しているため次のリクエストで失効する | |
+| パスワード変更が完走した | AI クライアント接続の一覧を確認する | 接続は失効しない（パスワードの変更は連携の取り消し意思を意味しない） | |
+| ログイン済みで、パスワードのクレデンシャルを持つアカウント | 誤った現在パスワードで変更を試みる | 照合失敗が `failedAttempts` を進める（ログイン失敗と同じカウンタである。認証済み経路でも総当たりの足場にさせない） | |
+| `nextAttemptAllowedAt` が未到達（ロックアウト中） | 正しい現在パスワードで変更を試みる | `ValidationError("TOO_MANY_ATTEMPTS")` で明示的に拒否される（ダミー材料へ倒すのではない。認証済み経路なので列挙オラクル回避の根拠がなく、制限中であることを隠さない）。検証材料は差し替わらない | |
+| `failedAttempts` が 0 より大きい | 正しい現在パスワードで変更に成功する | `failedAttempts` が 0 に戻る | |
+| 中間状態のまま前進不能が確定した | 一様な終端に落ちる | 終端に至った事実は記録として残り、運用へエスカレーションされる。**終端の具体的な手順は #45 が定める** | |
+| パスワード変更が完走した | 新しいパスワードでログインする | ログインが通る。`CredentialLocatorStore.advanceCredentialVersion` が対象クレデンシャルの `credentialVersion` を進めており、認証情報側の値と一致するのでログインの到達性検査を通る（前進が漏れると値が食い違い、正しいパスワードでも `ValidationError("INVALID_CREDENTIALS")` になる） | |
