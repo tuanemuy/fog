@@ -65,27 +65,53 @@ Loading fallbacks come in two kinds, by scope. **Per-fragment streaming** is for
 
 Each of these is enforced in code and documented in library-level JSDoc at the relevant module — read there for the details.
 
-- **Unit of Work** — every transactional usecase runs inside `UnitOfWorkProvider.run(fn)`; the context exposes the repositories the callback may touch and the only path to enqueue domain events.
-- **Outbox / domain events** — events collected during a UoW are persisted transactionally and dispatched out-of-band by a relay worker. Delivery is at-least-once with no ordering guarantee; consumers must be idempotent. The relay worker claims rows under a lease so multiple workers cannot dispatch the same row, and a crashed worker's claim is reclaimable once the lease lapses.
-- **Retry strategy** — the D1 adapter adds no retry of its own. Transient conditions (`SQLITE_BUSY` / `SQLITE_LOCKED`) are connection-level errors the D1 binding handles upstream of the adapter, and OCC mismatches are caller-visible signals rather than retry candidates (`packages/core/src/adapters/d1/unitOfWork.ts`). There is intentionally no application-level OCC retry decorator either — a `ConflictError("OPTIMISTIC_LOCK_FAILURE")` reaches the usecase and, from there, the transport boundary.
-- **Input validation** — validated at exactly two points: the transport boundary (shape / DoS) and value-object construction (business invariants). Usecases trust the static type in between. On the frontend the transport boundary is the route's `validateSearch` (URL params) or `serverAction`'s `inputValidator` (client-posted payloads); `serverData` is **internal-only** and intentionally schemaless — never feed unvalidated external input through it.
+- **Unit of Work** — every transactional usecase runs inside `UnitOfWorkProvider.run(fn)`, and the callback is **fully synchronous**. The signature `run<T>(fn: (ctx: UnitOfWorkContext) => T extends Promise<unknown> ? never : T): T` type-rejects `async` callbacks, which turns "no `await` inside a transaction" from a convention into a language rule. `run` takes no scope argument: the Durable Object is the scope, and `userId` was already consumed when its stub was selected. The context exposes the aggregate repositories the callback may touch, the non-aggregate stores (`credentialLocatorStore` / `resetTokenStore` / `rotationCheckpointStore`), and the in-transaction side-effect registration points `enqueueJob` / `recordOperation` / `updateOperation` / `setMigrationCursor`. Those two groups are the **complete set** of write paths into the non-aggregate stores — one per table, with `_meta` the single deliberate exception (only the adapter writes it, so no usecase can reach `schema_version`). Never put an asynchronous port on the context (`MailSender`, `PasswordHasher`, a DO stub factory, anything carrying `fetch`), and never call `run` from inside `run`.
+- **Retry strategy** — nothing between storage and usecase retries on its own. OCC is enforced by a conditional `UPDATE ... WHERE id = ? AND version = ?` whose matched-row count is read back, and a mismatch is a caller-visible signal rather than a retry candidate: `ConflictError("OPTIMISTIC_LOCK_FAILURE")` reaches the usecase and, from there, the transport boundary. There is intentionally no application-level OCC retry decorator. Retry exists in exactly one place — the job runner (see below) — and is never delegated to the platform.
+- **Input validation** — validated at exactly two points: the transport boundary (shape / DoS) and value-object construction (business invariants). Usecases trust the static type in between. On the frontend the transport boundary is the route's `validateSearch` (URL params) or `serverAction`'s `inputValidator` (client-posted payloads); `serverData` is **internal-only** and intentionally schemaless — never feed unvalidated external input through it. The RPC hop into a Durable Object is **not** a third point: facade signatures take primitives only (branded types do not survive structured clone), and the value objects are rebuilt inside the DO — that reconstruction *is* the second point.
+- **Storage limits** — one Durable Object holds a single user's data, capped at 10 GB counting the base tables and the FTS5 index together. The SQLite limits that shape the schema are 100 columns per table, 2 MB per row, 100 KB per statement and 100 bind parameters — the last is why bulk inserts are chunked. Near the cap a DO half-dies: writes fail while reads and `DELETE` still succeed, which is what keeps the recovery paths (empty the trash, export and delete) usable.
+
+### Asynchronous execution contract
+
+Every effect that cannot complete inside a transaction obeys this contract.
+
+1. **There is no domain-event transport.** Effects that do complete inside the transaction — the FTS5 projection, retention hard-deletes, saga phase advances — are performed directly in that `transactionSync`.
+2. **Work that performs external I/O must ride a durable job**, since it cannot run inside a transaction. That is a sufficient condition, not the full population: expiry processing, checkpointed bulk work and cross-DO saga advancement use the same `jobs` table and Alarm. The four kinds below cover every `jobs.kind` exactly once; **adding a `kind` means adding it here too** (the per-table list lives in `spec/database/index.md`).
+
+   | Kind of work | `jobs.kind` |
+   |---|---|
+   | External I/O | `send-mail` |
+   | Expiry processing | `purge-trash` / `sweep-reservations` / `sweep-reset-tokens` |
+   | Checkpointed bulk work | `reindex` / `migrate-bulk` / `rotate-encryption` |
+   | Cross-DO saga advancement | `finalize-withdrawal` / `resume-link` / `resume-signup` / `resume-credential-change` / `sweep-orphan-mapping` |
+
+   Only `send-mail` reaches outside; the other eleven are DO-local.
+3. **Job execution is at-least-once.** A DO has one Alarm, which walks its `jobs` rows in `nextRunAt` order, and the DO can reset immediately after a send succeeded — so **every job implementation must be idempotent**. External providers receive a `providerIdempotencyKey` derived deterministically from the job's `operationKey`.
+4. **There is no ordering guarantee between jobs.** Failures are pushed out by backoff, and jobs in different DOs share neither a clock nor a queue. Never write a design that depends on the relative order of two different job kinds; express ordering with state-machine phases and CAS conditions instead.
+5. **Retry belongs to the job runner, not to the platform.** Never throw out of `alarm()`. Catch each job's failure, advance its `attempt` and `nextRunAt`, and once the limit is passed mark the row `poison` with a `terminalReason` for operator escalation. This is the one broad catch allowed under "worker → root" below.
+6. **OCC conflicts are not retried** — see "Retry strategy" above. The conflict travels out to the transport boundary (or into the job's `terminalReason`) unswallowed.
+7. **Cross-request idempotency keys never come from the client.** `operationId` is minted server-side; cross-request idempotency is carried by the directory reservation rows and `credential_mappings.changeState`.
 
 ## Error handling
 
 - Errors are class hierarchies that each carry their own `kind`-tagged serialized form (`toSerialized()`). The presentation layer serializes structurally — no `instanceof` enumeration of concrete classes.
 - HTTP status mapping is presentation-only, driven by the serialized `kind`. Errors themselves do not carry transport concerns.
-- Avoid broad `try / catch` in ordinary application logic. Use it only at explicit boundaries (server-function serialization, per-row tolerance in workers).
+- Avoid broad `try / catch` in ordinary application logic. Use it only at explicit boundaries (server-function serialization, the Durable Object's RPC entry points, per-job tolerance in the job runner).
+- Errors cross the request Worker ↔ Durable Object boundary as a value envelope (`{ ok: true, value } | { ok: false, error: SerializedError }`), never as a thrown custom class — RPC does not preserve the structural serialization contract. The DO's RPC entry catches and returns `toSerialized()`; the calling adapter additionally translates platform failures raised by the stub call itself (the DO was unreachable or died), since those never enter the envelope. Both are folded into the same `SerializedError` before reaching the error-response middleware.
 
 ### Cross-layer catch policy
 
 - **adapter → application**: adapters catch driver-specific errors and translate them into the shared error contracts. Application code never sees provider-native errors.
 - **domain → application**: domain errors flow through usecases unchanged. Do not re-translate at the usecase boundary — invariant violations and transport-shape violations are intentionally distinct kinds.
 - **application → presentation**: the server-function boundary catches and serializes any thrown error structurally via its `kind`-tagged form. Usecases themselves do not serialize.
-- **worker → root**: workers wrap per-row processing in `try / catch` for partial-failure tolerance. This is the only place a broad `catch` is expected in application-layer code.
+- **worker → root**: the job runner wraps each job in `try / catch` so that one failing job neither aborts the rest of the queue nor escapes `alarm()`. This is the only place a broad `catch` is expected in application-layer code.
 
 ## Reference runtime
 
-The template targets Cloudflare Workers + D1 + Queues. The adapter and entry-point layers are what a runtime swap touches; `domain` / `application` / `presentation` stay intact across such a swap.
+The template targets Cloudflare Workers with per-user SQLite-backed Durable Objects — no D1, no Queues, no external search service. Two Workers: a request Worker that serves HTTP and does the CPU-bound work (password hashing, token signing, export rendering and zipping), and a state Worker that owns the Durable Object classes. Each user's domain data lives in its own **User Data DO**, including the FTS5 search index, which is maintained in the same transaction as the data it indexes. Credentials live in bucketed **Identity Directory DOs**. Asynchronous work runs on the `jobs` table and each DO's Alarm, under the contract above. Storage layout and migrations are specified in `spec/database/index.md`.
+
+Tenant isolation is structural rather than columnar: there is no `user_id` predicate that could be forgotten, because no code path can obtain another user's DO stub.
+
+**This is a deliberate lock-in, and it reaches the inward layers.** `.adr/002` accepted Cloudflare as the target; `transactionSync` is what makes the cost concrete. Domain port contracts are synchronous — `TransactionalRepository` and the repositories return values, not promises, and only `PasswordHasher` / `MailSender` remain asynchronous because they run outside transactions. A runtime whose storage API is asynchronous cannot implement those ports as written. So targeting a different runtime (Bun, Fly Machines, …) still means a new adapter group under `packages/core/src/adapters/{provider}/` plus a paired entry point, but budget for revisiting the port contracts as well: the swap is not confined to `adapters/` and the entry points.
 
 Entry points:
 
@@ -95,7 +121,15 @@ Operational guidance lives in `docs/runtime_cloudflare.md`. `pnpm dev` / `pnpm b
 
 `pnpm start` (`wrangler dev`) and `pnpm preview` both fail to boot today ([#40](https://github.com/tuanemuy/fog/issues/40)). The bundle builds fine; workerd then rejects it because `packages/core/src/application/workers/eventRelayWorker.ts` calls `crypto.randomUUID()` at module scope, which is disallowed outside a handler. The top-level Worker pulls that module in via `server.cloudflare.ts → application/di/serverCloudflare.ts → application/di/env.ts → application/workers/eventRelayWorker.ts` (`env.ts` value-imports the `DEFAULT_*` tuning constants from it). `pnpm dev` is unaffected — Vite evaluates modules inside the request handler — so it is the only way to run the app locally.
 
-To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put; the swap is the entry + DI wiring, not the whole stack.
+### Migration in progress — [#37](https://github.com/tuanemuy/fog/issues/37)
+
+**Everything above states the rules; the code has not moved yet.** Until #37 lands, the running system is still D1 + Queues, and this is the only place that says so — the rest of this file is written as settled rule on purpose.
+
+- `packages/core/src/adapters/d1/` is the live adapter group. `UnitOfWorkProvider.run` is still asynchronous and its context still exposes `collectEvents`; `pendingBatch.ts` and the `_occ_guard` table still exist.
+- The four workers in the entry-point list above — `relay` / `consumer` / `pruner` / `dlq` — still exist and still run. #37 deletes them along with the outbox and processed-events tables.
+- Nothing named Durable Object, `jobs` or Alarm exists in the code yet, and search has no FTS5 index.
+
+When #37 lands, delete this subsection.
 
 ## Examples
 

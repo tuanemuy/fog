@@ -46,7 +46,7 @@ TrashItemView（`kind` による直和）:
 | name | string（topic のみ） |
 | setDocumentIds | string[]（topic のみ。セット削除された配下ドキュメント ID 群） |
 | trashedAt | Date |
-| expiresAt | Date（照会時に `RetentionPolicy.expiresAt` で算出。保持期限変更は遡及適用される） |
+| expiresAt | Date（保存済みの `purgeAfter` をそのまま載せる。保持期限を変更したときは一括再計算で `purgeAfter` 自体が更新される） |
 
 ### 処理フロー
 
