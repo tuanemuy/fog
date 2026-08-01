@@ -17,8 +17,9 @@ OAuth 2.1 / セッション管理のプロトコル詳細（アクセストー�
 
 | 英語名 | 日本語名 | 定義 |
 |---|---|---|
-| User | ユーザー | fog のアカウント。メールアドレスで一意に識別され、パスワード認証または SSO で認証される |
-| Auth Method | 認証方式 | ユーザーの認証手段。パスワード認証と SSO のいずれか（排他） |
+| User | ユーザー | fog のアカウント。ユーザー単位設定の所有者。認証手段は後述のクレデンシャル集合として持つ |
+| Credential | クレデンシャル | ログインまたは本人到達に使える認証手段の1件。メール（パスワード検証材料を伴う）または SSO 主体。1ユーザーが複数持てる |
+| CredentialId | クレデンシャルID | クレデンシャルの同一性を表す不透明な識別子。解除・照合はこの ID をキーにする |
 | SSO | SSO | Google / Apple 等の外部 IdP による認証。プロバイダ種別とプロバイダ内主体IDの組で識別する |
 | AI Client Connection | AIクライアント接続 | ユーザーが OAuth 2.1 の認可フローで自分の AI クライアントに許可を与えた「認可の事実」。1回の許可＝1接続 |
 | Revoke | 失効（接続解除） | AIクライアント接続を無効化する不可逆操作。以後そのクライアントのトークンは認可エラーになる |
@@ -31,91 +32,96 @@ OAuth 2.1 / セッション管理のプロトコル詳細（アクセストー�
 
 ### User
 
-fog のアカウント。認証方式（パスワード / SSO）を判別可能ユニオンで表現し、「SSOユーザーがパスワードハッシュを持つ」「パスワードユーザーがプロバイダIDを持つ」といったあり得ない状態を型で排除する。
+fog のアカウント。**認証方式の判別可能ユニオンは持たない。** 1ユーザーが複数のクレデンシャル（メール / SSO）を同時に持てるので、認証手段は集合として表現する。
+
+**原本と検証材料は本エンティティに載らない。** メールアドレスの原本もパスワードの検証材料も認証情報側（Identity Directory）が持ち、ユーザー単位設定側が持つのは**非 PII の要約**だけである。
 
 #### フィールド
-
-共通部（`UserBase`）:
 
 | 名前 | 型 | 制約 |
 |---|---|---|
 | id | `UserId` | required |
-| email | `Email` | required。全ユーザー間で一意（一意性の検証はユースケース＋リポジトリで行う） |
+| credentials | `readonly CredentialRef[]` | required。保有クレデンシャルの要約（下記）。1件以上 |
 | trashRetentionDays | `TrashRetentionDays` | required。既定 `TrashRetentionDays.default()`（30日） |
 | version | `number` | required。OCC 用。生成時 0 |
 | createdAt | `Date` | required |
 | updatedAt | `Date` | required |
 
-判別可能ユニオン:
-
 ```ts
-export type PasswordUser = UserBase &
-  Readonly<{
-    authMethod: "password";
-    passwordHash: PasswordHash;
-  }>;
+/** 保有クレデンシャルの非 PII 要約。設定画面の一覧に出せるのはこの3つだけ */
+export type CredentialRef = Readonly<{
+  credentialId: CredentialId;
+  kind: "email" | "sso";
+  /** kind: "sso" なら provider 名（"google" / "apple"）、kind: "email" なら空文字 */
+  label: string;
+}>;
 
-export type SsoUser = UserBase &
-  Readonly<{
-    authMethod: "sso";
-    provider: SsoProvider;        // "google" | "apple"
-    providerSubject: string;      // IdP 内の主体ID（sub）。空文字不可
-  }>;
-
-export type User = PasswordUser | SsoUser;
+export type User = Readonly<{
+  id: UserId;
+  credentials: readonly CredentialRef[];
+  trashRetentionDays: TrashRetentionDays;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+}>;
 ```
+
+- **`email` はフィールドに持たない。** 原本は認証情報側に暗号化して保持され、本人が自分のアドレスを見る経路（設定画面）でだけ1件ずつ復号される
+- **`passwordHash` / `provider` / `providerSubject` もフィールドに持たない。** パスワードの検証材料と SSO 主体は認証情報側の関心事である
+- `credentials` は表示と解除操作の材料である。**解除操作を出してよいのは `kind: "sso"` の要素だけ**で、`kind: "email"` の解除経路は本設計に存在しない（後述の不変条件）
 
 #### 振る舞い
 
 ```ts
 export const User = {
-  /** パスワード登録。ハッシュ化はユースケースが PasswordHasher ポートで済ませてから渡す */
+  /** パスワード登録での初期化。最初のクレデンシャルは kind: "email" の1件 */
   registerWithPassword: (
-    params: { id: string; email: string; passwordHash: PasswordHash },
+    params: { id: string; credential: CredentialRef },
     now: Date,
-  ): WithEventDrafts<PasswordUser, IdentityEvent>;
+  ): User;
 
-  /** SSO 初回ログインでの自動作成 */
+  /** SSO 初回ログインでの自動作成。最初のクレデンシャルは kind: "sso" と kind: "email" の2件 */
   registerWithSso: (
-    params: { id: string; email: string; provider: SsoProvider; providerSubject: string },
+    params: { id: string; credentials: readonly CredentialRef[] },
     now: Date,
-  ): WithEventDrafts<SsoUser, IdentityEvent>;
+  ): User;
+
+  /** クレデンシャルの追加（SSO 連携）。同じ credentialId の要素があれば置き換える */
+  addCredential: (user: User, credential: CredentialRef, now: Date): User;
 
   /**
-   * パスワード変更。PasswordUser のみ受け付ける（SSOユーザーの変更は型エラー）。
-   * 現在パスワードの照合はユースケースが PasswordHasher.verify で行う。
+   * クレデンシャルの解除。kind: "sso" のみ受け付ける。
+   * 解除後に1件も残らない場合は BusinessRuleError(LastCredentialRemoval)。
    */
-  changePassword: (
-    user: PasswordUser,
-    newPasswordHash: PasswordHash,
-    now: Date,
-  ): WithEventDrafts<PasswordUser, IdentityEvent>;
+  removeCredential: (user: User, credentialId: CredentialId, now: Date): User;
 
-  /** ゴミ箱保持日数の変更。両認証方式で可能なため User を受ける */
+  /** ゴミ箱保持日数の変更 */
   changeTrashRetentionDays: (
     user: User,
     retentionDays: TrashRetentionDays,
     now: Date,
-  ): WithEventDrafts<User, IdentityEvent>;
+  ): User;
 };
 ```
 
-- 各ファクトリの処理内容: `params` の生文字列から値オブジェクト（`UserId.create`、`Email.create` 等）を構築し、`version: 0`（変更系は `version + 1`）、`createdAt` / `updatedAt` を設定して、対応するイベントドラフトと共に返す。`now` と `id` は引数で受け、ドメイン内で `new Date()` / ID生成は行わない
-- パスワードリセット実行（`resetPassword`）は `changePassword` と同じ遷移（新しい `passwordHash` への置換）であり、エンティティ上は `changePassword` を共用する。現在パスワード照合の代わりにリセットトークン検証を行う点だけがユースケースの差分
+- 各ファクトリの処理内容: `params` の生文字列から値オブジェクト（`UserId.create` 等）を構築し、`version: 0`（変更系は `version + 1`）、`createdAt` / `updatedAt` を設定して次状態を返す。`now` と `id` は引数で受け、ドメイン内で `new Date()` / ID生成は行わない
+- **パスワードの変更・リセットは本エンティティの遷移ではない。** 検証材料を持つのは認証情報側なので、変更はそちらを書き換える手続き（usecases/identity.md）として表現される。ユーザー単位設定側の `User` は変わらない
+- **SSO 初回登録でもメールのクレデンシャルが1件置かれる。** メールアドレスの一意性を認証方式をまたいで効かせるためであり、この要素は**ログイン手段ではない**（パスワードの検証材料を持たないため）
 
 #### 不変条件
 
-- `email` は全ユーザー間で一意（S-AC-01 異常系）。エンティティ単体では検証できないため、登録ユースケースが `UserRepository.findByEmail` で事前検証する
-- メール一意性は**認証方式をまたいで**適用する。SSO 初回サインイン時に IdP から得たメールが既存のパスワードユーザーと一致する場合、既存アカウントへの自動リンクは行わず `ConflictError("EMAIL_ALREADY_REGISTERED")` の明示エラーとする（UI はパスワードログインへの導線を示す）。逆に、パスワード登録時に同一メールの SSO ユーザーが既に存在する場合も同様に `EMAIL_ALREADY_REGISTERED` とする。アカウントリンク（既存アカウントへの認証方式の追加・統合）は現段階のスコープ外
-- `authMethod: "password"` のとき `passwordHash` を必ず持ち、`provider` / `providerSubject` を持たない（型で保証）
-- `authMethod: "sso"` のとき `(provider, providerSubject)` の組は全ユーザー間で一意。email と同様に事前チェック + DB 制約の二重防御とする: ユースケースが `UserRepository.findBySsoIdentity` で事前検証し、同時初回 SSO サインインのレースは `insert` 時の DB 一意制約で捕捉する（アダプターが制約違反を `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` にマッピングする）
-- パスワード変更・リセットは `PasswordUser` に対してのみ可能（S-AC-07 エッジケース。型で保証）
+- メールアドレスは全ユーザー間で一意（S-AC-01 異常系）。一意性の権威は認証情報側の credential 行であり、登録は予約を取ってから進む。重複は `ConflictError("EMAIL_ALREADY_REGISTERED")`
+- メール一意性は**認証方式をまたいで**適用する。SSO 初回サインイン時に IdP から得たメールが既存アカウントのものと一致する場合、既存アカウントへの自動リンクは行わず `EMAIL_ALREADY_REGISTERED` とする（UI はパスワードログインへの導線を示す）。逆も同様である
+- `(provider, providerSubject)` の組も全ユーザー間で一意。重複は `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`
+- **`credentials` は常に1件以上で、そのうち少なくとも1件はログイン手段である。** 最後のログイン手段を解除する操作は `BusinessRuleError` で拒否する。数えるのは要素数ではなく**ログイン手段になり得るクレデンシャルの `credentialId` の異なり数**である（同じクレデンシャルが移行中に複数の表現を持ちうるため、要素数で数えるとログイン手段が0のアカウントを作れてしまう）
+- **`kind: "email"` の解除経路は存在しない**（`removeCredential` が `kind: "sso"` のみを受ける）。メールクレデンシャルを失うとアドレス表示・パスワードリセット・パスワード変更のすべてが成立しなくなり、追加し直す経路も無いため
+- **SSO 専用アカウントにパスワードを設定する経路は無い。** メールの要素は一意性の予約としてのみ置かれており、ログイン手段へ昇格する遷移を本設計は持たない
 - `trashRetentionDays` は常に有効値（1以上の整数）。`TrashRetentionDays` の生成時バリデーションで保証
 
 #### ライフサイクル
 
 - 生成: パスワード登録（S-AC-01）または SSO 初回ログイン（S-AC-02）で生成される
-- 状態遷移: `authMethod` はアカウントの生成時に決まり、以後変わらない（認証方式の追加・切替は現段階のスコープ外）
+- 状態遷移: クレデンシャル集合は SSO 連携の追加・解除で増減する。パスワードの有無は集合の内容で決まり、アカウントの型を分けない
 - 削除: アカウント削除は現段階のスコープ外（要件・シナリオに存在しない）
 
 ### AiClientConnection
@@ -161,7 +167,7 @@ export const AiClientConnection = {
   create: (
     params: { id: string; userId: UserId; clientName: string },
     now: Date,
-  ): WithEventDrafts<ActiveAiClientConnection, IdentityEvent>;
+  ): ActiveAiClientConnection;
 
   /**
    * 接続の失効（S-AC-06）。active のみ受け付ける（失効済みの再失効は型エラー）。
@@ -170,11 +176,11 @@ export const AiClientConnection = {
   revoke: (
     connection: ActiveAiClientConnection,
     now: Date,
-  ): WithEventDrafts<RevokedAiClientConnection, IdentityEvent>;
+  ): RevokedAiClientConnection;
 
   /**
    * 最終利用日時の更新。AI からの API 呼び出しの認可検証時にアダプター経由で呼ばれる。
-   * active のみ（失効済み接続で API は呼べないため）。イベントは発行しない。
+   * active のみ（失効済み接続で API は呼べないため）。
    */
   recordUsage: (
     connection: ActiveAiClientConnection,
@@ -216,11 +222,29 @@ export const AiClientConnection = {
 - バリデーション: UserId と同様（不透明な非空文字列）
 - 等価性: 文字列一致
 
+### CredentialId
+
+クレデンシャルの同一性。**認証情報の保管方式や鍵の世代が変わっても値が変わらない**ことが本 VO の目的である。
+
+- フィールド: `string`（ブランド型）
+- バリデーション: UserId と同様（不透明な非空文字列）。値は `IdGenerator` が採番し、メールアドレスからも鍵からも導出しない
+- 等価性: 文字列一致
+- 用途: 保有クレデンシャルの照合・解除対象の指定・リセットトークンの対象指定。**設定画面へ出してよい非 PII の値である**
+
 ### Email
 
 - フィールド: `string`（ブランド型）
-- バリデーション: trim・小文字化の正規化後、メールアドレス形式（`local@domain` 構造、最大320文字）であること。違反は `IdentityErrorCode.InvalidEmail`
+- バリデーション: 次の順序で行う。違反は `IdentityErrorCode.InvalidEmail`
+  1. `trim()`
+  2. **構造チェック**（`@` を含むこと、local 部・domain 部がいずれも空でないこと）を正規化より**前**に置く。「最後の `@` で分割」が `@` の存在を前提にするため
+  3. 最後の `@` で local 部と domain 部に分割する
+  4. **local 部に非 ASCII（`U+0080` 以上）を含む入力は拒否する。** SMTPUTF8 には対応しない。local 部はオクテット単位で不透明であり、正規化すると利用者が打鍵した実アドレスが復元不能になるため
+  5. **local 部は lowercase 化するが、NFKC は掛けない。** 全角英数・合字を畳むと配送先が別のメールボックスへ変わりうる。lowercase 化だけを残すのは、区別する設計のほうが「同じアドレスで重複アカウントができる」というより頻度の高い害を生むという受容判断である
+  6. **domain 部は NFKC 正規化して lowercase 化し、非 ASCII を含む場合は punycode（IDNA、ASCII 形式）へ変換する**
+  7. `local + "@" + domain` に再結合する
+  8. **長さ上限 320（RFC 5321 のパス長）を正規化の前後で2回見る。** punycode 変換は文字列を伸ばしうるので、超過は変換後の値で判定して拒否する
 - 等価性: 正規化後の文字列一致
+- **本 VO が canonical 化の唯一の出所である。** 認証情報側の一意性判定も本人到達の判定も、ここで得た値だけを入力にする
 
 ### PlainPassword
 
@@ -228,7 +252,7 @@ export const AiClientConnection = {
 
 - フィールド: `string`（ブランド型）
 - バリデーション: 8文字以上128文字以下。違反は `IdentityErrorCode.PasswordTooWeak`
-- 等価性: 文字列一致（ただしログ・イベント・永続化には決して含めない。`toString` を無効化するなど漏出防止を実装で担保する）
+- 等価性: 文字列一致（ただしログ・永続化には決して含めない。`toString` を無効化するなど漏出防止を実装で担保する）
 
 ### PasswordHash
 
@@ -317,18 +341,6 @@ export const TokenScope = {
 - `Actor` との対応は固定: `UserActor` ⇔ `HumanScope`、`AiClientActor` ⇔ `AiScope`。この導出はアダプター（認証・認可ミドルウェア）が行う
 - MCP / REST API の presentation 層には ai スコープのユースケースしか配線しない（application 層のユースケース公開範囲による構造的表現。→ domains/index.md 横断事項）。上記の二層で「AI が何をしてもハードデリート・ゴミ箱・履歴に到達できない」を保証する
 
-## ドメインイベント
-
-| イベント | ペイロード | 発生契機 |
-|---|---|---|
-| `identity.userRegistered` | `{ userId, authMethod }` | User.registerWithPassword / registerWithSso |
-| `identity.passwordChanged` | `{ userId }` | User.changePassword（リセット実行含む） |
-| `identity.trashRetentionChanged` | `{ userId, retentionDays }` | User.changeTrashRetentionDays |
-| `identity.aiClientConnected` | `{ connectionId, userId }` | AiClientConnection.create |
-| `identity.aiClientRevoked` | `{ connectionId, userId }` | AiClientConnection.revoke |
-
-いずれも識別子なしドラフトとしてファクトリから返し、EventId の採番は application 層（UoW の `collectEvents`）が行う。`identity.aiClientRevoked` はアダプター側のトークン失効処理（トークンストアからの削除等）のトリガーとして consumer が購読できる。
-
 ## ドメインサービス
 
 なし。
@@ -339,38 +351,62 @@ export const TokenScope = {
 
 ## ポート
 
-すべてドメイン型を受け渡す。外部データのデコード（検証・変換）はアダプター境界の責務。リポジトリはテンプレートの `TransactionalRepository<TEntity, TId>` と同じ OCC 規約（insert / save + `ExpectedVersion` トークン、0 行更新 → Conflict）に従うが、**extends はしない**: テンプレートの `TransactionalRepository` は userId スコープなしの契約のため、`(userId, id)` シグネチャのメソッド（`AiClientConnectionRepository.findById` 等）とは両立しない。memo / knowledge の各リポジトリと同方式で、独立したインターフェースとして必要なメソッドのみ自前宣言する（契約の互換部分は同じ規約に従う）。
+すべてドメイン型を受け渡す。外部データのデコード（検証・変換）はアダプター境界の責務。リポジトリはテンプレートの `TransactionalRepository<TEntity, TId>` と同じ OCC 規約（insert / save + `ExpectedVersion` トークン、0 行更新 → Conflict）に従う。**全メソッドは同期契約であり `Promise` を返さない。例外は `PasswordHasher` と `MailSender` の2つだけである**（どちらもトランザクションの外で動く。domains/index.md「ポートの同期契約」）。
 
-### UserRepository
+**`UserRepository` は2つに割れる。** `User` 集約が「認証情報の所有者」と「ユーザー単位設定の所有者」の2つの関心事を抱えていたためで、物理境界が分かれた以上ポートも分かれる。
 
-- 目的: User 集約の永続化と検索
+| ポート | 置き場 | 持つもの |
+|---|---|---|
+| `CredentialMappingRepository` | 認証情報側（Identity Directory） | メール・SSO 主体の一意性、パスワードの検証材料、`userId` の解決 |
+| `UserSettingsRepository` | ユーザー単位設定側（User Data DO） | `User`（クレデンシャル集合の要約・`trashRetentionDays`・OCC） |
+
+### CredentialMappingRepository
+
+- 目的: クレデンシャルの一意性の権威と、`userId` が未確定の経路からの解決
+- 置き場: 認証情報側。**ユーザー単位 Durable Object の外にある唯一のリポジトリである**
 
 ```ts
-export interface UserRepository {
-  // --- 書き込み（TransactionalRepository と同じ OCC 規約。extends はしない） ---
-  insert(user: User): Promise<void>;
-  save(user: User, expectedVersion: ExpectedVersion<User>): Promise<void>;
+export interface CredentialMappingRepository {
+  /** canonical 化済みのメールアドレスから解決する。登録時の一意性検証・パスワードログイン・リセット依頼に使う */
+  findByEmail(email: Email): CredentialMapping | null;
 
-  /** ID で取得。セッション / 認可済みトークン由来の信頼済み ID を扱う。該当なしは null */
-  findById(id: UserId): Promise<Versioned<User> | null>;
-
-  /** メールアドレスで検索。登録時の一意性検証・パスワードログイン・リセット依頼に使う */
-  findByEmail(email: Email): Promise<Versioned<User> | null>;
-
-  /** SSO 主体で検索。SSO ログイン時の既存アカウント判定に使う */
+  /** SSO 主体で解決する。SSO ログイン時の既存アカウント判定に使う */
   findBySsoIdentity(
     provider: SsoProvider,
     providerSubject: string,
-  ): Promise<Versioned<SsoUser> | null>;
+  ): CredentialMapping | null;
+
+  /** credentialId で引く（解除・リセットトークンの対象特定用） */
+  findByCredentialId(credentialId: CredentialId): CredentialMapping | null;
 }
 ```
 
+- `CredentialMapping` は `{ credentialId, userId, kind, usableForLogin }` と検証材料からなる。**検証材料の照合そのものはこのポートでは行わない** — 計算は `PasswordHasher` が担い、実行位置はトランザクションの外である
+- エラーケース:
+  - 一意性違反 → `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`。**事前チェックではなく予約の獲得で判定する**（同時登録のレースはこちらで捕捉される）
+  - DB 例外 → `SystemError(DatabaseError)`
+  - 該当なしはエラーではなく `null`
+- **登録・変更・解除の手順そのものは単一のメソッドに畳めない。** 認証情報側とユーザー単位設定側の2つを跨ぐため、順序と再開の規則を持つ手続きとして usecases/identity.md に書く
+
+### UserSettingsRepository
+
+- 目的: ユーザー単位設定側の `User` の永続化と読み取り
+
+```ts
+export interface UserSettingsRepository {
+  // --- 書き込み（TransactionalRepository と同じ OCC 規約） ---
+  insert(user: User): void;
+  save(user: User, expectedVersion: ExpectedVersion<User>): void;
+
+  /** 自分の Durable Object の User を取得する。初期化前なら null */
+  find(): Versioned<User> | null;
+}
+```
+
+- **`findById(id)` を持たない。** `userId` は Durable Object の選択で消費済みであり、その DO の中には1人分の設定しか存在しないため（domains/index.md「テナント分離」）
 - エラーケース:
   - `save` の OCC 不一致 → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
-  - `insert` の email 一意制約違反 → `ConflictError("EMAIL_ALREADY_REGISTERED")`（事前チェックと DB 制約の二重防御。競合登録のレースはこちらで捕捉する）
-  - `insert` の (provider, providerSubject) 一意制約違反 → `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（email と同様、事前チェック（`findBySsoIdentity`）と DB 制約の二重防御。同時初回 SSO サインインのレースはこちらで捕捉し、アダプターが制約違反を `ConflictError` にマッピングする）
   - DB 例外 → `SystemError(DatabaseError)`
-  - `findByEmail` / `findBySsoIdentity` の該当なしはエラーではなく `null`
 
 ### AiClientConnectionRepository
 
@@ -378,48 +414,38 @@ export interface UserRepository {
 
 ```ts
 export interface AiClientConnectionRepository {
-  // --- 書き込み（TransactionalRepository と同じ OCC 規約。extends はしない） ---
-  insert(connection: ActiveAiClientConnection): Promise<void>;
-  save(connection: AiClientConnection, expectedVersion: ExpectedVersion<AiClientConnection>): Promise<void>;
+  // --- 書き込み（TransactionalRepository と同じ OCC 規約） ---
+  insert(connection: ActiveAiClientConnection): void;
+  save(connection: AiClientConnection, expectedVersion: ExpectedVersion<AiClientConnection>): void;
+
+  /** 単体取得（設定画面からの失効操作 S-AC-06 等）。不在は null */
+  findById(id: AiClientConnectionId): Versioned<AiClientConnection> | null;
+
+  /** 接続一覧（S-AC-06）。connectedAt 降順 */
+  listByUserId(): readonly AiClientConnection[];
 
   /**
-   * 外部入力の ID を受ける単体取得（設定画面からの失効操作 S-AC-06 等）。
-   * userId を第一引数に取り、アダプターは常に userId でスコープしたクエリを発行する。
-   * 他ユーザー所有・不在は null（テナント分離。他ユーザーの接続 ID を渡しても「存在しない」となり、
-   * ユースケース層の connection.userId 照合に依存しない構造的保証とする）
-   */
-  findById(
-    userId: UserId,
-    id: AiClientConnectionId,
-  ): Promise<Versioned<AiClientConnection> | null>;
-
-  /** ユーザーの接続一覧（S-AC-06）。connectedAt 降順 */
-  listByUserId(userId: UserId): Promise<readonly AiClientConnection[]>;
-
-  /**
-   * active な接続のみ取得。API 呼び出しの認可検証（認可ミドルウェア）専用:
-   * 引数の ID はトークン由来の信頼済み ID であり、外部入力経路（revoke 等）では使わない。
-   * 外部入力の ID は userId スコープ付きの findById で引くこと。
+   * active な接続のみ取得。API 呼び出しの認可検証（認可ミドルウェア）専用。
    * 失効済み・存在しない場合は null（呼び出し側で認可エラーに変換する）
    */
-  findActiveById(
-    id: AiClientConnectionId,
-  ): Promise<Versioned<ActiveAiClientConnection> | null>;
+  findActiveById(id: AiClientConnectionId): Versioned<ActiveAiClientConnection> | null;
 
   /**
    * 最終利用日時のベストエフォート更新（AiClientConnection.recordUsage の永続化用）。
    * OCC を伴わない単独 UPDATE（version は進めない）。並行呼び出しは後勝ち。
    * 対象不在・失敗時も throw せず、呼び出し元の本処理（API 呼び出し）を失敗させない（ログのみ）
    */
-  recordUsage(id: AiClientConnectionId, lastUsedAt: Date): Promise<void>;
+  recordUsage(id: AiClientConnectionId, lastUsedAt: Date): void;
 }
 ```
 
+- **`findActiveById` は `userId` を取らない。** AI クライアントトークンは `userId` を自己完結で運ぶので、対象の Durable Object は呼び出し前に確定している。かつてこのメソッドが全ユーザー横断の PK 素引きだったのは、トークンから `userId` を引けなかったためである
+- **失効の権威は本リポジトリが読む `status` である。** 失効を別ストアへ伝播させる経路は存在せず、次のリクエストのガードが直接読む
 - エラーケース:
   - `save` の OCC 不一致 → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`（例: 一覧画面の二重解除操作）
   - DB 例外 → `SystemError(DatabaseError)`
   - `findActiveById` は失効済みを `null` として返す。「失効済み」と「存在しない」を区別しない（外部に接続の存在有無を漏らさない）
-  - `findById` は他ユーザー所有・不在を `null` として返す（区別しない。存在の有無も漏らさない）
+  - `findById` は不在を `null` として返す（存在の有無も漏らさない）
 
 ### PasswordHasher
 
@@ -440,20 +466,23 @@ export interface PasswordHasher {
 ### PasswordResetTokenPort
 
 - 目的: パスワードリセットトークンの発行・検証・消費（S-AC-07）。トークンの形式・署名・保存方式はアダプターの責務。ドメイン/アプリケーションは不透明文字列として扱う
+- **置き場は認証情報側（Identity Directory）である。** `issue` も `verifyAndConsume` も、トークン行が認証情報側にあることから行き先が決まる。**`issue` が `userId` を引数に取ることは置き場の根拠にならない** — トークンから対象を引ける形にしておかないと、リセットリンクを踏んだ未認証リクエストが誰のものか決められないからである
 
 ```ts
 export interface PasswordResetTokenPort {
   /** リセットトークンを発行する。有効期限の起点として now を受ける */
-  issue(userId: UserId, now: Date): Promise<string>;
+  issue(credentialId: CredentialId, now: Date): string;
 
   /**
    * トークンを検証し、有効なら消費（使い捨て）して対象ユーザーを返す。
    * 無効・期限切れ・使用済みは null
    */
-  verifyAndConsume(token: string, now: Date): Promise<UserId | null>;
+  verifyAndConsume(token: string, now: Date): UserId | null;
 }
 ```
 
+- **発行は対象クレデンシャル単位である。** 同じクレデンシャルに新しいトークンを発行すると、そのクレデンシャル宛の未使用トークンはすべて置き換わる（古いリンクは以後効かない）
+- **クレデンシャルの解除・パスワードの変更でも、そのクレデンシャル宛の未使用トークンは同じトランザクションで無効化する**（解除したのにリセットリンクが生きている状態を作らない）
 - エラーケース:
   - 無効・期限切れ・使用済みトークンはエラーではなく `null`（ユースケースが `ValidationError("RESET_TOKEN_INVALID")` 等に変換し、S-AC-07 の「期限切れの場合は再送をやり直せる」表示につなげる）
   - ストア障害 → `SystemError`
@@ -476,18 +505,18 @@ export interface MailSender {
 
 詳細はユースケース設計フェーズで定義する。★ は Web UI 専用（human スコープのみに配線し、AI 側の presentation には存在させない）。identity のユースケースはすべて ★ である（AI クライアントが自分の認可を操作することはない）。
 
-- ★ registerWithPassword — パスワードでアカウント登録（S-AC-01）。メール重複・パスワード要件・メール形式のエラーを含む。同一メールの SSO ユーザーが既に存在する場合も `EMAIL_ALREADY_REGISTERED`（自動リンクしない）
-- ★ registerOrLoginWithSso — SSO でのログイン。初回は自動でアカウント作成（S-AC-02）。ただし IdP から得たメールが既存のパスワードユーザーと一致する場合は自動リンクせず `EMAIL_ALREADY_REGISTERED` の明示エラーとし、UI はパスワードログインへの導線を示す（アカウントリンクは現段階のスコープ外）
+- ★ registerWithPassword — パスワードでアカウント登録（S-AC-01）。メール重複・パスワード要件・メール形式のエラーを含む。同一メールのクレデンシャルが既に存在する場合も `EMAIL_ALREADY_REGISTERED`（自動リンクしない）
+- ★ registerOrLoginWithSso — SSO でのログイン。初回は自動でアカウント作成（S-AC-02）。ただし IdP から得たメールが既存アカウントのものと一致する場合は自動リンクせず `EMAIL_ALREADY_REGISTERED` の明示エラーとし、UI はパスワードログインへの導線を示す（アカウントリンクは現段階のスコープ外）
 - ★ loginWithPassword — メールアドレスとパスワードでログイン（S-AC-03）。失敗理由は特定しない
 - ★ logout — セッションの破棄（S-AC-04。セッション自体はアダプター管理）
-- ★ requestPasswordReset — リセット依頼。トークン発行とメール送信。登録有無を明かさない（S-AC-07）。`UserRepository.findByEmail` の結果が `SsoUser` の場合はトークンを発行せずメールも送らない（未登録メールと同じ扱い）。レスポンスはいずれの場合も「登録されていれば送信された」旨のみとし、登録有無・認証方式を明かさない（S-AC-07 の情報漏えい防止と同じ扱い）
-- ★ executePasswordReset — リセット実行。トークン検証・消費と新パスワード設定（S-AC-07）。トークン検証後に取得したユーザーが万一 `SsoUser` の場合は、防衛的に `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)` とする（requestPasswordReset が SSO ユーザーにトークンを発行しないため、正常運用ではこの分岐に到達しない）
-- ★ changePassword — ログイン中のパスワード変更。現在パスワードの照合を伴う。PasswordUser のみ（S-AC-07）
+- ★ requestPasswordReset — リセット依頼。トークン発行とメール送信。登録有無を明かさない（S-AC-07）。**SSO 専用アカウント（メールのクレデンシャルがログイン手段になっていない）にはトークンを発行せずメールも送らない**（未登録メールと同じ扱い。判定は「クレデンシャルの有無」ではなく「パスワードの検証材料の有無」で行う）。レスポンスはいずれの場合も「登録されていれば送信された」旨のみとし、登録有無・認証方式を明かさない（S-AC-07 の情報漏えい防止と同じ扱い）
+- ★ executePasswordReset — リセット実行。トークン検証・消費と新パスワード設定（S-AC-07）。トークン検証後の対象クレデンシャルが万一パスワードの検証材料を持たない場合は、防衛的に `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)` とする（requestPasswordReset が SSO 専用アカウントにトークンを発行しないため、正常運用ではこの分岐に到達しない）
+- ★ changePassword — ログイン中のパスワード変更。現在パスワードの照合を伴う。パスワードのクレデンシャルを持つアカウントのみ（S-AC-07）
 - ★ approveAiClientAuthorization — OAuth 認可の許可。AiClientConnection を作成する（S-AC-05）
 - ★ denyAiClientAuthorization — OAuth 認可の拒否。接続は作らず、拒否をアダプターへ伝える（S-AC-05 異常系）
 - ★ listAiClientConnections — 接続済み AI クライアントの一覧（S-AC-06）
-- ★ revokeAiClientConnection — 接続の失効（S-AC-06）。対象 `connectionId` は設定画面からの外部入力のため、`AiClientConnectionRepository.findById(userId, connectionId)`（操作主体の userId でスコープ）で取得する。他ユーザー所有・不在は NotFound（テナント分離の構造的保証。ユースケース側の `connection.userId` 照合は不要）。取得結果が active なら `AiClientConnection.revoke` → `save`
+- ★ revokeAiClientConnection — 接続の失効（S-AC-06）。対象 `connectionId` は設定画面からの外部入力だが、引くのは自分の Durable Object の中だけなので `AiClientConnectionRepository.findById(connectionId)` で足りる。不在は NotFound（到達可能性による構造的保証。ユースケース側の `connection.userId` 照合は不要）。取得結果が active なら `AiClientConnection.revoke` → `save`
 - ★ changeTrashRetentionDays — ゴミ箱保持期限の変更（S-ST-01）
-- ★ getCurrentUser — 現在のユーザー情報の読み取り（設定画面 P-13 の表示用）。email・認証方式（authMethod。パスワード変更 UI の表示判定用: SSO のみのユーザーには非表示 S-AC-07）・trashRetentionDays を返す。人間 UI 専用の読み取りユースケース
+- ★ getCurrentUser — 現在のユーザー情報の読み取り（設定画面 P-13 の表示用）。email・**保有クレデンシャルの一覧**（要素は `credentialId` / `kind` / `label` の3つ組。パスワード変更 UI の表示判定にも使う: `kind: "email"` のログイン手段が無ければ非表示 S-AC-07）・trashRetentionDays を返す。人間 UI 専用の読み取りユースケース
 
-補足: getCurrentUser の戻り値は表示用 DTO（view）であり、`passwordHash` 等の資格情報は含めない。認証方式は User の直和タグ（password / sso）から導出する。
+補足: getCurrentUser の戻り値は表示用 DTO（view）であり、パスワードの検証材料等の資格情報は含めない。**`provider` / `providerSubject` も返さない**（`label` は provider 名までで subject を含まない）。`email` の取得は認証情報側の原本を本人の自己参照として1件だけ復号する経路であり、一覧表示のために複数件をまとめて復号する経路は開かない。

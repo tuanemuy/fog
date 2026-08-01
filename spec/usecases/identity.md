@@ -7,7 +7,7 @@
 - **公開面**: identity のユースケースは**すべて人間UI（★）専用**である。human スコープのみに配線し、AI 側の presentation（MCP / REST API）には存在させない（AI クライアントが自分の認可を操作することはない）
 - **セッション・OAuth プロトコルの責務分界**: セッションの生成・破棄・Cookie 管理、OAuth 2.1 のプロトコル詳細（認可コード、PKCE、トークン発行・検証・失効反映、リダイレクト）はすべて**アダプター/presentation 層の責務**。ユースケースは「認可の事実の記録」「認証情報の照合」などドメイン操作のオーケストレーションに限定する
 - 各ユースケースは `ServiceArgs<TInput>` で `container`（`clock` / `idGenerator` / `unitOfWorkProvider` / 各ポート）と `input` を受け取る。`now` / 新規 `id` はユースケース冒頭で解決し、ドメイン内では生成しない
-- 書き込みは `UnitOfWorkProvider.run` 内で行い、ドメインファクトリが返すイベントドラフトを `collectEvents` に渡す（Outbox に同一トランザクションでフラッシュされる）
+- 書き込みは `UnitOfWorkProvider.run` 内の**同期**コールバックで行う（`await` を挟めない）。**ドメインの変更を外部へ通知する経路は持たない**。認証情報側（Identity Directory）とユーザー単位設定側（User Data DO）の両方に書く操作は、単一のトランザクションに収まらないので順序と再開の規則を持つ手続きとして各ユースケースに書く
 - エラー種別の使い分け: 入力・照合の失敗は `ValidationError`、対象不在は `NotFoundError`、一意性・OCC 競合は `ConflictError`、ドメイン規則違反（値オブジェクト生成失敗を含む）は `BusinessRuleError<IdentityErrorCode>`、基盤障害は `SystemError`
 - `input` の `userId` はセッション由来の信頼済み ID（presentation 層が認証済みセッションから注入する）。外部入力として受けるのは `connectionId`（revokeAiClientConnection）等の明示したフィールドのみ
 - 出力DTOのフィールドはプリミティブ型で表記する（ブランド型 VO はプリミティブに widen して射影する）
@@ -40,12 +40,14 @@
 1. `container.clock.now()` で `now`、`container.idGenerator.next()` で新規 ID を解決する
 2. `Email.create(input.email)` / `PlainPassword.create(input.password)` で値オブジェクトを構築する
 3. `container.passwordHasher.hash(plainPassword)` で `PasswordHash` を得る（UoW 外で実行）
-4. `unitOfWorkProvider.run` 内:
-   1. `UserRepository.findByEmail(email)` で重複を事前検証する。既存ユーザー（認証方式を問わない）が居れば `ConflictError("EMAIL_ALREADY_REGISTERED")`
-   2. `User.registerWithPassword({ id, email, passwordHash }, now)` で `PasswordUser` とイベントドラフト（`identity.userRegistered`）を得る
-   3. `UserRepository.insert(user)` で永続化する（同時登録レースは DB の email 一意制約で捕捉）
-   4. `collectEvents(eventDrafts)`
-5. `userId` を返す
+4. **認証情報側**でメールの予約を取る（`CredentialMappingRepository.findByEmail(email)` で重複を検証し、予約行を書く）。既に使われていれば `ConflictError("EMAIL_ALREADY_REGISTERED")`
+5. 予約に勝った場合だけ、**ユーザー単位設定側**の `unitOfWorkProvider.run` 内で初期化する:
+   1. `User.registerWithPassword({ id, credential }, now)` で `User` を得る（`credential` は採番済みの `credentialId` と `kind: "email"` の要約）
+   2. `UserSettingsRepository.insert(user)` で永続化する
+6. 認証情報側の予約を確定させ、パスワードの検証材料を記録する
+7. `userId` を返す
+
+**手順4〜6は2つの物理境界をまたぐので、単一のトランザクションには収まらない。** 途中で落ちた場合は前進させる仕組みが引き取る。**利用者から観測できるのは次の2点だけである** — 中間状態のあいだはそのメールで登録もログインもできず、前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる
 
 ### エラーケース
 
@@ -87,13 +89,15 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 ### 処理フロー
 
 1. `now` / 新規 ID を解決し、`SsoProvider` / `Email.create(input.email)` で値オブジェクトを構築する
-2. `unitOfWorkProvider.run` 内:
-   1. `UserRepository.findBySsoIdentity(provider, providerSubject)` で既存アカウントを検索する。存在すればその `userId` と `isNewUser: false` を返す（ログイン。書き込みなし）
-   2. 不在なら `UserRepository.findByEmail(email)` でメール重複を検証する。既存ユーザーが居れば `ConflictError("EMAIL_ALREADY_REGISTERED")`（自動リンクしない。UI はパスワードログインへの導線を示す）
-   3. `User.registerWithSso({ id, email, provider, providerSubject }, now)` で `SsoUser` とイベントドラフト（`identity.userRegistered`）を得る
-   4. `UserRepository.insert(user)`（同時初回サインインのレースは DB の (provider, providerSubject) 一意制約で捕捉）
-   5. `collectEvents(eventDrafts)`
-3. `userId` と `isNewUser: true` を返す
+2. **認証情報側**で `CredentialMappingRepository.findBySsoIdentity(provider, providerSubject)` により既存アカウントを検索する。存在すればその `userId` と `isNewUser: false` を返す（ログイン。書き込みなし）
+3. 不在なら **SSO 主体とメールの両方**に予約を取る（`CredentialMappingRepository.findByEmail(email)` でメール重複も検証する）。**メールの一意性は SSO 登録にも掛かるので、予約は2本走る**。どちらかが既に使われていれば `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（自動リンクしない。UI はパスワードログインへの導線を示す）
+4. 両方の予約に勝った場合だけ、**ユーザー単位設定側**の `unitOfWorkProvider.run` 内で初期化する:
+   1. `User.registerWithSso({ id, credentials }, now)` で `User` を得る（`credentials` は `kind: "sso"` と `kind: "email"` の2件の要約）
+   2. `UserSettingsRepository.insert(user)`
+5. 認証情報側の予約を確定させる
+6. `userId` と `isNewUser: true` を返す
+
+**registerWithPassword と同じく2つの物理境界をまたぐ。** 中間状態と終端についての保証も同じである
 
 ### エラーケース
 
@@ -131,10 +135,11 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 ### 処理フロー
 
 1. `Email.create(input.email)` / `PlainPassword.create(input.password)` で値オブジェクトを構築する。生成失敗は認証情報全体の誤りとして `ValidationError("INVALID_CREDENTIALS")` に変換する（形式エラーを個別に返すと登録有無の推測材料になるため）
-2. `UserRepository.findByEmail(email)` で検索する（読み取りのみ。UoW 不要）
-3. 不在、または `authMethod: "sso"` のユーザーの場合は `ValidationError("INVALID_CREDENTIALS")`
-4. `PasswordUser` なら `container.passwordHasher.verify(plainPassword, user.passwordHash)` で照合する（タイミングセーフな照合はアダプター実装の責務）。不一致は `ValidationError("INVALID_CREDENTIALS")`
-5. `userId` を返す
+2. **認証情報側**で `CredentialMappingRepository.findByEmail(email)` により対象クレデンシャルを解決する（読み取りのみ）
+3. 不在、またはパスワードの検証材料を持たない（SSO 専用アカウントのメールクレデンシャル）場合は `ValidationError("INVALID_CREDENTIALS")`。**ここで応答を早めない** — 存在しない場合もダミーの検証材料で同じ計算量を通し、登録有無を計算時間から推測できないようにする
+4. `container.passwordHasher.verify(plainPassword, verifier)` で照合する（タイミングセーフな照合はアダプター実装の責務。**計算は Durable Object の外で行う** — 単一スレッドの DO を長く占有させないため）。不一致は `ValidationError("INVALID_CREDENTIALS")`
+5. **到達可能性を検査する**: 解決した `credentialId` が対象ユーザーのクレデンシャル集合に active な要素として存在することを確認する。存在しなければ `ValidationError("INVALID_CREDENTIALS")`（片方だけが残った中間状態でログインを通さない）
+6. `userId` を返す
 
 ### エラーケース
 
@@ -147,7 +152,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 
 ### 概要
 
-ログアウトする（S-AC-04）。セッションの破棄はアダプター（presentation 層のセッション管理）の責務であり、identity ドメインにはログアウトに対応する状態・イベントが存在しない。
+ログアウトする（S-AC-04）。セッションの破棄はアダプター（presentation 層のセッション管理）の責務であり、identity ドメインにはログアウトに対応する状態遷移が存在しない。
 
 本ユースケースはアプリケーション層の公開面を揃えるための入口であり、ドメイン操作・永続化を行わない（実装上は presentation 層のセッション破棄処理のみで完結してよい。その場合は本ユースケースを設けない判断も許容する）。
 
@@ -192,10 +197,13 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 ### 処理フロー
 
 1. `container.clock.now()` で `now` を解決し、`Email.create(input.email)` で値オブジェクトを構築する
-2. `UserRepository.findByEmail(email)` で検索する（読み取りのみ。UoW 不要）
-3. 不在、または `authMethod: "sso"` のユーザーの場合は何もせず正常終了する（未登録メールと同じ扱い）
-4. `PasswordUser` なら `PasswordResetTokenPort.issue(user.id, now)` でリセットトークンを発行する
-5. `MailSender.sendPasswordResetMail(email, resetToken)` でリセットメールを送る（リセット URL の組み立てはアダプターの責務）
+2. **認証情報側**で `CredentialMappingRepository.findByEmail(email)` により対象クレデンシャルを解決する
+3. **登録済み / 未登録 / SSO 専用 / スロットル中の4ケースで処理経路を完全に一致させる。** どのケースでも同じトランザクションで送信ジョブの行を1行書き、同じ起床を張り、同じ応答を返す。**違うのは行の中身だけである** — 行の書き込みそのものが測定可能な処理時間差になり、登録済みメールの列挙オラクルになるため
+4. 送る側に倒すのは「パスワードの検証材料を持つクレデンシャル」がある場合だけである。**判定は「クレデンシャル行の有無」ではなく「検証材料の有無」で行う** — SSO 登録でもメールのクレデンシャル行は置かれるので、行の有無では決まらない。送らない側の行は宛先を持たず、起床した時点で何も送らずに完了する
+5. 送る側の場合は `PasswordResetTokenPort.issue(credentialId, now)` でリセットトークンを発行する。**発行はそのクレデンシャル宛の未使用トークンをすべて置き換える**（古いリンクは以後効かない）
+6. 起床したジョブが `MailSender.sendPasswordResetMail(email, resetToken)` でリセットメールを送る（リセット URL の組み立てはアダプターの責務）。**ジョブ行に載せるのはトークンの識別子だけで、生のトークンは載せない** — 送信直前に認証情報側で導出する
+
+**同じメールアドレスへの連打は1本のジョブ行に収束する。** 登録済みでも未登録でも同じで、書き込みと起床は依頼回数ではなく時間の窓の数に比例する
 
 ### エラーケース
 
@@ -203,7 +211,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 |---|---|
 | メール形式不正 | `BusinessRuleError(IdentityErrorCode.InvalidEmail)` |
 | トークンストア障害・送信基盤障害 | `SystemError`（ただし宛先の実在性に起因する失敗を応答に反映してはならない） |
-| メール未登録 / SSO ユーザー | エラーにしない（正常応答。登録有無を明かさない） |
+| メール未登録 / SSO 専用アカウント / スロットル中 | エラーにしない（正常応答。登録有無も認証方式も明かさない） |
 
 ## executePasswordReset
 
@@ -229,12 +237,11 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 1. `now` を解決し、`PlainPassword.create(input.newPassword)` で値オブジェクトを構築する（トークン消費前に検証し、要件違反でトークンを浪費しない）
 2. `PasswordResetTokenPort.verifyAndConsume(input.token, now)` でトークンを検証・消費する。`null` なら `ValidationError("RESET_TOKEN_INVALID")`（期限切れ・使用済み・改ざんを区別しない。UI は再送導線を示す）
 3. `container.passwordHasher.hash(newPlainPassword)` で新しい `PasswordHash` を得る
-4. `unitOfWorkProvider.run` 内:
-   1. `UserRepository.findById(userId)` で取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
-   2. 取得結果が `SsoUser` の場合は防衛的に `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)`（requestPasswordReset が SSO ユーザーにトークンを発行しないため、正常運用では到達しない）
-   3. `User.changePassword(user, newPasswordHash, now)` で更新後エンティティとイベントドラフト（`identity.passwordChanged`）を得る
-   4. `UserRepository.save(user, expectedVersion)`
-   5. `collectEvents(eventDrafts)`
+4. 対象クレデンシャルがパスワードの検証材料を持たない場合は防衛的に `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)`（requestPasswordReset が SSO 専用アカウントにトークンを発行しないため、正常運用では到達しない）
+5. **認証情報側**で検証材料を新しいものへ差し替え、そのクレデンシャル宛の未使用トークンをすべて無効化する（同一トランザクション）
+6. **ユーザー単位設定側**で、リセット完了を契機とする AI クライアント接続の自動失効を適用する（後述）
+
+**手順5〜6は2つの物理境界をまたぐ。** 中間状態のあいだは旧新どちらのパスワードでもログインできず、前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる。**リセット完了に限り、前回のリセット完了以降に作られた AI クライアント接続が失効する**（通常のパスワード変更では失効しない。domains/identity.md）
 
 ### エラーケース
 
@@ -251,7 +258,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 
 ### 概要
 
-ログイン中のユーザーが現在のパスワードを照合したうえで新しいパスワードに変更する（S-AC-07）。`PasswordUser` のみ可能（SSO のみのユーザーには UI 上パスワード変更の項目自体を表示しない。表示判定は getCurrentUser の `authMethod` を用いる）。
+ログイン中のユーザーが現在のパスワードを照合したうえで新しいパスワードに変更する（S-AC-07）。**パスワードのクレデンシャルを持つアカウントのみ可能**（SSO 専用アカウントには UI 上パスワード変更の項目自体を表示しない。表示判定は getCurrentUser が返すクレデンシャル一覧を用いる）。
 
 公開面: ★ 人間UI専用
 
@@ -270,14 +277,13 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 ### 処理フロー
 
 1. `now` を解決し、`PlainPassword.create` で `currentPassword` / `newPassword` の値オブジェクトを構築する
-2. `UserRepository.findById(userId)` で取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
-3. `authMethod: "sso"` の場合は `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)`
-4. `container.passwordHasher.verify(currentPlainPassword, user.passwordHash)` で現在パスワードを照合する。不一致は `ValidationError("CURRENT_PASSWORD_MISMATCH")`
-5. `container.passwordHasher.hash(newPlainPassword)` で新しい `PasswordHash` を得る
-6. `unitOfWorkProvider.run` 内:
-   1. `User.changePassword(user, newPasswordHash, now)` で更新後エンティティとイベントドラフト（`identity.passwordChanged`）を得る
-   2. `UserRepository.save(user, expectedVersion)`
-   3. `collectEvents(eventDrafts)`
+2. **認証情報側**で対象のメールクレデンシャルと検証材料を取得する。パスワードの検証材料を持たなければ `BusinessRuleError(IdentityErrorCode.PasswordNotSupported)`
+3. `container.passwordHasher.verify(currentPlainPassword, verifier)` で現在パスワードを照合する（計算は Durable Object の外）。不一致は `ValidationError("CURRENT_PASSWORD_MISMATCH")`。**照合の失敗はログイン失敗と同じ回数カウンタを進める**（認証済み経路でも総当たりの足場にさせない）
+4. `container.passwordHasher.hash(newPlainPassword)` で新しい `PasswordHash` を得る
+5. **認証情報側**で検証材料を差し替え、そのクレデンシャル宛の未使用トークンをすべて無効化する（同一トランザクション）
+6. **ユーザー単位設定側**でセッションの世代を進める（既存セッションは次のリクエストで失効する）
+
+**手順5〜6は2つの物理境界をまたぐ。** 中間状態のあいだは旧新どちらのパスワードでもログインできず、前進不能が確定した場合は一様な終端（記録を残して運用へエスカレーションする）に落ちる。**AI クライアント接続は失効しない**（パスワードの変更が連携の取り消し意思を意味しないため。domains/identity.md）
 
 ### エラーケース
 
@@ -318,10 +324,8 @@ OAuth 認可画面で「許可する」が押されたとき、AI クライア�
 ### 処理フロー
 
 1. `now` / 新規 ID を解決し、`UserId.create(input.userId)` / `ClientName.create(input.clientName)` で値オブジェクトを構築する
-2. `AiClientConnection.create({ id, userId, clientName }, now)` で `ActiveAiClientConnection` とイベントドラフト（`identity.aiClientConnected`）を得る
-3. `unitOfWorkProvider.run` 内:
-   1. `AiClientConnectionRepository.insert(connection)`
-   2. `collectEvents(eventDrafts)`
+2. `AiClientConnection.create({ id, userId, clientName }, now)` で `ActiveAiClientConnection` を得る
+3. `unitOfWorkProvider.run` 内で `AiClientConnectionRepository.insert(connection)`。**作成時点のリセット世代を接続に写す**（リセット完了時の自動失効の射程を決める材料である。domains/identity.md）
 4. `connectionId` を返す
 
 ### エラーケース
@@ -393,7 +397,7 @@ OAuth 認可画面で「拒否する」が押されたときの処理（S-AC-05 
 ### 処理フロー
 
 1. `UserId.create(input.userId)` で値オブジェクトを構築する
-2. `AiClientConnectionRepository.listByUserId(userId)` で接続一覧を取得する（connectedAt 降順。読み取りのみ。UoW 不要）
+2. `AiClientConnectionRepository.listByUserId()` で接続一覧を取得する（connectedAt 降順。読み取りのみ。UoW 不要）
 3. view に射影して返す（0件は空配列。エラーではない）
 
 ### エラーケース
@@ -408,7 +412,7 @@ OAuth 認可画面で「拒否する」が押されたときの処理（S-AC-05 
 
 AI クライアント接続を失効させる（S-AC-06）。以後そのクライアントのトークンは認可エラーになる。失効は不可逆で、再利用には新しい認可フロー（S-AC-05）が必要。
 
-トークンストアからの実トークン削除等の失効反映はアダプターの責務であり、`identity.aiClientRevoked` イベントの consumer として実行される。本ユースケースは失効状態の記録のみを担う。
+**失効の権威は `ai_client_connections.status` そのものである。** 失効を別ストアへ伝播させる経路は持たず、**次のリクエストで対象 Durable Object 内のガードが直接読んで拒否する**。本ユースケースは失効状態の記録のみを担う。
 
 公開面: ★ 人間UI専用
 
@@ -427,11 +431,10 @@ AI クライアント接続を失効させる（S-AC-06）。以後そのクラ�
 
 1. `now` を解決し、`UserId.create(input.userId)` / `AiClientConnectionId.create(input.connectionId)` で値オブジェクトを構築する
 2. `unitOfWorkProvider.run` 内:
-   1. `AiClientConnectionRepository.findById(userId, connectionId)` で取得する（userId スコープ付き。他ユーザー所有・不在は null で返る = テナント分離の構造的保証。ユースケース側の `connection.userId` 照合は不要）。null なら `NotFoundError("CONNECTION_NOT_FOUND")`
+   1. `AiClientConnectionRepository.findById(connectionId)` で取得する（自分の Durable Object の中だけを引くので、他ユーザーの接続 ID は不在として null で返る = 到達可能性による構造的保証。ユースケース側の `connection.userId` 照合は不要）。null なら `NotFoundError("CONNECTION_NOT_FOUND")`
    2. `status: "revoked"` の場合は何もせず正常終了する（冪等。既に失効済み）
-   3. `AiClientConnection.revoke(connection, now)` で `RevokedAiClientConnection` とイベントドラフト（`identity.aiClientRevoked`）を得る
+   3. `AiClientConnection.revoke(connection, now)` で `RevokedAiClientConnection` を得る
    4. `AiClientConnectionRepository.save(connection, expectedVersion)`
-   5. `collectEvents(eventDrafts)`
 
 ### エラーケース
 
@@ -464,10 +467,10 @@ AI クライアント接続を失効させる（S-AC-06）。以後そのクラ�
 
 1. `now` を解決し、`UserId.create(input.userId)` / `TrashRetentionDays.create(input.retentionDays)` で値オブジェクトを構築する
 2. `unitOfWorkProvider.run` 内:
-   1. `UserRepository.findById(userId)` で取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
-   2. `User.changeTrashRetentionDays(user, retentionDays, now)` で更新後エンティティとイベントドラフト（`identity.trashRetentionChanged`）を得る
-   3. `UserRepository.save(user, expectedVersion)`
-   4. `collectEvents(eventDrafts)`
+   1. `UserSettingsRepository.find()` で取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
+   2. `User.changeTrashRetentionDays(user, retentionDays, now)` で更新後エンティティを得る
+   3. `UserSettingsRepository.save(user, expectedVersion)`
+   4. **同じトランザクションでゴミ箱内の全項目の `purgeAfter` を再計算し**、新しい最も早い期限で `purge-trash` の起床を張り直す（domains/trash.md「保持期限」）。件数が大きい場合はチャンクに分けて進める
 
 ### エラーケース
 
@@ -482,7 +485,7 @@ AI クライアント接続を失効させる（S-AC-06）。以後そのクラ�
 
 ### 概要
 
-現在のユーザー情報を読み取る（設定画面 P-13 の表示用）。`authMethod` はパスワード変更 UI の表示判定（SSO のみのユーザーには非表示。S-AC-07 エッジケース）に使う。資格情報（`passwordHash`）や SSO 主体 ID は含めない。
+現在のユーザー情報を読み取る（設定画面 P-13 の表示用）。**保有クレデンシャルの一覧**はパスワード変更 UI の表示判定（`kind: "email"` のログイン手段が無ければ非表示。S-AC-07 エッジケース）と SSO 連携の解除操作に使う。資格情報や SSO 主体 ID は含めない。
 
 公開面: ★ 人間UI専用
 
@@ -498,14 +501,15 @@ AI クライアント接続を失効させる（S-AC-06）。以後そのクラ�
 |---|---|
 | userId | `string` |
 | email | `string` |
-| authMethod | `"password" \| "sso"`（User の直和タグから導出） |
+| credentials | `{ credentialId: string; kind: "email" \| "sso"; label: string }[]`（保有クレデンシャルの要約。`label` は SSO なら provider 名、メールなら空文字） |
 | trashRetentionDays | `number` |
 
 ### 処理フロー
 
 1. `UserId.create(input.userId)` で値オブジェクトを構築する
-2. `UserRepository.findById(userId)` で取得する（読み取りのみ。UoW 不要）。不在なら `NotFoundError("USER_NOT_FOUND")`
-3. view に射影して返す（`authMethod` は判別可能ユニオンのタグをそのまま用いる）
+2. `UserSettingsRepository.find()` でクレデンシャル要約と設定を取得する（読み取りのみ。UoW 不要）。不在なら `NotFoundError("USER_NOT_FOUND")`
+3. **認証情報側**からメールアドレスの原本を1件だけ復号して取得する（本人の自己参照であり、一覧のために複数件をまとめて復号する経路は開かない）
+4. view に射影して返す。**解除操作を出してよいのは `kind: "sso"` の要素だけである**（`kind: "email"` の解除経路は存在しない。権威はドメイン側にあり、UI の出し分けは二重の防波堤である）
 
 ### エラーケース
 

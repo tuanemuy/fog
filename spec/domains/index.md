@@ -7,7 +7,7 @@
 | [identity](./identity.md) | ユーザーの認証・AIクライアント認可・ユーザー設定を管理する | User, AiClientConnection |
 | [memo](./memo.md) | タイムラインに積まれるメモとそのリビジョン履歴を管理する | Memo |
 | [knowledge](./knowledge.md) | トピック・ドキュメント・出典リンクと、ドキュメントのリビジョン履歴を管理する | Topic, Document |
-| [search](./search.md) | メモ・ドキュメント横断のハイブリッド検索と検索インデックスの維持を担う | （検索クエリ・結果の値オブジェクトとポートのみ） |
+| [search](./search.md) | メモ・ドキュメント横断の全文検索の問い合わせを担う | （検索クエリ・結果の値オブジェクトとポートのみ） |
 | [trash](./trash.md) | ソフトデリート済み項目の横断閲覧・復元・ハードデリート・保持期限の規則を定める | （横断ビューとドメインサービス。項目自体の削除状態は各ドメインが持つ） |
 | [export](./export.md) | ユーザーの全データを可搬形式（Markdown）で書き出す | （エクスポート生成サービスとポート） |
 
@@ -21,7 +21,7 @@ identity ←─ memo ←─ knowledge
    └── export（memo, knowledge に依存）
 ```
 
-- すべてのドメインは identity の `UserId` を参照する（ID参照のみ）
+- identity の `UserId` はドメイン間で ID として参照されるが、**リポジトリ・ポートの引数には現れない**（ユーザー単位 Durable Object の選択で消費済み。下記「テナント分離」）
 - knowledge は memo の `MemoId` を出典リンクとして参照する（ID参照のみ。エンティティ直接参照はしない）
 - search / trash / export は memo・knowledge のエンティティをIDおよび読み取り専用ビューで扱う
 - 循環依存はない
@@ -29,6 +29,7 @@ identity ←─ memo ←─ knowledge
 ## 共通の横断事項
 
 - **操作主体（Actor）**: リビジョンの「誰が」は、人間ユーザーまたはAIクライアント（トークン識別）を表す `Actor` として identity が定義し、memo / knowledge が利用する
-- **テナント分離**: ユーザーのデータは本人にのみ属する（requirements 5.1）。リポジトリの読み書きは常に `userId` でスコープし、外部入力の ID を受けるメソッドは `userId` を第一引数に取る。他ユーザーの ID を指定した操作は NotFound として扱う（ID が実在しても所有者が異なれば「存在しない」= null / 空。存在の有無も漏らさない）。ユースケース層の追加検証（取得後の `entity.userId` 照合）に依存しない構造的保証とする。例外は Outbox 経由の信頼済み内部イベントを契機とするワーカー（search の indexer consumer 等）のみで、外部入力 ID を扱わないため専用の読み取り経路を用いる
+- **テナント分離**: ユーザーのデータは本人にのみ属する（requirements 5.1）。**ユーザーのドメインデータはユーザー単位の SQLite-backed Durable Object に物理分離される**（requirements 5.1）。`userId` は Durable Object の選択で消費されるので、DO 内のリポジトリ・ポートは `userId` を引数に取らない。**構造的保証の在り処は「型（第一引数の `userId`）」ではなく「到達可能性」である** — 他ユーザーの Durable Object stub を得る経路が存在しないので、誤った `userId` を渡す経路そのものが無い。他ユーザーの ID を指定した操作は NotFound として扱う（DO の中に他ユーザーの行が原理的に存在しないので、結果は null / 空になる。存在の有無も漏らさない）。ユースケース層の追加検証（取得後の `entity.userId` 照合）に依存しない構造的保証とする。**例外は無い**
 - **権限の非対称性**: ハードデリート・ゴミ箱操作・履歴閲覧はAIトークンのスコープに存在しない。この制約は二層で構造的に表現する（domains/identity.md「TokenScope」）: `actor` を入力に持つ人間 UI 専用（★）ユースケースは `actor` の型を `UserActor` に限定して型エラーで排除し、`actor` を持たない ★ ユースケースは application 層の公開範囲（AI 側 presentation に配線しない配線分離）＋ AI トークンの認可ミドルウェアの許可ユースケース列挙で排除する
-- **ドメインイベント + Outbox**: エンティティの作成・更新・削除はドメインイベントを発行し、検索インデックスの更新（search）は outbox 経由の consumer が行う（ADR-005）
+- **ポートの同期契約**: 全ドメインポートは同期契約である（`Promise` を返さない）。書き込みは Durable Object 内の単一の同期トランザクションで完結し、その中では `await` を挟めないためである。例外は `PasswordHasher` と `MailSender` の2つで、どちらもトランザクションの外（request Worker / ジョブ実行）で動くので `Promise` のまま残る
+- **派生データの更新**: 検索インデックスのような派生データは、本体を書くのと同一のトランザクションの中で更新する（[.adr/004](../../.adr/004-do-local-commit-and-alarm-jobs.md)。`spec/adr/005`（superseded））。別ストアへ非同期に配送する経路は持たず、エンティティの作成・更新・削除が通知を発行することもない。業務上の変更履歴はリビジョン（`memo_revisions` / `document_revisions`）が持つ
