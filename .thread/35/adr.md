@@ -1562,7 +1562,7 @@ Proposed
 
 ## ADR-051: 「すべて失効」と「SSO 連携の解除」を独立したユースケースとして新設する
 
-→ `.adr/013-sso-credential-linking-scope.md` に昇格（画面が約束した操作の受け皿と一括操作の扱いとして）
+→ `.adr/012-sso-credential-linking-scope.md` に昇格（画面が約束した操作の受け皿と一括操作の扱いとして）
 
 ### Status
 
@@ -1592,7 +1592,7 @@ Proposed
 
 ## ADR-052: 「ポートの同期契約」の例外は列挙であって導出規則ではない、と書く
 
-→ `.adr/011-synchronous-port-contract-exceptions.md` に昇格
+（昇格しない — ポートの同期契約の例外を定める規約であり、実体は `CLAUDE.md` と `spec/domains/index.md` が持つ。旧基準が誤判定を生んだ経緯は本作業ログに残す）
 
 ### Status
 
@@ -1800,7 +1800,7 @@ Proposed
 
 ## ADR-061: リセット完了時に新しいセッションを確立する
 
-→ `.adr/012-new-session-on-password-reset-completion.md` に昇格
+→ `.adr/011-new-session-on-password-reset-completion.md` に昇格
 
 ### Status
 
@@ -1825,7 +1825,7 @@ Proposed
 
 ## ADR-062: SSO 連携の追加（`linkSsoCredential`）を spec に載せる
 
-→ `.adr/013-sso-credential-linking-scope.md` に昇格
+→ `.adr/012-sso-credential-linking-scope.md` に昇格
 
 ### Status
 
