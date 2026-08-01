@@ -1,123 +1,126 @@
 # Inventory — adapter
 
-生成元: spec/database/ + spec/domains/（ポート定義）（最終同期: 2026-07-25）
+生成元: spec/database/ + spec/domains/（ポート定義）（最終同期: 2026-08-01）
 
 ## スキーマ / マイグレーション（テーブルごと）
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-users-001 | schema: users | spec/database/index.md#users | 認証方式の直和（password/sso）を判別タグ + nullable カラム + テーブル CHECK で表現し、`users_email_uq`（UNIQUE email）と部分一意 `users_sso_identity_uq`（sso_provider, sso_provider_subject WHERE sso_provider IS NOT NULL）を持つ |
-| ADP-password-reset-tokens-001 | schema: password_reset_tokens | spec/database/index.md#password_reset_tokens | 生トークンではなく token_hash（UNIQUE）を保存し、version なし・`prt_user_idx` / `prt_expires_idx` を備える |
-| ADP-ai-client-connections-001 | schema: ai_client_connections | spec/database/index.md#ai_client_connections | active/revoked の直和 CHECK（revoked のときのみ revoked_at 非 NULL）と `acc_user_connected_idx`（user_id, connected_at DESC）を持つ |
-| ADP-memos-001 | schema: memos | spec/database/index.md#memos | active/trashed の直和 CHECK と部分インデックス `memos_timeline_idx`（user_id, posted_at DESC, id DESC WHERE active）/ `memos_trash_idx` / `memos_expired_idx` を持つ |
+| ADP-users-001 | schema: users（廃止・分裂） | spec/database/index.md#テーブル一覧 | **共有の `users` テーブルは存在しない。** 認証方式の直和・`users_email_uq` / `users_sso_identity_uq` を1枚に載せていた前提ごと消える。行き先は4つで、それぞれ台帳の行を持つ — `account`（状態・失効の権威。`ADP-account-001`）/ `user_settings`（ユーザー単位設定。`ADP-user-settings-001`）/ `credential_mappings`（一意性の権威・検証材料・`userId` への写像。`ADP-credential-mappings-001`）/ `credential_locators`（保有クレデンシャルの逆引き。`ADP-credential-locators-001`） |
+| ADP-password-reset-tokens-001 | schema: password_reset_tokens | spec/database/index.md#password_reset_tokens | **Identity Directory DO 側に置く。** 生トークンではなく `token_hash`（UNIQUE）を保存し、PK は暗号論的乱数由来の `token_id`（連番・rowid・時刻由来を使わない）。対象は `credential_id`（`(kind, hmac)` をキーにしない）。`change_auth_token` は消費時に採番し成功時に同一トランザクションで `NULL` へ戻す（`NULL` の行は照合で常に不一致）。version なし・`prt_token_hash_uq` / `prt_credential_idx` / `prt_expires_idx` を備える |
+| ADP-ai-client-connections-001 | schema: ai_client_connections | spec/database/index.md#ai_client_connections | active/revoked の直和 CHECK（revoked のときのみ revoked_at 非 NULL）と `acc_connected_idx`（connected_at DESC）を持つ。`user_id` 列は持たない。`created_at_reset_version`（作成時点の `account.reset_version`）を持ち、リセット完了時の自動失効の射程を決める |
+| ADP-memos-001 | schema: memos | spec/database/index.md#memos | active/trashed の直和 CHECK（trashed であることと `purge_after` を持つことが同値）と部分インデックス `memos_timeline_idx`（posted_at DESC, id DESC WHERE active）/ `memos_trash_idx` / **`memos_purge_idx`（purge_after WHERE trashed）** を持つ。`user_id` 列も先頭 `user_id` の複合索引も持たない。**全ユーザー横断の JOIN による期限切れ列挙は存在しない**。書き込み・削除・復元はいずれも同一トランザクションで `search_entries` / `search_fts` を更新する |
 | ADP-memo-revisions-001 | schema: memo_revisions | spec/database/index.md#memo_revisions | 複合 PK (memo_id, revision_number)・Actor の直和 CHECK（user/ai_client）・FK ON DELETE CASCADE を持ち、actor_client_name を表示用スナップショットとして保存する |
-| ADP-topics-001 | schema: topics | spec/database/index.md#topics | active/archived/trashed の直和 CHECK（trashed のときのみ trashed_at と was_archived 非 NULL）と `topics_user_live_idx` / `topics_trash_idx` / `topics_expired_idx` を持つ |
-| ADP-documents-001 | schema: documents | spec/database/index.md#documents | 直和 CHECK + `trashed_with IS NULL OR trashed_with = topic_id` の CHECK を持ち、topic_id には意図的に FK を張らず（ADR-001）、`docs_topic_active_idx` 等 5 インデックスを備える |
+| ADP-topics-001 | schema: topics | spec/database/index.md#topics | active/archived/trashed の直和 CHECK（trashed のときのみ trashed_at / purge_after / was_archived が非 NULL）と `topics_live_idx`（status, name）/ `topics_trash_idx` / **`topics_purge_idx`（purge_after WHERE trashed）** を持つ。`user_id` 列を持たず、索引名からも `user` を落とす |
+| ADP-documents-001 | schema: documents | spec/database/index.md#documents | 直和 CHECK + `trashed_with IS NULL OR trashed_with = topic_id` の CHECK を持ち、topic_id には意図的に FK を張らず（ADR-001）、`docs_topic_active_idx` / `docs_topic_trashed_idx` / `docs_trash_idx` / **`docs_purge_idx`** / `docs_updated_idx` を備える。`user_id` 列を持たず、索引名からも `user` を落とす |
 | ADP-document-revisions-001 | schema: document_revisions | spec/database/index.md#document_revisions | 独立 TEXT PK + UNIQUE (document_id, revision_number)（`doc_revs_doc_rev_uq`）・Actor 直和 CHECK・change_reason NOT NULL・FK ON DELETE CASCADE を持つ |
-| ADP-source-links-001 | schema: source_links | spec/database/index.md#source_links | 複合 PK (document_id, memo_id)・双方向 FK ON DELETE CASCADE（defense-in-depth）・`source_links_memo_idx` を持ち、user_id カラムは持たない（JOIN でスコープ） |
-| ADP-outbox-001 | schema: outbox | spec/database/index.md#outbox--processed_events--_occ_guard共通基盤 | テンプレート流儀のイベント行（payload は対象 ID のみ）+ claimPending 用部分インデックス（processed_at IS NULL AND failed_at IS NULL）を持つ |
-| ADP-processed-events-001 | schema: processed_events | spec/database/index.md#outbox--processed_events--_occ_guard共通基盤 | consumer の event.id ベース冪等化（INSERT OR IGNORE で claim）用テーブルをテンプレート流儀で持つ |
-| ADP-occ-guard-001 | schema: _occ_guard | spec/database/index.md#outbox--processed_events--_occ_guard共通基盤 | D1 の PendingBatch 方式で OCC 不一致時に CHECK 違反でバッチ全体を abort するガードテーブルを全ランタイム共通スキーマとして持つ |
-| ADP-search-fts-001 | schema: search_fts | spec/database/index.md#検索インデックスの永続化アダプター実装詳細 | FTS5 仮想テーブル（type, entity_id/user_id/topic_id UNINDEXED, title, content）を SearchIndexPort アダプターのマイグレーションとして domain tables と別ファイルで管理し、upsert は delete + insert で冪等にする |
-| ADP-search-embeddings-001 | schema: search_embeddings | spec/database/index.md#検索インデックスの永続化アダプター実装詳細 | PRIMARY KEY (type, entity_id) の埋め込みテーブル（F32_BLOB。libSQL/Turso のベクトル型）をアダプターのマイグレーションとして管理する（D1 は外部インデックス差し替えで本テーブルを持たない） |
+| ADP-source-links-001 | schema: source_links | spec/database/index.md#source_links | 複合 PK (document_id, memo_id)・双方向 FK ON DELETE CASCADE（defense-in-depth）・`source_links_memo_idx` を持ち、`user_id` 列を持たない。**JOIN によるユーザースコープは行わない**（DO の中に1人分の行しか存在しないため） |
+| ADP-search-fts-001 | schema: search_fts | spec/database/index.md#search_fts | **external-content 構成の FTS5 仮想テーブル**（`title` / `body` の2列のみ索引、`content='search_entries'`、`content_rowid='rowid'`、`tokenize='trigram'`）。作成時に自動 populate されないので既存行の投入は migration の `reindex` ジョブが行う。更新・削除は「旧値で delete → 新値で insert」の2段で、整合は SQL トリガーではなく projection コードが担う。**踏み外すと例外が上がらず索引だけが黙って壊れる** |
+| ADP-account-001 | schema: account | spec/database/index.md#account | 単一行テーブル。`status`（active/deleting/deleted）・`session_epoch`（セッション失効の唯一の権威）・`deleted_at`・`caller_token`（ログ・エラー・`terminal_reason` に出さない）・`reset_version`（**リセット完了だけで進む単調増加カウンタ**。`credential_version` で代用しない）・OCC `version` を持つ。退会後も非 PII の tombstone として残る |
+| ADP-user-settings-001 | schema: user_settings | spec/database/index.md#user_settings | 単一行テーブル。`trash_retention_days`（CHECK `>= 1`。既定 30 の補完は application 層）と OCC `version` を持つ。**変更は同一トランザクションでゴミ箱内全項目の `purge_after` 再計算を伴う** |
+| ADP-credential-locators-001 | schema: credential_locators | spec/database/index.md#credential_locators | 保有クレデンシャルの逆引き。原本も検証材料も持たない。`credential_id` / `kind` / `hmac` / `generation` / `bucket_index` / `credential_version` / `status`（値域は `active` の1値のみ。除去は物理削除）/ `usable_for_login` / `label`（非 PII）を持ち、`cl_credential_uq`（credential_id, generation）と `cl_hmac_uq`（kind, hmac, generation）を張る。**到達性の照合は `credential_id` だけを見て `generation` を含めない**（ローテーション中は2世代が並存する） |
+| ADP-search-entries-001 | schema: search_entries | spec/database/index.md#search_entries | 検索 projection の本体（1エントリ1行）。**PK は `rowid INTEGER PRIMARY KEY`、`id TEXT` は UNIQUE の別列**（`search_fts` の delete に渡す安定した INTEGER rowid を組み立てるため。rowid を DO の外の DTO に出さない）。`type` / `topic_id` / `title` / `body`（**NFKC + trim 済みの値**）/ `timestamp` / `source_ids`（active な相手のみの JSON 配列）を持ち、`search_entries_id_uq` / `search_entries_topic_idx` / `search_entries_order_idx`（timestamp DESC, type, id）を張る。**原文もトピック名も複製しない**（スニペットは本体テーブル、トピック名は join で解決）。OCC `version` を持たない |
+| ADP-jobs-001 | schema: jobs（User Data DO） | spec/database/index.md#jobs | Alarm ジョブの多重化テーブル（12列）。`operation_key` PK・`kind`・`payload`（**PII と再利用可能な秘密を入れない**）・`payload_digest`（`next_run_at` を除いた payload で照合）・`attempt` / `next_run_at` / `status`（pending/running/done/poison）/ `lease_until` / `owner_token` / `provider_idempotency_key` / `terminal_reason` / `completed_at`。`jobs_runnable_idx` / `jobs_lease_idx` / `jobs_completed_idx` を張る。claim と完了は CAS（第2の選言に `status='running'` を必ず含める）。終端は一様で、前進不能は `terminal_reason` を残して `poison` にし operator 経路へエスカレーションする。prune 専用の `kind` は置かない |
+| ADP-operations-001 | schema: operations | spec/database/index.md#operations | saga / DO 間 RPC の冪等性を担う表。`operation_id` PK（**採番はサーバー側だけ**。クライアントに冪等キーを持たせない）・`kind` / `payload_digest`（違う payload の再送は `ConflictError`）/ `phase` / `target_locators`（**単一値ではなく JSON 配列**。終端の後始末が終わるまで消さない）/ `terminal_reason` / `created_at`。OCC `version` を持たない |
+| ADP-migration-progress-001 | schema: migration_progress | spec/database/index.md#migration_progress | migration の部分適用カーソル。**任意の最適化ではなく必須**（CPU 予算超過の帰結はエラーではなくリセット）。PK は (`target_version`, `step`) で、`migrate-bulk` と `reindex` が同じ `target_version` から投入されても衝突しない。永続カーソルを持つのはこの2種だけ。OCC `version` を持たない |
+| ADP-meta-001 | schema: _meta（User Data DO） | spec/database/index.md#_meta | 単一行。`schema_version`（適用済みスキーマバージョン）と `self_locator`（その DO の `userId`。用途はフォールバック・エクスポートのヘッダ・移送と検証の3つに限り、**行データの絞り込みには使わない**）。**usecase からは書けない**（書くのは初期化と migration ゲートだけ）。OCC `version` を持たない |
+| ADP-credential-mappings-001 | schema: credential_mappings | spec/database/index.md#credential_mappings | Identity Directory DO 側。メール / SSO 主体の一意性の権威で、検証材料と `userId` への写像を持つ。識別（credential_id / kind / hmac / generation）・写像（user_id / status）・認証材料（password_verifier / pending_verifier / **change_state は3値** `NULL`\|`pending`\|`advanced` / change_origin / credential_version）・PII（encrypted_canonical / encryption_generation / **encryption_nonce は独立列で使い回さない**）・濫用抑止（failed_attempts / next_attempt_allowed_at / last_reset_requested_at）・saga コーディネーター状態（operation_id / candidate_user_id / **reserved_until は NOT NULL** / saga_committed / locators / coordinator_locator）・caller_token を持つ。`cm_credential_uq`（kind, hmac）/ `cm_credential_id_uq` / `cm_user_idx` / `cm_reservation_idx` を張る。**OCC の `version` を持たない**（書き込みはすべて CAS で直列化される。`ExpectedVersion` を取らない） |
+| ADP-rotation-checkpoints-001 | schema: rotation_checkpoints | spec/database/index.md#rotation_checkpoints | Identity Directory DO 側。鍵ローテーションの進捗記録。PK は (`rotation_kind`, `bucket_index`, `generation`) で記録は置換。`rotation_kind` は `remap` / `encryption` の2値で、`generation` の意味は種別ごとに違う（独立した番号体系）。衝突の3列は `remap` の行だけが使う。OCC `version` を持たない。**記録の契機と読み方、ローテーションの手順そのものは #44 が決める** |
+| ADP-jobs-002 | schema: jobs（Identity Directory DO） | spec/database/index.md#jobsidentity-directory-do | User Data DO 側と**同じ12列・同じインデックス・同じ規則**。job table と Alarm の実装は2クラスで共有する。違うのは `kind` の値域だけで、`send-mail` / `resume-signup` / `resume-credential-change` / `sweep-reservations` / `sweep-reset-tokens` / `rotate-encryption` の6種である |
+| ADP-meta-002 | schema: _meta（Identity Directory DO） | spec/database/index.md#_metaidentity-directory-do | User Data DO 側と同じ2列。違うのは `self_locator` に入る値だけで、`dir:g{世代}:b{番号}` 形式の bucket 名が入る。単一行・OCC なし・usecase から書けない点も同じ |
 
 ## identity ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-identity-001 | UserRepository.insert | spec/domains/identity.md#userrepository | users へ初回挿入。email 一意制約違反は `ConflictError("EMAIL_ALREADY_REGISTERED")`、SSO 主体一意制約違反は `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` に翻訳する |
-| ADP-identity-002 | UserRepository.save | spec/domains/identity.md#userrepository | `WHERE id = ? AND version = ?` の条件付き更新で、0 行更新を `ConflictError("OPTIMISTIC_LOCK_FAILURE")` にマップする |
-| ADP-identity-003 | UserRepository.findById | spec/domains/identity.md#userrepository | 信頼済み ID の PK 引き。auth_method で判別して PasswordUser/SsoUser に再水和し、該当なしは null、不整合行は `SystemError(DataIntegrityError)` |
-| ADP-identity-004 | UserRepository.findByEmail | spec/domains/identity.md#userrepository | 正規化済み email で `users_email_uq` を引き、`Versioned<User>` または null を返す |
-| ADP-identity-005 | UserRepository.findBySsoIdentity | spec/domains/identity.md#userrepository | (provider, providerSubject) で部分一意インデックスを引き、`Versioned<SsoUser>` または null を返す |
-| ADP-identity-006 | AiClientConnectionRepository.insert | spec/domains/identity.md#aiclientconnectionrepository | ActiveAiClientConnection を ai_client_connections へ初回挿入し、DB 例外は `SystemError(DatabaseError)` に翻訳する |
+| ADP-identity-001 | UserSettingsRepository.insert | spec/domains/identity.md#usersettingsrepository | **旧 `UserRepository.insert` のユーザー単位設定側**。`user_settings`（と初期化時の `account`）へ初回挿入する。同期契約。DB 例外は `SystemError(DatabaseError)`。**メール / SSO 主体の一意性はここでは判定しない** — 権威は Identity Directory 側の予約獲得（`ADP-credential-mappings-001`）である |
+| ADP-identity-002 | UserSettingsRepository.save | spec/domains/identity.md#usersettingsrepository | **旧 `UserRepository.save` のユーザー単位設定側**。`WHERE version = ?` の条件付き更新（単一行なので `id` 述語は不要）で、0 行更新を `ConflictError("OPTIMISTIC_LOCK_FAILURE")` にマップする |
+| ADP-identity-003 | UserSettingsRepository.find | spec/domains/identity.md#usersettingsrepository | **旧 `UserRepository.findById` のユーザー単位設定側**。自 DO の単一行を読み、クレデンシャル要約は `credential_locators` から組み立てる。未初期化は null、不整合行は `SystemError(DataIntegrityError)`。**`findById(id)` は実装しない**（他の `userId` を渡せる読み方を残さないため） |
+| ADP-identity-004 | CredentialMappingRepository.findByEmail | spec/domains/identity.md#credentialmappingrepository | **Identity Directory 側へ移った**（旧 `UserRepository.findByEmail`）。canonical 化済み email の HMAC で bucket を決めて `cm_credential_uq` を引き、`CredentialMapping` または null を返す。一意性違反は事前チェックではなく予約の獲得で判定し、`ConflictError("EMAIL_ALREADY_REGISTERED")` に翻訳する |
+| ADP-identity-005 | CredentialMappingRepository.findBySsoIdentity | spec/domains/identity.md#credentialmappingrepository | **Identity Directory 側へ移った**（旧 `UserRepository.findBySsoIdentity`）。(provider, providerSubject) の HMAC で `cm_credential_uq` を引き、`CredentialMapping` または null を返す。一意性違反は `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")` |
+| ADP-identity-006 | AiClientConnectionRepository.insert | spec/domains/identity.md#aiclientconnectionrepository | ActiveAiClientConnection を ai_client_connections へ初回挿入し、`created_at_reset_version` に現在の `account.reset_version` を写す。DB 例外は `SystemError(DatabaseError)` |
 | ADP-identity-007 | AiClientConnectionRepository.save | spec/domains/identity.md#aiclientconnectionrepository | OCC 条件付き更新。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`（二重解除操作等） |
-| ADP-identity-008 | AiClientConnectionRepository.findById | spec/domains/identity.md#aiclientconnectionrepository | PK 引き + `user_id = ?` スコープ。他ユーザー所有・不在は区別せず null（テナント分離） |
-| ADP-identity-009 | AiClientConnectionRepository.listByUserId | spec/domains/identity.md#aiclientconnectionrepository | `acc_user_connected_idx` で userId の接続一覧を connectedAt 降順で返す |
-| ADP-identity-010 | AiClientConnectionRepository.findActiveById | spec/domains/identity.md#aiclientconnectionrepository | 認可ミドルウェア専用の PK 引き + `status = 'active'` 条件。失効済み・不在は区別せず null |
+| ADP-identity-008 | AiClientConnectionRepository.findById | spec/domains/identity.md#aiclientconnectionrepository | PK 引きのみ（**`user_id = ?` のスコープ述語は無い**）。不在は null で存在の有無も漏らさない |
+| ADP-identity-009 | AiClientConnectionRepository.listByUserId | spec/domains/identity.md#aiclientconnectionrepository | `acc_connected_idx` で自 DO の接続一覧を connectedAt 降順で返す（引数なし） |
+| ADP-identity-010 | AiClientConnectionRepository.findActiveById | spec/domains/identity.md#aiclientconnectionrepository | 認可ミドルウェア専用の PK 引き + `status = 'active'` 条件。失効済み・不在は区別せず null。**ガードは `status` と `account.status` を直接読む**（失効を別ストアへ配送する経路は無い） |
 | ADP-identity-011 | AiClientConnectionRepository.recordUsage | spec/domains/identity.md#aiclientconnectionrepository | `UPDATE ... SET last_used_at = ? WHERE id = ? AND status = 'active'` の単独文（version 不変・後勝ち）。失敗時も throw せずログのみ |
-| ADP-identity-012 | PasswordHasher.hash | spec/domains/identity.md#passwordhasher | PlainPassword を Argon2id 等でハッシュ化して PasswordHash を返す。計算失敗は `SystemError` |
-| ADP-identity-013 | PasswordHasher.verify | spec/domains/identity.md#passwordhasher | タイミングセーフに照合し、不一致はエラーでなく false を返す |
-| ADP-identity-014 | PasswordResetTokenPort.issue | spec/domains/identity.md#passwordresettokenport | トークンを発行し、生トークンではなくハッシュを `expires_at = now + TTL` とともに password_reset_tokens に保存して生トークンを返す |
-| ADP-identity-015 | PasswordResetTokenPort.verifyAndConsume | spec/domains/identity.md#passwordresettokenport | token_hash 一致・未使用・未失効の行を条件付き UPDATE（used_at = now）で消費して UserId を返し、0 行更新（無効・期限切れ・使用済み・並行消費の敗者）は null |
-| ADP-identity-016 | MailSender.sendPasswordResetMail | spec/domains/identity.md#mailsender | リセットリンク（トークン込み URL の組み立て含む）をメール送信する。送信基盤の失敗は `SystemError` |
+| ADP-identity-012 | PasswordHasher.hash | spec/domains/identity.md#passwordhasher | PlainPassword を Argon2id 等でハッシュ化して PasswordHash を返す。**実行位置は Durable Object の外**（単一スレッドの DO を長く占有させない）。計算失敗は `SystemError` |
+| ADP-identity-013 | PasswordHasher.verify | spec/domains/identity.md#passwordhasher | タイミングセーフに照合し、不一致はエラーでなく false を返す。**対象行が無い場合もダミー材料で同じ計算量を通す**（登録有無を計算時間から推測させない） |
+| ADP-identity-014 | PasswordResetTokenPort.issue | spec/domains/identity.md#passwordresettokenport | **Identity Directory 側**。`token_id` を暗号論的乱数で採番し、生トークンではなくハッシュを `expires_at = now + TTL` とともに保存して生トークンを返す。**同じトランザクションでその `credential_id` の未使用行を全削除する**（発行が未使用トークンを全置換する） |
+| ADP-identity-015 | PasswordResetTokenPort.verifyAndConsume | spec/domains/identity.md#passwordresettokenport | **Identity Directory 側**。token_hash 一致・`used_at IS NULL`・`expires_at > now` の行を条件付き UPDATE（used_at = now）で消費して UserId を返し、0 行更新（無効・期限切れ・使用済み・並行消費の敗者）は null |
+| ADP-identity-016 | MailSender.sendPasswordResetMail | spec/domains/identity.md#mailsender | リセットリンク（トークン込み URL の組み立て含む）をメール送信する。**`send-mail` ジョブの起床から呼ばれ、生トークンはジョブ行ではなく送信直前に認証情報側で導出する**。送信基盤の失敗は `SystemError` |
+| ADP-identity-017 | CredentialMappingRepository.findByCredentialId | spec/domains/identity.md#credentialmappingrepository | `cm_credential_id_uq` を引き、解除・リセットトークンの対象特定に使う。該当なしは null |
 
 ## memo ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-memo-001 | MemoRepository.insert | spec/domains/memo.md#memorepository | ActiveMemo（version 0）を memos へ初回挿入。PK 重複・DB 障害は `SystemError(DatabaseError)` |
+| ADP-memo-001 | MemoRepository.insert | spec/domains/memo.md#memorepository | ActiveMemo（version 0）を memos へ初回挿入し、**同じトランザクションで `search_entries` / `search_fts` のエントリを作る**。PK 重複・DB 障害は `SystemError(DatabaseError)` |
 | ADP-memo-002 | MemoRepository.insertRevision | spec/domains/memo.md#memorepository | memo_revisions へ追記のみ。(memo_id, revision_number) 一意制約違反（線形性の最終防衛線）・DB 障害は `SystemError(DatabaseError)` |
-| ADP-memo-003 | MemoRepository.save | spec/domains/memo.md#memorepository | active/trashed 問わず OCC 条件付き上書き。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
-| ADP-memo-004 | MemoRepository.hardDelete | spec/domains/memo.md#memorepository | メモ本体と全リビジョンを同一 UoW で物理削除。version 不一致は `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
-| ADP-memo-005 | MemoRepository.findById | spec/domains/memo.md#memorepository | userId スコープで active のみ返す。trashed・他ユーザー所有は null |
-| ADP-memo-006 | MemoRepository.findByIdIncludingTrashed | spec/domains/memo.md#memorepository | userId スコープで状態を問わず `Versioned<Memo>` を返す。他ユーザー所有は null |
-| ADP-memo-007 | MemoRepository.listByIdsIncludingTrashed | spec/domains/memo.md#memorepository | ID 群を userId スコープで trashed 含め一括取得。不在・他ユーザー所有 ID は結果に含めない |
-| ADP-memo-008 | MemoRepository.listActiveByIds | spec/domains/memo.md#memorepository | ID 群を userId スコープで active のみ `Versioned` 付き一括取得。trashed・不在・他ユーザー所有は区別せず結果から除外 |
+| ADP-memo-003 | MemoRepository.save | spec/domains/memo.md#memorepository | active/trashed 問わず OCC 条件付き上書き。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。**同じトランザクションで projection を更新する**（active はエントリを作り直し、trashed は除去する） |
+| ADP-memo-004 | MemoRepository.hardDelete | spec/domains/memo.md#memorepository | メモ本体と全リビジョンを同一トランザクションで物理削除し、**当該エントリを projection から除去する**。version 不一致は `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
+| ADP-memo-005 | MemoRepository.findById | spec/domains/memo.md#memorepository | PK 引き + `status = 'active'`。trashed は null（`user_id` のスコープ述語は無い） |
+| ADP-memo-006 | MemoRepository.findByIdIncludingTrashed | spec/domains/memo.md#memorepository | PK 引き（status 条件なし）で `Versioned<Memo>` を返す。不在は null |
+| ADP-memo-007 | MemoRepository.listByIdsIncludingTrashed | spec/domains/memo.md#memorepository | ID 群を trashed 含め一括取得。不在の ID は結果に含めない |
+| ADP-memo-008 | MemoRepository.listActiveByIds | spec/domains/memo.md#memorepository | ID 群を active のみ `Versioned` 付き一括取得。trashed・不在は区別せず結果から除外 |
 | ADP-memo-009 | MemoRepository.findTimelinePage | spec/domains/memo.md#memorepository | `memos_timeline_idx` の (posted_at, id) 行値比較による双方向カーソルページング。items は常に postedAt 降順、keyword は範囲内 LIKE、デコード不能カーソルは `ValidationError` |
 | ADP-memo-010 | MemoRepository.findTimelineAround | spec/domains/memo.md#memorepository | 日付 / メモアンカーの位置を含む前後ページと olderCursor/newerCursor を返す。0 件・アンカー不在は空結果 |
-| ADP-memo-011 | MemoRepository.listRevisions | spec/domains/memo.md#memorepository | userId スコープで全リビジョンを revisionNumber 昇順で返す。メモ不存在・他ユーザー所有は空配列 |
-| ADP-memo-012 | MemoRepository.findRevision | spec/domains/memo.md#memorepository | userId スコープの単一リビジョン取得。なければ（他ユーザー所有含め）null |
-| ADP-memo-013 | MemoRepository.listTrashed | spec/domains/memo.md#memorepository | trashed メモを trashedAt 降順で `Versioned` 付きで返す（TrashQueryPort アダプターの UNION 枝専用） |
+| ADP-memo-011 | MemoRepository.listRevisions | spec/domains/memo.md#memorepository | 全リビジョンを revisionNumber 昇順で返す。メモ不存在は空配列 |
+| ADP-memo-012 | MemoRepository.findRevision | spec/domains/memo.md#memorepository | 単一リビジョン取得。なければ null |
+| ADP-memo-013 | MemoRepository.listTrashed | spec/domains/memo.md#memorepository | `memos_trash_idx` で trashed メモを trashedAt 降順・`Versioned` 付きで返す（TrashQueryPort アダプターの UNION 枝専用）。**期限切れ列挙メソッドは実装しない** — `purge_after` の索引を引くのは自 DO の Alarm ジョブである |
 
 ## knowledge ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-knowledge-001 | TopicRepository.insert | spec/domains/knowledge.md#topicrepository | ActiveTopic を topics へ初回挿入。DB 例外は `SystemError(DatabaseError)` |
+| ADP-knowledge-001 | TopicRepository.insert | spec/domains/knowledge.md#topicrepository | ActiveTopic を topics へ初回挿入。トピックはエントリを持たないので projection の更新は無い。DB 例外は `SystemError(DatabaseError)` |
 | ADP-knowledge-002 | TopicRepository.save | spec/domains/knowledge.md#topicrepository | OCC 条件付き更新。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
-| ADP-knowledge-003 | TopicRepository.delete | spec/domains/knowledge.md#topicrepository | OCC 付きハードデリート。同一バッチで行を消し、0 行更新は Conflict |
-| ADP-knowledge-004 | TopicRepository.findById | spec/domains/knowledge.md#topicrepository | userId スコープで LiveTopic（active/archived）のみ返す。trashed・他ユーザー所有は null |
-| ADP-knowledge-005 | TopicRepository.findByIdIncludingTrashed | spec/domains/knowledge.md#topicrepository | userId スコープで全状態の `Versioned<Topic>` を返す。他ユーザー所有は null |
-| ADP-knowledge-006 | TopicRepository.listByUser | spec/domains/knowledge.md#topicrepository | ゴミ箱外トピック一覧を includeArchived に応じて名前順等の安定順序で返す（`topics_user_live_idx`） |
+| ADP-knowledge-003 | TopicRepository.delete | spec/domains/knowledge.md#topicrepository | OCC 付きハードデリート。同一トランザクションで行を消し、0 行更新は Conflict |
+| ADP-knowledge-004 | TopicRepository.findById | spec/domains/knowledge.md#topicrepository | PK 引きで LiveTopic（active/archived）のみ返す。trashed は null（`user_id` のスコープ述語は無い） |
+| ADP-knowledge-005 | TopicRepository.findByIdIncludingTrashed | spec/domains/knowledge.md#topicrepository | PK 引きで全状態の `Versioned<Topic>` を返す。不在は null |
+| ADP-knowledge-006 | TopicRepository.listByUser | spec/domains/knowledge.md#topicrepository | ゴミ箱外トピック一覧を includeArchived に応じて名前順等の安定順序で返す（**`topics_live_idx`**） |
 | ADP-knowledge-007 | TopicRepository.listTrashedByUser | spec/domains/knowledge.md#topicrepository | ゴミ箱内トピックを `Versioned` 付きで返す（TrashQueryPort アダプターの UNION 枝専用） |
-| ADP-knowledge-008 | TopicRepository.listByIds | spec/domains/knowledge.md#topicrepository | ID 群を userId スコープで一括取得（検索結果のトピック名解決を 1 クエリで）。不在・他ユーザー所有は結果に含めない |
-| ADP-knowledge-009 | DocumentRepository.insert | spec/domains/knowledge.md#documentrepository | ActiveDocument を documents へ初回挿入。DB 例外は `SystemError(DatabaseError)` |
-| ADP-knowledge-010 | DocumentRepository.save | spec/domains/knowledge.md#documentrepository | OCC 条件付き更新。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |
-| ADP-knowledge-011 | DocumentRepository.delete | spec/domains/knowledge.md#documentrepository | OCC 付きハードデリートで、同一バッチで全リビジョンと documentId 側の全出典リンクも明示消去する |
-| ADP-knowledge-012 | DocumentRepository.findById | spec/domains/knowledge.md#documentrepository | userId スコープで active のみ返す。trashed・他ユーザー所有は null |
-| ADP-knowledge-013 | DocumentRepository.findByIdIncludingTrashed | spec/domains/knowledge.md#documentrepository | userId スコープで全状態の `Versioned<Document>` を返す。他ユーザー所有は null |
-| ADP-knowledge-014 | DocumentRepository.listByIdsIncludingTrashed | spec/domains/knowledge.md#documentrepository | ID 群を userId スコープで trashed 含め一括取得（出典表示用）。不在・他ユーザー所有は結果に含めない |
-| ADP-knowledge-015 | DocumentRepository.listActiveByTopic | spec/domains/knowledge.md#documentrepository | トピック配下の active ドキュメントを `Versioned` 付きで返す（`docs_topic_active_idx`）。他ユーザー所有トピックは空配列 |
-| ADP-knowledge-016 | DocumentRepository.listActiveByTopics | spec/domains/knowledge.md#documentrepository | 複数トピック配下の active ドキュメントを 1 クエリで一括取得（N+1 回避）。他ユーザー所有分は含めない |
-| ADP-knowledge-017 | DocumentRepository.listTrashedByTopic | spec/domains/knowledge.md#documentrepository | トピック配下のゴミ箱内ドキュメントを `Versioned` 付きで返す（`docs_topic_trashed_idx`。セット復元・ハードデリート対象確定用） |
+| ADP-knowledge-008 | TopicRepository.listByIds | spec/domains/knowledge.md#topicrepository | ID 群を一括取得（検索結果のトピック名解決を 1 クエリで）。不在の ID は結果に含めない |
+| ADP-knowledge-009 | DocumentRepository.insert | spec/domains/knowledge.md#documentrepository | ActiveDocument を documents へ初回挿入し、**同じトランザクションで当該ドキュメントと出典メモの projection を更新する**。DB 例外は `SystemError(DatabaseError)` |
+| ADP-knowledge-010 | DocumentRepository.save | spec/domains/knowledge.md#documentrepository | OCC 条件付き更新。0 行更新は `ConflictError("OPTIMISTIC_LOCK_FAILURE")`。**同じトランザクションで projection を更新する** |
+| ADP-knowledge-011 | DocumentRepository.delete | spec/domains/knowledge.md#documentrepository | OCC 付きハードデリートで、同一トランザクションで全リビジョンと documentId 側の全出典リンクも明示消去し、**当該エントリを projection から除去する** |
+| ADP-knowledge-012 | DocumentRepository.findById | spec/domains/knowledge.md#documentrepository | PK 引き + `status = 'active'`。trashed は null（`user_id` のスコープ述語は無い） |
+| ADP-knowledge-013 | DocumentRepository.findByIdIncludingTrashed | spec/domains/knowledge.md#documentrepository | PK 引きで全状態の `Versioned<Document>` を返す。不在は null |
+| ADP-knowledge-014 | DocumentRepository.listByIdsIncludingTrashed | spec/domains/knowledge.md#documentrepository | ID 群を trashed 含め一括取得（出典表示用）。不在の ID は結果に含めない |
+| ADP-knowledge-015 | DocumentRepository.listActiveByTopic | spec/domains/knowledge.md#documentrepository | トピック配下の active ドキュメントを `Versioned` 付きで返す（`docs_topic_active_idx`）。不在トピックは空配列 |
+| ADP-knowledge-016 | DocumentRepository.listActiveByTopics | spec/domains/knowledge.md#documentrepository | 複数トピック配下の active ドキュメントを 1 クエリで一括取得（N+1 回避） |
+| ADP-knowledge-017 | DocumentRepository.listTrashedByTopic | spec/domains/knowledge.md#documentrepository | トピック配下のゴミ箱内ドキュメントを `Versioned` 付きで返す（`docs_topic_trashed_idx`。`trashed_with = ?` の絞り込みはこの範囲内で評価。セット復元・トピックハードデリート対象確定用） |
 | ADP-knowledge-018 | DocumentRepository.listTrashedByUser | spec/domains/knowledge.md#documentrepository | ゴミ箱内ドキュメントを `Versioned` 付きで返す（TrashQueryPort アダプターの UNION 枝専用） |
 | ADP-knowledge-019 | DocumentRepository.insertRevision | spec/domains/knowledge.md#documentrepository | document_revisions へ追記のみ。(document_id, revision_number) 一意制約違反は `ConflictError` に翻訳する |
-| ADP-knowledge-020 | DocumentRepository.listRevisions | spec/domains/knowledge.md#documentrepository | userId スコープでリビジョン履歴を revisionNumber 昇順で返す。他ユーザーのドキュメントは空配列 |
-| ADP-knowledge-021 | DocumentRepository.findRevision | spec/domains/knowledge.md#documentrepository | userId スコープの特定リビジョン取得。他ユーザーのドキュメントのリビジョンは null |
-| ADP-knowledge-022 | DocumentRepository.insertSourceLinks | spec/domains/knowledge.md#documentrepository | SourceLink 群を source_links へ一括登録（Document.create と同一 UoW）。複合 PK が重複を排除する |
-| ADP-knowledge-023 | DocumentRepository.listSourceLinksByDocument | spec/domains/knowledge.md#documentrepository | documentId → 出典リンク一覧を PK 前方一致 + documents JOIN の userId スコープで返す |
-| ADP-knowledge-024 | DocumentRepository.listSourceLinksByDocuments | spec/domains/knowledge.md#documentrepository | documentId 群 → 出典リンクを 1 クエリで一括逆引き（N+1 回避）。他ユーザー所有分は含めない |
-| ADP-knowledge-025 | DocumentRepository.listSourceLinksByMemo | spec/domains/knowledge.md#documentrepository | memoId → 参照元リンク一覧を `source_links_memo_idx` + userId スコープで返す |
-| ADP-knowledge-026 | DocumentRepository.listSourceLinksByMemos | spec/domains/knowledge.md#documentrepository | memoId 群 → 参照元リンクを 1 クエリで一括逆引き（タイムライン 1 ページ分）。他ユーザー所有分は含めない |
-| ADP-knowledge-027 | DocumentRepository.deleteSourceLinksByMemo | spec/domains/knowledge.md#documentrepository | memoId 側リンクの冪等消去。userId スコープは **documents 側 JOIN**（`document_id IN (SELECT id FROM documents WHERE user_id = ?)`）で行う（memos 側 JOIN は同一 UoW 内でメモ削除済みのため 0 行更新となり禁止。spec/database/index.md#source_links） |
+| ADP-knowledge-020 | DocumentRepository.listRevisions | spec/domains/knowledge.md#documentrepository | リビジョン履歴を revisionNumber 昇順で返す。不在は空配列 |
+| ADP-knowledge-021 | DocumentRepository.findRevision | spec/domains/knowledge.md#documentrepository | 特定リビジョンの取得。不在は null |
+| ADP-knowledge-022 | DocumentRepository.insertSourceLinks | spec/domains/knowledge.md#documentrepository | SourceLink 群を source_links へ一括登録（Document.create と同一トランザクション）。複合 PK が重複を排除する |
+| ADP-knowledge-023 | DocumentRepository.listSourceLinksByDocument | spec/domains/knowledge.md#documentrepository | documentId → 出典リンク一覧を複合 PK の前方一致で返す（JOIN によるユーザースコープは行わない） |
+| ADP-knowledge-024 | DocumentRepository.listSourceLinksByDocuments | spec/domains/knowledge.md#documentrepository | documentId 群 → 出典リンクを 1 クエリで一括逆引き（N+1 回避） |
+| ADP-knowledge-025 | DocumentRepository.listSourceLinksByMemo | spec/domains/knowledge.md#documentrepository | memoId → 参照元リンク一覧を `source_links_memo_idx` で返す（projection 更新時の影響先確定にも使う） |
+| ADP-knowledge-026 | DocumentRepository.listSourceLinksByMemos | spec/domains/knowledge.md#documentrepository | memoId 群 → 参照元リンクを 1 クエリで一括逆引き（タイムライン 1 ページ分） |
+| ADP-knowledge-027 | DocumentRepository.deleteSourceLinksByMemo | spec/domains/knowledge.md#documentrepository | memoId 側リンクの冪等消去を `source_links_memo_idx` で行う。**「`userId` スコープは documents 側 JOIN で行う」という旧規則は前提ごと撤回する** — DO の中に1人分の行しか存在しないので `memo_id` だけで引く（spec/database/index.md#source_links） |
 
 ## search ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-search-001 | SearchIndexPort.query | spec/domains/search.md#searchindexport | キーワード + ベクトルを RRF 等で統合した単一結果を関連度順で返し、userId 境界・ゴミ箱除外・topicId スコープ絞り込み・事実データのみの規則を満たす。0 件は空 `PaginationResult` |
-| ADP-search-002 | SearchIndexPort.upsertMemo | spec/domains/search.md#searchindexport | MemoIndexEntry を埋め込み再生成込みで冪等 upsert（delete + insert）。失敗は `SystemError(SearchIndexUnavailable / EmbeddingFailed)` で retryable |
-| ADP-search-003 | SearchIndexPort.upsertDocument | spec/domains/search.md#searchindexport | DocumentIndexEntry について upsertMemo と同じ冪等 upsert 契約を満たす |
-| ADP-search-004 | SearchIndexPort.removeMemo | spec/domains/search.md#searchindexport | メモをインデックスから除去する。存在しない ID でもエラーにせず成功（冪等） |
-| ADP-search-005 | SearchIndexPort.removeDocument | spec/domains/search.md#searchindexport | ドキュメントについて removeMemo と同じ冪等 remove 契約を満たす |
-| ADP-search-006 | IndexerReadPort.findMemoById | spec/domains/search.md#indexerreadport | userId スコープなし（信頼済み内部 ID）で active メモのみ返す。trashed・不在は null（remove 判断用） |
-| ADP-search-007 | IndexerReadPort.findDocumentById | spec/domains/search.md#indexerreadport | active ドキュメントのみ返す。trashed・不在は null |
-| ADP-search-008 | IndexerReadPort.listSourceLinksByMemo | spec/domains/search.md#indexerreadport | memoId を出典とする SourceLink をスコープなしで返す（ファンアウト逆引き用）。なければ空配列 |
-| ADP-search-009 | IndexerReadPort.listSourceLinksByDocument | spec/domains/search.md#indexerreadport | documentId の SourceLink をスコープなしで返す（ファンアウト逆引き用）。なければ空配列 |
+| ADP-search-001 | SearchIndexPort.query | spec/domains/search.md#searchindexport | **同期契約の唯一のメソッド**。FTS5 の全文一致を `bm25`（タイトルを本文より重く見る。重みの実値は実装側が持つ）と安定 tie-breaker `timestamp DESC, type, id` で順位付けして返す。1〜2文字のクエリは `instr()` フォールバックへ落とし、対象列とページサイズを制限する。ゴミ箱除外（エントリが存在しないことで成立）・optional 単一 topic スコープ絞り込み（未知・ゴミ箱内は `TOPIC_NOT_FOUND`）・トピック名は `topics` との join で解決・事実データのみ・期限付きスナップショットと不透明カーソルによるページング（期限切れは `InvalidCursor`）の規則を満たす。**ユーザー境界は列条件ではなく到達可能性による**。0 件は空の `SearchPage` |
+
+**書き込み側のアダプター行は無い。** インデックスの更新はポートではなく、本体（メモ / ドキュメント）を書くトランザクション内の projection 処理であり、`ADP-memo-*` / `ADP-knowledge-*` の各行と `ADP-search-entries-001` / `ADP-search-fts-001` に分かれて記述されている（domains/search.md「インデックスの維持」）。
 
 ## trash ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-trash-001 | TrashQueryPort.listTrashItems | spec/domains/trash.md#trashqueryport | memo/document/topic の trashed 行を UNION 射影し、削除日時降順ページングで返す。expiresAt は `RetentionPolicy.expiresAt` で算出付与し、topic 項目の setDocumentIds を trashed_with から埋める |
-| ADP-trash-002 | TrashQueryPort.findTrashItem | spec/domains/trash.md#trashqueryport | TrashItemRef で単一項目を listTrashItems と同じ射影契約（expiresAt 算出・setDocumentIds 付与）で取得し、ゴミ箱にない場合は null |
-| ADP-trash-003 | TrashQueryPort.countTrashItems | spec/domains/trash.md#trashqueryport | ユーザーのゴミ箱総件数を返す（「空にする」の件数確認用） |
-| ADP-trash-004 | TrashQueryPort.listExpiredItems | spec/domains/trash.md#trashqueryport | 全ユーザー横断で users と JOIN し `trashed_at + retention_days * 86400000 < now` を評価（`RetentionPolicy.isExpired` と一致必須）して userId 付き期限切れ項目を limit 件まで返す |
+| ADP-trash-001 | TrashQueryPort.listTrashItems | spec/domains/trash.md#trashqueryport | memo/document/topic の trashed 行を自 DO 内の UNION クエリで射影し、削除日時降順ページングで返す。**`retentionDays` 引数を取らず、`expiresAt` には保存済みの `purge_after` をそのまま載せる**。topic 項目の setDocumentIds は `docs_topic_trashed_idx` から `trashed_with = topic_id` で埋める |
+| ADP-trash-002 | TrashQueryPort.findTrashItem | spec/domains/trash.md#trashqueryport | TrashItemRef で単一項目を listTrashItems と同じ射影契約（保存済み `purge_after` の載せ替え・setDocumentIds 付与）で取得し、ゴミ箱にない場合は null |
+| ADP-trash-003 | TrashQueryPort.countTrashItems | spec/domains/trash.md#trashqueryport | 自 DO のゴミ箱総件数を返す（「空にする」の件数確認用） |
 
 ## export ポート実装
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-export-001 | ExportSourceReader.readAll | spec/domains/export.md#exportsourcereader | 対象ユーザーの全メモ・トピック・ドキュメントをゴミ箱除外・最新リビジョンのみで単一トランザクション（スナップショット読み）で読み出し、sourceMemoIds にハードデリート済みメモ ID を含めない |
-| ADP-export-002 | ArchiveWriter.write | spec/domains/export.md#archivewriter | ExportArchive を `rootDirName/` 配下に格納した zip にエンコードして `{rootDirName}.zip` の ArchiveBinary を返す。失敗は `SystemError(ArchiveEncodingError)` |
+| ADP-export-001 | ExportSourceReader.readAll | spec/domains/export.md#exportsourcereader | **同期契約で引数を取らない**。全メモ・トピック・ドキュメントをゴミ箱除外・最新リビジョンのみで **Durable Object 内の1回の `transactionSync`** として読み切り、sourceMemoIds にハードデリート済みメモ ID を含めない。**1回で返せる総バイト数の上限を超えたら拒否する**（`SystemError` 系。上限値そのものは実装側が持つ運用値） |
+| ADP-export-002 | ArchiveWriter.write | spec/domains/export.md#archivewriter | ExportArchive を `rootDirName/` 配下に格納した zip にエンコードして `{rootDirName}.zip` の ArchiveBinary を返す。**実行位置は Durable Object の外（リクエストを受ける側）である**（zip エンコードは CPU を長く使うため）。失敗は `SystemError(ArchiveEncodingError)` |
+| ADP-export-003 | ExportRenderer.render | spec/domains/export.md#exportrenderer | 純関数。`ExportSource` から「アーカイブ構成」の規則どおり `ExportArchive` を決定的に導出する（マニフェスト・日別メモ・トピックメタ・ドキュメント・スラッグ導出と衝突解決・出典の相対パス解決・`deleted: true` 規則・`OrphanDocument` の防衛的検査）。**実行位置は Durable Object の外（リクエストを受ける側）である** |

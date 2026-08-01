@@ -39,5 +39,13 @@
 | [002](./adr/002-export-scope.md) | データエクスポートの範囲 |
 | [003](./adr/003-source-link-after-hard-delete.md) | 出典リンク先のハードデリート後の表示 |
 | [004](./adr/004-domain-boundaries.md) | ドメイン境界の切り方 |
-| [005](./adr/005-search-index-via-outbox.md) | 検索インデックスの更新方式 |
+| [005](./adr/005-search-index-via-outbox.md) | 検索インデックスの更新方式（superseded。根拠側は `.adr/003`、方式側は `.adr/004`。本文は当時の決定の記録として保持する） |
 | [006](./adr/006-memo-fulltext-update.md) | メモは全文置換（パッチ対象外） |
+
+ランタイム構成に関する決定はリポジトリ直下の `.adr/` にある。
+
+| # | タイトル |
+|---|---|
+| [.adr/002](../.adr/002-cloudflare-workers-and-user-data-durable-objects.md) | Cloudflare Workers とユーザー単位 Durable Objects を本番構成とする |
+| [.adr/003](../.adr/003-sqlite-fts5-only-search.md) | 検索は SQLite FTS5 の全文検索のみとする（`spec/adr/005` の根拠側を supersede） |
+| [.adr/004](../.adr/004-do-local-commit-and-alarm-jobs.md) | ローカル同期コミットと Alarm ジョブへ移行する（`spec/adr/005` の更新方式を supersede） |

@@ -130,7 +130,7 @@ export const DocumentPatch = {
 | 名前 | 型 | 制約 |
 |---|---|---|
 | `id` | `TopicId` | required |
-| `userId` | `UserId` | required。所有者。作成後不変 |
+| `userId` | `UserId` | required。所有者。作成後不変。**値は所属する Durable Object の同一性そのものであり、行ごとの絞り込みには用いない**（domains/index.md「テナント分離」） |
 | `name` | `TopicName` | required |
 | `description` | `TopicDescription \| null` | optional。`null` = 説明なし |
 | `version` | `number` | required。OCC 用。生成時 0、状態を変えるたびに +1 |
@@ -183,7 +183,7 @@ export type LiveTopic = ActiveTopic | ArchivedTopic;
 | 名前 | 型 | 制約 |
 |---|---|---|
 | `id` | `DocumentId` | required |
-| `userId` | `UserId` | required。作成後不変 |
+| `userId` | `UserId` | required。作成後不変。**値は所属する Durable Object の同一性そのものであり、行ごとの絞り込みには用いない**（domains/index.md「テナント分離」） |
 | `topicId` | `TopicId` | required。**ドキュメントは必ずいずれかのトピックに属する。** 変更は `moveToTopic` のみ（ADR-001 の復元先選択用） |
 | `title` | `DocumentTitle` | required |
 | `body` | `DocumentBody` | required（空文字は可） |
@@ -539,4 +539,4 @@ trash ドメイン側（knowledge のサービス・ポートを利用）:
 
 - `restoreTopic` ★ — `TopicTrashService.restoreTopicSet` でセット復元
 - `restoreDocument` ★ — 個別復元。所属トピックが (a) 存命 → そのまま復元、(b) ゴミ箱内 → 確認のうえ `restoreTopicSet` でトピックごとセット復元し、復元要求対象が `skippedDocuments`（個別削除分）に含まれた場合は同一 UoW 内で追加で `Document.restore`、(c) ハードデリート済み → 復元先選択（既存 / 新規）を受けて `moveToTopic` → `restore`（ADR-001）
-- `hardDeleteTopic` ★ / `hardDeleteDocument` ★ / `emptyTrash` ★ / 保持期限による自動ハードデリート — リビジョン・出典リンクごとの完全消去。`topic.hardDeleted` / `document.hardDeleted` を発行。メモのハードデリート時は、消去前に `listSourceLinksByMemo` で影響ドキュメント ID を確定したうえで `deleteSourceLinksByMemo` を同一 UoW で実行し（ADR-003 の同期方式）、各影響ドキュメントへ `document.sourceLinksChanged` を発行する。ドキュメントのハードデリート時も同様に、消去前に `listSourceLinksByDocument` で出典メモ ID を確定し、各影響メモへ memo の `memo.sourceLinksChanged` を同一 UoW で発行する（検索インデックスの出典関連フィールドの再構築契機）
+- `hardDeleteTopic` ★ / `hardDeleteDocument` ★ / `emptyTrash` ★ / 保持期限による自動ハードデリート — リビジョン・出典リンクごとの完全消去。消去と同一トランザクションで対象のインデックスエントリを除去する。メモのハードデリート時は、消去前に `listSourceLinksByMemo` で影響ドキュメント ID を確定したうえで `deleteSourceLinksByMemo` を同一 UoW で実行し（ADR-003 の同期方式）、各影響ドキュメントのエントリを同じトランザクションで作り直す。ドキュメントのハードデリート時も同様に、消去前に `listSourceLinksByDocument` で出典メモ ID を確定し、各影響メモのエントリを同一 UoW で作り直す（出典関連フィールドの再構築）

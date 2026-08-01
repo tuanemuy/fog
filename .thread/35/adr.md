@@ -784,3 +784,98 @@ Proposed
 - 良い点: **domains/search.md の `IndexEntry` の各フィールドに対応する列が1対1で決まる**ので、ステップ12 が `ADP-search-entries-001` の要点欄を書ける。
 - トレードオフ: **`source_ids` は JSON 文字列なので SQL からは絞り込めない。** 結果 DTO への載せ替え専用の列であり、絞り込みに使う必要が無いことは domains/search.md の検索の規則から確認できる（絞り込みは topic だけである）。
 - 波及: ステップ12（`spec/inventory/adapter.md` に `ADP-search-entries-001` を新設し、`ADP-search-fts-001` を external-content 構成へ書き換える）。
+
+## ADR-024: `ADP-users-001` は行ごと削除せず、分裂の行き先を記録する行として残す
+
+### Status
+
+Proposed
+
+### Context
+
+steps.md ステップ12 は `spec/inventory/adapter.md` について「**`ADP-users-001` は第4.1.1節に対応テーブルが無く、`account` / `user_settings` / `credential_mappings` / `credential_locators` へ割れる**（行1 / 行2）— 行き先を台帳に明記する」と指示している。ところが**どこに明記するかを決めていない。**
+
+- **(a) 行ごと削除し、行き先は4つの新設行（`ADP-account-001` ほか）が暗黙に示す**
+- **(b) 行を残し、要点欄に「廃止。行き先は次の4つ」と書く**
+
+(a) を採ると「行き先を台帳に明記する」という指示が満たされない。`users` テーブルが消えたことも、それが4つに割れたことも、台帳のどこにも書かれない状態になる。ADR-011 の欠番規約は「削除した ID を繰り上げない」ことを求めているだけで、「消えた要素を必ず行ごと削除する」とは言っていない。
+
+### Decision
+
+**(b) を採る。** `ADP-users-001` の要素欄を `schema: users（廃止・分裂）` にし、要点欄に4つの行き先とそれぞれの新 ID（`ADP-account-001` / `ADP-user-settings-001` / `ADP-credential-mappings-001` / `ADP-credential-locators-001`）を書く。「定義場所」欄は消えた `#users` から `spec/database/index.md#テーブル一覧` へ差し替える（`P-8` の DANGLING を避けるため）。
+
+**同じ形を `ADP-outbox-001` / `ADP-processed-events-001` / `ADP-occ-guard-001` / `ADP-search-embeddings-001` / `ADP-trash-004` / `ADP-search-002`〜`009` には適用しない。** あちらは**機構ごと消える**（行き先が無い）のに対し、`users` は**同じ責務が4つのテーブルへ分かれた**だけである。行き先のあるものだけ、行を残して行き先を書く。
+
+### Consequences
+
+- 良い点: 改訂後の台帳だけを読んで「旧 `users` の各責務が今どこにあるか」を辿れる。#37 が実テーブルを組むときの探索が1ホップで済む。
+- トレードオフ: **台帳に「実在しないテーブルの行」が1行残る。** 要素欄の `（廃止・分裂）` がその印であり、`P-8` は「定義場所のアンカーが実在する」ことだけを見るので通る。
+- 波及: 同じ判断が `ADP-identity-001`〜`005` にも効く（ADR-025）。
+
+## ADR-025: `UserRepository` の分裂は既存 `ADP-identity-001`〜`005` の in-place 読み替えで表し、新設は末尾 append にとどめる
+
+### Status
+
+Proposed
+
+### Context
+
+steps.md ステップ12 は「`ADP-identity-001` / `-002`（`insert` / `save`）を Directory 側と User Data 側に割る（行11）。`ADP-identity-003`（`findById`）も同じ2つに割る（行7c）」「**`ADP-identity-004`（`findByEmail`）/ `-005`（`findBySsoIdentity`）は Directory へ移る**」と指示している。
+
+「割る」を文字どおり読むと、1行が2行になる（= 5行が10行になる）。ところが ADR-019 が確定させた分裂先を実物と突き合わせると、**両側に対称なメソッドは存在しない。**
+
+- ユーザー単位設定側（`UserSettingsRepository`）は `insert` / `save` / `find()` の3本。
+- 認証情報側（`CredentialMappingRepository`）は `findByEmail` / `findBySsoIdentity` / `findByCredentialId` の3本で、**書き込みメソッドを持たない** — 予約の獲得と確定は単一メソッドに畳めない手続きとして usecases/identity.md に書かれている（domains/identity.md が明記）。
+
+つまり `insert` / `save` の「Directory 側」に対応するポートメソッドが無い。10行に割ると、実体の無い行が2行生まれる。
+
+### Decision
+
+**既存5行を 1:1 で読み替え、増える分（`findByCredentialId`）だけを末尾へ append する。**
+
+| 旧 | 新 | 置き場 |
+|---|---|---|
+| `ADP-identity-001` `UserRepository.insert` | `UserSettingsRepository.insert` | User Data DO |
+| `ADP-identity-002` `UserRepository.save` | `UserSettingsRepository.save` | User Data DO |
+| `ADP-identity-003` `UserRepository.findById` | `UserSettingsRepository.find` | User Data DO |
+| `ADP-identity-004` `UserRepository.findByEmail` | `CredentialMappingRepository.findByEmail` | Identity Directory |
+| `ADP-identity-005` `UserRepository.findBySsoIdentity` | `CredentialMappingRepository.findBySsoIdentity` | Identity Directory |
+| （新設） | `ADP-identity-017` `CredentialMappingRepository.findByCredentialId` | Identity Directory |
+
+**「割れた」という事実は要点欄に書く** — 各行の冒頭に「旧 `UserRepository.*` の◯◯側」と明示し、`ADP-identity-001` には「メール / SSO 主体の一意性はここでは判定しない。権威は Directory 側の予約獲得（`ADP-credential-mappings-001`）である」を添える。これで**割れた両側が台帳から辿れる**（ADR-024 と同じ形）。
+
+**ID を繰り上げない・新設は末尾**という ADR-011 の規約は破っていない。既存 ID はどれも同じ責務の同じメソッドを指し続け、新規は `-017` として末尾に付く。
+
+### Consequences
+
+- 良い点: **#13 が参照する `ADP-identity-006`〜`011`（AiClientConnection 側の6本）が影響を受けない。** 途中に行を挿さないので採番がずれない。
+- 良い点: 実体の無いポートメソッドの行を作らずに済む。
+- トレードオフ: **「1行が2行に割れる」という steps.md の字面とは一致しない。** 一致させると実装の無い行が生まれるので、実物（ADR-019 が決めたポート構成）を正とした。
+- 波及: 同じ理由で `spec/inventory/domain.md` の `DOM-identity-018`〜`022` も 1:1 の読み替えにした（`018`〜`020` が `UserSettingsRepository`、`021` / `022` が `CredentialMappingRepository`。新設の `findByCredentialId` は `DOM-identity-035`、`CredentialId` VO は `DOM-identity-034` として末尾に append）。**`DOM-identity-018`〜`022` は #10 / #13 のどちらからも参照されていない**ことを `gh issue view` で確認済みである。
+
+## ADR-026: 両クラスに現れる `jobs` / `_meta` には DO クラスごとに別の `ADP-*` を採番する
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-022 は `spec/database/index.md` について「列の全数は User Data DO 側に一度だけ書き、Identity Directory 側は差分だけを書く」と決め、見出しを `### jobs（Identity Directory DO）` / `### _meta（Identity Directory DO）` に分けた。**台帳側で何行にするかは決めていない。**
+
+- **(a) テーブル名ごとに1行**（`ADP-jobs-001` / `ADP-meta-001` だけを置き、両クラスを1行で説明する）
+- **(b) DO クラスごとに1行**（`ADP-jobs-001` / `ADP-jobs-002` / `ADP-meta-001` / `ADP-meta-002`）
+
+### Decision
+
+**(b) を採る。**
+
+**(a) を採らない理由**は、台帳の「定義場所」欄が**1つのアンカーしか持てない**からである。1行にすると `#jobs` か `#jobsidentity-directory-do` のどちらかしか指せず、指さなかった側の節が台帳から到達不能になる。`P-8`（アンカー実在検査）は「指した先が実在する」ことしか見ないので、この取りこぼしは機械では検出できない。
+
+**列の重複は起きない。** `ADP-jobs-002` / `ADP-meta-002` の要点欄は ADR-022 と同じ形で「User Data DO 側と同じ12列・同じインデックス・同じ規則。違うのは `kind` の値域だけ」と書き、列の全数は `ADP-jobs-001` / `ADP-meta-001` にだけ置く。正本は1つのままである。
+
+### Consequences
+
+- 良い点: `spec/database/index.md` の 21 セルすべてに台帳の行が1対1で対応する。#37 がどちらの節を読むべきかを台帳から決められる。
+- 良い点: `P-10`（テーブル名の異なり数 19 で数える検査）とも矛盾しない — あちらは名前を数え、台帳はセルを数えるという役割の違いがそのまま残る。
+- トレードオフ: **台帳の行数（86行）が第4.1.1節のテーブル数と一致しない。** スキーマ行は 21 セル + 廃止行1（`ADP-users-001`。ADR-024）で 22 行になる。

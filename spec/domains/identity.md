@@ -135,7 +135,7 @@ OAuth 2.1 の認可フローでユーザーが AI クライアントに許可を
 | 名前 | 型 | 制約 |
 |---|---|---|
 | id | `AiClientConnectionId` | required |
-| userId | `UserId` | required。許可を与えたユーザー（ID参照） |
+| userId | `UserId` | required。許可を与えたユーザー（ID参照）。**値は所属する Durable Object の同一性そのものであり、行ごとの絞り込みには用いない**（domains/index.md「テナント分離」） |
 | clientName | `ClientName` | required。認可リクエストが名乗るクライアント表示名 |
 | connectedAt | `Date` | required。許可した日時 |
 | lastUsedAt | `Date \| null` | optional。この接続のトークンで最後に API が呼ばれた日時。未使用なら null |
