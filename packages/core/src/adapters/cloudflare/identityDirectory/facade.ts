@@ -3,6 +3,7 @@ import type {
   UnitOfWorkProvider,
 } from "@repo/core/application/execution/unitOfWork";
 import type { CredentialMappingKind } from "@repo/core/domain/identity/ports/credentialMappingRepository";
+import type { SealedCanonical } from "@repo/core/domain/identity/ports/credentialMappingStore";
 import { CredentialId } from "@repo/core/domain/identity/valueObject";
 
 /**
@@ -65,6 +66,23 @@ export type ReserveCredentialFacadeArgs = Readonly<{
   hmac: string;
   generation: number;
   credentialId: string;
+  /**
+   * The canonical credential in the clear — the **only** entry that takes one.
+   *
+   * The bucket has to store a reversible copy of the address, and neither side
+   * can produce it alone: the request Worker holds the plaintext but no
+   * encryption key, and the state Worker holds the key but derives no canonical
+   * (`DIRECTORY_ROUTING_SECRET` is not distributed to it, ADR-016). So the
+   * plaintext travels one hop inward and is sealed by the entry point before the
+   * transaction opens.
+   *
+   * This is not the thing AC-3 forbids. That rule bars a raw address from a
+   * Durable Object *name*, and from logs, errors and URLs; the value here is an
+   * RPC argument inside the trust boundary, one per signup rather than in bulk
+   * (`.thread/34/design.md` §5.2.3). **It must never be written as-is, logged or
+   * echoed in an error** — the ciphertext is what reaches the row.
+   */
+  canonical: string;
   candidateUserId: string;
   operationId: string;
   callerToken: string;
@@ -172,10 +190,16 @@ export function reportLoginResult(
  * alone: if every bucket drove the saga forward, phase 3 would advance
  * independently in each and one of them could reach phase 4 while another is
  * still behind.
+ *
+ * `sealed` is a parameter rather than something derived here, and that is the
+ * whole shape of the writer: encryption is WebCrypto and therefore
+ * asynchronous, `run`'s callback is type-rejected from being asynchronous, so
+ * the ciphertext has to exist before this function is entered.
  */
 export function reserveCredential(
   deps: IdentityDirectoryFacadeDeps,
   args: ReserveCredentialFacadeArgs,
+  sealed: SealedCanonical,
   now: number,
 ): void {
   const credentialId = CredentialId.create(args.credentialId);
@@ -189,6 +213,7 @@ export function reserveCredential(
       operationId: args.operationId,
       callerToken: args.callerToken,
       reservedUntil: args.reservedUntil,
+      sealedCanonical: sealed,
       // Spread-conditionally rather than passing `undefined`: with
       // `exactOptionalPropertyTypes`, "absent" and "present as undefined" are
       // different, and absent is what "this credential has no verifier" means.

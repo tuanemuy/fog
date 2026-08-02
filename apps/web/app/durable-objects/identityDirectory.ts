@@ -3,6 +3,7 @@ import type {
   DurableObjectState as CoreDurableObjectState,
   SqlStorage,
 } from "@cloudflare/workers-types";
+import { sealCanonical } from "@repo/core/adapters/cloudflare/identityDirectory/canonicalCipher";
 import * as facade from "@repo/core/adapters/cloudflare/identityDirectory/facade";
 import {
   type AlarmCache,
@@ -34,6 +35,7 @@ import {
   type StateEnv,
 } from "@repo/core/application/di/stateCloudflare";
 import type { CredentialMappingKind } from "@repo/core/domain/identity/ports/credentialMappingRepository";
+import type { SealedCanonical } from "@repo/core/domain/identity/ports/credentialMappingStore";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 
 /**
@@ -74,11 +76,34 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
     });
   }
 
-  reserveCredential(
+  /**
+   * The one entry that does work before `entry()`.
+   *
+   * Sealing the address is WebCrypto and therefore asynchronous, and a unit of
+   * work's callback is type-rejected from being asynchronous — so the only
+   * moment a bucket can encrypt is here, in the entry point, which is
+   * asynchronous by construction. The ciphertext then crosses into the
+   * transaction as a plain value (ADR-036).
+   *
+   * The failure is returned as an envelope like any other: a deployment with no
+   * mail-encryption key must fail the signup rather than write a reservation
+   * whose address can never be recovered.
+   */
+  async reserveCredential(
     args: facade.ReserveCredentialFacadeArgs,
   ): Promise<RpcEnvelope<null>> {
+    let sealed: SealedCanonical;
+    try {
+      sealed = await sealCanonical(
+        readStateSecretsOrNull(this.env)?.mailEncryptionKeyring ?? null,
+        args.canonical,
+        { kind: args.kind, credentialId: args.credentialId },
+      );
+    } catch (error) {
+      return err(error);
+    }
     return this.entry(() => {
-      facade.reserveCredential(this.container, args, this.now());
+      facade.reserveCredential(this.container, args, sealed, this.now());
       return null;
     });
   }

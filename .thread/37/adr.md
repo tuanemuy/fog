@@ -841,7 +841,8 @@ steps.md ステップ21 は「`payload` に載せるのは `tokenId` だけ」�
 ## ADR-030: `sendMail` は `encrypted_canonical` を復号して宛先を得る。書き込み側は #37 に存在しない
 
 **日付:** 2026-08-03（ステップ21）
-**ステータス:** 採用（ただし前提に穴があることを明記する）
+**ステータス:** 採用。**下記「未解決」は ADR-036 で解消済み**（`reserve-credential` が平文 canonical を受け取り、DO が RPC エントリで封をしてから予約行を書く形）
+**追記（ADR-036 時点）:** 本 ADR が引き継ぎ先を求めた2点 (a) (b) は、別 Issue ではなく #37 の中で閉じた。`encryptCanonical` は本番経路（`sealCanonical` 経由）から呼ばれるようになったので、決定2「#37 の本番経路から呼ばれない」はもはや成立しない。
 
 ### Context
 
@@ -988,6 +989,42 @@ JS RPC の stub のメソッドは通常の関数ではなくパイプライン�
 - 良い点: request Worker → DO の経路が実際に動く。#37 のカットオーバー全体がこの1行に乗っていた。
 - 良い点: `identity.integration.test.ts`（12ケース）が恒久のガードになる。
 - 学び: 「合成ルートを通す」テストハーネスの価値は、ハーネス自身が使われて初めて出る。ステップ19 の削除とステップ21 の作り直しのあいだ7ステップにわたって、この経路は無検証だった。
+
+---
+
+## ADR-036: `reserve-credential` が平文 canonical を受け取り、DO が RPC エントリで封をしてから予約行を書く
+
+**日付:** 2026-08-03（ADR-030 の引き継ぎ）
+**ステータス:** 採用
+
+### Context
+
+ADR-030 は `encrypted_canonical` の**読み側だけ**を実装し、書き手が #37 のどこにも無いことを未解決として引き継いだ。実際のサインアップが作る mapping 行は3列（`encrypted_canonical` / `encryption_generation` / `encryption_nonce`）とも NULL で、`sendMail` はそれを「宛先を持たない行」として黙って `done` に落とす。**つまり本番のサインアップで作られたアカウントには、リセットメールが1通も届かない。** 統合テストが緑だったのは、テスト自身が `encryptCanonical` で暗号文を seed していたからである。
+
+構造的な行き止まりは2つあった。**(i) 平文 canonical を持つのは request Worker だが、暗号化鍵 `IDENTITY_MAIL_ENCRYPTION_KEY` は state Worker にしか配られない**（第3.2節の非重複配布）。**(ii) 鍵を持つ DO 側は `transactionSync` の中にいるので、WebCrypto（非同期）を呼べない。**
+
+### Decision
+
+ADR-030 が示した closing plan (a) (b) をそのまま採る。**秘密の配布境界は動かさない。**
+
+1. **`reserve-credential` の引数に `canonical: string`（平文）を足す。** #37 の RPC エントリで平文 canonical を取るのはこの1本だけである。`CredentialMappingKind` ごとの区別は無く、SSO の行も同じ経路で封をする（原本は鍵ローテーションの再 HMAC にも要る。第6.2.1節の動機2）。
+2. **封をするのは DO クラスの RPC エントリで、`this.entry(...)` に入る前である。** (ii) の行き止まりは「エントリ自身は非同期である」ことで抜ける — `await sealCanonical(...)` の結果を値として同期コールバックへ渡す。**`run()` のコールバックの中では相変わらず何も `await` しない。**
+3. **`sealCanonical(keyring | null, canonical, { kind, credentialId })` を `identityDirectory/canonicalCipher.ts` に置く。** active 世代は keyring の先頭エントリから採り、行に記録する（復号は行が宣言した世代で行うという既存規則のまま）。AAD と nonce の規則は ADR-030 のまま変えない。
+4. **鍵が未設定なら予約そのものを失敗させる**（`SystemError(CryptoError)` を値エンベロープで返す）。`send-mail` の `requireKeyring` と同じ「大きな音を立てる」側に倒す。黙って NULL を書くと、**そのユーザーは以後永久にパスワードリセットできない**のに、症状が出るのは最初のリセット依頼のとき（=サインアップよりずっと後）である。鍵は DO の constructor ではなく毎回 `readStateSecretsOrNull(this.env)` から読む（constructor で投げると `alarm()` と運用診断まで道連れになる、という既存の判断のまま）。
+5. **ポートの3列を `sealedCanonical: SealedCanonical`（必須の1値）に畳む。** 3つの optional は「2列だけ書かれた行」を型で許してしまい、その行は二度と開けない。予約は必ず封を伴う、を型で言い切る。
+
+**AC-3 に反しない。** AC-3 が禁じるのは (a) DO の ID / routing key に生アドレス・SSO subject を使うこと、(b) canonical / hmac / locator / 各種トークンが**ログ・エラー・URL** に出ること、の2つである。ここで平文が乗るのは信頼境界の内側への RPC 引数であり、量は1サインアップにつき1件で、第5.2.3節が制約として固定した「平文 canonical を Worker 境界の外へ **bulk** で出さない」にも当たらない（第6.2.1節 (c) 4 の `read-own-canonical` が逆向きに1件だけ越えるのと同じ性質）。ADR-016 が定めた責務配置（canonical 化と HMAC 導出は request Worker、bucket は `(kind, hmac)` で引く）も動かない — **引くキーは今も `(kind, hmac)` だけ**であり、bucket は routing secret を持たないので平文から自分の名前を導けない。
+
+**列挙オラクルも壊さない。** ADR-029 が守っているのは `request-password-reset` → `send-mail` の4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）の経路一致であって、`reserve-credential` はその経路に無い（サインアップは元から「登録済みなら `EMAIL_ALREADY_REGISTERED`」を返す）。封は行の有無を見る**前に**無条件で行われるので、暗号化の有無で分岐する観測点も生まれない。
+
+### Consequences
+
+- 良い点: **実際のサインアップ → リセット依頼 → `send-mail` で宛先が復元できる。** 統合テスト `identity.integration.test.ts` に、seed を一切使わずこの経路を通す1本（と、行の3列が埋まることを見る1本）を足した。
+- 良い点: `encryptCanonical` / `decryptCanonical` が対になって本番経路に乗ったので、AAD・nonce・世代の規則が「テストとローテーションだけが知っている」状態を脱した。#44 の `rotate-encryption` は同じ規則を再利用できる。
+- トレードオフ: **`IDENTITY_MAIL_ENCRYPTION_KEY` がサインアップの必須バインディングになった。** 未設定のデプロイはサインアップが失敗する（従来はサインアップだけ通って、リセットが黙って壊れていた）。`vitest.config.integration.ts` は両鍵を束ねているので統合スイートは影響を受けない。`.dev.vars.example` に state 側2鍵の記載が無い件は #37 のステップ27 の宿題として残っている（本 ADR の射程外）。
+- トレードオフ: `reserveCredential` だけが `this.entry(...)` の外で仕事をする非対称な形になった。理由（WebCrypto が非同期・UoW コールバックが同期）を DO クラスの JSDoc に残した。
+- 非スコープ: `read-own-canonical`（設定画面の自アドレス表示。第6.2.1節 (c) 4）は #12 のまま。今回足したのは**書き込みと、ジョブからの復号**だけである。
+- 隣接修正: `canonicalCipher.ts` の AAD 区切り子が**生の NUL バイト**で書かれており、`git` / `grep` がこのファイルを binary 扱いしていた（`ssoCanonical` 側は最初からエスケープ表記で、規則もそこに書かれている）。`\u0000` のエスケープ表記へ直した。**エンコードされるバイト列は同一**なので暗号文の互換性には影響しない。放置すると AC-3 の禁止語 grep を含む機械検査がこのファイルに対して無言で0件を返す。
 
 ---
 

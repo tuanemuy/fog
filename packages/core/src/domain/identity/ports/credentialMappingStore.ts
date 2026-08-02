@@ -1,6 +1,20 @@
 import type { CredentialId } from "../valueObject";
 import type { CredentialMappingKind } from "./credentialMappingRepository";
 
+/**
+ * The address original, sealed for storage.
+ *
+ * One value rather than three independently-optional fields: the ciphertext,
+ * the nonce and the generation that sealed them are only ever meaningful
+ * together, and a row carrying two of the three cannot be opened again.
+ */
+export type SealedCanonical = Readonly<{
+  ciphertext: string;
+  /** The keyring generation that sealed it. A row is opened with its own. */
+  generation: number;
+  nonce: string;
+}>;
+
 export type ReserveCredentialArgs = Readonly<{
   kind: CredentialMappingKind;
   hmac: string;
@@ -26,9 +40,15 @@ export type ReserveCredentialArgs = Readonly<{
   locators?: readonly unknown[];
   /** Written on non-coordinator rows, pointing back at the coordinator. */
   coordinatorLocator?: string;
-  encryptedCanonical?: string;
-  encryptionGeneration?: number;
-  encryptionNonce?: string;
+  /**
+   * Required, on every reservation. The bucket's row is the single place the
+   * raw address survives (`.thread/34/design.md` §6.2.1 (a)), so a row written
+   * without it silently loses the account's only recoverable recipient — the
+   * failure would first surface at that user's first password reset, long after
+   * the signup that caused it. Sealing is asynchronous, so it happens in the
+   * RPC entry *before* the transaction opens and arrives here as a value.
+   */
+  sealedCanonical: SealedCanonical;
 }>;
 
 /**

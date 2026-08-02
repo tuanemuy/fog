@@ -15,6 +15,8 @@ declare global {
       USER_DATA: DurableObjectNamespace;
       IDENTITY_DIRECTORY: DurableObjectNamespace;
       APP_URL: string;
+      IDENTITY_MAIL_ENCRYPTION_KEY: string;
+      IDENTITY_RESET_TOKEN_KEY: string;
     }
   }
 }

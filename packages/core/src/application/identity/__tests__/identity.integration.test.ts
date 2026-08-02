@@ -1,7 +1,11 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import type { SqlStorage } from "@cloudflare/workers-types";
+import type { DurableObjectState, SqlStorage } from "@cloudflare/workers-types";
+import { IDENTITY_DIRECTORY_JOB_HANDLERS } from "@repo/core/adapters/cloudflare/jobs/registry";
+import { runDueJobs } from "@repo/core/adapters/cloudflare/jobs/runner";
+import type { Email } from "@repo/core/domain/identity/valueObject";
 import { describe, expect, it } from "vitest";
 import { setupTestContainer } from "../../__tests__/helpers";
+import { requireKeyring, type StateSecrets } from "../../di/secrets";
 import {
   isConflictError,
   isForbiddenError,
@@ -48,6 +52,73 @@ function inUserDataOf<T>(
   return runInDurableObject(ns.get(ns.idFromName(userId)), (_i, ctx) =>
     fn(ctx.storage.sql as SqlStorage),
   ) as Promise<T>;
+}
+
+/** The same, for the bucket an address routes to. */
+async function inDirectoryOf<T>(
+  email: string,
+  fn: (sql: SqlStorage, ctx: DurableObjectState) => T,
+): Promise<T> {
+  const locator = (await container().directoryLocator.forCanonical(email))[0];
+  if (locator === undefined) throw new Error("no locator");
+  const ns = env.IDENTITY_DIRECTORY;
+  return runInDurableObject(ns.get(ns.idFromName(locator.doName)), (_i, ctx) =>
+    fn(ctx.storage.sql as SqlStorage, ctx as DurableObjectState),
+  ) as Promise<T>;
+}
+
+/** The state Worker's keyrings, as `vitest.config.integration.ts` binds them. */
+function stateSecrets(): StateSecrets {
+  return {
+    mailEncryptionKeyring: requireKeyring(
+      env.IDENTITY_MAIL_ENCRYPTION_KEY,
+      "IDENTITY_MAIL_ENCRYPTION_KEY",
+      { requireBucketCount: false },
+    ),
+    resetTokenKeyring: requireKeyring(
+      env.IDENTITY_RESET_TOKEN_KEY,
+      "IDENTITY_RESET_TOKEN_KEY",
+      { requireBucketCount: false },
+    ),
+  };
+}
+
+/**
+ * Runs the bucket's due jobs against a recording sender and reports every
+ * recipient. The DO's own `alarm()` would use the noop sender — an unbound
+ * `MAIL_SENDER` is what the suite runs with — so the send has to be driven with
+ * a sender the test can read.
+ */
+async function deliverDueMail(email: string): Promise<string[]> {
+  const sent: string[] = [];
+  const now = Date.now();
+  await inDirectoryOf(email, (sql, ctx) =>
+    runDueJobs(
+      {
+        ctx,
+        sql,
+        now,
+        ownerToken: "test-owner",
+        logger: {
+          info: () => undefined,
+          warn: () => undefined,
+          error: () => undefined,
+        },
+        idGenerator: container().idGenerator,
+        mailSender: {
+          sendPasswordResetMail: (to: Email) => {
+            sent.push(to);
+            return Promise.resolve();
+          },
+        },
+        appUrl: "http://localhost:8787",
+        secrets: stateSecrets(),
+      },
+      IDENTITY_DIRECTORY_JOB_HANDLERS,
+      now,
+    ),
+  );
+  return sent;
 }
 
 describe("registerWithPassword", () => {
@@ -100,6 +171,35 @@ describe("registerWithPassword", () => {
     // Forward-compatibility point: the stashed locators are the only reverse
     // information a recovery has, so nothing clears them at the terminus.
     expect(rows.operations[0]?.target_locators).not.toBeNull();
+  });
+
+  it("seals the address original into the bucket's mapping row", async () => {
+    const email = address();
+    await registerWithPassword({
+      container: container(),
+      input: { email, password: "correct horse battery staple" },
+    });
+    const row = await inDirectoryOf(
+      email,
+      (sql) =>
+        sql
+          .exec<{
+            encrypted_canonical: string | null;
+            encryption_generation: number | null;
+            encryption_nonce: string | null;
+          }>(
+            `SELECT encrypted_canonical, encryption_generation, encryption_nonce
+               FROM credential_mappings`,
+          )
+          .toArray()[0],
+    );
+    // The row is the only place the address survives, and the reservation is
+    // the only write that can put it there.
+    expect(row?.encrypted_canonical).toMatch(/^[0-9a-f]+$/);
+    expect(row?.encryption_generation).toBe(1);
+    // 96 bits, in its own column rather than concatenated onto the ciphertext.
+    expect(row?.encryption_nonce).toMatch(/^[0-9a-f]{24}$/);
+    expect(row?.encrypted_canonical).not.toContain(email);
   });
 
   it("refuses a second registration of the same address", async () => {
@@ -339,5 +439,27 @@ describe("requestPasswordReset", () => {
     // an enumeration oracle.
     expect(await jobsFor(registeredAddress)).toHaveLength(1);
     expect(await jobsFor(unknownAddress)).toHaveLength(1);
+  });
+
+  it("sends the link to the address the signup itself sealed", async () => {
+    const email = address();
+    await registerWithPassword({
+      container: container(),
+      input: { email, password: "correct horse battery staple" },
+    });
+    await requestPasswordReset({ container: container(), input: { email } });
+
+    // Nothing seeded the ciphertext: the recipient is recovered from what the
+    // signup wrote, which closes the loop the write side used to leave open
+    // (ADR-030 → ADR-036). An unregistered address in the same run produces the
+    // same job row and no recipient at all.
+    expect(await deliverDueMail(email)).toEqual([email]);
+
+    const unknown = address();
+    await requestPasswordReset({
+      container: container(),
+      input: { email: unknown },
+    });
+    expect(await deliverDueMail(unknown)).toEqual([]);
   });
 });

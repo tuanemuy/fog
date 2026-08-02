@@ -43,6 +43,12 @@ export type SignupResult = Readonly<{
 type ResolvedCredential = Readonly<{
   credentialId: string;
   kind: CredentialMappingKind;
+  /**
+   * Carried as far as the reservation and no further. The bucket seals it under
+   * a key this Worker does not hold; nothing on this side stores, logs or
+   * returns it.
+   */
+  canonical: string;
   label: string;
   passwordVerifier?: string;
   locators: readonly DirectoryLocator[];
@@ -67,6 +73,7 @@ export async function runSignupSaga(
     resolved.push({
       credentialId: container.idGenerator.next(),
       kind: credential.kind,
+      canonical: credential.canonical,
       label: credential.label,
       // Absent, not `undefined`: "holds no verifier" is what makes an address
       // reservation fail the `usableForLogin` test.
@@ -235,6 +242,11 @@ async function reserve(
       hmac: locator.hmac,
       generation: locator.generation,
       credentialId: credential.credentialId,
+      // The plaintext, one hop inward. The bucket owns the encryption key and
+      // this Worker owns the canonical, so the row's reversible copy of the
+      // address can only be produced on the far side of this call — see the
+      // field's own note on why that does not weaken AC-3.
+      canonical: credential.canonical,
       candidateUserId: args.userId,
       operationId: args.operationId,
       callerToken: args.callerToken,
