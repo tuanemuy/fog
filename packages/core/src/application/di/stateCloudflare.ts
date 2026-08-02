@@ -124,6 +124,25 @@ function activeResetTokenGeneration(env: StateEnv): number {
  * request side nests `RequestSecrets`: a flat placement rides a rest-spread out
  * of the module.
  */
+/**
+ * The same secrets, for a caller that must not be taken down by an unset
+ * optional binding — the Durable Object's `alarm()`, which may never throw.
+ *
+ * `null` means "this deployment binds neither key". A job that actually needs
+ * one then fails on its own, loudly, and lands in `poison` with a reason; the
+ * DO keeps serving everything else. Returning a silently empty keyring instead
+ * would let a reset mail be recorded as sent when nothing left the building.
+ */
+export function readStateSecretsOrNull(env: StateEnv): StateSecrets | null {
+  if (
+    env.IDENTITY_MAIL_ENCRYPTION_KEY === undefined &&
+    env.IDENTITY_RESET_TOKEN_KEY === undefined
+  ) {
+    return null;
+  }
+  return readStateSecrets(env);
+}
+
 export function readStateSecrets(env: StateEnv): StateSecrets {
   return {
     mailEncryptionKeyring: requireKeyring(

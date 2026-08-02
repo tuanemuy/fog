@@ -85,3 +85,10 @@ jobs:
 
       - name: Build
         run: pnpm build:cf
+
+      # The build artefacts are right here, so the boot smoke test runs in this
+      # job rather than rebuilding them in another. It is the only check that
+      # asks workerd to evaluate the shipped bundle's top level, which is where
+      # the global-scope restrictions live.
+      - name: Boot smoke test
+        run: pnpm test:smoke

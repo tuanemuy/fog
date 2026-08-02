@@ -806,6 +806,191 @@ AC-4 は「`grep -rn "idFromName\|getByName" packages/core/src apps/web/app` の
 
 ---
 
+## ADR-029: `send-mail` の `payload` に `tokenId` を載せず、依頼の `(kind, hmac)` だけを載せる
+
+**日付:** 2026-08-03（ステップ21）
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ21 は「`payload` に載せるのは `tokenId` だけ」と指示している。この形を実装して統合テストを書いたところ、**同一アドレスへの連打が2回目で `ConflictError("JOB_PAYLOAD_MISMATCH")` になる**ことが判明した。
+
+- 1回目の依頼は eligible なのでトークンを発行し、`payload = { tokenId: "…" }` を書く。
+- 2回目は `lastResetRequestedAt` によりスロットルされるのでトークンを発行せず、`payload = { tokenId: null }` になる。
+- 行はまだ実行可能集合（`pending`）にいるので、`enqueueJob` の収束規則4（`payload_digest` の不一致は真の競合）が発火する。
+
+**未登録アドレスでは常に `{ tokenId: null }` なので競合しない。** つまり「2回目の依頼がエラーになるかどうか」が**そのアドレスが登録済みかどうかを直接返す列挙オラクル**になる。第7.6節が「登録済み / 未登録 / SSO 専用 / スロットル中の4ケースで処理経路が完全に一致する」と決め切っている当のものを、`tokenId` を payload に載せる形そのものが壊す。
+
+### Decision
+
+**`payload` は依頼の入力そのもの（`{ kind, hmac }`）だけを載せる。** 送信側（`sendMail` ハンドラ）は自 bucket の行から必要なものを全部引き直す — `(kind, hmac)` で mapping を引き、`password_verifier` の有無で送るかどうかを決め、その `credential_id` の未使用・未失効トークン行を引く。
+
+- `(kind, hmac)` は `operation_key` が既に持っている値なので、`jobs` テーブルに新しい情報を足していない。
+- 4ケースの payload はバイト単位で一致するので、`payload_digest` の競合が原理的に起こらない。
+- 「生トークンを載せない」という元の要求はより強い形で満たされる（トークンの**識別子すら**載らない）。
+
+### Consequences
+
+- 良い点: 4ケースの処理経路が「行数・`setAlarm`・応答」だけでなく **payload の中身まで**一致する。統合テストが4ケースを直接比較する形で書ける。
+- 良い点: ハンドラが冪等になる。再配送は同じ生きたトークン行を引き直すだけで、payload に焼き付けた id が消費済み・失効済みになっている場合の分岐が要らない。
+- トレードオフ: ハンドラの読みが1本増える（mapping → token の2段）。`issue` が同じ credential の未使用行を全削除するので、引き当たる行は高々1本である。
+- **steps.md ステップ21 の記述を訂正した。** 「`payload` に載せるのは `tokenId` だけ」は、第7.6節の列挙オラクル対策と両立しない。
+
+---
+
+## ADR-030: `sendMail` は `encrypted_canonical` を復号して宛先を得る。書き込み側は #37 に存在しない
+
+**日付:** 2026-08-03（ステップ21）
+**ステータス:** 採用（ただし前提に穴があることを明記する）
+
+### Context
+
+`MailSender.sendPasswordResetMail(to: Email, …)` は生のメールアドレスを要求する。原本の所在は設計上 `credential_mappings.encrypted_canonical` の1箇所だけであり（第6.2.1節 (a)）、復号が許される経路の1つがこのジョブである（同 (c) 1）。
+
+ところが **#37 のどのコードもこの列を書かない。** `CredentialMappingStore.reserve` は引数を受け取る形になっているが、facade もサーガも渡していない。構造的な理由がある — 平文 canonical を持つのは request Worker だが暗号化鍵は state Worker にしか配られず（第3.2節の非重複配布）、逆に DO 側は `transactionSync` の中にいるので WebCrypto（非同期）を呼べない。
+
+### Decision
+
+1. **読み側だけを実装する。** `identityDirectory/canonicalCipher.ts` に AES-256-GCM の `encryptCanonical` / `decryptCanonical` を置き、AAD は `(kind, credentialId, encryptionGeneration)`、nonce は独立列。`sendMail` は列が揃っているときだけ復号し、揃っていなければ「宛先を持たない行」として何も送らずに `done` へ落ちる。
+2. **`encryptCanonical` は #37 の本番経路から呼ばれない。** 統合テストが行を仕込むのに使い、`rotate-encryption`（#44）が使う。対になる半分を欠いた暗号モジュールを置かないほうが、後から書き込み側を足すときに AAD と nonce の規則が割れない。
+3. **鍵は job context 経由で渡す。** `IdentityDirectoryJobContext.secrets: StateSecrets | null` を足し、DO クラスが `alarm()` の中で `readStateSecretsOrNull(this.env)` から読む。コンテナには載せない（`stateContainerConfig.test.ts` が「コンテナに秘密が載らない」を恒久ガードとして固定しているため）。未設定のまま鍵を要する経路に入ったら `SystemError(CryptoError)` で**大きな音を立てて落ちる** — 黙って `done` にすると「送ったことになっている未送信」が生まれる。
+
+### Consequences
+
+- 良い点: `send-mail` の E2E が「登録済みでは実際に1通送られる」ところまで検証できる。
+- 良い点: 復号失敗は fail closed（`SystemError(DataIntegrityError)`）で、暗号文の付け替えが検出できる。
+- **未解決:** `encrypted_canonical` の**書き込み点が存在しない**ので、実際の signup で作られた行にリセットメールは送れない。閉じるには (a) `reserve-credential` RPC が canonical を受け取り、(b) DO 側がトランザクションの外で暗号化してから予約を書く、という2点が要る。**#38 のメール配線より前に、この2点を担当する Issue が要る**（本 ADR がその引き継ぎである）。
+
+---
+
+## ADR-031: `resume-signup` は観測と終端だけを実装し、phase の前進は実装しない
+
+**日付:** 2026-08-03（ステップ21）
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ21 は `resumeSignup` に「コーディネーター予約行から phase を読んで 1b → 2 → 3 → 4 を前進させる」と書いている。ところが phase 1b〜4 は**すべて別 DO への RPC** であり、Directory bucket からそれを発行するには state 側に stub factory が要る。
+
+**AC-4 は `idFromName` / `getByName` の出現を `application/di/serverCloudflare.ts`（request Worker の合成ルート）1箇所に閉じることを要求している**（ADR-028 でテストハーネスだけ除外済み）。state 側に stub factory を置くことは、この構造的保証そのものの引き直しにあたる。
+
+### Decision
+
+**#37 の `resumeSignup` は stub を要さない半分だけを実装する。**
+
+- コーディネーター予約行（`operation_id` 一致かつ `coordinator_locator IS NULL`）を読む。
+- 行が無い → 補償済みか掃除済み → `done`。
+- `status='active'` または `saga_committed` あり → phase 3 を越えている → `done`。
+- `reserved_until > now` → まだ TTL 内なので `rearm`（遅いだけのサーガを止まったと決めつけない）。
+- TTL 切れ → **一様な終端**（`poison` + `terminal_reason: "SIGNUP_RESERVATION_EXPIRED"`）。予約行は消さない（`locators` / `candidate_user_id` / `caller_token` が #45 の唯一の材料である）。
+
+**前進そのものは、AC-4 の境界を引き直す判断とセットで別 Issue が実装する。**
+
+### Consequences
+
+- 良い点: AC-27（一様な終端）と前方互換点は満たされる。
+- 良い点: AC-4 の機械検証が壊れない。
+- トレードオフ: 中断した signup は自動では完走しない。利用者から見ると「登録に失敗したのでやり直す」であり、再送は毎回新しい `operationId` を採番するので詰まりはしない（第6.3節）。
+- **引き継ぎ:** 前進を実装する Issue は、(a) state 側の stub factory、(b) AC-4 の文面、(c) 第3.2節の配布境界（bucket が User Data DO を名指しできるか）を同時に決める必要がある。
+
+---
+
+## ADR-032: ハンドラが「前進不能」を返せるよう `JobOutcome` に `terminal` を足す
+
+**日付:** 2026-08-03（ステップ21 / 22）
+**ステータス:** 採用
+
+### Context
+
+「前進不能が確定したら一様な終端（`poison` + `terminal_reason`）」（steps.md ステップ21）を、既存の `JobOutcome`（`done` / `rearm` / `yield`）では表せない。throw すればいずれ `poison` に落ちるが、それは**リトライ予算を8回使い切ってから**であり、「確定した」という情報が失われる。`migrate-bulk` が知らない step を渡されたときも同じ形が要る（リトライしても永久に知らないままである）。
+
+### Decision
+
+`JobOutcome` に `{ kind: "terminal"; reason: string }` を足し、ランナーが `poisonJob` を1文で呼ぶ。**throw 経由の終端とまったく同じ終端**（`status='poison'` / `terminal_reason` / `completed_at` / `lease_until` / `owner_token` / `next_run_at` を同じ文で確定）に落ちる。
+
+`reason` の規則は `terminal_reason` と同じ — 終端の理由と `operationId` だけで、PII と再利用可能な秘密を載せない。
+
+### Consequences
+
+- 良い点: 「終端は一様である」が、どの経路から来ても成立する（#45 が読む行の形が1つに保たれる）。
+- 良い点: 確定した失敗に8回分のバックオフを払わない。
+- トレードオフ: ハンドラが自分で終端を宣言できるようになるので、「retry すべき失敗」を `terminal` で潰す誤用が可能になる。**判断基準は「この deployment のコードのままでは何度やっても同じ結果になるか」**であり、それを `JobOutcome` の JSDoc に書いた。
+
+---
+
+## ADR-033: `changeTrashRetentionDays` の再計算を UoW コンテキストのメソッドとして持つ
+
+**日付:** 2026-08-03（ステップ20）
+**ステータス:** 採用
+
+### Context
+
+AC-10 は「保持日数の変更が**同一トランザクションで**全項目を再計算し」と要求する。ところが ADR-001 により #37 は memo / knowledge のリポジトリを作らないので、`memos` / `topics` / `documents` を書く口が `UserDataUnitOfWorkContext` に無い。facade は生の `sql` を掴んではならない（AC-5 の grep 検証）。
+
+### Decision
+
+`UserDataUnitOfWorkContext` に `recalcTrashPurgeAfter(retentionDays, limit): number` を足し、実装は `trashQuery.recalcPurgeAfterChunk` に委譲する。facade は設定の保存と同じトランザクションでこれを1チャンク呼び、続けて `purge-trash` を投入する（残りと再武装はジョブが持つ）。
+
+`spec/database/index.md`「非集約ストアへの書き込み口は6ストア・7メソッド」の全数は**崩れない** — `memos` / `topics` / `documents` は集約側のテーブルであって非集約ストアではない。
+
+### Consequences
+
+- 良い点: AC-10 の「同一トランザクション」が字義どおり成立する。ゴミ箱が1トランザクションに収まる通常の規模では、変更した瞬間に全項目が新しい期限を持つ。
+- 良い点: 超過分の安全性はジョブの**フェーズ順序**が持つ（再計算が空になるまで削除しない）ので、チャンクに割れても延長方向の誤削除が起きない。
+- トレードオフ: #2〜#6 が memo / knowledge のリポジトリを作るとき、この口を残すか各リポジトリへ寄せるかを判断する必要がある。
+
+---
+
+## ADR-034: 起動スモークテストは request / state の2 Worker を `workers` 配列に並べて構成する
+
+**日付:** 2026-08-03（ステップ24）
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ24 の断片は、request Worker を Miniflare のトップレベル（`scriptPath` / `durableObjects` / `bindings`）に置き、state Worker だけを `workers: [...]` に入れる形を示している。実測すると2点で成立しない。
+
+1. **`workers` 配列があると、その先頭が `dispatchFetch` と `getDurableObjectNamespace` の既定の対象になる。** トップレベルに request を置くと既定が `state` になり、`No Durable Object namespace binding named "USER_DATA" found in "state" worker.` で落ちる。
+2. **`dist/server/index.js` はコード分割されていて `assets/*.js` を import する。** miniflare の既定モジュール規則は裸の `.js` を CommonJS と読むので、最初の `import` で `ERR_MODULE_PARSE` になる。
+
+### Decision
+
+- **両方を `workers` 配列に並べ、request を先頭に置く。** DO バインディングと秘密は request のエントリに、`scriptName: "state"` で state のクラスを指す。
+- **request 側に `modulesRules: [{ type: "ESModule", include: ["**/*.js"] }]` を付ける。**
+- **`getAlarm()` に依拠しない**（下記の実測。統合テスト側にも同じ判断が要る）。
+
+### Consequences
+
+- 良い点: 注入試験で両方の Worker について `Disallowed operation called within global scope` を検知できることを確認した（下記の追補）。
+- トレードオフ: steps.md の断片と形が違う。断片のまま書くと「起動しないのに緑」ではなく「起動するのに赤」になる側の失敗なので、気づけないリスクは無い。
+
+---
+
+## ADR-035: `guardStub` は RPC メソッドを取り出して `apply` してはならない
+
+**日付:** 2026-08-03（ステップ21）
+**ステータス:** 採用（既存実装の不具合の是正）
+
+### Context
+
+ステップ17 が置いた `application/di/serverCloudflare.ts` の `guardStub` は、Proxy の `get` トラップで取り出した関数を `value.apply(target, args)` で呼んでいた。**この形はどの RPC 呼び出しでも失敗する** — `DataCloneError: ServiceStub serialization requires the 'experimental' compat flag.`
+
+JS RPC の stub のメソッドは通常の関数ではなくパイプライン用のハンドルであり、`apply` / `call` で呼ぶと workerd がレシーバーを**シリアライズすべき値**として扱う。`Reflect.get` の `receiver` を省いても同じである（実測で両方赤）。
+
+**この不具合はステップ19 で `identity.integration.test.ts` が削除されて以降、どのテストも stub 経由の呼び出しをしていなかったため検出されなかった。** ステップ21 で同テストを作り直した最初の実行で12件全部が落ちて判明した。
+
+### Decision
+
+`get` トラップの中で `target[property](...args)` として**プロパティのまま呼ぶ**。理由を JSDoc に残す。
+
+### Consequences
+
+- 良い点: request Worker → DO の経路が実際に動く。#37 のカットオーバー全体がこの1行に乗っていた。
+- 良い点: `identity.integration.test.ts`（12ケース）が恒久のガードになる。
+- 学び: 「合成ルートを通す」テストハーネスの価値は、ハーネス自身が使われて初めて出る。ステップ19 の削除とステップ21 の作り直しのあいだ7ステップにわたって、この経路は無検証だった。
+
+---
+
 ## 付録: spike の実測結果
 
 **実測日:** 2026-08-03
@@ -840,3 +1025,13 @@ AC-4 は「`grep -rn "idFromName\|getByName" packages/core/src apps/web/app` の
 | 事実 | 実測 | 影響 |
 |---|---|---|
 | `setAlarm(t)` に**過去時刻**を渡すと、`getAlarm()` が返すのは `t` ではなく**ほぼ現在時刻**である | miniflare 上で `setAlarm(40_000)`（epoch ミリ秒 = 1970年）の直後に `getAlarm()` が `1785702532310`（実行時刻）を返した | プラットフォーム側が過去のアラームを「即時」に丸めるということであり、**設計の `clamp(now, at)`（過去・現在の due job を `now + 1000` へ寄せる）はこの丸めに依存せず自前で行う必要がある**（丸め後の値が読み戻せないと `AlarmCache` の比較が毎回外れて `setAlarm` を書き続ける）。統合テストは絶対時刻を**未来基準**（`Date.now() + 3_600_000` からのオフセット）で書く — 過去時刻の定数だと `getAlarm()` が壁時計を返して何も検証しないテストになる |
+
+### 付録の追補: ステップ20〜24 で判明した実測事実
+
+| 事実 | 実測 | 影響 |
+|---|---|---|
+| miniflare の `getAlarm()` は、**武装済みで未配送の alarm に対して `null` を返す** | `requestPasswordReset` の直後に `getAlarm()` が `null`、300ms 後に同じジョブ行が `done` になっていた（alarm は確かに発火している） | **統合テストで `getAlarm()` を観測手段に使えない。** 設計が「`getAlarm()` を呼ばず `AlarmCache` で比較する」と決めているのと同じ理由が、テスト側にも及ぶ。alarm の効果は「キューされた仕事が実行されたか」で観測する |
+| `dist/server/index.js` はコード分割されており `assets/*.js` を import する | miniflare の既定モジュール規則では `ERR_MODULE_PARSE`（`'import' and 'export' may appear only with 'sourceType: module'`） | スモークテストの request Worker に `modulesRules: [{ type: "ESModule", include: ["**/*.js"] }]` が要る（ADR-034） |
+| `workers` 配列の**先頭**が `dispatchFetch` / `getDurableObjectNamespace` の既定対象になる | request をトップレベルに、state だけを `workers` に置くと `No Durable Object namespace binding named "USER_DATA" found in "state" worker.` | 両方を配列に並べ、request を先頭に置く（ADR-034） |
+| global scope 制約違反の注入試験 | `apps/web/app/worker/cloudflare/state.ts` と `apps/web/app/server.cloudflare.ts` のそれぞれに module スコープの `crypto.randomUUID()` を1行足して `pnpm build:cf && pnpm test:smoke` を実行し、**両方とも** `service core:user:{state,request}: Uncaught Error: Disallowed operation called within global scope.` で赤になることを確認した。確認後に両ファイルを元へ戻し、`git diff` が空であることを確認済み | AC-22 / AC-23 の「実行時に検知できる」が実測で裏づけられた。#40 の再発は request / state のどちら側でも捕まる |
+| `purge-trash` の安全弁（駆動源が due なのに作業0件だったらクランプする）は、**駆動源クエリと作業述語が一致している限り到達不能である** | 両者とも `status='trashed'` の同じ `purge_after` を見るので、`min(purge_after) <= now` なら必ず削除対象がある | クランプは防御として残したが、テストは代わりに**不変条件**（1回の起床の後、駆動源は必ず未来にある）を固定した。到達可能にするには両クエリを意図的にずらすしかなく、それは検査したい不具合そのものである |

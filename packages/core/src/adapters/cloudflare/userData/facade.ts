@@ -16,6 +16,7 @@ import {
   TrashRetentionDays,
   UserId,
 } from "@repo/core/domain/identity/valueObject";
+import { CHUNK_BUDGETS } from "@repo/core/lib/jobBudgets";
 
 /**
  * The User Data DO's usecase facade.
@@ -161,7 +162,15 @@ export function changeTrashRetentionDays(
     ctx.userSettingsRepository.save(next, found.expectedVersion);
     // Recomputing every trashed item's `purge_after` belongs to the *same*
     // transaction as the settings change; the job below only carries the tail
-    // of the work when there is more of it than one wake-up can afford.
+    // of the work when there is more of it than one transaction can afford.
+    // The job is enqueued unconditionally rather than only when a tail remains,
+    // because it also owns the re-arm: a shortened window has to pull the next
+    // wake-up forward, and a lengthened one has to push it back, and only the
+    // job's own completion may move an alarm later.
+    ctx.recalcTrashPurgeAfter(
+      retentionDays,
+      CHUNK_BUDGETS["purge-trash"].chunkRowLimit,
+    );
     ctx.enqueueJob({
       kind: "purge-trash",
       operationKey: "purge-trash",

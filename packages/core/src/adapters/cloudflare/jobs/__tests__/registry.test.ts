@@ -10,12 +10,10 @@ import {
 // `sweep-orphan-mapping` / `rotate-encryption`) belongs to #12 / #44 / #45,
 // and pinning the number is what keeps it from drifting silently.
 //
-// #37 registers the handlers in steps 20 / 21, so the expected sets are stated
-// here and the assertions become non-trivial as those steps land.
-const EXPECTED_USER_DATA_HANDLERS = ["purge-trash", "reindex", "migrate-bulk"];
+const EXPECTED_USER_DATA_HANDLERS = ["migrate-bulk", "purge-trash", "reindex"];
 const EXPECTED_DIRECTORY_HANDLERS = [
-  "send-mail",
   "resume-signup",
+  "send-mail",
   "sweep-reservations",
   "sweep-reset-tokens",
 ];
@@ -58,12 +56,12 @@ describe("job handler registries", () => {
     }
   });
 
-  it("registers no handler outside the planned 3 / 4 split", () => {
-    for (const kind of Object.keys(USER_DATA_JOB_HANDLERS)) {
-      expect(EXPECTED_USER_DATA_HANDLERS).toContain(kind);
-    }
-    for (const kind of Object.keys(IDENTITY_DIRECTORY_JOB_HANDLERS)) {
-      expect(EXPECTED_DIRECTORY_HANDLERS).toContain(kind);
-    }
+  it("registers exactly the planned 3 / 4 split", () => {
+    expect(Object.keys(USER_DATA_JOB_HANDLERS).sort()).toEqual(
+      EXPECTED_USER_DATA_HANDLERS,
+    );
+    expect(Object.keys(IDENTITY_DIRECTORY_JOB_HANDLERS).sort()).toEqual(
+      EXPECTED_DIRECTORY_HANDLERS,
+    );
   });
 });

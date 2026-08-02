@@ -2,9 +2,11 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 // Integration tests run inside a Workers isolate (Miniflare) against the two
-// SQLite-backed Durable Object namespaces. Pure unit tests run via the
-// Node-pool `vitest.config.ts` instead, which excludes the
-// `*.integration.test.ts` suffix.
+// SQLite-backed Durable Object namespaces — the only storage this system has.
+// Pure unit tests run via the Node-pool `vitest.config.ts` instead, which
+// excludes the `*.integration.test.ts` suffix; the boot smoke tests are a third
+// suite again (`vitest.config.smoke.ts`), because they start a *built* Worker
+// rather than importing modules into this isolate.
 //
 // `include` below is an explicit allow-list of directories, not a bare
 // suffix match: a `*.integration.test.ts` placed outside them is
@@ -31,35 +33,6 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2026-05-01",
         compatibilityFlags: ["nodejs_compat"],
-        d1Databases: ["DB"],
-        queueProducers: {
-          EVENTS_QUEUE: "tanstack-start-template-events",
-          // Registered so `createMessageBatch("…-events-dlq", …)` is
-          // recognised by the test harness when exercising the DLQ
-          // consumer; the production DLQ Worker does not bind it as a
-          // producer.
-          EVENTS_DLQ: "tanstack-start-template-events-dlq",
-        },
-        // Mirror wrangler.toml so the DLQ routing wiring is the same
-        // shape miniflare sees in production. Tests that go through
-        // `createMessageBatch(...)` bypass dispatch and don't depend on
-        // these values, but registering them keeps the per-batch
-        // disposition (`retryBatch.retry`) consistent with how real
-        // queues would surface the same handler decision, and prevents
-        // silent drift when wrangler.toml is tuned.
-        queueConsumers: {
-          "tanstack-start-template-events": {
-            maxBatchSize: 25,
-            maxBatchTimeout: 30,
-            maxRetries: 3,
-            deadLetterQueue: "tanstack-start-template-events-dlq",
-          },
-          "tanstack-start-template-events-dlq": {
-            maxBatchSize: 25,
-            maxBatchTimeout: 30,
-            maxRetries: 1,
-          },
-        },
         // `useSQLite: true` is **mandatory**, and the object form is required
         // because of it: the string shorthand (`USER_DATA:
         // "UserDataDurableObject"`) cannot express it. The default backend is
@@ -76,6 +49,17 @@ export default defineConfig({
         },
         bindings: {
           APP_URL: "http://localhost:8787",
+          // The state Worker's two keyrings. Test values, and the only reason
+          // they are here at all is that `send-mail` derives the reset link and
+          // opens the stored address with them — an unbound keyring makes that
+          // job fail loudly rather than silently drop the mail, which is the
+          // behaviour the suite asserts.
+          IDENTITY_MAIL_ENCRYPTION_KEY: JSON.stringify([
+            { generation: 1, key: "test-mail-encryption-key-0123456789" },
+          ]),
+          IDENTITY_RESET_TOKEN_KEY: JSON.stringify([
+            { generation: 1, key: "test-reset-token-key-0123456789ab" },
+          ]),
         },
       },
     }),
@@ -83,14 +67,9 @@ export default defineConfig({
   test: {
     // Allow-list — see the note at the top of this file.
     include: [
-      "apps/web/app/durable-objects/**/*.integration.test.ts",
-      "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
-      // Matches nothing today; listed so the first integration test for a
-      // Cloudflare-binding adapter (e.g. `ServiceBindingRelayTrigger`) runs
-      // instead of silently landing in neither suite.
       "packages/core/src/adapters/cloudflare/**/*.integration.test.ts",
-      "packages/core/src/adapters/d1/**/*.integration.test.ts",
       "packages/core/src/application/**/*.integration.test.ts",
+      "apps/web/app/durable-objects/**/*.integration.test.ts",
     ],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
     setupFiles: ["packages/core/src/adapters/cloudflare/__tests__/setup.ts"],

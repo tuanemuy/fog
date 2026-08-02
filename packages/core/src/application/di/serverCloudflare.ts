@@ -97,15 +97,21 @@ function buildSharedDeps(): SharedDeps {
  */
 function guardStub<T extends object>(stub: T): T {
   return new Proxy(stub, {
-    get(target, property, receiver) {
-      const value = Reflect.get(target, property, receiver);
+    get(target, property) {
+      const value = Reflect.get(target, property);
       if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
         try {
-          const result = (value as (...a: unknown[]) => unknown).apply(
-            target,
-            args,
-          );
+          // **Invoked as a property of the stub, never as an extracted
+          // function.** A JS RPC stub's method is not an ordinary function: it
+          // is a pipelining handle, and calling it with `apply`/`call` makes
+          // workerd treat the receiver as a value to serialise, which fails
+          // with `ServiceStub serialization requires the 'experimental' compat
+          // flag` before the call ever leaves.
+          const method = (
+            target as Record<PropertyKey, (...a: unknown[]) => unknown>
+          )[property];
+          const result = method(...args);
           return result instanceof Promise
             ? result.catch(translateStubError)
             : result;

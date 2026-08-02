@@ -17,6 +17,7 @@ import { enqueueJob } from "../jobs/table";
 import { one, run, type Sql } from "../sql/exec";
 import { createAccountStore } from "./accountStore";
 import { createCredentialLocatorStore } from "./credentialLocatorStore";
+import { recalcPurgeAfterChunk } from "./trashQuery";
 import { createUserSettingsRepository } from "./userSettingsRepository";
 
 /**
@@ -65,6 +66,10 @@ export function createUserDataContext(
 
     enqueueJob(args: EnqueueJobArgs): void {
       enqueueJob(sql, now(), args);
+    },
+
+    recalcTrashPurgeAfter(retentionDays: number, limit: number): number {
+      return recalcPurgeAfterChunk(sql, retentionDays, limit, now());
     },
 
     findOperation(operationId: string): OperationRecord | null {

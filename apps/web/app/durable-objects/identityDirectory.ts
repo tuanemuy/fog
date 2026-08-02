@@ -30,6 +30,7 @@ import {
 import {
   createIdentityDirectoryContainer,
   type IdentityDirectoryContainer,
+  readStateSecretsOrNull,
   type StateEnv,
 } from "@repo/core/application/di/stateCloudflare";
 import type { CredentialMappingKind } from "@repo/core/domain/identity/ports/credentialMappingRepository";
@@ -206,6 +207,9 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         idGenerator: this.container.idGenerator,
         mailSender: this.container.mailSender,
         appUrl: this.container.appUrl,
+        // Read here rather than in the constructor, and leniently: an unset
+        // optional binding must not be able to stop `alarm()` from running.
+        secrets: readStateSecretsOrNull(this.env),
       },
       IDENTITY_DIRECTORY_JOB_HANDLERS,
       now,

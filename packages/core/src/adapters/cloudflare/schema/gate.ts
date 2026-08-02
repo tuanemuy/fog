@@ -1,5 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import { enqueueJob } from "../jobs/table";
 import { one, run, type Sql } from "../sql/exec";
 import type { MigrationStep } from "./types";
 
@@ -47,9 +48,29 @@ export function runMigrationGate(
         run(sql, statement);
       }
       run(sql, "UPDATE _meta SET schema_version = ?", step.version);
+      for (const deferred of step.enqueue ?? []) {
+        // Through `enqueueJob`, never a bare INSERT: `jobs` has exactly one
+        // write path, and that claim is what makes the set of in-transaction
+        // writes countable against `spec/database/index.md`.
+        enqueueJob(sql, RUN_IMMEDIATELY, {
+          kind: deferred.kind,
+          operationKey: `${deferred.kind}:${step.version}:${deferred.step}`,
+          payload: { targetVersion: step.version, step: deferred.step },
+          nextRunAt: RUN_IMMEDIATELY,
+        });
+      }
     });
   }
 }
+
+/**
+ * The gate is synchronous by construction and holds no clock — injecting one
+ * would put a port on the path that has to stay `await`-free. It does not need
+ * a real timestamp either: "as early as possible" is expressible as an epoch
+ * the runner's `next_run_at <= now` always admits, and the alarm helpers clamp
+ * a past due time up to `now + 1s` before it ever reaches the platform.
+ */
+const RUN_IMMEDIATELY = 0;
 
 const META_DDL = `CREATE TABLE IF NOT EXISTS _meta (
   schema_version INTEGER NOT NULL,

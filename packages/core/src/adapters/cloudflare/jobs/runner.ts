@@ -71,6 +71,10 @@ async function runOne<TCtx extends JobContextBase>(
       releaseJob(sql, row.operation_key, ownerToken);
       return "yield";
     }
+    if (outcome.kind === "terminal") {
+      poisonJob(sql, row.operation_key, ownerToken, now, outcome.reason);
+      return "settled";
+    }
     completeJob(
       sql,
       row.operation_key,

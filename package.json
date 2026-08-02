@@ -24,6 +24,7 @@
     "test:unit": "vitest run",
     "test:integration": "pnpm test:integration:cf",
     "test:integration:cf": "vitest run --config vitest.config.integration.ts",
+    "test:smoke": "vitest run --config vitest.config.smoke.ts",
     "db:migrate": "pnpm --filter @repo/web db:migrate",
     "db:migrate:cf": "pnpm --filter @repo/web db:migrate:cf",
     "db:generate": "pnpm --filter @repo/web db:generate",

@@ -13,5 +13,16 @@ import type { Email } from "@repo/core/domain/identity/valueObject";
  * Building the reset link URL is the adapter's job, not the usecase's.
  */
 export interface MailSender {
-  sendPasswordResetMail(to: Email, resetToken: string): Promise<void>;
+  /**
+   * `providerIdempotencyKey` is derived from the job's `operationKey`, so it is
+   * the *same* value on every redelivery of the same row. Deriving one from the
+   * message inside the adapter would mint a fresh key per retry and defeat the
+   * collapse it exists for; that is why it is a parameter rather than a detail
+   * of the implementation.
+   */
+  sendPasswordResetMail(
+    to: Email,
+    resetToken: string,
+    providerIdempotencyKey: string,
+  ): Promise<void>;
 }

@@ -291,21 +291,26 @@ export function requestPasswordReset(
       (mapping.lastResetRequestedAt === null ||
         mapping.lastResetRequestedAt + RESET_THROTTLE_MS <= now);
 
-    const tokenId =
-      eligible && mapping !== null
-        ? ctx.resetTokenStore.issue(mapping.credentialId, new Date(now))
-        : null;
+    if (eligible && mapping !== null) {
+      ctx.resetTokenStore.issue(mapping.credentialId, new Date(now));
+    }
     if (mapping !== null) {
       ctx.credentialMappingStore.recordResetRequested(kind, hmac, now);
     }
 
-    // The payload carries the token *id*, never the token itself: the row is
-    // readable by anyone who can read the job table, and the send derives the
-    // link from the id at the last moment.
+    // **The payload is the request's own input and nothing else.** It carries
+    // no token, no token id and no derived state, for two reasons that both
+    // have to hold. The row is readable by anyone who can read the job table
+    // and survives in the recovery log after pruning, so a secret on it is a
+    // secret at rest. And a payload that varied with the outcome would make
+    // `enqueueJob`'s digest rule reject the second request of a burst against a
+    // *registered* address while accepting it against an unregistered one —
+    // handing back exactly the enumeration oracle the uniform path exists to
+    // close. The send resolves everything it needs from this bucket's own rows.
     ctx.enqueueJob({
       kind: "send-mail",
       operationKey: `send-mail:${kind}:${hmac}`,
-      payload: { tokenId },
+      payload: { kind, hmac },
       nextRunAt: now,
       providerIdempotencyKey: `send-mail:${kind}:${hmac}`,
     });

@@ -49,6 +49,20 @@ export interface UserDataUnitOfWorkContext {
   enqueueJob(args: EnqueueJobArgs): void;
 
   /**
+   * Recomputes `purge_after` for up to `limit` trashed items and reports how
+   * many rows changed, so that a retention change and the re-dating of the
+   * items it governs commit together.
+   *
+   * It is on the context rather than behind a memo / knowledge repository
+   * because #37 builds none of those (ADR-001) while it does own the retention
+   * setting. The predicate behind it is self-consuming, so a change whose trash
+   * is larger than one transaction leaves the remainder to the `purge-trash`
+   * job — which recomputes before it deletes anything, and therefore cannot
+   * purge an item on a window the user has just lengthened.
+   */
+  recalcTrashPurgeAfter(retentionDays: number, limit: number): number;
+
+  /**
    * Reads a saga's `operations` row. A read, so it is not one of the write
    * paths the roster counts — but it has to be on the context all the same,
    * because the phase-2 idempotency rule is a decision about the *pair* of the

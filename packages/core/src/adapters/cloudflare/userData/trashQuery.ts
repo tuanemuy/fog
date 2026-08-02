@@ -1,4 +1,4 @@
-import { all, one, type Sql } from "../sql/exec";
+import { all, one, run, type Sql } from "../sql/exec";
 
 /**
  * Queries backing the `purge-trash` job.
@@ -118,4 +118,112 @@ export function recalcPurgeAfterChunk(
     updated += rows.length;
   }
   return updated;
+}
+
+/**
+ * The retention window `purge_after` is computed from, or `null` before the
+ * account has been initialised. `purge-trash` reads it rather than taking it as
+ * a payload field: a payload copy would go stale the moment the setting changes
+ * while the job sits queued, and the job is the thing that has to converge.
+ */
+export function readTrashRetentionDays(sql: Sql): number | null {
+  const row = one<{ trash_retention_days: number }>(
+    sql,
+    "SELECT trash_retention_days FROM user_settings",
+  );
+  return row?.trash_retention_days ?? null;
+}
+
+/**
+ * Documents trashed **as part of** the topic, which is what `trashed_with`
+ * records. A document trashed on its own while its topic was still live keeps
+ * its own retention clock and is not swept up by the topic's purge.
+ */
+export function listDocumentsTrashedWithTopic(
+  sql: Sql,
+  topicId: string,
+): string[] {
+  return all<{ id: string }>(
+    sql,
+    "SELECT id FROM documents WHERE topic_id = ? AND trashed_with = ?",
+    topicId,
+    topicId,
+  ).map((row) => row.id);
+}
+
+/** Documents that cite the memo, whose projections have to be rebuilt. */
+export function listDocumentsCitingMemo(sql: Sql, memoId: string): string[] {
+  return all<{ document_id: string }>(
+    sql,
+    "SELECT document_id FROM source_links WHERE memo_id = ?",
+    memoId,
+  ).map((row) => row.document_id);
+}
+
+export function deleteSourceLinksByMemo(sql: Sql, memoId: string): void {
+  run(sql, "DELETE FROM source_links WHERE memo_id = ?", memoId);
+}
+
+export function deleteMemoRow(sql: Sql, memoId: string): void {
+  run(sql, "DELETE FROM memos WHERE id = ?", memoId);
+}
+
+export function deleteDocumentRow(sql: Sql, documentId: string): void {
+  run(sql, "DELETE FROM documents WHERE id = ?", documentId);
+}
+
+export function deleteTopicRow(sql: Sql, topicId: string): void {
+  run(sql, "DELETE FROM topics WHERE id = ?", topicId);
+}
+
+export type DocumentProjectionSource = Readonly<{
+  id: string;
+  topicId: string;
+  title: string;
+  body: string;
+  timestamp: number;
+  sourceIds: readonly string[];
+}>;
+
+/**
+ * Everything the search projection of one document needs, or `null` if the
+ * document is gone or trashed.
+ *
+ * `sourceIds` lists **active** memos only, per the projection's contract: a
+ * trashed or hard-deleted memo's id must not surface through search.
+ */
+export function readDocumentProjectionSource(
+  sql: Sql,
+  documentId: string,
+): DocumentProjectionSource | null {
+  const row = one<{
+    id: string;
+    topic_id: string;
+    title: string;
+    body: string;
+    updated_at: number;
+  }>(
+    sql,
+    `SELECT id, topic_id, title, body, updated_at
+       FROM documents WHERE id = ? AND status = 'active'`,
+    documentId,
+  );
+  if (row === null) return null;
+  const sourceIds = all<{ memo_id: string }>(
+    sql,
+    `SELECT sl.memo_id AS memo_id
+       FROM source_links sl
+       JOIN memos m ON m.id = sl.memo_id
+      WHERE sl.document_id = ? AND m.status = 'active'
+      ORDER BY sl.memo_id`,
+    documentId,
+  ).map((source) => source.memo_id);
+  return {
+    id: row.id,
+    topicId: row.topic_id,
+    title: row.title,
+    body: row.body,
+    timestamp: row.updated_at,
+    sourceIds,
+  };
 }
