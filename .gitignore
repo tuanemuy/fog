@@ -15,6 +15,9 @@ worker-configuration.d.ts
 # Edit the `.tpl` instead — these are regenerated on every deploy.
 wrangler.staging.toml
 wrangler.production.toml
+# Per-worker variants rendered while splitting the app across Durable Objects.
+wrangler.*.staging.toml
+wrangler.*.production.toml
 
 # Local env files
 .env
@@ -27,3 +30,6 @@ wrangler.production.toml
 *.db-shm
 *.db-wal
 .claude/scheduled_tasks.lock
+
+# Test run evidence / reports written by the verification scripts.
+.artifacts/
