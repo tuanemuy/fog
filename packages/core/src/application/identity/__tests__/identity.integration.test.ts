@@ -53,7 +53,7 @@ async function seedSsoUser(
   container: TestContainer,
   email: string,
 ): Promise<string> {
-  const { entity } = User.registerWithSso(
+  const entity = User.registerWithSso(
     {
       id: container.idGenerator.next(),
       email,
@@ -132,7 +132,6 @@ async function withInsertBreakingProvider<T>(
     run: (callback) =>
       base.unitOfWorkProvider.run((ctx) => {
         const wrapped: UnitOfWorkContext = {
-          collectEvents: (drafts) => ctx.collectEvents(drafts),
           userRepository: {
             findById: (id) => ctx.userRepository.findById(id),
             findByEmail: (email) => ctx.userRepository.findByEmail(email),
@@ -160,11 +159,9 @@ async function withInsertBreakingProvider<T>(
 
 const userRows = (container: TestContainer) =>
   container.db.select().from(schema.users);
-const outboxRows = (container: TestContainer) =>
-  container.db.select().from(schema.outboxEvents);
 
 describe("registerWithPassword (integration)", () => {
-  it("creates a version-0 PasswordUser and its userRegistered event in one commit (TC-registerWithPassword-001)", async () => {
+  it("creates a version-0 PasswordUser in one commit (TC-registerWithPassword-001)", async () => {
     const container = createTestContainer();
 
     const { userId } = await registerWithPassword({
@@ -184,15 +181,6 @@ describe("registerWithPassword (integration)", () => {
       version: 0,
     });
     expect(users[0]?.passwordHash).not.toContain(PASSWORD);
-
-    const outbox = await outboxRows(container);
-    expect(outbox).toHaveLength(1);
-    expect(outbox[0]).toMatchObject({
-      eventType: "identity.userRegistered",
-      aggregateId: userId,
-      processedAt: null,
-    });
-    expect(outbox[0]?.payload).toEqual({ userId, authMethod: "password" });
   });
 
   it("stores the trimmed, lowercased address (TC-registerWithPassword-002)", async () => {
@@ -222,7 +210,6 @@ describe("registerWithPassword (integration)", () => {
       "IDENTITY_INVALID_EMAIL",
     );
     expect(await userRows(container)).toHaveLength(0);
-    expect(await outboxRows(container)).toHaveLength(0);
   });
 
   // The VO's own boundary tests stop at `Email.create`; spec's
@@ -265,7 +252,6 @@ describe("registerWithPassword (integration)", () => {
       expect(users).toHaveLength(1);
       expect(users[0]?.id).toBe(userId);
       expect(users[0]?.passwordHash).not.toContain(password);
-      expect(await outboxRows(container)).toHaveLength(1);
     },
   );
 
@@ -370,7 +356,6 @@ describe("registerWithPassword (integration)", () => {
     ).toBeDefined();
 
     expect(await userRows(container)).toHaveLength(1);
-    expect(await outboxRows(container)).toHaveLength(1);
   });
 
   it("surfaces a hashing failure as SystemError without creating a user (TC-registerWithPassword-015)", async () => {
@@ -388,7 +373,6 @@ describe("registerWithPassword (integration)", () => {
     expect(isSystemError(error)).toBe(true);
     expect(isSystemError(error) && error.code).toBe("CRYPTO_ERROR");
     expect(await userRows(container)).toHaveLength(0);
-    expect(await outboxRows(container)).toHaveLength(0);
   });
 
   // A non-constraint failure on purpose: a constraint violation would be
@@ -409,7 +393,6 @@ describe("registerWithPassword (integration)", () => {
     expect(isSystemError(error)).toBe(true);
     expect(isSystemError(error) && error.code).toBe("DATABASE_ERROR");
     expect(await userRows(base)).toHaveLength(0);
-    expect(await outboxRows(base)).toHaveLength(0);
   });
 });
 
@@ -807,19 +790,16 @@ describe("getCurrentUser (integration)", () => {
       input: { email: "user@example.com", password: PASSWORD },
     });
 
-    await container.unitOfWorkProvider.run(
-      async ({ userRepository, collectEvents }) => {
-        const found = await userRepository.findById(UserId.create(userId));
-        if (!found) throw new Error("seeded user disappeared");
-        const { entity, eventDrafts } = User.changeTrashRetentionDays(
-          found.entity,
-          TrashRetentionDays.create(1),
-          NOW,
-        );
-        await userRepository.save(entity, found.expectedVersion);
-        collectEvents(eventDrafts);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ userRepository }) => {
+      const found = await userRepository.findById(UserId.create(userId));
+      if (!found) throw new Error("seeded user disappeared");
+      const entity = User.changeTrashRetentionDays(
+        found.entity,
+        TrashRetentionDays.create(1),
+        NOW,
+      );
+      await userRepository.save(entity, found.expectedVersion);
+    });
 
     const user = await getCurrentUser({ container, input: { userId } });
     expect(user.trashRetentionDays).toBe(1);

@@ -2,7 +2,6 @@
 // the import does not leak into the client bundle through server-fn
 // dynamic imports traced by vite.
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ExecutionContext } from "@cloudflare/workers-types";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   createRequestContainer,
@@ -35,12 +34,8 @@ installContainerStore({ getStore: () => storage.getStore() });
 export type AppEnv = ServerEnv;
 
 export default {
-  async fetch(
-    request: Request,
-    env: AppEnv,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
-    const container = createRequestContainer(readRequestServerConfig(env, ctx));
+  async fetch(request: Request, env: AppEnv): Promise<Response> {
+    const container = createRequestContainer(readRequestServerConfig(env));
     return storage.run(container, async () => defaultEntry.fetch(request));
   },
 };

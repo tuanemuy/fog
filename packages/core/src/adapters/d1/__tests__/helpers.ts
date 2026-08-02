@@ -1,26 +1,19 @@
 import { env } from "cloudflare:test";
 import { FakePasswordHasher } from "@repo/core/application/__tests__/fakes";
-import type {
-  RequestContainer,
-  WorkerContainer,
-} from "@repo/core/application/di/types";
+import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { content } from "@repo/core/config";
 import { createHmacSessionCodec } from "../../webcrypto/hmacSessionCodec";
 import { type Database, getDatabase } from "../client";
-import { D1IdempotencyStore } from "../repositories/idempotencyStore";
-import { D1OutboxRepository } from "../repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "../unitOfWork";
 
-// Tests need both scopes — they seed via UoW (request) and assert via
-// the outbox repo / idempotency store (worker). The fat shape is
-// test-only; production code uses one container or the other.
-export type TestContainer = RequestContainer &
-  WorkerContainer & {
-    db: Database;
-  };
+// The raw `db` handle rides along so tests can read back through a side
+// channel and prove that a write really landed.
+export type TestContainer = RequestContainer & {
+  db: Database;
+};
 
 export const TEST_SESSION_SECRET = "test-session-secret-0123456789abcdef";
 
@@ -57,11 +50,6 @@ export function createTestContainer(
     sessionCodec:
       overrides.sessionCodec ??
       createHmacSessionCodec({ secret: TEST_SESSION_SECRET }),
-    // The relay-worker variant of the outbox repo (no PendingBatch).
-    // UoW-internal saves go through a per-UoW instance constructed
-    // inside `D1UnitOfWorkProvider.run`.
-    outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
-    idempotencyStore: new D1IdempotencyStore(db, SystemClock),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

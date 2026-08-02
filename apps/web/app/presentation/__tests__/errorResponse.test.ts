@@ -7,11 +7,13 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "@repo/core/application/errors";
+import { RESTORABLE_ERROR_KINDS } from "@repo/core/application/rpc/restoreError";
 import { BusinessRuleError } from "@repo/core/domain/error";
 import { describe, expect, it } from "vitest";
 import {
   httpStatusFor,
   redactForClient,
+  SERIALIZED_ERROR_KINDS,
   type SerializedError,
   type SerializedErrorKind,
   serializeError,
@@ -142,5 +144,17 @@ describe("httpStatusFor", () => {
   it("still answers 500 for a redacted system error", () => {
     expect(httpStatusFor(redactForClient(SAMPLES.system))).toBe(500);
     expect(httpStatusFor(redactForClient(SAMPLES.unknown))).toBe(500);
+  });
+});
+
+// The `SerializedError` union is assembled here, so this is where the RPC
+// restoration table is pinned against it. `unknown` is presentation-only —
+// no Durable Object envelope ever carries it — so the restoration table is
+// the union minus that one variant.
+describe("RPC restoration table", () => {
+  it("covers every serialized kind except presentation-only `unknown`", () => {
+    expect([...RESTORABLE_ERROR_KINDS, "unknown"].sort()).toEqual(
+      Object.keys(SERIALIZED_ERROR_KINDS).sort(),
+    );
   });
 });

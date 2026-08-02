@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { type SsoUser, User } from "../entity";
 import {
   PasswordHash,
-  PlainPassword,
   SsoProvider,
   TrashRetentionDays,
   UserId,
@@ -13,27 +12,11 @@ const NOW = new Date("2026-01-01T00:00:00.000Z");
 const LATER = new Date("2026-02-02T03:04:05.000Z");
 const ID = "01950000-0000-7000-8000-000000000001";
 
-const PLAINTEXT = PlainPassword.create("correct horse battery staple");
 const HASH = PasswordHash.create("pbkdf2-sha256$1$c2FsdA==$aGFzaA==");
-
-// Recursive scan rather than a key check: `PlainPassword` is a branded
-// `string` with no `toJSON` to override, so the only guard against a
-// plaintext reaching an event payload is asserting it is nowhere in the
-// emitted value.
-function containsString(value: unknown, needle: string): boolean {
-  if (typeof value === "string") return value.includes(needle);
-  if (Array.isArray(value)) {
-    return value.some((item) => containsString(item, needle));
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.values(value).some((item) => containsString(item, needle));
-  }
-  return false;
-}
 
 describe("User.registerWithPassword", () => {
   it("starts at version 0 with both timestamps at `now` and the default retention", () => {
-    const { entity } = User.registerWithPassword(
+    const entity = User.registerWithPassword(
       { id: ID, email: "  User@Example.COM ", passwordHash: HASH },
       NOW,
     );
@@ -50,43 +33,6 @@ describe("User.registerWithPassword", () => {
     });
   });
 
-  it("emits a single identity.userRegistered draft aggregated on the user", () => {
-    const { entity, eventDrafts } = User.registerWithPassword(
-      { id: ID, email: "user@example.com", passwordHash: HASH },
-      NOW,
-    );
-
-    expect(eventDrafts).toEqual([
-      {
-        type: "identity.userRegistered",
-        payload: { userId: entity.id, authMethod: "password" },
-        occurredAt: NOW,
-        aggregateId: entity.id,
-      },
-    ]);
-  });
-
-  // The plaintext-leak guard the type system cannot express.
-  it("never carries the plaintext password or the hash into the event payload", () => {
-    const { eventDrafts } = User.registerWithPassword(
-      { id: ID, email: "user@example.com", passwordHash: HASH },
-      NOW,
-    );
-
-    expect(Object.keys(eventDrafts[0]?.payload ?? {}).sort()).toEqual([
-      "authMethod",
-      "userId",
-    ]);
-    // Positive control: `registerWithPassword` takes no plaintext, so the
-    // plaintext scan below can only ever pass. Prove the scanner reaches
-    // the depth a payload sits at first, or it asserts nothing.
-    expect(
-      containsString([{ payload: { password: PLAINTEXT } }], PLAINTEXT),
-    ).toBe(true);
-    expect(containsString(eventDrafts, PLAINTEXT)).toBe(false);
-    expect(containsString(eventDrafts, HASH)).toBe(false);
-  });
-
   it("rejects an invalid email through the value object", () => {
     expect(() =>
       User.registerWithPassword(
@@ -99,7 +45,7 @@ describe("User.registerWithPassword", () => {
 
 describe("User.registerWithSso", () => {
   it("starts at version 0 and trims the provider subject", () => {
-    const { entity } = User.registerWithSso(
+    const entity = User.registerWithSso(
       {
         id: ID,
         email: "sso@example.com",
@@ -122,25 +68,6 @@ describe("User.registerWithSso", () => {
     });
   });
 
-  it("emits identity.userRegistered with authMethod sso", () => {
-    const { eventDrafts } = User.registerWithSso(
-      {
-        id: ID,
-        email: "sso@example.com",
-        provider: SsoProvider.create("apple"),
-        providerSubject: "sub-123",
-      },
-      NOW,
-    );
-
-    expect(eventDrafts).toHaveLength(1);
-    expect(eventDrafts[0]?.type).toBe("identity.userRegistered");
-    expect(eventDrafts[0]?.payload).toEqual({
-      userId: ID,
-      authMethod: "sso",
-    });
-  });
-
   it("rejects an empty provider subject", () => {
     expect(() =>
       User.registerWithSso(
@@ -157,14 +84,14 @@ describe("User.registerWithSso", () => {
 });
 
 describe("User.changePassword", () => {
-  const { entity: user } = User.registerWithPassword(
+  const user = User.registerWithPassword(
     { id: ID, email: "user@example.com", passwordHash: HASH },
     NOW,
   );
   const NEXT_HASH = PasswordHash.create("pbkdf2-sha256$2$c2FsdA==$bmV3aA==");
 
   it("bumps the version, moves updatedAt and keeps createdAt", () => {
-    const { entity } = User.changePassword(user, NEXT_HASH, LATER);
+    const entity = User.changePassword(user, NEXT_HASH, LATER);
 
     expect(entity.passwordHash).toBe(NEXT_HASH);
     expect(entity.version).toBe(1);
@@ -172,22 +99,8 @@ describe("User.changePassword", () => {
     expect(entity.updatedAt).toBe(LATER);
   });
 
-  it("emits identity.passwordChanged carrying only the user id", () => {
-    const { eventDrafts } = User.changePassword(user, NEXT_HASH, LATER);
-
-    expect(eventDrafts).toEqual([
-      {
-        type: "identity.passwordChanged",
-        payload: { userId: ID },
-        occurredAt: LATER,
-        aggregateId: ID,
-      },
-    ]);
-    expect(containsString(eventDrafts, NEXT_HASH)).toBe(false);
-  });
-
   it("rejects an SSO account at compile time", () => {
-    const { entity: ssoUser } = User.registerWithSso(
+    const ssoUser = User.registerWithSso(
       {
         id: ID,
         email: "sso@example.com",
@@ -211,13 +124,13 @@ describe("User.changePassword", () => {
 });
 
 describe("User.changeTrashRetentionDays", () => {
-  const { entity: user } = User.registerWithPassword(
+  const user = User.registerWithPassword(
     { id: ID, email: "user@example.com", passwordHash: HASH },
     NOW,
   );
 
-  it("bumps the version and emits identity.trashRetentionChanged", () => {
-    const { entity, eventDrafts } = User.changeTrashRetentionDays(
+  it("bumps the version and moves updatedAt", () => {
+    const entity = User.changeTrashRetentionDays(
       user,
       TrashRetentionDays.create(1),
       LATER,
@@ -226,18 +139,12 @@ describe("User.changeTrashRetentionDays", () => {
     expect(entity.trashRetentionDays).toBe(1);
     expect(entity.version).toBe(1);
     expect(entity.updatedAt).toBe(LATER);
-    expect(eventDrafts).toEqual([
-      {
-        type: "identity.trashRetentionChanged",
-        payload: { userId: ID, retentionDays: 1 },
-        occurredAt: LATER,
-        aggregateId: ID,
-      },
-    ]);
   });
 
   it("is a no-op when the value is unchanged", () => {
-    const { entity, eventDrafts } = User.changeTrashRetentionDays(
+    // Identity, not equality: the no-op has to be detectable by the caller
+    // so it can skip the `save` (and the OCC round trip that comes with it).
+    const entity = User.changeTrashRetentionDays(
       user,
       TrashRetentionDays.create(30),
       LATER,
@@ -245,7 +152,6 @@ describe("User.changeTrashRetentionDays", () => {
 
     expect(entity).toBe(user);
     expect(entity.version).toBe(0);
-    expect(eventDrafts).toEqual([]);
   });
 });
 
@@ -339,11 +245,11 @@ describe("User.reconstruct", () => {
 
 describe("User type guards", () => {
   it("discriminate on authMethod", () => {
-    const { entity: passwordUser } = User.registerWithPassword(
+    const passwordUser = User.registerWithPassword(
       { id: ID, email: "user@example.com", passwordHash: HASH },
       NOW,
     );
-    const { entity: ssoUser } = User.registerWithSso(
+    const ssoUser = User.registerWithSso(
       {
         id: UserId.create(ID),
         email: "sso@example.com",

@@ -1,10 +1,8 @@
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import type { UnitOfWorkProvider } from "../execution/unitOfWork";
 import type { Clock } from "../ports/clock";
-import type { IdempotencyStore } from "../ports/idempotencyStore";
 import type { IdGenerator } from "../ports/idGenerator";
 import type { Logger } from "../ports/logger";
-import type { OutboxRepository } from "../ports/outboxRepository";
 import type { SessionCodec } from "../ports/sessionCodec";
 
 export type AppConfig = Readonly<{
@@ -32,13 +30,7 @@ export type SharedDeps = Readonly<{
  * (which must run inside `unitOfWorkProvider.run`) and to the
  * presentation layer for SSR head/meta via `config`.
  *
- * Intentionally does NOT carry `outboxRepository` or
- * `idempotencyStore`: those are worker concerns. A request that needs
- * to enqueue a domain event uses the UoW's `collectEvents`, which
- * funnels through the transactional outbox write inside the unit of
- * work — never touching the repository directly.
- *
- * Repositories likewise stay out: `UnitOfWorkContext` is their single
+ * Repositories stay out: `UnitOfWorkContext` is their single
  * point of issue, which is what keeps every aggregate access inside a
  * unit of work. `passwordHasher` is a deliberate exception to that rule
  * — it is a domain port but not a repository, it touches no storage, and
@@ -56,19 +48,4 @@ export type RequestContainer = SharedDeps &
     unitOfWorkProvider: UnitOfWorkProvider;
     passwordHasher: PasswordHasher;
     sessionCodec: SessionCodec;
-  }>;
-
-/**
- * Worker-path container. Used by the relay (`processOutboxEvents`),
- * pruner (`pruneOutbox`), queue consumer, and DLQ handler.
- *
- * Intentionally does NOT carry `config` or `unitOfWorkProvider`:
- * `config` is SSR-only metadata, and worker code that reads/writes
- * the outbox does so through `outboxRepository` directly without a
- * unit of work (no aggregate is mutated).
- */
-export type WorkerContainer = SharedDeps &
-  Readonly<{
-    outboxRepository: OutboxRepository;
-    idempotencyStore: IdempotencyStore;
   }>;

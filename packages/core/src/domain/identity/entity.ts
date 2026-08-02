@@ -1,8 +1,6 @@
-import type { WithEventDrafts } from "@repo/core/domain/common/event";
 import { Version } from "@repo/core/domain/common/version";
 import { BusinessRuleError, RehydrationError } from "@repo/core/domain/error";
 import { IdentityErrorCode } from "./errorCode";
-import { type IdentityEvent, IdentityEvents } from "./events";
 import {
   Email,
   PasswordHash,
@@ -49,7 +47,7 @@ function createProviderSubject(raw: string): string {
 function registerWithPassword(
   params: { id: string; email: string; passwordHash: PasswordHash },
   now: Date,
-): WithEventDrafts<PasswordUser, IdentityEvent> {
+): PasswordUser {
   const user: PasswordUser = {
     authMethod: "password",
     id: UserId.create(params.id),
@@ -60,10 +58,7 @@ function registerWithPassword(
     createdAt: now,
     updatedAt: now,
   };
-  return {
-    entity: user,
-    eventDrafts: [IdentityEvents.userRegistered(user.id, "password", now)],
-  };
+  return user;
 }
 
 function registerWithSso(
@@ -74,7 +69,7 @@ function registerWithSso(
     providerSubject: string;
   },
   now: Date,
-): WithEventDrafts<SsoUser, IdentityEvent> {
+): SsoUser {
   const user: SsoUser = {
     authMethod: "sso",
     id: UserId.create(params.id),
@@ -86,10 +81,7 @@ function registerWithSso(
     createdAt: now,
     updatedAt: now,
   };
-  return {
-    entity: user,
-    eventDrafts: [IdentityEvents.userRegistered(user.id, "sso", now)],
-  };
+  return user;
 }
 
 // Takes `PasswordUser`, not `User`: an SSO account has no password to
@@ -100,33 +92,28 @@ function changePassword(
   user: PasswordUser,
   newPasswordHash: PasswordHash,
   now: Date,
-): WithEventDrafts<PasswordUser, IdentityEvent> {
+): PasswordUser {
   const next: PasswordUser = {
     ...user,
     passwordHash: newPasswordHash,
     version: Version.next(user.version),
     updatedAt: now,
   };
-  return {
-    entity: next,
-    eventDrafts: [IdentityEvents.passwordChanged(next.id, now)],
-  };
+  return next;
 }
 
 function changeTrashRetentionDays(
   user: User,
   retentionDays: TrashRetentionDays,
   now: Date,
-): WithEventDrafts<User, IdentityEvent> {
+): User {
   // Re-submitting the current value is not an error (the spec's test cases
   // require it to succeed), but it is not a change either: bumping the
   // version would make a settings screen that re-posts its form fight
-  // concurrent writers over OCC, and `identity.trashRetentionChanged`
-  // subscribers would recompute retention windows that did not move. The
-  // caller can detect the no-op by identity (`entity === user`) or by the
-  // empty draft list before deciding whether to `save`.
+  // concurrent writers over OCC. The caller detects the no-op by identity
+  // (`next === user`) before deciding whether to `save`.
   if (retentionDays === user.trashRetentionDays) {
-    return { entity: user, eventDrafts: [] };
+    return user;
   }
   const next: User = {
     ...user,
@@ -134,12 +121,7 @@ function changeTrashRetentionDays(
     version: Version.next(user.version),
     updatedAt: now,
   };
-  return {
-    entity: next,
-    eventDrafts: [
-      IdentityEvents.trashRetentionChanged(next.id, retentionDays, now),
-    ],
-  };
+  return next;
 }
 
 function assertUnset(value: string | null, column: string): void {

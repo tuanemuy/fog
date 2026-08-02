@@ -11,11 +11,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM users"),
-    env.DB.prepare("DELETE FROM outbox_events"),
-    env.DB.prepare("DELETE FROM processed_events"),
-  ]);
+  await env.DB.batch([env.DB.prepare("DELETE FROM users")]);
 });
 
 // `_occ_guard` must stay empty by construction: the CHECK (`n > 0`) aborts

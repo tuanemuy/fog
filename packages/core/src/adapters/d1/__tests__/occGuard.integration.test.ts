@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { describe, expect, it } from "vitest";
-import { occGuard, outboxEvents, users } from "../schema";
+import { occGuard, users } from "../schema";
 
 // Pins, end-to-end against a real Workers / Miniflare D1 binding, that
 // the `_occ_guard` CHECK-constraint trick aborts an entire D1 batch when
@@ -92,37 +92,5 @@ describe("OCC guard via _occ_guard CHECK constraint", () => {
 
     const guardRows = await db.select().from(occGuard);
     expect(guardRows).toHaveLength(0);
-  });
-
-  it("rolls back co-batched INSERTs when a later OCC-guarded UPDATE fails", async () => {
-    const db = drizzle(env.DB, { schema: { users, occGuard } });
-    await db.insert(users).values(seedRow("user-3"));
-
-    // Simulates: aggregate save (UPDATE with stale version) plus an
-    // outbox event INSERT in the same batch. The outbox row must NOT
-    // be persisted when the OCC check fails — this is the property
-    // that makes "writes ⇔ outbox" atomicity hold under D1.
-    const promise = db.batch([
-      db.insert(outboxEvents).values({
-        id: "evt-1",
-        eventType: "identity.trashRetentionChanged",
-        aggregateId: "user-3",
-        payload: {},
-        occurredAt: now,
-        createdAt: now,
-      }),
-      db
-        .update(users)
-        .set({ trashRetentionDays: 1, version: 100, updatedAt: now })
-        .where(sql`${users.id} = 'user-3' AND ${users.version} = 99`),
-      db.run(
-        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
-      ),
-    ]);
-
-    await expect(promise).rejects.toThrow();
-
-    const outboxRows = await db.select().from(outboxEvents);
-    expect(outboxRows).toHaveLength(0);
   });
 });

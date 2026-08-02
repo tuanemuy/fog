@@ -52,9 +52,6 @@ function container(
       run: (fn) =>
         fn({
           userRepository: absentUser,
-          collectEvents: () => {
-            throw new Error("login must not enqueue events");
-          },
         }),
     },
     passwordHasher: {

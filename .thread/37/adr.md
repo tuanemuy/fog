@@ -534,3 +534,165 @@ ADR-014 は「逆流の検出が grep 1本から2本になり、presentation 方
 - 良い点: 検査が語ではなく import を見るので、**JSDoc が層の関係を正しく説明することを妨げない。** 規約の説明文を書けば書くほど機械検証が赤くなる、という逆インセンティブが消える。
 - トレードオフ: 除外が2つに増え、`grep` のパイプが長くなる。除外の根拠を書かないと「都合の悪いものを外しただけ」に見えるので、**AC-25 本文・ステップ4 の検証欄・本 ADR の3箇所に同じ根拠を置く**（`COV-P-007` で `.thread/` と `spec/idea.md` の除外根拠を書いたのと同じ扱い）。
 - トレードオフ: 正規表現が import の書き方（`from "…"` / `require("…")`）に依存する。実測で `packages/core/src` の側効果 import（`import "…"`）は **0件**、動的 `import()` は **2件**だがどちらも `application/identity/__tests__/loginWithPassword.test.ts` から同じ application 層のモジュール（`../loginWithPassword`）を指しており、**検査したい2方向のどちらにも当たらない。** 将来この書き方で層をまたぐなら、検査側の正規表現も足す。
+
+---
+
+## ADR-019: 単一行テーブルの制約は定数式の UNIQUE 索引で掛け、サロゲート列を足さない
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/database/index.md` は `account` / `user_settings` / `_meta` を「単一行のテーブル」と定め、**掛け方は実装裁量とする（#37）** と明記して #37 に委ねている。同時に同ファイルの共通方針は「**節に無いサロゲートの `id` 列を足してよいという読み方はしない**」とも書いている。素直な実装（`id INTEGER PRIMARY KEY CHECK (id = 1)`）はこの2つの指示に挟まれる — 制約は掛かるが、spec の列一覧に無い列が1本増え、AC-1 / ステップ8 の「列を逐語で突き合わせる」検証がテーブル3つぶんずれる。
+
+### Decision
+
+- **列を足さず、常に同じ値を返す式に対する UNIQUE 索引で掛ける。**
+  - `CREATE UNIQUE INDEX account_singleton_uq ON account ((status IS NOT NULL))`
+  - `CREATE UNIQUE INDEX user_settings_singleton_uq ON user_settings ((trash_retention_days IS NOT NULL))`
+  - `CREATE UNIQUE INDEX meta_singleton_uq ON _meta ((schema_version IS NOT NULL))`
+- 式は NOT NULL 列に対する `IS NOT NULL` なので恒真であり、索引のキー空間が1値に潰れて2行目の INSERT が UNIQUE 違反になる。**SQLite / workerd 上で実測して動作を確認済み**（ステップ8 の統合テスト「keeps the single-row tables to one row」が常設で固定する）。
+- 索引名は3本とも `*_singleton_uq` に揃え、ステップ8 の索引集合アサーションに載せる。
+
+### Consequences
+
+- 良い点: **spec の列一覧と DDL が逐語で一致したままになる。** AC-1 / AC-2 の突き合わせに例外規則が要らない。
+- 良い点: `user_settings` の OCC が `WHERE version = ?` だけで条件づけられる（`id` 述語を持たない）という spec の規定と素直に噛み合う。
+- トレードオフ: 索引が3本増え、`(status IS NOT NULL)` という式の意図が読んで即座には分からない。**DDL 側のモジュール JSDoc に理由を1段落残す**ことで緩和した。
+- トレードオフ: 式インデックスの挙動に依存する。統合テストが常設なので、SQLite の版が上がって挙動が変わればそこで落ちる。
+
+---
+
+## ADR-020: `jobs` の DDL は共有モジュールに置き、2つのスキーマから参照する
+
+### Status
+
+Proposed
+
+### Context
+
+steps.md ステップ5 の対象ファイルは `schema/{types,userData,identityDirectory,gate}.ts` の4本で、`jobs` テーブルは User Data / Identity Directory の両方が持つ。`spec/database/index.md`「jobs（Identity Directory DO）」は「**User Data DO 側と同じ12列・同じインデックス・同じ規則である。job table と Alarm の実装は2クラスで共有する**」と明記している。両方のスキーマモジュールに DDL 文字列を複製すると、12列のうち1列を直し忘れた状態が型でもテストでも検出されない（列集合の統合テストは DO クラスごとに別々に走る）。
+
+### Decision
+
+- `packages/core/src/adapters/cloudflare/schema/jobsDdl.ts` を新設し、`JOBS_DDL: readonly string[]`（テーブル1 + 索引3）だけを export する。
+- `userData.ts` / `identityDirectory.ts` は version 1 の statements 配列にこれをスプレッドで展開する。テンプレート補間は使わないので ADR-009 の「`${` を DDL に書かない」と衝突しない。
+- `kind` の値域は CHECK ではなくハンドラレジストリの型拘束（`JobKindOf<D>`）が担保する。**DDL 側では DO クラス間で1文字も違わない**ので、共有できる。
+
+### Consequences
+
+- 良い点: 「2クラスで同じ表」という spec の断定が、複製ではなく1つの定義として実装に写る。
+- トレードオフ: steps.md が挙げた4ファイルより1本多い。ステップ5 の対象ファイル一覧との差分は本 ADR が説明する。
+
+---
+
+## ADR-021: `_meta` の読み取り2本もゲートモジュールが持つ
+
+### Status
+
+Proposed
+
+### Context
+
+ステップ5 は「`_meta` を作るのはゲートのブートストラップだけであり、権威を1箇所に閉じる」と決めた。ところがステップ6 の診断エントリ（`read-schema-version`）と `selfLocator()` のフォールバックは、**ゲートを通さずに** `_meta` を読む必要がある（fail-closed の DO でも動かなければならないエントリなので、ゲートを通せない）。DO クラス側に `SELECT schema_version FROM _meta` を直接書くと、`_meta` に触るコードが2箇所になり、しかも片方は「テーブルがまだ無い」場合を自分で判定しなければならない。
+
+### Decision
+
+- `schema/gate.ts` に `readSchemaVersion(sql)` と `readSelfLocator(sql)` を追加し、どちらも `sqlite_master` で `_meta` の存在を先に確かめる（未ブートストラップの DO では 0 / `null` を返し、例外を投げない）。
+- `apps/web/app/durable-objects/*.ts` はこの2本を呼ぶだけにし、`_meta` の SQL を持たない。
+- `readSchemaVersion` が「一度も migrate していない DO」と「version 0 まで migrate した DO」を区別しないのは意図的である — ブートストラップが書く初期値が 0 なので、呼び手にとって両者は同じ意味になる。
+
+### Consequences
+
+- 良い点: `_meta` に触るモジュールが1つのままになり、ステップ5 の「権威を1箇所に閉じる」が読み側にも及ぶ。
+- トレードオフ: ゲートモジュールが「適用」だけでなく「診断のための読み」も持つ。どちらも `_meta` の所有という同じ責務の範囲内なので、分割の基準はぶれていない。
+
+---
+
+## ADR-022: ステップ12 の対象に、イベントを主張しないドメイン / アダプターのテスト2本を足す
+
+### Status
+
+Proposed
+
+### Context
+
+steps.md ステップ12 は「単独で typecheck-clean」を分割の唯一の価値とし、`collectEvents` の全参照10ファイルを実測で洗い出して対象に入れてある。**ただし `WithEventDrafts` の側の洗い出しが漏れている。** ステップ12 はエンティティのファクトリの戻り値を `WithEventDrafts<User>` → `User` へ変えるので、**戻り値を `{ entity }` で分割代入している呼び出し側もすべて壊れる**。実測で、`collectEvents` を1度も参照しないのに壊れるファイルが2本あった。
+
+- `packages/core/src/domain/identity/__tests__/entity.test.ts` — `const { entity, eventDrafts } = User.registerWithPassword(...)` が全域に散っており、イベント草稿を直接主張するケースも4本ある。
+- `packages/core/src/adapters/d1/__tests__/userRepository.integration.test.ts` — `.entity` を後置で剥がすヘルパが3箇所。
+
+どちらも steps.md ステップ12 の削除・改修リストに無く、ステップ13 の「ドメイン層のテストを新しい形へ書き直す」に含まれると読むこともできるが、**そう読むとステップ12 単独で `pnpm typecheck` が通らなくなり、分割の唯一の価値が消える。**
+
+### Decision
+
+- 上の2本を**ステップ12 の対象に加える。** 変更は分割代入の解体だけに留め、`User` の形そのもの（`credentials` 集合への読み替え）はステップ13 に残す。
+- `entity.test.ts` からはイベント草稿を主張する4ケース（`userRegistered` ×2 / `passwordChanged` / 平文リークのスキャン）を削除する。**対象消滅であって移植先は無い** — イベント機構そのものが消えるためである。平文リークのスキャナ（`containsString`）も同時に消える（唯一の被検査対象がイベント payload だった）。
+- `changeTrashRetentionDays` の no-op ケースは、判定材料が「空の草稿配列」から「同一性（`next === user`）」だけになるので、その旨をテストのコメントに残す。
+
+### Consequences
+
+- 良い点: ステップ12 が実際に単独で typecheck-clean / test-clean になる（実測: unit 417 / integration 136 が緑）。
+- トレードオフ: 「平文パスワードがイベント payload へ漏れない」という保証がテストから消える。**#37 の最終形にイベント payload が存在しないので対象消滅**であり、代替の検査は `terminal_reason` とログに対する禁止語配列（`adapters/cloudflare/__tests__/forbiddenValues.ts`）が引き継ぐ。
+
+---
+
+## ADR-023: `jobs.payload_digest` は非暗号学的ハッシュで足りる
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/database/index.md` は `payload_digest` を「実行可能集合の行に同じ `operation_key` で違う payload が来たら `ConflictError`」を判定するための列と定めるが、アルゴリズムは定めていない。`crypto.subtle.digest` は**非同期**なので、`transactionSync` の中から呼べない — `enqueueJob` は UoW コンテキストの副作用登録点であり、同期でなければならない。
+
+### Decision
+
+- **FNV-1a 32bit の同期実装を `jobs/table.ts` に置く。** 入力は `JSON.stringify(payload)`（`nextRunAt` を含まない）。
+- 用途は**取り違えの検出であって改ざんの検出ではない** — 値はサーバー側で組み立てられ、クライアントから来ない（「cross-request idempotency keys never come from the client」）。衝突の帰結も「本来 `ConflictError` になるべき再投入が通る」だけで、権限昇格にはならない。
+- 暗号学的な強度が要る用途（`provider_idempotency_key`、リセットトークンのハッシュ）は**別の場所で `crypto.subtle` を使う**。両者を混同しない旨を関数の JSDoc に書く。
+
+### Consequences
+
+- 良い点: `enqueueJob` が同期のままでいられる。UoW コンテキストの同期契約に例外を作らない。
+- トレードオフ: 32bit なので衝突確率はゼロではない。射程が「同じ `operation_key` の実行可能な行1本」に閉じているので、衝突が起きるには同じキーで違う payload が同時に生きている必要があり、実質的に起こらない。
+
+---
+
+## 付録: spike の実測結果
+
+**実測日:** 2026-08-03
+**環境:** `@cloudflare/vitest-pool-workers@0.16.20` → `miniflare@4.20260625.0`（workerd 同梱版）、`durableObjects: { PROBE: { className, useSQLite: true } }`、`main` を `WorkersPoolOptions` のトップレベルに置いた形。
+**再現手段:** `packages/core/src/adapters/cloudflare/__spike__/platform.integration.test.ts`（12項目。ステップ9 / 10 で常設テストへ移植したのち削除する使い捨て）。
+
+| # | 項目 | 結果 | 設計への影響 |
+|---|---|---|---|
+| 1 | `CREATE VIRTUAL TABLE search_fts USING fts5(…, content='search_entries', content_rowid='rowid', tokenize='trigram')` | **作れる**。`sqlite_master` に現れる `type='table'` は `search_entries` / `search_fts` + shadow **4件**（`search_fts_config` / `search_fts_data` / `search_fts_docsize` / `search_fts_idx`）。**`search_fts_content` は作られない** | `.adr/003` の前提が成立。AC-1 の「shadow 4件を除外する」数え方が実測どおり |
+| 2 | `search_fts MATCH '東京駅'`（3文字） | 3件中 **2件**（`東京駅の構内` / `東京駅の周辺`）が返る | trigram が日本語で期待どおり動く |
+| 3 | `bm25(search_fts, 3.0, 1.0)` | 例外なく順位を返す（値は負。SQLite 慣行どおり**昇順で良い順**）。実測 `-1.6923e-6` ×2 | `ORDER BY bm25(...)` を昇順で使う |
+| 3b | **2文字クエリ `周辺` を `MATCH` に渡すと 0 件** | **steps.md ステップ1 の項目3 / 項目5 が指定した検証キーワード `周辺` は2文字で、trigram では原理的にヒットしない。** 3文字以上（`駅の周辺`）に差し替えて再実行し、2件返ることを確認した | **短語フォールバック（`instr()`）が必須であることの実測的裏付け。** ステップ9 の常設テストは「3文字以上は `MATCH`、2文字以下は `instr()`」の両方を固定する |
+| 4 | `instr(title, ?) > 0 OR instr(body, ?) > 0` に2文字 `東京` | **2件**返る | 短語フォールバックが成立 |
+| 5 | `駅の周辺` を `LIMIT 1 OFFSET n` で2ページに割る | 1ページ目 `b` / 2ページ目 `c` で別項目 | ページングが破綻しない |
+| 6 | `snippet()` / `highlight()` | **どちらも使える**（`[東京駅]の構内を歩く` / `[東京駅]の構内`） | F-13 の不確実性は解消。ただし設計はこれに依存していないので結論は動かない（#10 が使ってよい） |
+| 7 | `transactionSync` のネスト | **可能**。内側は savepoint 相当で、内側が throw して呼び出し側が握り潰すと**内側の書き込みだけがロールバックし外側はコミットされる**（実測: 外側 `a=2` が残り、内側 `a=3` が消えた） | ネストは技術的に可能だが、`CLAUDE.md`「never call `run` from inside `run`」の禁止は**規約として維持する**（部分ロールバックが暗黙に成立してしまうため、むしろ禁止の必要性が上がった） |
+| 8 | `UPDATE … WHERE … RETURNING 1` | **使える**。一致時 `[{"1":1}]`、0行時 `[]`。参考: `SELECT changes()` も直前 DML のマッチ行数（1）を返し、`SqlStorageCursor.rowsWritten` も 1 を返す | 第8.4節の OCC 実現手段（`RETURNING 1` の行有無）がそのまま成立。`changes()` / `rowsWritten` は不要 |
+| 9 | 1クエリの結果セット合計サイズ上限 | **miniflare では上限に当たらない** — 64 KiB × 4,096行（**256 MiB**）を1クエリで読み切っても例外が上がらない | **ローカル実測では上限値を確定できない。** export 上限の根拠値は公式ドキュメントの記載から採るしかないので、**#38 へ「実測不能」として引き継ぐ**（この値に依存する設計は #37 に無い） |
+| 10 | `sql.exec()` が `Date.now()` を進めるか | **進む**。SQL 2万回で 33ms、**I/O を一切含まない純 CPU ループ（2千万回）でも 19ms 進んだ** | **miniflare では workerd の時刻凍結が再現しない**（凍結の射程を実測で確認できない）。したがって F-32 の保守的な読みを維持し、**チャンク予算の打ち切りは経過時間ではなく件数だけで有界にする**（設計は元から件数基準なので変更なし） |
+| 11 | Alarm / RPC が CPU リセットの契機か | **観測不能**。miniflare は CPU 時間制限を強制しないので、リセットの契機を実験で確定できない（`setAlarm` の存在のみ確認） | 保守的な読み（「エビクションは例外として観測できない」「`finally` に再武装を置かない」）を**そのまま維持する** |
+| 12 | `(iii-a)` 1,000行 / `(iii-b)` 20チャンクの初期値 | 10万行を1トランザクションで INSERT: **223ms**。`WHERE status='trashed' AND purge_after <> <新値> LIMIT 1000` の自己消尽チャンクで全件再計算: **101チャンク / 346ms**（≒**3.4ms/チャンク**） | 初期値は**十分に保守的**。20チャンク/起床 = 2万行 ≒ 70ms で、Alarm 1回の予算に対して余裕がある。`CHUNK_BUDGETS` の出発点（1,000行 / 20チャンク）を**変更せずに採用する** |
+
+**環境設定について実測で確認した2点**（steps.md ステップ1 / 7 の記述どおり）:
+
+- `main` は `WorkersPoolOptions` の**トップレベル**に置く必要がある（`miniflare` の中に書くと無視される）。
+- `durableObjects` の値に **`useSQLite: true` が必須**。落とすと KV バックエンドになり `ctx.storage.sql` が存在しない。
+
+**steps.md への差し戻し:** ステップ1 項目3 / 項目5 の検証キーワード `周辺`（2文字）は trigram では 0 件になる。ステップ9 の常設テストへ移植する際は**3文字以上のキーワード**（`駅の周辺`）を使い、2文字は `instr()` フォールバック側のケースとして固定する。
+
+### 付録の追補: ステップ10 で判明した Alarm の実測事実
+
+| 事実 | 実測 | 影響 |
+|---|---|---|
+| `setAlarm(t)` に**過去時刻**を渡すと、`getAlarm()` が返すのは `t` ではなく**ほぼ現在時刻**である | miniflare 上で `setAlarm(40_000)`（epoch ミリ秒 = 1970年）の直後に `getAlarm()` が `1785702532310`（実行時刻）を返した | プラットフォーム側が過去のアラームを「即時」に丸めるということであり、**設計の `clamp(now, at)`（過去・現在の due job を `now + 1000` へ寄せる）はこの丸めに依存せず自前で行う必要がある**（丸め後の値が読み戻せないと `AlarmCache` の比較が毎回外れて `setAlarm` を書き続ける）。統合テストは絶対時刻を**未来基準**（`Date.now() + 3_600_000` からのオフセット）で書く — 過去時刻の定数だと `getAlarm()` が壁時計を返して何も検証しないテストになる |

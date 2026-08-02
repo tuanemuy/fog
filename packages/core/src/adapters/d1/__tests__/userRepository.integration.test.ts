@@ -21,8 +21,7 @@ const nextId = (): string => {
 };
 
 const passwordUser = (email: string) =>
-  User.registerWithPassword({ id: nextId(), email, passwordHash: HASH }, NOW)
-    .entity;
+  User.registerWithPassword({ id: nextId(), email, passwordHash: HASH }, NOW);
 
 const ssoUser = (email: string) =>
   User.registerWithSso(
@@ -33,7 +32,7 @@ const ssoUser = (email: string) =>
       providerSubject: `sub-${email}`,
     },
     NOW,
-  ).entity;
+  );
 
 async function insert(
   container: TestContainer,
@@ -145,7 +144,7 @@ describe("D1UserRepository (integration)", () => {
       async ({ userRepository }) => userRepository.findById(user.id),
     );
     if (!found) throw new Error("seeded user disappeared");
-    const { entity: updated } = User.changeTrashRetentionDays(
+    const updated = User.changeTrashRetentionDays(
       found.entity,
       TrashRetentionDays.create(7),
       NOW,
@@ -170,7 +169,7 @@ describe("D1UserRepository (integration)", () => {
       async ({ userRepository }) => userRepository.findById(user.id),
     );
     if (!found) throw new Error("seeded user disappeared");
-    const { entity: updated } = User.changeTrashRetentionDays(
+    const updated = User.changeTrashRetentionDays(
       found.entity,
       TrashRetentionDays.create(7),
       NOW,
@@ -232,7 +231,7 @@ describe("D1UserRepository (integration)", () => {
           providerSubject: "shared-subject",
         },
         NOW,
-      ).entity;
+      );
 
     await insert(container, shared("one@example.com"));
 

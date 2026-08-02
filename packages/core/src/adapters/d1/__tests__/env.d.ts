@@ -17,12 +17,7 @@ declare global {
     interface Env {
       DB: D1Database;
       EVENTS_QUEUE?: Queue;
-      RELAY?: Fetcher;
       APP_URL: string;
-      OUTBOX_BATCH_SIZE?: string;
-      OUTBOX_LEASE_MS?: string;
-      OUTBOX_MAX_ATTEMPTS?: string;
-      OUTBOX_RETENTION_MS?: string;
       MIGRATIONS: D1Migration[];
     }
   }

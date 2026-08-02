@@ -4,19 +4,9 @@ import type {
 } from "@repo/core/application/execution/unitOfWork";
 import type { Clock } from "@repo/core/application/ports/clock";
 import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
-import {
-  NoopRelayTrigger,
-  type RelayTrigger,
-} from "@repo/core/application/ports/relayTrigger";
-import {
-  attachEventIds,
-  type DomainEvent,
-  EventId,
-} from "@repo/core/domain/common/event";
 import type { Database } from "./client";
 import { PendingBatch } from "./pendingBatch";
 import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
-import { D1OutboxRepository } from "./repositories/outboxRepository";
 import { D1UserRepository } from "./repositories/userRepository";
 
 /**
@@ -26,8 +16,7 @@ import { D1UserRepository } from "./repositories/userRepository";
  * is impossible. The replacement is a deferred-batch model:
  *
  *   1. The caller's `fn` runs through to completion. Reads execute
- *      immediately against `db`; writes (and outbox events) accumulate
- *      on a `PendingBatch`.
+ *      immediately against `db`; writes accumulate on a `PendingBatch`.
  *
  *   2. After `fn` returns, a single `db.batch()` flushes everything
  *      atomically. If the batch fails because an OCC-guarded write
@@ -49,51 +38,24 @@ import { D1UserRepository } from "./repositories/userRepository";
 export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
     private readonly db: Database,
-    private readonly clock: Clock,
+    // Kept in the signature so the call sites do not move. Nothing this
+    // provider writes carries a timestamp of its own any more.
+    _clock: Clock,
     private readonly idGenerator: IdGenerator,
-    // Default to a no-op kicker so worker contexts (relay / consumer /
-    // pruner / dlq) can construct the provider without service-binding
-    // wiring. The request path overrides this with a real Service
-    // Binding kicker in `packages/core/src/application/di/serverCloudflare.ts`.
-    private readonly relayTrigger: RelayTrigger = NoopRelayTrigger,
   ) {}
 
   async run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
     const pending = new PendingBatch(this.db);
-    const collected: DomainEvent[] = [];
 
     const userRepository = new D1UserRepository(
       this.db,
       pending,
       this.idGenerator,
     );
-    const outbox = new D1OutboxRepository(
-      this.db,
-      this.idGenerator,
-      this.clock,
-      pending,
-    );
 
-    const ctx: UnitOfWorkContext = {
-      userRepository,
-      // `EventId` is minted here, on the path between domain emission
-      // and outbox persistence — keeping id generation a single
-      // application-layer concern. Domain factories return identity-less
-      // drafts; usecases never see `idGenerator`.
-      collectEvents: (drafts) => {
-        collected.push(
-          ...attachEventIds(drafts, () =>
-            EventId.create(this.idGenerator.next()),
-          ),
-        );
-      },
-    };
+    const ctx: UnitOfWorkContext = { userRepository };
 
     const result = await fn(ctx);
-
-    if (collected.length > 0) {
-      await outbox.save(collected);
-    }
 
     if (pending.isEmpty()) {
       // Nothing to flush — pure-read UoW. D1 rejects empty batches, so
@@ -117,13 +79,6 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
         throw error;
       }
     });
-
-    // Post-commit only — kicking before the batch resolves would race
-    // the relay against rows that may roll back. The kicker is
-    // fire-and-forget; failures here do not affect usecase semantics.
-    if (collected.length > 0) {
-      this.relayTrigger.kick();
-    }
 
     return result;
   }

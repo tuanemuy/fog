@@ -43,19 +43,13 @@ export async function registerWithPassword({
   const passwordHash = await container.passwordHasher.hash(plainPassword);
 
   try {
-    const { entity: user, eventDrafts } = User.registerWithPassword(
-      { id, email, passwordHash },
-      now,
-    );
+    const user = User.registerWithPassword({ id, email, passwordHash }, now);
 
-    await container.unitOfWorkProvider.run(
-      async ({ userRepository, collectEvents }) => {
-        const existing = await userRepository.findByEmail(email);
-        if (existing) throw emailAlreadyRegistered();
-        await userRepository.insert(user);
-        collectEvents(eventDrafts);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ userRepository }) => {
+      const existing = await userRepository.findByEmail(email);
+      if (existing) throw emailAlreadyRegistered();
+      await userRepository.insert(user);
+    });
 
     return { userId: user.id };
   } catch (error) {
@@ -66,10 +60,10 @@ export async function registerWithPassword({
     // the pre-check would have.
     //
     // Safe only because of what this unit of work writes: one `users`
-    // insert plus its outbox row. The inserted user is a `PasswordUser`,
-    // so both SSO columns are NULL and the partial index
-    // `users_sso_identity_uq` cannot match; `users.id` and the outbox id
-    // are UUIDv7, so their primary keys do not realistically collide.
+    // insert. The inserted user is a `PasswordUser`, so both SSO columns
+    // are NULL and the partial index `users_sso_identity_uq` cannot match;
+    // `users.id` is a UUIDv7, so the primary key does not realistically
+    // collide.
     // Add a write with another unique constraint to this unit of work and
     // this translation has to go.
     if (isConflictError(error) && error.code === "UNIQUE_VIOLATION") {

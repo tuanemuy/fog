@@ -38,7 +38,10 @@ export type SerializedError =
 
 export type SerializedErrorKind = SerializedError["kind"];
 
-const SERIALIZED_ERROR_KINDS = {
+// Exported so the RPC restoration table in `application/rpc/restoreError.ts`
+// can be pinned against the union from this side — the union's authority is
+// here, so the check belongs here too.
+export const SERIALIZED_ERROR_KINDS = {
   business: true,
   notFound: true,
   conflict: true,

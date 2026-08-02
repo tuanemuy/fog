@@ -9,14 +9,9 @@
 // shared binding.
 import { env } from "cloudflare:test";
 import { type Database, getDatabase } from "@repo/core/adapters/d1/client";
-import { D1IdempotencyStore } from "@repo/core/adapters/d1/repositories/idempotencyStore";
-import { D1OutboxRepository } from "@repo/core/adapters/d1/repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "@repo/core/adapters/d1/unitOfWork";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
-import type {
-  RequestContainer,
-  WorkerContainer,
-} from "@repo/core/application/di/types";
+import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
@@ -24,13 +19,11 @@ import { content } from "@repo/core/config";
 import { beforeEach } from "vitest";
 import { FakePasswordHasher } from "./fakes";
 
-// Tests need both scopes — they exercise usecases (request) and worker
-// pipelines in the same suite. Production code uses one container or
-// the other, never this fat shape.
-export type TestContainer = RequestContainer &
-  WorkerContainer & {
-    db: Database;
-  };
+// The raw `db` handle rides along so tests can read back through a side
+// channel and prove that a write really landed.
+export type TestContainer = RequestContainer & {
+  db: Database;
+};
 
 export const TEST_SESSION_SECRET = "test-session-secret-0123456789abcdef";
 
@@ -62,8 +55,6 @@ export function createTestContainer(
     sessionCodec:
       overrides.sessionCodec ??
       createHmacSessionCodec({ secret: TEST_SESSION_SECRET }),
-    outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
-    idempotencyStore: new D1IdempotencyStore(db, SystemClock),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

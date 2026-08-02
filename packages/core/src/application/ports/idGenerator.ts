@@ -6,7 +6,7 @@ const UUID_V7_PATTERN =
 /**
  * Generator + format validator for opaque, stable, unique identifiers.
  *
- * Domain value objects (`UserId`, `EventId`) treat the produced strings as
+ * Domain value objects (`UserId`) treat the produced strings as
  * opaque non-empty values — they deliberately do not validate the
  * generator's format. The *format* (UUIDv7 in this template) is a
  * deployment-level decision owned by the implementation chosen here, and
@@ -17,9 +17,7 @@ const UUID_V7_PATTERN =
  * when the implementation is swapped.
  *
  * Replacements (e.g. ULID, KSUID) need to be unique. They do not need to
- * be monotonic: `(createdAt, id)` only acts as a deterministic poll-order
- * tiebreaker for the outbox — consumers must NOT rely on observing events
- * in any particular order.
+ * be monotonic.
  */
 export interface IdGenerator {
   next(): string;

@@ -197,6 +197,15 @@ export const SystemErrorCode = {
   // unreadable. Not retryable — a second attempt writes the same header
   // into the same broken response.
   SessionError: "SESSION_ERROR",
+  // The Durable Object refused the call because it is over capacity
+  // (`.overloaded`). Not retryable at this layer: the caller-visible answer is
+  // "try later", and an automatic retry here would add load to the thing that
+  // is already saturated.
+  ServiceOverloaded: "SERVICE_OVERLOADED",
+  // The DO's SQLite store hit its size cap (`SQLITE_FULL`). Reads and DELETEs
+  // still work, which is what keeps the recovery paths usable — so this is a
+  // caller-visible signal, never a retry candidate.
+  StorageCapacityExceeded: "STORAGE_CAPACITY_EXCEEDED",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;
