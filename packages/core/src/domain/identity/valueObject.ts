@@ -9,6 +9,7 @@ const CLIENT_NAME_MAX_LENGTH = 100;
 const DEFAULT_TRASH_RETENTION_DAYS = 30;
 
 declare const userIdBrand: unique symbol;
+declare const credentialIdBrand: unique symbol;
 declare const emailBrand: unique symbol;
 declare const plainPasswordBrand: unique symbol;
 declare const passwordHashBrand: unique symbol;
@@ -34,6 +35,30 @@ export const UserId = {
   },
 };
 
+/**
+ * Identity of a credential, stable across storage schemes and key
+ * generations. Minted by `IdGenerator`; never derived from an address or
+ * from a key, which is what lets reachability checks compare it directly
+ * while a routing-key rotation has two generations of rows live at once.
+ *
+ * A non-PII value: it is what the settings screen shows and what an unlink
+ * request names.
+ */
+export type CredentialId = string & { readonly [credentialIdBrand]: true };
+
+export const CredentialId = {
+  create: (raw: string): CredentialId => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      throw new BusinessRuleError(
+        IdentityErrorCode.InvalidCredentialId,
+        "Invalid credential id",
+      );
+    }
+    return trimmed as CredentialId;
+  },
+};
+
 export type Email = string & { readonly [emailBrand]: true };
 
 // Deliberately structural (`local@domain`, no whitespace) rather than a
@@ -42,22 +67,108 @@ export type Email = string & { readonly [emailBrand]: true };
 // addresses. Length is capped at the RFC 5321 path limit.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/;
 
+const ASCII_MAX = 0x7f;
+
+/**
+ * Whether the string carries any code unit above `U+007F`.
+ *
+ * A loop rather than a regular expression: a character class spanning the
+ * ASCII range has to name control characters, which the linter refuses in a
+ * pattern — and rightly, since a raw control byte in a source file is exactly
+ * the hazard the SSO separator is written as an escape to avoid.
+ */
+function hasNonAscii(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) > ASCII_MAX) return true;
+  }
+  return false;
+}
+
+function invalidEmail(message: string): BusinessRuleError<IdentityErrorCode> {
+  return new BusinessRuleError(IdentityErrorCode.InvalidEmail, message);
+}
+
+/**
+ * `URL` is the only IDNA (punycode) implementation available in both workerd
+ * and Node without a dependency. A domain the URL parser refuses is not a
+ * domain mail can be delivered to either, so the failure is reported as an
+ * invalid address rather than as a system fault.
+ */
+function toAsciiDomain(domain: string): string {
+  let host: string;
+  try {
+    host = new URL(`http://${domain}`).hostname;
+  } catch {
+    throw invalidEmail("Invalid email address");
+  }
+  // Bracketed IPv6 literals come back wrapped; they are not domains that
+  // punycode applies to, and the structural check has already passed.
+  if (host.length === 0 || hasNonAscii(host)) {
+    throw invalidEmail("Invalid email address");
+  }
+  return host;
+}
+
 export const Email = {
+  /**
+   * The single source of canonical addresses. Everything downstream — the
+   * uniqueness authority in the Identity Directory, the routing HMAC, the
+   * encrypted original — consumes the value produced here, so the order of
+   * these steps is part of the contract:
+   *
+   * trim → structural check → split on the **last** `@` → reject a non-ASCII
+   * local part → lowercase the local part → NFKC + lowercase + punycode the
+   * domain → rejoin → re-check the length.
+   *
+   * **NFKC is applied to the domain only.** It folds compatibility-equivalent
+   * characters, but an SMTP local part is opaque at the octet level:
+   * `ａｂｃ@example.com` and `abc@example.com` are different mailboxes. Since
+   * the canonical value is also what a reset mail is addressed to, folding the
+   * local part would deliver A's reset link to B's mailbox — and signup has no
+   * address-ownership check to catch it.
+   *
+   * A non-ASCII local part is therefore **rejected** instead: not normalising
+   * and still accepting it would let `ａ` and `a` become two accounts. SMTPUTF8
+   * is out of scope by design.
+   *
+   * Lowercasing the local part is kept as an explicit trade: the same three
+   * arguments formally apply to it, but folding case matches how mail
+   * providers actually behave, and distinguishing it produces the more
+   * frequent harm (duplicate accounts the user cannot tell apart).
+   */
   create: (raw: string): Email => {
-    const normalized = raw.trim().toLowerCase();
-    if (codePointLength(normalized) > EMAIL_MAX_LENGTH) {
-      throw new BusinessRuleError(
-        IdentityErrorCode.InvalidEmail,
-        `Email exceeds maximum length (${EMAIL_MAX_LENGTH})`,
-      );
+    const trimmed = raw.trim();
+    if (codePointLength(trimmed) > EMAIL_MAX_LENGTH) {
+      throw invalidEmail(`Email exceeds maximum length (${EMAIL_MAX_LENGTH})`);
     }
-    if (!EMAIL_PATTERN.test(normalized)) {
-      throw new BusinessRuleError(
-        IdentityErrorCode.InvalidEmail,
-        "Invalid email address",
-      );
+    // Before normalisation: "split on the last `@`" is undefined without it.
+    if (!EMAIL_PATTERN.test(trimmed)) {
+      throw invalidEmail("Invalid email address");
     }
-    return normalized as Email;
+
+    const at = trimmed.lastIndexOf("@");
+    const local = trimmed.slice(0, at);
+    const domain = trimmed.slice(at + 1);
+
+    if (hasNonAscii(local)) {
+      throw invalidEmail("Invalid email address");
+    }
+
+    const normalizedDomain = domain.normalize("NFKC").toLowerCase();
+    const asciiDomain = hasNonAscii(normalizedDomain)
+      ? toAsciiDomain(normalizedDomain)
+      : normalizedDomain;
+
+    const canonical = `${local.toLowerCase()}@${asciiDomain}`;
+    // Punycode lengthens; an input that fit before the conversion can exceed
+    // the limit after it, so the bound is checked on the converted value too.
+    if (codePointLength(canonical) > EMAIL_MAX_LENGTH) {
+      throw invalidEmail(`Email exceeds maximum length (${EMAIL_MAX_LENGTH})`);
+    }
+    if (!EMAIL_PATTERN.test(canonical)) {
+      throw invalidEmail("Invalid email address");
+    }
+    return canonical as Email;
   },
 };
 
@@ -122,6 +233,43 @@ export const SsoProvider = {
   },
 };
 
+/**
+ * Separator between the provider name and the SSO subject inside an SSO
+ * canonical value.
+ *
+ * `SsoProvider` is a closed enumeration of ASCII names, so a `U+0000` can
+ * never occur inside a provider name and the split point is unambiguous.
+ *
+ * Written as an escape, never as a raw NUL byte: a raw NUL makes `grep` treat
+ * this file as binary and silently report zero matches, which breaks the
+ * mechanical checks and the hand-off searches at the same time.
+ */
+const SSO_CANONICAL_SEPARATOR = "\u0000";
+
+/**
+ * The canonical value an SSO credential is keyed by — the input to the
+ * routing HMAC, exactly as `Email.create`'s result is for an address.
+ *
+ * The provider name is lowercased; **the subject is only trimmed**. It is an
+ * opaque value minted by the provider, and normalising it (NFKC, case folding)
+ * would put our notion of sameness out of step with theirs.
+ *
+ * Deriving the bucket from this value belongs to the request Worker; the
+ * Identity Directory only ever sees `(kind, hmac)` (ADR-016).
+ */
+export function ssoCanonical(
+  provider: SsoProvider,
+  providerSubject: string,
+): string {
+  const subject = providerSubject.trim();
+  if (subject.length === 0) {
+    throw new BusinessRuleError(
+      IdentityErrorCode.InvalidSsoProviderSubject,
+      "SSO provider subject cannot be empty",
+    );
+  }
+  return `${provider.toLowerCase()}${SSO_CANONICAL_SEPARATOR}${subject}`;
+}
 export type AiClientConnectionId = string & {
   readonly [aiClientConnectionIdBrand]: true;
 };

@@ -53,13 +53,16 @@ export type Versioned<T> = {
  * constructor, before the lookup — and a foreign id (a `UserId` passed
  * to a `Memo` repository) becomes a type error. The `string` default
  * exists only as a fallback for aggregates that have no dedicated id VO.
+ *
+ * **Every method is synchronous.** A unit of work is one
+ * `ctx.storage.transactionSync` callback, in which `await` is a syntax error,
+ * so a `Promise`-returning repository could not be called from inside one.
+ * This is where the Cloudflare lock-in reaches the domain layer: a runtime
+ * whose storage API is asynchronous cannot implement this contract as written.
  */
 export interface TransactionalRepository<TEntity, TId = string> {
-  insert(entity: TEntity): Promise<void>;
-  findById(id: TId): Promise<Versioned<TEntity> | null>;
-  save(
-    entity: TEntity,
-    expectedVersion: ExpectedVersion<TEntity>,
-  ): Promise<void>;
-  delete(id: TId, expectedVersion: ExpectedVersion<TEntity>): Promise<void>;
+  insert(entity: TEntity): void;
+  findById(id: TId): Versioned<TEntity> | null;
+  save(entity: TEntity, expectedVersion: ExpectedVersion<TEntity>): void;
+  delete(id: TId, expectedVersion: ExpectedVersion<TEntity>): void;
 }

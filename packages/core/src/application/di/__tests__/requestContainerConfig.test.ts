@@ -1,7 +1,11 @@
 import { content } from "@repo/core/config";
 import { describe, expect, it } from "vitest";
 import type { ServiceArgs } from "../../types";
-import { requireSessionSecret } from "../secrets";
+import {
+  requireAiClientTokenSecret,
+  requireDirectoryRoutingKeyring,
+  requireSessionSecret,
+} from "../secrets";
 import { createRequestContainer } from "../serverCloudflare";
 import type { RequestContainer } from "../types";
 
@@ -23,7 +27,19 @@ const APP_CONFIG_KEYS = [
 ].sort();
 
 const SESSION_SECRET = requireSessionSecret("0123456789abcdef0123456789abcdef");
+const AI_CLIENT_TOKEN_SECRET = requireAiClientTokenSecret(
+  "ai-client-0123456789abcdef0123456789abcdef",
+);
+const ROUTING_KEY = "routing-0123456789abcdef0123456789abcdef";
+const DIRECTORY_ROUTING_KEYRING = requireDirectoryRoutingKeyring(
+  JSON.stringify([{ generation: 1, key: ROUTING_KEY, bucketCount: 256 }]),
+);
 const APP_URL = "http://localhost:3000";
+
+// Every one of the three has to be walked, not just the session secret: the
+// guard is about the *shape* of the config, so a new secret added flat would
+// otherwise slip through while the old assertion still passed.
+const SECRET_VALUES = [SESSION_SECRET, AI_CLIENT_TOKEN_SECRET, ROUTING_KEY];
 
 const containers: ReadonlyArray<readonly [string, () => RequestContainer]> = [
   [
@@ -32,8 +48,15 @@ const containers: ReadonlyArray<readonly [string, () => RequestContainer]> = [
       createRequestContainer({
         ...content,
         appUrl: APP_URL,
-        binding: {} as never,
-        secrets: { sessionSecret: SESSION_SECRET },
+        bindings: {
+          userData: {} as never,
+          identityDirectory: {} as never,
+        },
+        secrets: {
+          sessionSecret: SESSION_SECRET,
+          aiClientTokenSecret: AI_CLIENT_TOKEN_SECRET,
+          directoryRoutingKeyring: DIRECTORY_ROUTING_KEYRING,
+        },
       }),
   ],
 ];
@@ -43,9 +66,12 @@ describe.each(containers)("%s request container config", (_name, build) => {
     expect(Object.keys(build().config).sort()).toEqual(APP_CONFIG_KEYS);
   });
 
-  it("carries no secret material anywhere in the serialized config", () => {
-    expect(JSON.stringify(build().config)).not.toContain(SESSION_SECRET);
-  });
+  it.each(SECRET_VALUES)(
+    "carries no secret material anywhere in the serialized config",
+    (secret) => {
+      expect(JSON.stringify(build().config)).not.toContain(secret);
+    },
+  );
 });
 
 describe("what a usecase receives", () => {

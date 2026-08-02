@@ -1,10 +1,11 @@
 import { UserId } from "@repo/core/domain/identity/valueObject";
-import { NotFoundError } from "../errors";
+import { unwrap } from "../rpc/restoreError";
 import type { ServiceArgs } from "../types";
-import { type CurrentUserView, toCurrentUserView } from "./view";
+import type { CurrentUserView } from "./view";
 
 export type GetCurrentUserInput = {
   userId: string;
+  epoch: number;
 };
 
 export type GetCurrentUserOutput = CurrentUserView;
@@ -12,22 +13,19 @@ export type GetCurrentUserOutput = CurrentUserView;
 /**
  * Reads the signed-in user for the settings screen.
  *
- * `userId` comes from the verified session, never from the request body,
- * so a miss means the account was deleted while a session outlived it —
- * hence `NotFoundError` rather than an authorization failure.
+ * `userId` and `epoch` both come from the verified session, never from the
+ * request body. The epoch is compared against the account's current one inside
+ * the Durable Object — this side's cookie check proves only that the token was
+ * signed by us, not that it is still current.
  */
 export async function getCurrentUser({
   container,
   input,
 }: ServiceArgs<GetCurrentUserInput>): Promise<GetCurrentUserOutput> {
   const userId = UserId.create(input.userId);
-
-  const found = await container.unitOfWorkProvider.run(({ userRepository }) =>
-    userRepository.findById(userId),
+  return unwrap(
+    await container
+      .userDataStubFactory(userId)
+      .getCurrentUser(userId, input.epoch),
   );
-  if (!found) {
-    throw new NotFoundError("USER_NOT_FOUND", `User not found: ${userId}`);
-  }
-
-  return toCurrentUserView(found.entity);
 }

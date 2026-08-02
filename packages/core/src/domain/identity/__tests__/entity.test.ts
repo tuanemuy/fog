@@ -1,31 +1,43 @@
-import { isRehydrationError } from "@repo/core/domain/error";
-import { describe, expect, it } from "vitest";
-import { type SsoUser, User } from "../entity";
 import {
-  PasswordHash,
-  SsoProvider,
-  TrashRetentionDays,
-  UserId,
-} from "../valueObject";
+  isBusinessRuleError,
+  isRehydrationError,
+} from "@repo/core/domain/error";
+import { describe, expect, it } from "vitest";
+import type { CredentialRef } from "../entity";
+import { User } from "../entity";
+import { IdentityErrorCode } from "../errorCode";
+import { CredentialId, TrashRetentionDays } from "../valueObject";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const LATER = new Date("2026-02-02T03:04:05.000Z");
 const ID = "01950000-0000-7000-8000-000000000001";
 
-const HASH = PasswordHash.create("pbkdf2-sha256$1$c2FsdA==$aGFzaA==");
+function credential(
+  id: string,
+  overrides: Partial<CredentialRef> = {},
+): CredentialRef {
+  return {
+    credentialId: CredentialId.create(id),
+    kind: "email",
+    label: "",
+    usableForLogin: true,
+    ...overrides,
+  };
+}
 
-describe("User.registerWithPassword", () => {
+const PASSWORD = credential("cred-email");
+const SSO = credential("cred-sso", { kind: "sso", label: "google" });
+const ADDRESS_ONLY = credential("cred-email", { usableForLogin: false });
+
+function userWith(credentials: readonly CredentialRef[]) {
+  return User.initialize({ id: ID, credentials }, NOW);
+}
+
+describe("User.initialize", () => {
   it("starts at version 0 with both timestamps at `now` and the default retention", () => {
-    const entity = User.registerWithPassword(
-      { id: ID, email: "  User@Example.COM ", passwordHash: HASH },
-      NOW,
-    );
-
-    expect(entity).toEqual({
-      authMethod: "password",
+    expect(userWith([PASSWORD])).toEqual({
       id: ID,
-      email: "user@example.com",
-      passwordHash: HASH,
+      credentials: [PASSWORD],
       trashRetentionDays: 30,
       version: 0,
       createdAt: NOW,
@@ -33,101 +45,104 @@ describe("User.registerWithPassword", () => {
     });
   });
 
-  it("rejects an invalid email through the value object", () => {
-    expect(() =>
-      User.registerWithPassword(
-        { id: ID, email: "not-an-email", passwordHash: HASH },
-        NOW,
-      ),
-    ).toThrow();
+  it("rejects an empty id through the value object", () => {
+    expect(() => User.initialize({ id: "  ", credentials: [] }, NOW)).toThrow();
   });
 });
 
-describe("User.registerWithSso", () => {
-  it("starts at version 0 and trims the provider subject", () => {
-    const entity = User.registerWithSso(
-      {
-        id: ID,
-        email: "sso@example.com",
-        provider: SsoProvider.create("google"),
-        providerSubject: "  sub-123  ",
-      },
-      NOW,
-    );
+describe("User.addCredential", () => {
+  it("appends and bumps the version", () => {
+    const next = User.addCredential(userWith([PASSWORD]), SSO, LATER);
 
-    expect(entity).toEqual({
-      authMethod: "sso",
-      id: ID,
-      email: "sso@example.com",
-      provider: "google",
-      providerSubject: "sub-123",
-      trashRetentionDays: 30,
-      version: 0,
-      createdAt: NOW,
-      updatedAt: NOW,
-    });
+    expect(next.credentials).toEqual([PASSWORD, SSO]);
+    expect(next.version).toBe(1);
+    expect(next.createdAt).toBe(NOW);
+    expect(next.updatedAt).toBe(LATER);
   });
 
-  it("rejects an empty provider subject", () => {
-    expect(() =>
-      User.registerWithSso(
-        {
-          id: ID,
-          email: "sso@example.com",
-          provider: SsoProvider.create("google"),
-          providerSubject: "   ",
-        },
-        NOW,
-      ),
-    ).toThrow();
+  it("replaces an entry with the same credentialId rather than duplicating it", () => {
+    const promoted = credential("cred-sso", { kind: "sso", label: "apple" });
+    const next = User.addCredential(userWith([PASSWORD, SSO]), promoted, LATER);
+
+    expect(next.credentials).toEqual([PASSWORD, promoted]);
   });
 });
 
-describe("User.changePassword", () => {
-  const user = User.registerWithPassword(
-    { id: ID, email: "user@example.com", passwordHash: HASH },
-    NOW,
-  );
-  const NEXT_HASH = PasswordHash.create("pbkdf2-sha256$2$c2FsdA==$bmV3aA==");
-
-  it("bumps the version, moves updatedAt and keeps createdAt", () => {
-    const entity = User.changePassword(user, NEXT_HASH, LATER);
-
-    expect(entity.passwordHash).toBe(NEXT_HASH);
-    expect(entity.version).toBe(1);
-    expect(entity.createdAt).toBe(NOW);
-    expect(entity.updatedAt).toBe(LATER);
-  });
-
-  it("rejects an SSO account at compile time", () => {
-    const ssoUser = User.registerWithSso(
-      {
-        id: ID,
-        email: "sso@example.com",
-        provider: SsoProvider.create("google"),
-        providerSubject: "sub-123",
-      },
-      NOW,
+describe("User.removeCredential", () => {
+  it("removes an entry when another way in remains", () => {
+    const next = User.removeCredential(
+      userWith([PASSWORD, SSO]),
+      SSO.credentialId,
+      LATER,
     );
 
-    expect(ssoUser.authMethod).toBe("sso");
+    expect(next.credentials).toEqual([PASSWORD]);
+    expect(next.version).toBe(1);
+  });
 
-    // The directive below is the whole assertion: widening the parameter back
-    // to `User` makes this line compile and fails the suite. There is
-    // deliberately no runtime guard (`entity.ts`, `changePassword`), so
-    // invoking the call would assert nothing.
-    // @ts-expect-error `changePassword` takes `PasswordUser`; an SSO account
-    // has no password to change.
-    const call = () => User.changePassword(ssoUser, NEXT_HASH, LATER);
-    void call;
+  it("refuses to remove the last credential usable for login", () => {
+    let caught: unknown;
+    try {
+      User.removeCredential(userWith([PASSWORD]), PASSWORD.credentialId, LATER);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isBusinessRuleError(caught) && caught.code).toBe(
+      IdentityErrorCode.LastLoginCredential,
+    );
+  });
+
+  // An SSO-only account holds an email entry purely to reserve the address.
+  // Counting entries instead of login-capable ones would let the SSO link be
+  // removed and leave an account with no way in at all.
+  it("does not count an address-only entry as a way in", () => {
+    let caught: unknown;
+    try {
+      User.removeCredential(
+        userWith([ADDRESS_ONLY, SSO]),
+        SSO.credentialId,
+        LATER,
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isBusinessRuleError(caught) && caught.code).toBe(
+      IdentityErrorCode.LastLoginCredential,
+    );
+  });
+
+  it("removes an address-only entry without complaint", () => {
+    const next = User.removeCredential(
+      userWith([ADDRESS_ONLY, SSO]),
+      ADDRESS_ONLY.credentialId,
+      LATER,
+    );
+
+    expect(next.credentials).toEqual([SSO]);
+  });
+
+  it("is a no-op for an unknown credential", () => {
+    const user = userWith([PASSWORD]);
+
+    expect(
+      User.removeCredential(user, CredentialId.create("absent"), LATER),
+    ).toBe(user);
+  });
+});
+
+describe("User.loginCredentialCount", () => {
+  // Two rows of the same credential exist during a routing-key rotation.
+  it("counts distinct credentialIds, not entries", () => {
+    const duplicated = userWith([PASSWORD, { ...PASSWORD, label: "" }]);
+
+    expect(User.loginCredentialCount(duplicated)).toBe(1);
   });
 });
 
 describe("User.changeTrashRetentionDays", () => {
-  const user = User.registerWithPassword(
-    { id: ID, email: "user@example.com", passwordHash: HASH },
-    NOW,
-  );
+  const user = userWith([PASSWORD]);
 
   it("bumps the version and moves updatedAt", () => {
     const entity = User.changeTrashRetentionDays(
@@ -156,33 +171,26 @@ describe("User.changeTrashRetentionDays", () => {
 });
 
 describe("User.reconstruct", () => {
-  const passwordRow = {
+  const row = {
     id: ID,
-    email: "user@example.com",
-    authMethod: "password",
-    passwordHash: HASH as string,
-    ssoProvider: null,
-    ssoProviderSubject: null,
+    credentials: [
+      {
+        credentialId: "cred-email",
+        kind: "email",
+        label: "",
+        usableForLogin: true,
+      },
+    ],
     trashRetentionDays: 30,
     version: 3,
     createdAt: NOW,
     updatedAt: LATER,
   };
 
-  const ssoRow = {
-    ...passwordRow,
-    authMethod: "sso",
-    passwordHash: null,
-    ssoProvider: "google",
-    ssoProviderSubject: "sub-123",
-  };
-
-  it("rehydrates a password row", () => {
-    expect(User.reconstruct(passwordRow)).toEqual({
-      authMethod: "password",
+  it("rehydrates a stored row", () => {
+    expect(User.reconstruct(row)).toEqual({
       id: ID,
-      email: "user@example.com",
-      passwordHash: HASH,
+      credentials: [PASSWORD],
       trashRetentionDays: 30,
       version: 3,
       createdAt: NOW,
@@ -190,42 +198,30 @@ describe("User.reconstruct", () => {
     });
   });
 
-  it("rehydrates an SSO row", () => {
-    const user = User.reconstruct(ssoRow);
-    expect(User.isSsoUser(user)).toBe(true);
-    expect((user as SsoUser).provider).toBe("google");
-    expect((user as SsoUser).providerSubject).toBe("sub-123");
-  });
-
   it.each([
-    ["password row without a hash", { ...passwordRow, passwordHash: null }],
-    ["unknown auth method", { ...passwordRow, authMethod: "magic-link" }],
-    ["sso row without a provider", { ...ssoRow, ssoProvider: null }],
-    ["sso row with an unsupported provider", { ...ssoRow, ssoProvider: "x" }],
-    ["sso row without a subject", { ...ssoRow, ssoProviderSubject: null }],
-    // The other direction of the same CHECK: a row carrying the columns
-    // of the variant it is not. Dropping them silently would rehydrate a
-    // user whose stored identity no longer matches the one in memory.
+    ["empty id", { ...row, id: "" }],
+    ["retention below 1", { ...row, trashRetentionDays: 0 }],
+    ["negative version", { ...row, version: -1 }],
     [
-      "password row carrying an SSO provider",
-      { ...passwordRow, ssoProvider: "google" },
+      "unknown credential kind",
+      {
+        ...row,
+        credentials: [{ ...row.credentials[0], kind: "magic-link" }],
+      },
     ],
     [
-      "password row carrying an SSO subject",
-      { ...passwordRow, ssoProviderSubject: "sub-123" },
+      "empty credential id",
+      {
+        ...row,
+        credentials: [{ ...row.credentials[0], credentialId: " " }],
+      },
     ],
-    [
-      "sso row carrying a password hash",
-      { ...ssoRow, passwordHash: HASH as string },
-    ],
-    ["empty id", { ...passwordRow, id: "" }],
-    ["malformed email", { ...passwordRow, email: "not-an-email" }],
-    ["retention below 1", { ...passwordRow, trashRetentionDays: 0 }],
-    ["negative version", { ...passwordRow, version: -1 }],
-  ])("wraps an inconsistent row in RehydrationError: %s", (_label, row) => {
+  ])("wraps an inconsistent row in RehydrationError: %s", (_label, input) => {
     let caught: unknown;
     try {
-      User.reconstruct(row);
+      User.reconstruct(
+        input as unknown as Parameters<typeof User.reconstruct>[0],
+      );
     } catch (error) {
       caught = error;
     }
@@ -235,33 +231,10 @@ describe("User.reconstruct", () => {
   it("preserves the original value-object failure as the cause", () => {
     let caught: unknown;
     try {
-      User.reconstruct({ ...passwordRow, email: "nope" });
+      User.reconstruct({ ...row, id: "" });
     } catch (error) {
       caught = error;
     }
     expect(isRehydrationError(caught) && caught.cause).toBeDefined();
-  });
-});
-
-describe("User type guards", () => {
-  it("discriminate on authMethod", () => {
-    const passwordUser = User.registerWithPassword(
-      { id: ID, email: "user@example.com", passwordHash: HASH },
-      NOW,
-    );
-    const ssoUser = User.registerWithSso(
-      {
-        id: UserId.create(ID),
-        email: "sso@example.com",
-        provider: SsoProvider.create("google"),
-        providerSubject: "sub-123",
-      },
-      NOW,
-    );
-
-    expect(User.isPasswordUser(passwordUser)).toBe(true);
-    expect(User.isSsoUser(passwordUser)).toBe(false);
-    expect(User.isPasswordUser(ssoUser)).toBe(false);
-    expect(User.isSsoUser(ssoUser)).toBe(true);
   });
 });

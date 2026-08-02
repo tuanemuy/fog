@@ -1,69 +1,207 @@
-// The floor belongs to the codec's construction boundary; restating it
-// here would let the two drift, and a secret that satisfies this check
-// but not the codec's would pass the brand and then fail at container
-// construction — outside the error middleware.
-import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
+import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/lib/secretLengths";
 
 /**
- * Secrets a request container needs, held in their own nested object.
+ * The secrets each composition root needs, held in their own nested objects.
  *
- * The nesting is load-bearing. `createRequestContainer` builds
- * `AppConfig` by rest-spreading its runtime config
- * (`const { …, secrets, ...appConfig } = config`), and
- * `appConfig satisfies AppConfig` is a `satisfies` on a *variable*, which
- * does not run excess-property checking. A secret placed flat on
- * `RequestServerConfig` would therefore ride the spread into
- * `container.config` and out to the client through `loadAppContext` —
- * with no type error anywhere. Keeping secrets one level down means the
- * spread cannot reach them, and the same protection extends for free to
- * any secret added later.
+ * **The nesting is load-bearing.** `createRequestContainer` builds `AppConfig`
+ * by rest-spreading its runtime config, and `satisfies AppConfig` on a
+ * *variable* does not run excess-property checking — so a secret placed flat on
+ * `RequestServerConfig` would ride that spread into `container.config` and out
+ * to the browser through `loadAppContext`, with no type error anywhere. One
+ * level down, the spread cannot reach it, and the protection extends for free
+ * to every secret added later.
+ *
+ * The split between the two shapes is the distribution boundary itself.
+ * `DIRECTORY_ROUTING_SECRET` is on the request side **only**: handing it to the
+ * state Worker would let a bucket derive its own name from a raw address, which
+ * is exactly what the design spends the HMAC to prevent (ADR-016). Symmetrically
+ * the mail-encryption and reset-token keyrings are state-side only.
  */
 export type RequestSecrets = Readonly<{
   sessionSecret: SessionSecret;
+  aiClientTokenSecret: AiClientTokenSecret;
+  directoryRoutingKeyring: DirectoryRoutingKeyring;
+}>;
+
+export type StateSecrets = Readonly<{
+  mailEncryptionKeyring: Keyring;
+  resetTokenKeyring: Keyring;
 }>;
 
 declare const sessionSecretBrand: unique symbol;
+declare const aiClientTokenSecretBrand: unique symbol;
+declare const keyringBrand: unique symbol;
+declare const directoryRoutingKeyringBrand: unique symbol;
 
 /**
- * A session secret that has passed {@link requireSessionSecret}.
+ * A secret that has passed its check.
  *
- * Branded so "the deployment set no `SESSION_SECRET`" cannot be smuggled
- * into a `RequestSecrets` as `""` or `undefined`: the only way to obtain
- * the type is to run the check, so every consumer downstream of the
- * request config holds a secret that was validated once, at the point the
- * config was built.
+ * Branded so "the deployment set nothing" cannot be smuggled in as `""` or
+ * `undefined`: the only way to obtain the type is to run the check, so every
+ * consumer downstream holds a value that was validated once, where the config
+ * was built.
  */
-export type SessionSecret = string & {
-  readonly [sessionSecretBrand]: true;
+export type SessionSecret = string & { readonly [sessionSecretBrand]: true };
+
+/**
+ * Signing key for AI client tokens. **A separate key from the session secret**,
+ * because the two token kinds differ in TTL, in how they are revoked and in
+ * when they are issued — sharing a key would make either rotation drag the
+ * other down with it. #37 supplies the container; the `typ: "aiClient"` codec
+ * itself is #13.
+ */
+export type AiClientTokenSecret = string & {
+  readonly [aiClientTokenSecretBrand]: true;
 };
 
-/**
- * Asserts a usable `SESSION_SECRET` while the request config is built.
- *
- * `ServerEnv` keeps `SESSION_SECRET` optional on purpose: the same shape
- * is read by the relay / consumer / pruner / DLQ Workers, which never
- * touch a session and are deliberately not given the secret
- * (`docs/runtime_cloudflare.md`). Marking it required there would not
- * enforce anything — `ServerEnv` is a hand-written type with no runtime
- * validation, and the worker entries only use it to annotate their
- * handler parameter, so a required field would neither fail a boot nor
- * fail `pnpm typecheck`; it would just claim a binding four Workers do
- * not have. Optional keeps the type honest, and this function puts the
- * actual guarantee where the secret is consumed: the request path, which
- * cannot build its config without one.
- *
- * Cloudflare hands `env` to a handler and never to module scope, so
- * there is no boot phase that could validate it and the request config
- * is necessarily per-request. The check still runs before the container
- * is built, and the message names only the variable, never a value.
- */
+export type KeyringEntry = Readonly<{
+  generation: number;
+  key: string;
+  /** Directory routing only: how many buckets that generation was split into. */
+  bucketCount: number;
+}>;
+
+/** Active generation first, then the previous one if there is one. */
+export type Keyring = Readonly<{
+  entries: readonly KeyringEntry[];
+}> & { readonly [keyringBrand]: true };
+
+export type DirectoryRoutingKeyring = Keyring & {
+  readonly [directoryRoutingKeyringBrand]: true;
+};
+
+/** The JSON shape a keyring env var carries. */
+type RawKeyringEntry = {
+  generation?: unknown;
+  key?: unknown;
+  bucketCount?: unknown;
+  role?: unknown;
+};
+
 export function requireSessionSecret(
   secret: string | undefined,
 ): SessionSecret {
+  return requireSecret(secret, "SESSION_SECRET") as SessionSecret;
+}
+
+export function requireAiClientTokenSecret(
+  secret: string | undefined,
+): AiClientTokenSecret {
+  return requireSecret(secret, "AI_CLIENT_TOKEN_SECRET") as AiClientTokenSecret;
+}
+
+/**
+ * Asserts a usable single-key secret while a container's config is built.
+ *
+ * `ServerEnv` keeps these optional on purpose: it is a hand-written type with
+ * no runtime validation, so marking a field required would enforce nothing —
+ * it would neither fail a boot nor fail `pnpm typecheck`. Optional keeps the
+ * type honest and this function puts the actual guarantee at the point of
+ * consumption.
+ *
+ * The floor comes from `lib/secretLengths.ts` rather than being restated here,
+ * so raising it cannot split this check from the codec's.
+ *
+ * The message names the variable and never the value it was handed.
+ */
+function requireSecret(secret: string | undefined, name: string): string {
   if (secret === undefined || secret.length < MIN_SESSION_SECRET_LENGTH) {
     throw new Error(
-      `SESSION_SECRET is required on the request path and must be at least ${MIN_SESSION_SECRET_LENGTH} characters`,
+      `${name} is required and must be at least ${MIN_SESSION_SECRET_LENGTH} characters`,
     );
   }
-  return secret as SessionSecret;
+  return secret;
+}
+
+/**
+ * Parses and validates a keyring, which is a JSON array of
+ * `{ generation, key, bucketCount?, role? }`.
+ *
+ * Four invariants, checked here so that **only a checked value can obtain the
+ * type**: generations are unique, exactly one entry is `active`, at most one is
+ * `previous`, and — for directory routing — every entry declares a
+ * `bucketCount` of at least 1. That last one cannot be defaulted: the DO name
+ * carries the bucket *index*, not the count, so a previous generation's modulus
+ * is unrecoverable if it was not written down.
+ *
+ * Order is normalised to active-then-previous, which is the order lookups walk.
+ */
+export function requireKeyring(
+  raw: string | undefined,
+  name: string,
+  options: { requireBucketCount: boolean },
+): Keyring {
+  if (raw === undefined || raw.length === 0) {
+    throw new Error(`${name} is required`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Never echo the value: it is the secret.
+    throw new Error(`${name} is not valid JSON`);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`${name} must be a non-empty JSON array`);
+  }
+
+  const active: KeyringEntry[] = [];
+  const previous: KeyringEntry[] = [];
+  const generations = new Set<number>();
+
+  for (const item of parsed as RawKeyringEntry[]) {
+    if (typeof item !== "object" || item === null) {
+      throw new Error(`${name} entries must be objects`);
+    }
+    const { generation, key, bucketCount, role } = item;
+    if (typeof generation !== "number" || !Number.isInteger(generation)) {
+      throw new Error(`${name} entries must carry an integer generation`);
+    }
+    if (generations.has(generation)) {
+      throw new Error(`${name} repeats generation ${generation}`);
+    }
+    generations.add(generation);
+    if (typeof key !== "string" || key.length < MIN_SESSION_SECRET_LENGTH) {
+      throw new Error(
+        `${name} entries must carry a key of at least ${MIN_SESSION_SECRET_LENGTH} characters`,
+      );
+    }
+    if (options.requireBucketCount) {
+      if (
+        typeof bucketCount !== "number" ||
+        !Number.isInteger(bucketCount) ||
+        bucketCount < 1
+      ) {
+        throw new Error(
+          `${name} entries must carry a bucketCount of 1 or more`,
+        );
+      }
+    }
+    const entry: KeyringEntry = {
+      generation,
+      key,
+      bucketCount: typeof bucketCount === "number" ? bucketCount : 1,
+    };
+    if (role === "previous") previous.push(entry);
+    else if (role === undefined || role === "active") active.push(entry);
+    else throw new Error(`${name} entries must be "active" or "previous"`);
+  }
+
+  if (active.length !== 1) {
+    throw new Error(`${name} must declare exactly one active generation`);
+  }
+  if (previous.length > 1) {
+    throw new Error(`${name} must declare at most one previous generation`);
+  }
+  // The brand exists only so that a keyring cannot be built without passing the
+  // four checks above; this is its single construction site.
+  return { entries: [...active, ...previous] } as unknown as Keyring;
+}
+
+export function requireDirectoryRoutingKeyring(
+  raw: string | undefined,
+): DirectoryRoutingKeyring {
+  return requireKeyring(raw, "DIRECTORY_ROUTING_SECRET", {
+    requireBucketCount: true,
+  }) as DirectoryRoutingKeyring;
 }

@@ -1,7 +1,6 @@
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
-import type { UserRepository } from "@repo/core/domain/identity/ports/userRepository";
 import { describe, expect, it, vi } from "vitest";
 import { content } from "../../../config";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -31,15 +30,31 @@ async function freshLogin(): Promise<LoginWithPassword> {
   return (await import("../loginWithPassword")).loginWithPassword;
 }
 
-const absentUser: UserRepository = {
-  insert: async () => {
-    throw new Error("an unknown address must not insert");
+/**
+ * A Directory bucket that resolves nothing. `lookupCredential` still answers —
+ * that is the levelling — it just answers with the "no usable material" shape,
+ * which is exactly what an unregistered address produces.
+ */
+const absentBucket = {
+  lookupCredential: async () => ({
+    v: 1 as const,
+    ok: true as const,
+    value: {
+      userId: null,
+      credentialId: null,
+      passwordVerifier: null,
+      credentialVersion: 0,
+      usedLocator: {
+        kind: "email" as const,
+        hmac: "0".repeat(64),
+        generation: 1,
+        bucketIndex: 0,
+      },
+    },
+  }),
+  reportLoginResult: async () => {
+    throw new Error("an unresolved address must not report a result");
   },
-  save: async () => {
-    throw new Error("an unknown address must not save");
-  },
-  findById: async () => null,
-  findByEmail: async () => null,
 };
 
 function container(
@@ -48,11 +63,22 @@ function container(
 ): RequestContainer {
   return {
     config: { ...content, appUrl: "http://localhost:3000" },
-    unitOfWorkProvider: {
-      run: (fn) =>
-        fn({
-          userRepository: absentUser,
-        }),
+    directoryLocator: {
+      forCanonical: async () => [
+        {
+          generation: 1,
+          bucketIndex: 0,
+          hmac: "0".repeat(64),
+          doName: "dir:g1:b0",
+        },
+      ],
+    },
+    directoryStubFactory: () =>
+      absentBucket as unknown as ReturnType<
+        RequestContainer["directoryStubFactory"]
+      >,
+    userDataStubFactory: () => {
+      throw new Error("an unresolved address must not reach a User Data DO");
     },
     passwordHasher: {
       hash: async () => {

@@ -5,10 +5,12 @@ import {
   Actor,
   AiClientConnectionId,
   ClientName,
+  CredentialId,
   Email,
   PasswordHash,
   PlainPassword,
   SsoProvider,
+  ssoCanonical,
   TrashRetentionDays,
   UserId,
 } from "../valueObject";
@@ -43,6 +45,18 @@ describe("UserId", () => {
   });
 });
 
+describe("CredentialId", () => {
+  it("accepts a non-empty id and trims", () => {
+    expect(CredentialId.create("  cred-1 ")).toBe("cred-1");
+  });
+
+  it("rejects an empty id", () => {
+    expect(codeOf(() => CredentialId.create("  "))).toBe(
+      IdentityErrorCode.InvalidCredentialId,
+    );
+  });
+});
+
 describe("Email", () => {
   it("normalises by trimming and lowercasing (TC-registerWithPassword-002)", () => {
     expect(Email.create("  User@Example.COM  ")).toBe("user@example.com");
@@ -67,6 +81,79 @@ describe("Email", () => {
       );
     },
   );
+
+  // A full-width local part is an IME accident, and folding it would send the
+  // reset link — the only proof of address ownership the design has — to a
+  // different mailbox. Rejecting it surfaces the mistake before registration.
+  it("rejects a non-ASCII local part rather than folding it", () => {
+    expect(codeOf(() => Email.create("\uff41\uff42\uff43@example.com"))).toBe(
+      IdentityErrorCode.InvalidEmail,
+    );
+  });
+
+  it("folds case in the local part", () => {
+    expect(Email.create("Foo.Bar@example.com")).toBe("foo.bar@example.com");
+  });
+
+  // NFKC is applied to the domain and only to the domain.
+  it("NFKC-normalises a full-width domain", () => {
+    expect(
+      Email.create("user@\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45.com"),
+    ).toBe("user@example.com");
+  });
+
+  it("punycodes a non-ASCII domain", () => {
+    expect(Email.create("user@\u65e5\u672c\u8a9e.jp")).toBe(
+      "user@xn--wgv71a119e.jp",
+    );
+  });
+
+  // Punycode lengthens, so an address that fits before conversion can exceed
+  // the RFC 5321 path limit after it. 267 characters in, 417 out.
+  it("re-checks the length after punycode conversion", () => {
+    const syllables =
+      "\u3042\u3044\u3046\u3048\u304a\u304b\u304d\u304f\u3051\u3053";
+    const label = syllables.repeat(3).slice(0, 25);
+    const domain = `${Array.from({ length: 10 }, () => label).join(".")}.jp`;
+
+    expect(codeOf(() => Email.create(`user@${domain}`))).toBe(
+      IdentityErrorCode.InvalidEmail,
+    );
+  });
+});
+
+describe("ssoCanonical", () => {
+  it("folds the provider name's case", () => {
+    expect(ssoCanonical("Google" as never, "sub-1")).toBe(
+      ssoCanonical("google", "sub-1"),
+    );
+  });
+
+  // The subject is opaque provider output: normalising it would put our notion
+  // of sameness out of step with theirs.
+  it("leaves the subject's case and width alone", () => {
+    expect(ssoCanonical("google", "Sub-\uff11")).not.toBe(
+      ssoCanonical("google", "sub-1"),
+    );
+  });
+
+  it("trims only the subject's surrounding whitespace", () => {
+    expect(ssoCanonical("google", "  sub-1  ")).toBe(
+      ssoCanonical("google", "sub-1"),
+    );
+  });
+
+  it("keeps the same subject distinct across providers", () => {
+    expect(ssoCanonical("google", "sub-1")).not.toBe(
+      ssoCanonical("apple", "sub-1"),
+    );
+  });
+
+  it("rejects an empty subject", () => {
+    expect(codeOf(() => ssoCanonical("google", "   "))).toBe(
+      IdentityErrorCode.InvalidSsoProviderSubject,
+    );
+  });
 });
 
 describe("PlainPassword", () => {

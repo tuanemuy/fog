@@ -13,6 +13,7 @@ import {
 } from "../sessionCookie";
 
 const USER_ID = "01950000-0000-7000-8000-000000000001";
+const EPOCH = 5;
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const TOKEN = "issued.session.token";
 
@@ -72,15 +73,21 @@ describe("endSession", () => {
 });
 
 describe("startSession", () => {
-  let issued: ReadonlyArray<readonly [string, Date]>;
+  let issued: ReadonlyArray<readonly [string, number, Date]>;
 
   beforeEach(() => {
     issued = [];
     const container = {
       config: { ...content, appUrl: "http://localhost:3000" },
-      unitOfWorkProvider: {
-        run: async () => {
-          throw new Error("startSession must not open a unit of work");
+      userDataStubFactory: () => {
+        throw new Error("startSession must not reach a Durable Object");
+      },
+      directoryStubFactory: () => {
+        throw new Error("startSession must not reach a Durable Object");
+      },
+      directoryLocator: {
+        forCanonical: async () => {
+          throw new Error("startSession must not derive a directory locator");
         },
       },
       passwordHasher: {
@@ -92,8 +99,8 @@ describe("startSession", () => {
         },
       },
       sessionCodec: {
-        issue: async (userId: string, now: Date) => {
-          issued = [...issued, [userId, now]];
+        issue: async (userId: string, epoch: number, now: Date) => {
+          issued = [...issued, [userId, epoch, now]];
           return TOKEN;
         },
         verify: async () => {
@@ -109,15 +116,15 @@ describe("startSession", () => {
   });
 
   it("issues exactly one token, stamped with the container clock", async () => {
-    await startSession(USER_ID, () => undefined);
+    await startSession(USER_ID, EPOCH, () => undefined);
 
-    expect(issued).toEqual([[USER_ID, NOW]]);
+    expect(issued).toEqual([[USER_ID, EPOCH, NOW]]);
   });
 
   it("writes the issued token as the session cookie", async () => {
     const written: string[] = [];
 
-    await startSession(USER_ID, (value) => {
+    await startSession(USER_ID, EPOCH, (value) => {
       written.push(value);
     });
 
@@ -139,7 +146,7 @@ describe("startSession", () => {
 
     let caught: unknown;
     try {
-      await startSession(USER_ID, () => {
+      await startSession(USER_ID, EPOCH, () => {
         throw cause;
       });
     } catch (error) {

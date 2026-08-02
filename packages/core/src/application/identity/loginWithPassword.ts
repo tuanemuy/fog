@@ -1,12 +1,13 @@
-import { User } from "@repo/core/domain/identity/entity";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   Email,
   type PasswordHash,
   PlainPassword,
 } from "@repo/core/domain/identity/valueObject";
+import { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/lib/passwordHashing";
 import { ValidationError } from "../errors";
 import type { Logger } from "../ports/logger";
+import { unwrap } from "../rpc/restoreError";
 import type { ServiceArgs } from "../types";
 
 export type LoginWithPasswordInput = {
@@ -16,30 +17,22 @@ export type LoginWithPasswordInput = {
 
 export type LoginWithPasswordOutput = {
   userId: string;
+  sessionEpoch: number;
 };
 
 const invalidCredentials = (): ValidationError =>
   new ValidationError("INVALID_CREDENTIALS", "Invalid email or password");
 
 /**
- * The work factor {@link DUMMY_PASSWORD_HASH} declares.
- *
- * `PasswordHasher.verify` reads the cost out of the value it is handed, so
- * this number — not the salt, not the digest — is what makes the burn cost
- * what a real verification costs. Equalisation therefore only holds while
- * it equals the shipped hasher's work factor, and the shipped hasher pins
- * itself to it: `DEFAULT_PBKDF2_ITERATIONS` is declared as `typeof` this
- * constant, so raising one without the other stops compiling.
- */
-export const DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
-
-/**
  * A throwaway hash, in the `PasswordHasher` adapter's stored encoding, of a
- * password nobody holds. It exists so a login that finds no password
- * account still pays for one key derivation — see `burnVerificationTime`.
+ * password nobody holds. It exists so a login that finds no password account
+ * still pays for one key derivation — see `burnVerificationTime`.
  *
- * Only the declared cost has to be current; the salt and digest are
- * arbitrary bytes, since no password is ever meant to match them.
+ * Only the declared cost has to be current; the salt and digest are arbitrary
+ * bytes, since no password is ever meant to match them. `verify` reads the cost
+ * out of the value it is handed, which is why that number — shared with the
+ * shipped hasher through `lib/passwordHashing.ts` — is what makes the burn cost
+ * what a real verification costs.
  */
 const DUMMY_PASSWORD_HASH =
   `pbkdf2-sha256$${DUMMY_PASSWORD_HASH_ITERATIONS}$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=` as PasswordHash;
@@ -53,23 +46,20 @@ const DUMMY_PASSWORD_HASH =
 let dummyHashUnreadableReported = false;
 
 /**
- * Runs one verification whose outcome is discarded, so the "no such
- * account" and "wrong password" paths take comparable time.
+ * Runs one verification whose outcome is discarded, so the "no such account"
+ * and "wrong password" paths take comparable time.
  *
  * The result cannot matter and neither can a failure: a hasher that cannot
- * parse {@link DUMMY_PASSWORD_HASH} (an algorithm swap that leaves this
- * constant stale) must not turn an unknown address into a 500. That
- * degrades the equalisation back to today's behaviour rather than breaking
- * login, which is why this is the one place a throw is swallowed — and why
- * it is logged: the request is unaffected, so the warning is the only
- * signal that the mitigation has stopped working. The latch above holds it
- * to once per isolate, which is the granularity of the fact.
+ * parse {@link DUMMY_PASSWORD_HASH} must not turn an unknown address into a
+ * 500. That degrades the equalisation back to no equalisation rather than
+ * breaking login, which is why this is the one place a throw is swallowed — and
+ * why it is logged, since the request is unaffected and the warning is the only
+ * signal that the mitigation has stopped working.
  *
- * Only the failure's type is logged, never the value: the `PasswordHasher`
- * contract forbids putting a `PlainPassword` in what it throws, and
- * projecting to a name rather than passing the object through keeps that
- * promise from being the only thing standing between a swapped-in hasher
- * and a plaintext password in the logs.
+ * Only the failure's *type* is logged, never the value: the `PasswordHasher`
+ * contract forbids putting a `PlainPassword` in what it throws, and projecting
+ * to a name keeps that promise from being the only thing between a swapped-in
+ * hasher and a plaintext password in the logs.
  */
 async function burnVerificationTime(
   hasher: PasswordHasher,
@@ -92,18 +82,25 @@ async function burnVerificationTime(
  * Authenticates a password account.
  *
  * Every way this can fail — malformed email, password outside the length
- * bounds, unknown address, an SSO-only account, a wrong password —
- * produces the identical `ValidationError("INVALID_CREDENTIALS")`. That
- * uniformity is the feature: any difference in code, message or field
- * would let an attacker probe which addresses are registered and how.
- * Note this includes value-object failures, which everywhere else in the
- * codebase surface as `BusinessRuleError`.
+ * bounds, unknown address, an SSO-only account, a change in flight, a wrong
+ * password — produces the identical `ValidationError("INVALID_CREDENTIALS")`.
+ * That uniformity is the feature. Response time is levelled the same way: an
+ * address with no password account still pays for one key derivation.
  *
- * Response time is levelled the same way: an address with no password
- * account still pays for one key derivation
- * ({@link burnVerificationTime}), so the wall clock does not disclose what
- * the answer refuses to. The malformed-input path is exempt — it never
- * reaches storage and reveals only what the caller already typed.
+ * ## Three RPCs, and why that is not one too many
+ *
+ * 1. `lookup-credential` on the Directory bucket, which answers unconditionally
+ *    and hands back dummy material for every non-usable case;
+ * 2. `verify-login` on the User Data DO, which checks the account state, the
+ *    reachability of the credential and its version;
+ * 3. `report-login-result` back on the bucket.
+ *
+ * A failed comparison skips (2), so that path is two. The write-back in (3) is
+ * unavoidable: the comparison itself runs here, in the request Worker, because
+ * key derivation must not occupy a Durable Object — so the counters cannot be
+ * updated as a side effect of a read. It is issued on **both** outcomes and
+ * awaited before responding, since a failure report a caller can dodge by
+ * dropping the connection is not a deterrent.
  */
 export async function loginWithPassword({
   container,
@@ -118,33 +115,43 @@ export async function loginWithPassword({
     throw invalidCredentials();
   }
 
-  const found = await container.unitOfWorkProvider.run(({ userRepository }) =>
-    userRepository.findByEmail(email),
-  );
-  if (!found) {
-    await burnVerificationTime(
-      container.passwordHasher,
-      plainPassword,
-      container.logger,
+  const locators = await container.directoryLocator.forCanonical(email);
+  // Active generation first, then the previous one: during a rotation the row
+  // may still live under the old key.
+  for (const locator of locators) {
+    const bucket = container.directoryStubFactory(locator);
+    const found = unwrap(
+      await bucket.lookupCredential({
+        kind: "email",
+        hmac: locator.hmac,
+        generation: locator.generation,
+        bucketIndex: locator.bucketIndex,
+      }),
     );
-    throw invalidCredentials();
+
+    if (found.userId === null || found.passwordVerifier === null) continue;
+
+    const matches = await container.passwordHasher.verify(
+      plainPassword,
+      found.passwordVerifier as PasswordHash,
+    );
+    unwrap(await bucket.reportLoginResult("email", locator.hmac, matches));
+    if (!matches) throw invalidCredentials();
+
+    const account = unwrap(
+      await container.userDataStubFactory(found.userId).verifyLogin({
+        userId: found.userId,
+        credentialId: found.credentialId ?? "",
+        credentialVersion: found.credentialVersion,
+      }),
+    );
+    return { userId: found.userId, sessionEpoch: account.sessionEpoch };
   }
 
-  const user = found.entity;
-  if (!User.isPasswordUser(user)) {
-    await burnVerificationTime(
-      container.passwordHasher,
-      plainPassword,
-      container.logger,
-    );
-    throw invalidCredentials();
-  }
-
-  const matches = await container.passwordHasher.verify(
+  await burnVerificationTime(
+    container.passwordHasher,
     plainPassword,
-    user.passwordHash,
+    container.logger,
   );
-  if (!matches) throw invalidCredentials();
-
-  return { userId: user.id };
+  throw invalidCredentials();
 }

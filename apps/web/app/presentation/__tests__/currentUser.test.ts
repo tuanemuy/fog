@@ -28,8 +28,9 @@ vi.mock("@tanstack/react-start/server", () => ({
 const USER_ID = "01950000-0000-7000-8000-000000000001";
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const TOKEN = "payload.signature";
+const EPOCH = 7;
 
-type Verified = { userId: string } | null;
+type Verified = { userId: string; epoch: number } | null;
 
 let verifyCalls: ReadonlyArray<readonly [string, Date]>;
 
@@ -37,9 +38,17 @@ function installContainer(verified: Verified): void {
   verifyCalls = [];
   const container = {
     config: { ...content, appUrl: "https://app.example" },
-    unitOfWorkProvider: {
-      run: async () => {
-        throw new Error("reading the session must not open a unit of work");
+    userDataStubFactory: () => {
+      throw new Error("reading the session must not reach a Durable Object");
+    },
+    directoryStubFactory: () => {
+      throw new Error("reading the session must not reach a Durable Object");
+    },
+    directoryLocator: {
+      forCanonical: async () => {
+        throw new Error(
+          "reading the session must not derive a directory locator",
+        );
       },
     },
     passwordHasher: {
@@ -90,15 +99,18 @@ beforeEach(() => {
 describe("getCurrentUserId", () => {
   it("reads the session cookie and hands the token to the codec with the container clock", async () => {
     mocks.cookie = TOKEN;
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, epoch: EPOCH });
 
     const { getCurrentUserId } = await currentUser();
-    await expect(getCurrentUserId()).resolves.toBe(USER_ID);
+    await expect(getCurrentUserId()).resolves.toEqual({
+      userId: USER_ID,
+      epoch: EPOCH,
+    });
     expect(verifyCalls).toEqual([[TOKEN, NOW]]);
   });
 
   it("reports nobody when the request carries no session cookie", async () => {
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, epoch: EPOCH });
 
     const { getCurrentUserId } = await currentUser();
     await expect(getCurrentUserId()).resolves.toBeNull();
@@ -129,10 +141,13 @@ describe("requireUserId", () => {
   // reach the browser's history / heuristic caches; only this header can.
   it("marks an authenticated response as uncacheable", async () => {
     mocks.cookie = TOKEN;
-    installContainer({ userId: USER_ID });
+    installContainer({ userId: USER_ID, epoch: EPOCH });
 
     const { requireUserId } = await currentUser();
-    await expect(requireUserId()).resolves.toBe(USER_ID);
+    await expect(requireUserId()).resolves.toEqual({
+      userId: USER_ID,
+      epoch: EPOCH,
+    });
 
     expect(mocks.headers).toEqual([["cache-control", "no-store, private"]]);
   });

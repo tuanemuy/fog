@@ -14,6 +14,14 @@ import { noStoreMiddleware } from "./noStoreMiddleware";
  *
  * Referenced only from route modules, which the RSC manifest already sees;
  * no side-effect import in `__root.tsx` is needed.
+ *
+ * **It deliberately does not reach the Durable Object**, so it cannot observe a
+ * revoked epoch — putting an RPC on every navigation to find that out is not
+ * worth it. That trade is only safe under a rule, and the rule is: **a server
+ * function that does not go through the Durable Object must not return
+ * protected data.** This one returns a single boolean used to pick which shell
+ * to render. Adding a field sourced from anything but a DO call turns this into
+ * a real bypass.
  */
 export const readAuthStateFn = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware, noStoreMiddleware])

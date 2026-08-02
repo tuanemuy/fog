@@ -1,33 +1,51 @@
 import type { SessionCodec } from "@repo/core/application/ports/sessionCodec";
+import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/lib/secretLengths";
 import { fromBase64Url, toBase64Url } from "./encoding";
+
+export { MIN_SESSION_SECRET_LENGTH };
 
 /** Seven days — short enough to bound a stateless token's blast radius. */
 export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Floor for the HMAC key length, asserted by the factory below.
- *
- * A shorter key than the hash's block-equivalent output buys nothing:
- * HMAC-SHA256 forgeries cost the key's entropy, not the payload's. This is
- * the invariant of the construction boundary itself, so paths that build
- * the codec directly (tests, a future app package) cannot skip it.
- *
- * `application/di/secrets.ts` imports it rather than restating it, so this
- * algorithm-specific floor is also what
- * `SESSION_SECRET` is checked against at request-config time. That import
- * is the only reader of this constant outside this file in shipped code,
- * and replacing the codec means replacing it too.
+ * The audience tag. Session tokens and AI client tokens are signed with
+ * different keys *and* carry different `typ` values, so neither a key mix-up
+ * nor a signing-key reuse can make one pass as the other.
  */
-export const MIN_SESSION_SECRET_LENGTH = 32;
+export type TokenType = "session" | "aiClient";
 
-export type HmacSessionCodecOptions = Readonly<{
+export type HmacTokenCodecOptions = Readonly<{
   secret: string;
+  typ: TokenType;
   ttlMs?: number;
 }>;
 
-type Payload = Readonly<{ uid: string; exp: number }>;
+export type TokenPayload = Readonly<{
+  typ: string;
+  uid: string;
+  /** Session epoch at issue time. */
+  ep: number;
+  exp: number;
+}>;
 
-function parsePayload(raw: string): Payload | null {
+export interface HmacTokenCodec {
+  issue(uid: string, ep: number, now: Date): Promise<string>;
+  verify(token: string, now: Date): Promise<TokenPayload | null>;
+}
+
+/**
+ * Rejects anything that is not exactly the expected shape.
+ *
+ * **A missing `typ` or `ep` is a rejection, not a default.** Treating an absent
+ * `ep` as epoch 0 would let a token minted before epochs existed survive a
+ * revocation that was supposed to kill it; the price of refusing is one
+ * re-login for everyone, which is recoverable, and a session that outlives its
+ * revocation is not.
+ */
+function parsePayload(
+  raw: string,
+  expectedTyp: TokenType,
+): TokenPayload | null {
   let decoded: unknown;
   try {
     decoded = JSON.parse(new TextDecoder().decode(fromBase64Url(raw)));
@@ -35,39 +53,35 @@ function parsePayload(raw: string): Payload | null {
     return null;
   }
   if (typeof decoded !== "object" || decoded === null) return null;
-  const { uid, exp } = decoded as Record<string, unknown>;
+  const { typ, uid, ep, exp } = decoded as Record<string, unknown>;
+  if (typeof typ !== "string" || typ !== expectedTyp) return null;
   if (typeof uid !== "string" || uid.length === 0) return null;
+  if (typeof ep !== "number" || !Number.isInteger(ep) || ep < 0) return null;
   if (typeof exp !== "number" || !Number.isFinite(exp)) return null;
-  return { uid, exp };
+  return { typ, uid, ep, exp };
 }
 
 /**
- * `SessionCodec` backed by an HMAC-SHA256 signature over a `{ uid, exp }`
- * payload, encoded as `<payloadBase64url>.<signatureBase64url>`.
+ * HMAC-SHA256 over a `{ typ, uid, ep, exp }` payload, encoded as
+ * `<payloadBase64url>.<signatureBase64url>`.
  *
- * Stateless by design: no session table, no read on the request path. The
- * cost is that a token cannot be revoked server-side before `exp` —
- * acceptable while the product has no "sign out everywhere" requirement,
- * and the reason `ttlMs` defaults to a week rather than months. Swapping in
- * a table-backed codec later stays inside the composition root: this file,
- * the DI factory that calls {@link createHmacSessionCodec}
- * (`application/di/serverCloudflare.ts`), the `application/di/secrets.ts`
- * check that reads {@link MIN_SESSION_SECRET_LENGTH}, and the test
- * harnesses that build a codec directly — callers of the port see nothing.
+ * Stateless by design: no session table, no read on the request path. What that
+ * costs is server-side revocation before `exp` — which the `ep` field is what
+ * buys back, since the Durable Object compares it against the account's current
+ * epoch on every protected call.
  *
- * Verification goes through `crypto.subtle.verify`, which compares the
- * MAC in constant time. Every rejection path — malformed token, bad
- * signature, expired payload — returns `null`; nothing about *why* a
+ * Verification goes through `crypto.subtle.verify`, which compares the MAC in
+ * constant time. Every rejection path returns `null`; nothing about *why* a
  * token was refused reaches the caller.
  *
  * @throws if `secret` is shorter than {@link MIN_SESSION_SECRET_LENGTH}.
  */
-export function createHmacSessionCodec(
-  options: HmacSessionCodecOptions,
-): SessionCodec {
+export function createHmacTokenCodec(
+  options: HmacTokenCodecOptions,
+): HmacTokenCodec {
   if (options.secret.length < MIN_SESSION_SECRET_LENGTH) {
     throw new Error(
-      `Session secret must be at least ${MIN_SESSION_SECRET_LENGTH} characters`,
+      `Token secret must be at least ${MIN_SESSION_SECRET_LENGTH} characters`,
     );
   }
 
@@ -91,13 +105,15 @@ export function createHmacSessionCodec(
   };
 
   return {
-    async issue(userId: string, now: Date): Promise<string> {
+    async issue(uid: string, ep: number, now: Date): Promise<string> {
       const payload = toBase64Url(
         encoder.encode(
           JSON.stringify({
-            uid: userId,
+            typ: options.typ,
+            uid,
+            ep,
             exp: now.getTime() + ttlMs,
-          } satisfies Payload),
+          } satisfies TokenPayload),
         ),
       );
       const signature = await crypto.subtle.sign(
@@ -108,7 +124,7 @@ export function createHmacSessionCodec(
       return `${payload}.${toBase64Url(new Uint8Array(signature))}`;
     },
 
-    async verify(token: string, now: Date): Promise<{ userId: string } | null> {
+    async verify(token: string, now: Date): Promise<TokenPayload | null> {
       const parts = token.split(".");
       const [payloadPart, signaturePart] = parts;
       if (parts.length !== 2 || !payloadPart || !signaturePart) return null;
@@ -126,9 +142,30 @@ export function createHmacSessionCodec(
       }
       if (!valid) return null;
 
-      const payload = parsePayload(payloadPart);
+      const payload = parsePayload(payloadPart, options.typ);
       if (!payload || payload.exp <= now.getTime()) return null;
-      return { userId: payload.uid };
+      return payload;
+    },
+  };
+}
+
+export type HmacSessionCodecOptions = Readonly<{
+  secret: string;
+  ttlMs?: number;
+}>;
+
+/** The session-shaped view of {@link createHmacTokenCodec}. */
+export function createHmacSessionCodec(
+  options: HmacSessionCodecOptions,
+): SessionCodec {
+  const codec = createHmacTokenCodec({ ...options, typ: "session" });
+  return {
+    issue: (userId, epoch, now) => codec.issue(userId, epoch, now),
+    async verify(token, now) {
+      const payload = await codec.verify(token, now);
+      return payload === null
+        ? null
+        : { userId: payload.uid, epoch: payload.ep };
     },
   };
 }

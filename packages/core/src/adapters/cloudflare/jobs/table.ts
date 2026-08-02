@@ -1,5 +1,6 @@
 import { ConflictError } from "@repo/core/application/errors";
-import { type JobKind, REARMING_KINDS } from "@repo/core/lib/jobKind";
+import type { EnqueueJobArgs } from "@repo/core/application/execution/jobs";
+import { REARMING_KINDS } from "@repo/core/lib/jobKind";
 import { all, one, run, type Sql } from "../sql/exec";
 
 /**
@@ -29,13 +30,7 @@ export type JobRow = {
   completed_at: number | null;
 };
 
-export type EnqueueJobArgs = Readonly<{
-  kind: JobKind;
-  operationKey: string;
-  payload: unknown;
-  nextRunAt: number;
-  providerIdempotencyKey?: string;
-}>;
+export type { EnqueueJobArgs };
 
 const REARMING: ReadonlySet<string> = new Set(REARMING_KINDS);
 

@@ -662,6 +662,150 @@ Proposed
 
 ---
 
+## ADR-024: Directory 側の予約 CAS は `operationId` だけで判定し、`payloadDigest` を条件に含めない
+
+### Status
+
+Proposed
+
+### Context
+
+`.thread/34/design.md` 第5.1節は `reserve-credential` のガードを「一意制約 + `operationId` / `payloadDigest` の CAS」と書いている。ところが `spec/database/index.md` の `credential_mappings` の列一覧には **`payload_digest` 列が無い**（saga コーディネーター状態として持つのは `operation_id` / `candidate_user_id` / `reserved_until` / `saga_committed` / `locators` / `coordinator_locator` の6つ）。`payload_digest` を持つのは User Data DO 側の `operations` である。
+
+正本の優先順位は `spec/database/index.md` > `.thread/34/design.md` なので、列を勝手に足して design.md の字面に合わせることはできない。同時に、`spec/domains/identity.md` の書き込み操作表は `reserveCredential` の冪等性を「**同じ手続き ID の再送は同じ行に収束する**」とだけ規定しており、digest には言及していない。
+
+### Decision
+
+- **`CredentialMappingStore.reserve` の CAS 条件は `operationId` の一致だけとする。** 同じ `operationId` の再送は既存行に収束して成功を返し、別の `operationId` は一意制約で敗北する。
+- **`ReserveCredentialArgs` から `payloadDigest` を落とす。** 書き込み先の無いフィールドを署名に残すと、読み手が「どこかで照合されている」と誤読する。
+- **digest の CAS は User Data DO 側に残る** — `initialize-account` と `record-credential-locator` はどちらも `operations.payload_digest` を照合する（`spec/database/index.md` が `operations` にこの列を置いている）。したがって「同じ `operationId` に違う payload」の検出は saga 全体としては失われていない。
+
+### Consequences
+
+- 良い点: 列一覧を逐語で写すという AC-1 / AC-2 の突き合わせ規則に例外が要らない。
+- 良い点: 「どこで digest を照合するか」が `operations` の1箇所に閉じる。
+- トレードオフ: Directory 単体では「同じ `operationId` で違う locator 集合」を検出できない。#37 の経路では到達不能である — `operationId` は signup ごとに request Worker が新規採番し、リクエストを跨いで再利用する概念そのものを持たない（第6.3節）。#12 が credential 変更 saga で `operationId` を跨リクエストで運ぶ形を導入するなら、そのときに列と条件を同時に足す。
+
+---
+
+## ADR-025: `AccountStore` に `initialize` と `matchCallerToken` を足す
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/identity.md` の `AccountStore` は `find` / `advanceSessionEpoch` / `advanceResetVersion` の3本である。ところが #37 の RPC エントリは2つの操作をこのポート越しに必要とする。
+
+1. **`account` 行の作成。** signup phase 2（`initialize-account`）が `account` / `user_settings` を書いて `status = 'active'` にする（第6.3節）。3本のどれでも書けない。
+2. **`caller_token` の照合。** `record-credential-locator` の束縛は `callerToken` の定数時間比較である（第5.1節 (3-d)）。`AccountState` はこの列を持たない。
+
+`spec/database/index.md` の `account` の節は「`status` の3値遷移・`deleted_at`・`caller_token` を書くのは退会 saga の前進であり、**その書き手は #37 が DO の RPC 側で決める**」と明記して #37 に委ねている。
+
+### Decision
+
+- **`initialize(callerToken, now): void` を足す。** 呼び出し元は signup phase 2 の1箇所だけである。
+- **`matchCallerToken(token): boolean` を足す。** getter ではなく**述語**にする — トークンをストアの外へ出さない形にすれば、DTO・ログ・`terminal_reason` へ載る経路が構造的に生まれない（AC-3 の非露出対象）。実装は `opaqueBinding.matchOpaque` を通す。
+- **非集約ストアの全数（6ストア・7メソッド）は崩れない。** `account` は OCC の `version` を持つ集約ルート側のテーブルであり、`spec/domains/identity.md` も `spec/database/index.md` も明示的に非集約ストア7つの外に置いている。
+
+### Consequences
+
+- 良い点: `caller_token` が `AccountState` に載らないので、「読める値は必ず出力に載りうる」という前提のもとでも漏えい経路が閉じる。
+- 良い点: spec が #37 へ委ねた判断に対して、記録の残る応答が返る。
+- トレードオフ: ドメインポートが spec の3本から5本へ増える。退会 saga（#45）が `status` 遷移と `deleted_at` の書き手を足すとき、同じポートに更に生える。
+
+---
+
+## ADR-026: `CredentialMappingStore` に8本目 `recordResetRequested` を置く
+
+### Status
+
+Proposed
+
+### Context
+
+`credential_mappings.last_reset_requested_at` は `spec/database/index.md` の濫用抑止3列の1つで、用途は「リセット依頼のスロットル判定」と書かれている。ところが**書き手がどこにも割り当てられていない** — `spec/domains/identity.md` の書き込み操作表6本にも、ADR-012 が7本目として足した `reportResult` にも該当するものが無い。
+
+一方 `.thread/34/design.md` 第5.1節は `request-password-reset` のガードを「レート制限と応答均一化のみ」と定める。読むだけで誰も書かない列を条件にすると、スロットルは恒久的に発火せず、AC-11 が要求する4ケース（登録済み / 未登録 / SSO 専用 / **スロットル中**）のうち1つが実質的に空になる。
+
+### Decision
+
+- **`recordResetRequested(kind, hmac, at): void` を8本目として足す。** ポートに置くのは、ジョブ行の書き込みと**同一 `transactionSync`** でなければならないからである（`enqueueJob` はコンテキスト経由でしか届かない）。
+- **行の状態を問わず無条件に更新する。** スロットル中の依頼でも刻む — 刻まないと再試行で窓を開け続けられる。
+- **突き合わせ規則を「非集約ストア6ストア・7メソッド + CAS 区分の `credentialMappingStore` **8**メソッド」に更新する。** ADR-012 が確立した「CAS 区分は非集約ストアの全数の外」という扱いは変わらない。
+- **天井・減衰・具体値は #18 のままである。** #37 が持つのは列と更新点だけで、窓幅はアダプター内の暫定定数である。
+
+### Consequences
+
+- 良い点: `spec/database/index.md` の列一覧に、書き手を持たない列が無くなる。
+- 良い点: AC-11 の「スロットル中」ケースが実際に振る舞いを持つので、4ケースの経路一致がテストとして意味を持つ。
+- トレードオフ: ADR-012 が「7本」と書いた数が8本になる。#18 が減衰を足すときに更に増える可能性がある（減衰は読み側で計算できるので必須ではない）。
+
+---
+
+## ADR-027: `DirectoryLocator` の型を `packages/core/src/lib/` へ置く
+
+### Status
+
+Proposed
+
+### Context
+
+ステップ17 は `DirectoryLocator` を `packages/core/src/adapters/cloudflare/directoryLocator.ts` に置くと書いている。ところがこの型を名前で必要とするのは**アプリケーション層**である — `signupSaga`（locator を持ち回る）と `RequestContainer.directoryStubFactory`（引数の型）の2つ。
+
+そのまま実装すると `application → adapters` の逆流になり、**AC-25 の機械検証 (ii) が実際に赤くなる**（実測でヒット1件）。`di/` は除外されるが `application/identity/signupSaga.ts` は除外されない。
+
+これは ADR-014 が `RpcEnvelope` について解いたのと**同じ形**である（型は複数層が共有する構造的プリミティブ、実装は adapters）。
+
+### Decision
+
+- **型を `packages/core/src/lib/directoryLocator.ts` へ移す。** import ゼロの leaf。
+- **`adapters/cloudflare/directoryLocator.ts` は `export type { DirectoryLocator }` で re-export し、導出関数（`createDirectoryLocator`）だけを持つ。** ADR-014 が `platform/envelope.ts` に re-export を禁じたのとは扱いを分ける — あちらは application 側が adapters の名前で型を取れてしまうことが問題だったが、ここは adapters 自身が自分の戻り値型を名乗るだけで、application 側は `lib/` を読む。
+- 判定基準は ADR-014 と同じ「複数レイヤーが共有する構造的プリミティブか」であり、`DirectoryLocator` はプリミティブだけのプレーンなオブジェクトで振る舞いも依存も持たないので当てはまる。
+
+### Consequences
+
+- 良い点: AC-25 (ii) が最終状態で 0 件になる（実測で確認済み）。
+- 良い点: `lib/` の基準がぶれていない — `error` / `jobKind` / `jobBudgets` / `passwordHashing` / `secretLengths` / `rpcEnvelope` / `directoryLocator` の7本はすべて同じ基準で置かれている。
+- トレードオフ: `lib/` のファイルがまた1本増える。
+
+---
+
+## ADR-028: AC-4 の `idFromName` grep はテストハーネスを除外する形へ確定させる
+
+### Status
+
+Proposed（AC-4 の検証手段の形を確定させるもので、AC の主張そのものは変えない）
+
+### Context
+
+AC-4 は「`grep -rn "idFromName\|getByName" packages/core/src apps/web/app` の一致が `application/di/serverCloudflare.ts`（とそのテスト）だけであること」と書いている。実装後の実測では、この形のままだと次が残る。
+
+- **JSDoc の散文3件** — `serverCloudflare.ts` の「`idFromName` / `getByName` appear here and nowhere else」、`signupSaga.ts` の「client-supplied idempotency key would end up as the argument to `idFromName`」、`durable-objects/userData.ts` の「`ctx.id.name` is populated for stubs obtained through `idFromName`」。いずれも**この規約そのものを説明している記述**である。
+- **テストハーネス2件** — `adapters/cloudflare/__tests__/doHarness.ts` と `adapters/cloudflare/__tests__/binding.integration.test.ts`（どちらもステップ8 で作成済み）。DO 内の `SqlStorage` を直接触るには名前で stub を引く以外に手段が無い。
+
+これは ADR-018 が AC-25 について解いた問題と**同じ形**である（語で検査すると「正しいコメントを消して grep を通す」か「AC を無視する」の二択になる）。
+
+### Decision
+
+- **検査を import ではなく「呼び出し」に限り、テストを除外する形へ確定させる。**
+  ```sh
+  grep -rn "\.idFromName(\|\.getByName(" packages/core/src apps/web/app \
+    | grep -v '/__tests__/'
+  ```
+  実測でこの形の一致は `application/di/serverCloudflare.ts` の2行だけである。
+- **除外の根拠を ADR-018 と揃える** — `__tests__/` はテスト対象へ実物を与えるための合成点であり、production の依存グラフではない。射程はこの検査だけで、プロダクションコードから `__tests__/` を import する経路は存在しない。
+- **`application/__tests__/helpers.ts` は除外に頼らず `createRequestContainer` 経由へ直した。** 除外があっても、アプリケーション層のハーネスが合成ルートを迂回すると「production と同じ配線をテストしている」という主張が弱くなるためである。`doHarness.ts` は DO 内の SQL を直接触るのが目的なので合成ルートを通せず、除外の対象として残る。
+
+### Consequences
+
+- 良い点: AC-4 が着手前・着手中・最終状態のどの時点でも実行でき、規約を説明する JSDoc を書くほど検査が赤くなる逆インセンティブが消える。
+- 良い点: 実質的な保証は落ちていない — production コードで DO を選ぶ点は依然 `serverCloudflare.ts` の1箇所である。
+- トレードオフ: 除外が1つ増える。ステップ32 の最終ゲートで AC-4 の文面を本 ADR の形へ更新する必要がある。
+
+---
+
 ## 付録: spike の実測結果
 
 **実測日:** 2026-08-03

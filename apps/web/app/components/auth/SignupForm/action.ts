@@ -11,11 +11,11 @@ export const signupFn = createServerFn({ method: "POST" })
     const { container, module } = await loadServerDeps(
       () => import("@repo/core/application/identity/registerWithPassword"),
     );
-    const { userId } = await module.registerWithPassword({
+    const { userId, sessionEpoch } = await module.registerWithPassword({
       container,
       input: data,
     });
     const { startSession } = await import("@/presentation/session");
-    await startSession(userId);
+    await startSession(userId, sessionEpoch);
     return { ok: true } as const;
   });

@@ -7,9 +7,10 @@ import { content } from "../../../config";
 import { FakeLogger } from "../../__tests__/fakes";
 import { logout } from "../logout";
 
-// Every dependency a usecase could reach for is a tripwire: logout performs
-// no domain operation, no persistence and no event, so touching any of
-// these is the failure.
+// Every dependency a usecase could reach for is a tripwire: logout performs no
+// domain operation and no persistence, so touching any of these is the failure.
+// It notably does **not** advance the session epoch — signing out one browser
+// must not sign out every other one.
 function trippingContainer(): {
   container: RequestContainer;
   touched: string[];
@@ -24,8 +25,10 @@ function trippingContainer(): {
     touched,
     container: {
       config: { ...content, appUrl: "http://localhost:3000" },
-      unitOfWorkProvider: {
-        run: async () => trip("unitOfWorkProvider"),
+      userDataStubFactory: () => trip("userDataStubFactory"),
+      directoryStubFactory: () => trip("directoryStubFactory"),
+      directoryLocator: {
+        forCanonical: async () => trip("directoryLocator"),
       },
       passwordHasher: {
         hash: async () => trip("passwordHasher.hash"),

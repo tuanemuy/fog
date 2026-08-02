@@ -7,7 +7,7 @@ export const logoutFn = createServerFn({ method: "POST" })
   .middleware([errorResponseMiddleware, noStoreMiddleware])
   .handler(async () => {
     const { requireUserId } = await import("@/presentation/currentUser");
-    const userId = await requireUserId();
+    const { userId } = await requireUserId();
 
     const { container, module } = await loadServerDeps(
       () => import("@repo/core/application/identity/logout"),

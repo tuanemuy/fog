@@ -1,26 +1,16 @@
-import path from "node:path";
-import {
-  cloudflareTest,
-  readD1Migrations,
-} from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// Integration tests run inside a Workers isolate (Miniflare) with a
-// real `env.DB` D1 binding backed by an in-memory SQLite database.
-// Pure unit tests run via the Node-pool `vitest.config.ts` instead,
-// which excludes the `*.integration.test.ts` suffix.
+// Integration tests run inside a Workers isolate (Miniflare) against the two
+// SQLite-backed Durable Object namespaces. Pure unit tests run via the
+// Node-pool `vitest.config.ts` instead, which excludes the
+// `*.integration.test.ts` suffix.
 //
 // `include` below is an explicit allow-list of directories, not a bare
 // suffix match: a `*.integration.test.ts` placed outside them is
 // dropped from the unit suite by its suffix and never picked up here,
 // so it silently runs in neither suite. Add the directory to `include`
 // when you start putting integration tests in a new one.
-const migrationsPath = path.join(
-  import.meta.dirname,
-  "packages/core/src/adapters/d1/migrations",
-);
-
-const migrations = await readD1Migrations(migrationsPath);
 
 export default defineConfig({
   resolve: {
@@ -85,7 +75,6 @@ export default defineConfig({
           },
         },
         bindings: {
-          MIGRATIONS: migrations,
           APP_URL: "http://localhost:8787",
         },
       },
@@ -104,6 +93,6 @@ export default defineConfig({
       "packages/core/src/application/**/*.integration.test.ts",
     ],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
-    setupFiles: ["packages/core/src/adapters/d1/__tests__/setup.ts"],
+    setupFiles: ["packages/core/src/adapters/cloudflare/__tests__/setup.ts"],
   },
 });

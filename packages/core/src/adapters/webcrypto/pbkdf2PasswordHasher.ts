@@ -1,10 +1,10 @@
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
-import type { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/application/identity/loginWithPassword";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   PasswordHash,
   type PlainPassword,
 } from "@repo/core/domain/identity/valueObject";
+import type { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/lib/passwordHashing";
 import { fromBase64, timingSafeEqual, toBase64 } from "./encoding";
 
 const ALGORITHM_ID = "pbkdf2-sha256";

@@ -8,9 +8,7 @@ export type ContainerStore = Readonly<{
   getStore(): RequestContainer | undefined;
 }>;
 
-const STORE_SYMBOL: unique symbol = Symbol.for(
-  "@tanstack-start-template/container-store",
-) as never;
+const STORE_SYMBOL: unique symbol = Symbol.for("@fog/container-store") as never;
 
 type GlobalSlot = { [STORE_SYMBOL]?: ContainerStore };
 

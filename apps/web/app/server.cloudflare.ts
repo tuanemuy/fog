@@ -14,9 +14,7 @@ import { default as defaultEntry } from "@tanstack/react-start/server-entry";
 // SSR and RSC are separate module graphs in the same isolate; pin the
 // ALS on `globalThis` (and on `import.meta.hot.data` for HMR) so both
 // resolve the same store.
-const ALS_SYMBOL: unique symbol = Symbol.for(
-  "@tanstack-start-template/request-als",
-) as never;
+const ALS_SYMBOL: unique symbol = Symbol.for("@fog/request-als") as never;
 type AlsHotData = { als?: AsyncLocalStorage<RequestContainer> };
 type AlsGlobalSlot = { [ALS_SYMBOL]?: AsyncLocalStorage<RequestContainer> };
 const alsHotData: AlsHotData = (import.meta.hot?.data ?? {}) as AlsHotData;

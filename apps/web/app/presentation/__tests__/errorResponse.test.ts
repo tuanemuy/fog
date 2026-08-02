@@ -19,10 +19,10 @@ import {
   serializeError,
 } from "../errorResponse";
 
-// Shaped like the strings that actually leak: a driver tag, a table name,
-// and an absolute server path.
+// Shaped like the strings that actually leak on the DO stack: a SQLite error
+// code, a table name, and an absolute server path.
 const INTERNAL_DETAIL =
-  "D1_ERROR: no such table: users (/var/task/packages/core/adapters/d1/userRepository.js:120)";
+  "SQLITE_ERROR: no such table: user_settings (/var/task/packages/core/adapters/cloudflare/userData/userSettingsRepository.js:120)";
 
 const LOGIN_FAILURE_MESSAGE = "Invalid email or password";
 
@@ -112,8 +112,8 @@ describe("redactForClient", () => {
   it.each(REDACTED_KINDS)("leaks no server detail through %s", (kind) => {
     const wire = JSON.stringify(redactForClient(SAMPLES[kind]));
 
-    expect(wire).not.toContain("D1_ERROR");
-    expect(wire).not.toContain("users");
+    expect(wire).not.toContain("SQLITE_ERROR");
+    expect(wire).not.toContain("user_settings");
     expect(wire).not.toContain("/var/task");
     expect(wire).not.toContain(SystemErrorCode.DatabaseError);
   });

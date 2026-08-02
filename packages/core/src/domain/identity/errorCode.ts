@@ -1,6 +1,8 @@
 export const IdentityErrorCode = {
   InvalidUserId: "IDENTITY_INVALID_USER_ID",
+  InvalidCredentialId: "IDENTITY_INVALID_CREDENTIAL_ID",
   InvalidEmail: "IDENTITY_INVALID_EMAIL",
+  LastLoginCredential: "IDENTITY_LAST_LOGIN_CREDENTIAL",
   PasswordTooWeak: "IDENTITY_PASSWORD_TOO_WEAK",
   InvalidPasswordHash: "IDENTITY_INVALID_PASSWORD_HASH",
   UnsupportedSsoProvider: "IDENTITY_UNSUPPORTED_SSO_PROVIDER",

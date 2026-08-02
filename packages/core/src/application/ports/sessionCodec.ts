@@ -17,8 +17,16 @@
  * `verify` reports every rejection — tampered signature, expired token,
  * unparseable payload — as `null` rather than throwing. "This token is no
  * longer good" is an expected outcome of an ordinary request, not a fault.
+ *
+ * The token carries the `sessionEpoch` the account had when it was issued.
+ * That value is not the authority on anything by itself — the Durable Object
+ * compares it against the current one — but it has to travel, because there is
+ * no session table to look it up in.
  */
 export interface SessionCodec {
-  issue(userId: string, now: Date): Promise<string>;
-  verify(token: string, now: Date): Promise<{ userId: string } | null>;
+  issue(userId: string, epoch: number, now: Date): Promise<string>;
+  verify(
+    token: string,
+    now: Date,
+  ): Promise<{ userId: string; epoch: number } | null>;
 }

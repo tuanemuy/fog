@@ -33,13 +33,20 @@ function writeSessionCookie(
   }
 }
 
+/**
+ * `epoch` is the account's `sessionEpoch` at issue time, obtained from the same
+ * Durable Object call that authorised the sign-in. It is signed into the token
+ * so a later revocation can be detected without a session table.
+ */
 export async function startSession(
   userId: string,
+  epoch: number,
   setCookieHeader: SetCookieHeader = defaultSetCookieHeader,
 ): Promise<void> {
   const container = await getContainer();
   const token = await container.sessionCodec.issue(
     userId,
+    epoch,
     container.clock.now(),
   );
   writeSessionCookie(token, setCookieHeader);
