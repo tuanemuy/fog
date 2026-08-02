@@ -78,7 +78,7 @@ trash / export ドメインは自前のテーブルを持たない（ADR-004）�
 - `reset_version` を `credential_version` で代用しない。侵害と復旧のあいだにパスワード変更が1回でも挟まると、失効させたい接続が対象から外れるためである
 - **ドメイン側の口は `AccountStore` である**（domains/identity.md）。名前は `*Store` だが**この表は後述の非集約ストア7つには入らない** — OCC の `version` を持つ集約ルート側であり、`User` 集約に畳まないことと非集約であることは別である
 - `session_epoch` / `reset_version` の前進は単調増加カウンタの更新なので、`version` の条件を付けない単独文で書き、`version` も進めない（`ai_client_connections.last_used_at` と同じ扱い）
-- **`version` 列は保持するが、本 spec の範囲では OCC の条件付き更新を発行する操作が無い。** `AccountStore` の3メソッド（`find` / `advanceSessionEpoch` / `advanceResetVersion`。domains/identity.md）はいずれも `version` を読まず進めない。`status` の3値遷移・`deleted_at`・`caller_token` を書くのは退会 saga の前進（`finalize-withdrawal`）であり、**その書き手は #37 が DO の RPC 側で決める**。列を落とさないのは、「集約ルートは `version` を持つ」という全数（後述の OCC の表）を崩さないためである
+- **`version` 列は保持するが、本 spec の範囲では OCC の条件付き更新を発行する操作が無い。** `AccountStore` の3メソッド（`find` / `advanceSessionEpoch` / `advanceResetVersion`。domains/identity.md）はいずれも `version` を読まず進めない。`status` の3値遷移・`deleted_at`・`caller_token` を書くのは退会 saga の前進（`finalize-withdrawal`）であり、**その書き手は #12 / #45 が決める**（当初は #37 に割り当てていたが、#37 は退会をスコープ外とし `finalize-withdrawal` のハンドラも実装していない）。列を落とさないのは、「集約ルートは `version` を持つ」という全数（後述の OCC の表）を崩さないためである
 
 ### user_settings
 
@@ -460,12 +460,13 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 - **backoff と終端。** 失敗時は `attempt` を進めて指数バックオフで `next_run_at` を先送りする。上限を超えたら `status='poison'` にして `terminal_reason` を残し、ホットパスの索引から外す。**`done` / `poison` のどちらへ落とすときも、同じトランザクションで `completed_at` に現在時刻を書き、`lease_until` / `owner_token` / `next_run_at` を `NULL` にする**
 - **終端は一様である。** 前進不能が確定したジョブは `terminal_reason` を残して `poison` にし、operator 経路へエスカレーションする（後述）。**「黙って中間状態を残す」は選ばない。** 材料の寿命のうち **#37 が落としてはならない前方互換点3本は本ファイルが各テーブルの節で持つ** — `account.caller_token`（消すのは退会の完走時だけ）/ `operations.target_locators`（終端の後始末が終わるまで消さない）/ `credential_mappings` のコーディネーター予約行（同）。**それ以外の巻き戻し（自動回収）の具体 — 段の順序・原子性境界・終端モードの印・後始末の再試行上限 — は #45 が決める**ので、本ファイルには書かない
 - **1回の起動で触る量は件数だけで有界にする。** 経過時間では測らない（`Date.now()` はコード実行中に進まない）。ジョブ件数・チャンク反復回数・1チャンクの行数の3階層の上限を置き、値は #37 が spike で出して #38 が運用値として確定する
+  - **#37 が置いた初期値**（`packages/core/src/lib/jobBudgets.ts`。2026-08-03 の spike 実測が根拠）: ジョブ件数 **25 / 起床**、チャンク反復 **20 / claim**、1チャンク **1,000行**。実測では 10万行を1トランザクションで INSERT して 223ms、自己消尽チャンクでの全件再計算が 101チャンク / 346ms（≒3.4ms/チャンク）だったので、20チャンク = 2万行 ≒ 70ms であり Alarm 1回の予算に対して十分保守的である。あわせて lease **60秒**、最大試行 **8回**、`done` の保持 **24時間** / `poison` の保持 **30日**、prune の1回あたり削除上限 **1,000行**、fail-closed の再武装間隔 **60秒**。**運用値としての確定は #38**
 - **チャンク反復回数の上限に達したら、その時点の進捗をコミットするのと同じトランザクションで `status` を `pending` へ戻し、`lease_until` / `owner_token` を解放して次の起床へ回す**（解放した行は同じ起動の中では再 claim しない。しないと上限を置いた意味が消える）。**したがって「残件が空になるまで回す」と書かれたフェーズもこの上限の内側にある** — 空になるまでというのは**フェーズの順序の規定であって、1回の起床で終わることの規定ではない**。該当するのは `purge-trash` の再計算フェーズで、**削除フェーズへ進むのは再計算の残件が空になった起床でだけである**（有限回の起床で空になる根拠は `user_settings` の項の自己消尽する作業述語が持つ）
 - **prune 専用の `kind` は置かない。** ジョブランナーが1回の起動の末尾で、保持期間を過ぎた `done` / `poison` を上限件数だけ削除する（`jobs_completed_idx` から引く）
 
 #### `kind` の全数
 
-**本表が `spec/` 側の `kind` の全数である。12種で、所有 DO クラスごとに6種ずつである。** **「投入点」欄を落とさない** — 投入点を同じ表に持たせることで、**投入されるが二度と起きないジョブ**を欄の空白として検出できるようにするためである（投入点の無い再武装ジョブは1回完走した時点で恒久的に停止する）。**ユースケースから投入する 8 種は、いずれもそのジョブが待つ状態を書くのと同じトランザクション**の中で `enqueueJob` する。残る4種は経路が違う — `reindex` / `migrate-bulk` はユースケースからは投入せず（スキーマ移行の適用側が投入する）、`rotate-encryption` は operator 経路の起動による。`finalize-withdrawal` は退会のユースケースが本 spec に存在しない（`spec/inventory/domain.md` の `AccountStore` の項）ため、投入点は #37 が DO の RPC 側で決める。
+**本表が `spec/` 側の `kind` の全数である。12種で、所有 DO クラスごとに6種ずつである。** **「投入点」欄を落とさない** — 投入点を同じ表に持たせることで、**投入されるが二度と起きないジョブ**を欄の空白として検出できるようにするためである（投入点の無い再武装ジョブは1回完走した時点で恒久的に停止する）。**ユースケースから投入する 8 種は、いずれもそのジョブが待つ状態を書くのと同じトランザクション**の中で `enqueueJob` する。残る4種は経路が違う — `reindex` / `migrate-bulk` はユースケースからは投入せず（スキーマ移行の適用側が投入する）、`rotate-encryption` は operator 経路の起動による。`finalize-withdrawal` は退会のユースケースが本 spec に存在しない（`spec/inventory/domain.md` の `AccountStore` の項）ため、投入点は **#12 / #45** が決める（当初は #37 に割り当てていたが、#37 は退会をスコープ外とし、`finalize-withdrawal` / `resume-link` / `resume-credential-change` / `sweep-orphan-mapping` / `rotate-encryption` の5種はハンドラも投入点も実装していない。型と本表の全数には残る）。
 
 | `kind` | 所有 DO クラス | 投入点 | 類型 | 用途 |
 |---|---|---|---|---|
@@ -572,6 +573,8 @@ DO ごとのメタ情報。単一行。
 | `encrypted_canonical` | TEXT | nullable。メールアドレス原本の暗号文 |
 | `encryption_generation` | INTEGER | nullable。暗号鍵の世代。**写像鍵の世代とは独立した番号体系である** |
 | `encryption_nonce` | TEXT | nullable。AES-256-GCM の96ビット nonce。**独立列に持ち、暗号文に連結しない。** 行ごと・書き込みごとに再生成し、使い回さない |
+
+**3列が nullable なのは列制約としてであって、書き手の裁量ではない。** #37 の実装では予約経路（`reserve-credential`）の引数 `sealedCanonical` が**必須**であり（`packages/core/src/domain/identity/ports/credentialMappingStore.ts` の `ReserveCredentialArgs`）、鍵が未設定の環境では予約そのものが `SystemError(CryptoError)` で失敗する — 原本を復元できない予約行を書くくらいなら登録を断る、という fail-closed である。したがって**メールの予約行は3列とも常に埋まる**。nullable を保つのは (i) SSO の mapping 行が原本を持たない、(ii) 再暗号化（#44）の途中で世代が混在する、の2点のためである。
 
 **濫用抑止:**
 
@@ -691,6 +694,16 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 - **順位付けは `bm25` で行い、タイトルを本文より重く見る重み付けを行う。裏付けは実測**（公式ドキュメントに記載は無い）。**重みとページサイズの実値は本ファイルに固定しない** — 実装側が持ち、#37 が実環境で再検証して結果を spec へ反映する
 - トークナイザや正規化規則を変えたときの全件再構築は migration の `reindex` ジョブが担う（次節）
 
+### #37 の再確認結果（2026-08-03 実測）
+
+`.adr/003` が「実装着手時に再確認する」と書いた分の書き戻しである。環境は `@cloudflare/vitest-pool-workers@0.16.20` → `miniflare@4.20260625.0` 同梱の workerd。常設テストは `packages/core/src/adapters/cloudflare/search/__tests__/tokenizer.integration.test.ts`。
+
+- **`tokenize='trigram'` は動く。** external-content（`content='search_entries'` / `content_rowid='rowid'`）の仮想表が作れ、3文字のキーワード（`東京駅`）が期待どおりヒットする。shadow テーブルは `search_fts_{config,data,docsize,idx}` の**4件**で、`search_fts_content` は作られない
+- **短語の閾値は3文字である。** 2文字（`周辺`）を `MATCH` に渡すと **0 件**になることを実測した。したがって**1〜2文字は `instr()` フォールバックへ回す**（`MIN_FTS_KEYWORD_LENGTH = 3`。`packages/core/src/adapters/cloudflare/search/probe.ts`）
+- **`bm25` の重みは `bm25(search_fts, 3.0, 1.0)`**（title 3.0 / body 1.0）。例外なく順位を返す。値は負で、SQLite の慣行どおり**昇順が良い順**なので `ORDER BY bm25(...) ASC` で使う
+- **ページサイズは spec では固定しない。** `probe.ts` は `limit` / `offset` を引数に取るだけで既定値を持たない — ページサイズを決めるのは検索ユースケースであり **#10** の範囲である。ページングが `LIMIT 1 OFFSET n` で重複も欠落もなく割れることは実測・常設化した
+- **`snippet()` / `highlight()` はどちらも使えた**が、上の「スニペットは正規化前の原文から組み立てる」という結論は変えない（索引が持つのは正規化後のテキストなので、依存しないほうが正しい）
+
 ## スキーマバージョンと lazy migration
 
 ### `_meta.schema_version` とゲート関数
@@ -761,7 +774,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 ## 本ファイルで定義しないテーブル
 
 - **OAuth 2.1 の `jti` 一回性テーブル。** 認可コードは署名済みの自己完結値なので永続化せず、User Data DO に置くのは交換済みコードの `jti` を短期間だけ記録する表だけである。**その定義は #13「AIクライアント接続（OAuth認可・一覧・失効）」の範囲であり、本ファイルでは名前を確定させない。** OCC の `version` は持たない（一回性の記録なので集約ではない）
-- **検索の不透明カーソルが指す期限付きスナップショットの物理形。** ドメイン側で決まっているのは契約（同じカーソルからは同じ集合が読める / 期限切れのカーソルは拒否される / カーソルは不透明である。domains/search.md）だけで、**物理形は #37 が決める** — 期限付きの表・DO ストレージの一時キー・安定順位による再実行のいずれでも契約を満たせるうえ、寿命と粒度はストレージ上限に依存する判断だからである
+- **検索の不透明カーソルが指す期限付きスナップショットの物理形。** ドメイン側で決まっているのは契約（同じカーソルからは同じ集合が読める / 期限切れのカーソルは拒否される / カーソルは不透明である。domains/search.md）だけで、**物理形は #10 が決める** — 期限付きの表・DO ストレージの一時キー・安定順位による再実行のいずれでも契約を満たせるうえ、寿命と粒度はストレージ上限に依存する判断だからである。**当初は #37 に割り当てていたが、#37 は `SearchIndexPort` を実装せず（tokenizer 検証用の最小の読み `adapters/cloudflare/search/probe.ts` だけを置く）、物理形はページングの実装と不可分なので、検索ユースケースを持つ #10 へ委譲した**（`.thread/37/adr.md` ADR-008）
 
 ## リレーション図
 

@@ -776,7 +776,7 @@ Proposed
 
 ### Status
 
-Proposed（AC-4 の検証手段の形を確定させるもので、AC の主張そのものは変えない）
+採用（AC-4 の検証手段の形を確定させるもので、AC の主張そのものは変えない）。**ステップ32 の最終ゲートで確定** — 本 ADR の形の grep を実行し、一致が `application/di/serverCloudflare.ts:148` / `:158` の2行だけであることを実測した。`plan.md` の AC-4 の検証手段欄も同じ形へ更新済み。
 
 ### Context
 
@@ -1072,3 +1072,169 @@ ADR-030 が示した closing plan (a) (b) をそのまま採る。**秘密の配
 | `workers` 配列の**先頭**が `dispatchFetch` / `getDurableObjectNamespace` の既定対象になる | request をトップレベルに、state だけを `workers` に置くと `No Durable Object namespace binding named "USER_DATA" found in "state" worker.` | 両方を配列に並べ、request を先頭に置く（ADR-034） |
 | global scope 制約違反の注入試験 | `apps/web/app/worker/cloudflare/state.ts` と `apps/web/app/server.cloudflare.ts` のそれぞれに module スコープの `crypto.randomUUID()` を1行足して `pnpm build:cf && pnpm test:smoke` を実行し、**両方とも** `service core:user:{state,request}: Uncaught Error: Disallowed operation called within global scope.` で赤になることを確認した。確認後に両ファイルを元へ戻し、`git diff` が空であることを確認済み | AC-22 / AC-23 の「実行時に検知できる」が実測で裏づけられた。#40 の再発は request / state のどちら側でも捕まる |
 | `purge-trash` の安全弁（駆動源が due なのに作業0件だったらクランプする）は、**駆動源クエリと作業述語が一致している限り到達不能である** | 両者とも `status='trashed'` の同じ `purge_after` を見るので、`min(purge_after) <= now` なら必ず削除対象がある | クランプは防御として残したが、テストは代わりに**不変条件**（1回の起床の後、駆動源は必ず未来にある）を固定した。到達可能にするには両クエリを意図的にずらすしかなく、それは検査したい不具合そのものである |
+
+---
+
+## ADR-037: `pnpm dev` は state Worker を vite プラグインの auxiliary worker として起動する
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+ステップ25 が `apps/web/wrangler.toml`（request 側）の DO バインディング2本に `script_name = "fog-state"` を書くと決めている。DO クラスの所有者は state Worker であり、request Worker がクラスを宣言しないための必然の帰結である。
+
+ところが **steps.md にはローカル開発でその `fog-state` を誰が起動するのかが書かれていない。** `@cloudflare/vite-plugin` は `apps/web/wrangler.toml` だけを自動発見するので、`pnpm dev` は request Worker しか立ち上がらず、`script_name` の指す先が存在しない。にもかかわらずステップ25 とステップ32 の検証欄は「`pnpm dev` でサインアップ・ログインが通る」を要求している。実測でも、この状態では DO 呼び出しに到達した時点で失敗する。
+
+`dev:state`（`wrangler dev -c wrangler.state.toml`）はステップ26 で新設するが、これは**別プロセス**であり、`vite dev` が起動する miniflare とはバインディングを共有しない。2つのターミナルを開いても request 側の `USER_DATA` は解決しない。
+
+### Decision
+
+**`apps/web/vite.config.cloudflare.ts` の `cloudflare()` に `auxiliaryWorkers` を1件足す。**
+
+```ts
+auxiliaryWorkers: [
+  {
+    configPath: "./wrangler.state.toml",
+    devOnly: true,
+    config: { main: "app/worker/cloudflare/state.ts" },
+    viteEnvironment: { name: "state" },
+  },
+],
+```
+
+3つの指定はそれぞれ別の理由を持つ。
+
+- **`configPath`** — バインディングと `exports` の宣言を `wrangler.state.toml` から引く。設定を2箇所に書かない。
+- **`devOnly: true`** — デプロイ用の state Worker を作るのは `vite.config.state.ts`（`build:cf` の2段目）である。これを落とすと `vite build --config vite.config.cloudflare.ts` が state Worker をもう1部、別の出力先へ吐く。
+- **`config: { main: ... }`** — `wrangler.state.toml` の `main` は `dist/state/index.js`（成果物）だが、vite プラグインは auxiliary worker の `main` も**ソースエントリとして解決し、存在しなければ throw する**。ステップ25 が「ローカル `wrangler.toml` の `main` を成果物へ向けてはならない」と実測した制約が、そのまま auxiliary 側にも掛かる。ファイル側は成果物のままにして（`wrangler dev -c wrangler.state.toml` と `--dry-run` はそちらを必要とする）、vite 経路だけを上書きする。
+
+**steps.md ステップ25 の「`vite.config.*` には触らない」に対する例外である。** 同ステップの目的（wrangler 設定の2次元化）と同ステップの検証条件（`pnpm dev` が通る）が両立しないので、検証条件のほうを成立させた。
+
+### Consequences
+
+- 良い点: `pnpm dev` の1コマンドで両 Worker が立ち、DO 越しのサインアップ → ログイン → 設定 → ログアウトが通る（agent-browser で実測）。
+- 良い点: `.wrangler/deploy/config.json` の `auxiliaryWorkers` は `[]` のままである（`devOnly` なので production の redirect 設定に載らない）。AC-26 の判定に影響しない。
+- トレードオフ: ローカル開発では両 Worker が同じ `apps/web/.dev.vars` を読むので、**秘密の配布境界がローカルでだけ守られない。** wrangler が設定ファイルの隣の `.dev.vars` を読む仕様による制約であり、デプロイ経路は役割別の設定に対して `wrangler secret put` するので影響しない。`.dev.vars.example` にその旨を明記した。
+- トレードオフ: `wrangler.state.toml` の `main` が経路ごとに2つの意味を持つ（wrangler は成果物、vite は上書きされたソース）。両ファイルにコメントで理由を残した。
+
+---
+
+## ADR-038: `worker-configuration.d.ts` の D1 / Queue 検査は生成された env インターフェース部分に限る
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ25 は「`grep -n "D1Database\|Queue<\|EVENTS_QUEUE" apps/web/worker-configuration.d.ts` が 0 件」を検証条件に置いている。実際に `wrangler types` で再生成すると、**この条件は原理的に満たせない。**
+
+`wrangler types` が出力するファイルは2部構成である。前半は wrangler 設定から導いた env インターフェース（`__BaseEnv_Env`）、後半（`// Begin runtime types` 以降）は compatibility date / flags から生成した **workerd のランタイム型一式**である。後半には `D1Database` の宣言が5件、`interface Queue<Body = unknown>` が1件、必ず含まれる — バインディングを1つも持たない Worker でも同じである。
+
+### Decision
+
+**検査の射程を `// Begin runtime types` より前に限る。**
+
+```sh
+n=$(grep -n "^// Begin runtime types" apps/web/worker-configuration.d.ts | cut -d: -f1)
+head -n "$((n-1))" apps/web/worker-configuration.d.ts | grep -n "D1Database\|Queue<\|EVENTS_QUEUE"   # 0 件
+head -n "$((n-1))" apps/web/worker-configuration.d.ts | grep -c "DurableObjectNamespace"             # 2 件
+```
+
+AC-17 / AC-19 が守りたいのは「**この Worker のバインディングに** D1 / Queue が残っていないこと」であり、それを表しているのは前半だけである。後半はプラットフォームが提供する型の目録であって、このリポジトリの設定を1文字も反映しない。
+
+### Consequences
+
+- 良い点: 実測で前半に D1 / Queue の一致は 0 件、`DurableObjectNamespace` が `USER_DATA` / `IDENTITY_DIRECTORY` の2件で、AC の意図どおりに判定できる。
+- 良い点: `wrangler types` の `includeRuntime` を切って検査を通す、という「検査のために型を痩せさせる」倒錯を避けられた。
+- 補足: **steps.md はこのファイルを「tracked な生成物」と書いているが誤りである。** 実測で `.gitignore:12` に `worker-configuration.d.ts` があり、`git ls-files` にも現れない。`postinstall` / `predev:cf` の `wrangler types` が各環境で作る。したがって「再生成しないと古い D1 型が tracked ファイルに残る」という懸念は成立しないが、**再生成しないとローカルの `pnpm typecheck` が落ちる**ので、再生成そのものは必要である。
+
+---
+
+## ADR-039: 旧 `deploy:*` 対応表は README に残し、ステップ26 の README grep はその表を除外する
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ26 は2つのことを同時に要求している。
+
+1. 旧 `deploy:*` ↔ 新スクリプトの**対応表を README の該当節に残す**（AC-18 も「対応表が残っており」と要求）。
+2. `grep -n "D1\|Queues\|outbox\|relay\|consumer\|pruner\|DLQ\|db:" README.md` が **0 件**。
+
+対応表の左辺には `deploy:{stage}:relay` / `:consumer` / `:pruner` / `:dlq` が現れる。**両立しない。**
+
+### Decision
+
+**対応表を残し、grep の射程からその1行を除外する。** 除外の根拠は AC-20 が `spec/idea.md` を除外するのと同じ性質 — **歴史的記述であって、現行構成の案内ではない。** 表の右辺は「gone — those Workers no longer exist」であり、読み手を消えた機構へ誘導しない。
+
+判定は次の形で行う。
+
+```sh
+grep -n "D1\|Queues\|outbox\|relay\|consumer\|pruner\|DLQ\|db:" README.md | grep -v 'gone — those Workers no longer exist'   # 0 件
+```
+
+### Consequences
+
+- 良い点: 旧スクリプト名から新スクリプトへ辿れる導線が残る。名前が消えただけの変更は、対応表が無いと利用者が「消された」のか「改名された」のか判断できない。
+- トレードオフ: 除外が1つ増える。表を消す判断は #41（README / docs の乖離解消）が、対応表の役目が終わったと判断した時点で行えばよい。
+
+---
+
+## ADR-040: request Worker の `--dry-run` 検証対象はローカル `wrangler.toml` ではなく rendered `wrangler.request.<stage>.toml` である
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+steps.md ステップ32 の項目9 は `npx wrangler deploy -c wrangler.toml --dry-run` の成功を求めている。**これはステップ25 自身の決定と矛盾する。**
+
+ステップ25 は、`@cloudflare/vite-plugin` が `apps/web/wrangler.toml` の `main` をソースエントリとして解決するので、この1本だけは `main = "app/server.cloudflare.ts"` に据え置くと決めた。ところが wrangler にとってソースエントリは esbuild でバンドルする対象であり、TanStack Start の仮想モジュール（`tanstack-start-manifest:v` など）を解決できない。実測でも `--dry-run` は `Could not resolve "tanstack-start-manifest:v"` で失敗する。
+
+**この失敗は欠陥ではない。** `apps/web/wrangler.toml` はファイル冒頭が明記するとおり **LOCAL DEV ONLY** であり、`wrangler deploy` の対象ではない。デプロイに使う設定は `.tpl` からレンダリングした `wrangler.request.<stage>.toml` で、そちらは `main = "dist/server/index.js"` を指す。
+
+### Decision
+
+**request 側の `--dry-run` 検証対象を rendered `wrangler.request.<stage>.toml` に読み替える。** state 側はローカル `wrangler.state.toml` と rendered の両方が成果物を指すので、両方を対象にする。
+
+実測（wrangler 4.114.0、`.wrangler/deploy/config.json` が `../../dist/server/wrangler.json` への redirect を持つ状態）:
+
+| 対象 | 結果 |
+|---|---|
+| `-c wrangler.state.toml` | 成功。バンドル入口は `dist/state/index.js`、バインディングは自己参照の DO 2本 |
+| `-c wrangler.state.staging.toml` / `.production.toml` | 成功。同上 + `APP_URL` がステージ値 |
+| `-c wrangler.request.staging.toml` / `.production.toml` | 成功。バンドル入口は `dist/server/index.js`、DO 2本が `fog-{stage}-state` の定義を指す、ASSETS 37ファイル |
+| `-c wrangler.toml` | **失敗（想定どおり）。** ソースエントリを wrangler が直接バンドルできない |
+
+### Consequences
+
+- 良い点: **AC-26 が実測で満たされた** — redirect 設定が存在する状態で、明示 `-c` を渡した4本ともそれぞれ自分の `main` をバンドルし、redirect 先（`dist/server/wrangler.json`）へ引きずられなかった。`[env.*]` を使わない構成なので #40 §5 の踏み方自体が発生しない。
+- トレードオフ: 「ローカル `wrangler.toml` は `wrangler deploy` に使えない」という性質が、コメントだけでなく検証手順にも現れた。README とファイル冒頭コメントの両方で明示してある。
+- 補足: `pnpm start`（`wrangler dev`、`-c` なし）は redirect が効くので `dist/server/index.js` を起動し、**正常に応答する**（実測: `GET /login` が 200）。`pnpm preview` も同様。#40 は解消済みである。
+
+---
+
+## ADR-041: `@repo/web` の `test:smoke` はルートスクリプトへのパススルーにする
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+3つの vitest 設定（`vitest.config.ts` / `.integration.ts` / `.smoke.ts`）はすべてリポジトリルートにあり、`include` もルート基準のパスで書かれている。したがって `test:unit` / `test:integration` / `test:smoke` はいずれもルートにしか存在せず、`@repo/web` 側の対応スクリプトは無い。
+
+一方でスモークテストの対象（`apps/web/__tests__/**/*.smoke.test.ts` とビルド成果物 `apps/web/dist/`）は `apps/web` に閉じており、`apps/web` の中で作業しているときに `test:smoke` が見つからないのは発見性が悪い。
+
+### Decision
+
+**`@repo/web` に `"test:smoke": "pnpm --workspace-root test:smoke"` を置く。** 設定を複製せず、ルートの1本を呼ぶ。
+
+`vitest.config.smoke.ts` を `apps/web` から相対参照する案は採らない — vitest の root が `apps/web` になって `include` のパスが総崩れになるため、設定側にも `root` 指定の追加が要り、ルートと web で2通りの解釈が生まれる。
+
+### Consequences
+
+- 良い点: `pnpm --filter @repo/web test:smoke` と `cd apps/web && pnpm test:smoke` のどちらでも動く。
+- トレードオフ: **ルート → web という委譲の向きに対して逆向きの1本ができた。** 再帰の危険は無い（ルートの `test:smoke` は `vitest run` を直接呼び、web へ委譲しない）が、ルート側を委譲形に変える場合はこの1本を先に外す必要がある。
+- 非対称: `test:unit` / `test:integration` には web 側の対応を置かない。どちらも `packages/core` を含む複数パッケージに跨るので、`@repo/web` の名前空間に置くと射程を誤解させる。スモークだけが `apps/web` に閉じている。

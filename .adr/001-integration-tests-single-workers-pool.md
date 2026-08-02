@@ -41,4 +41,5 @@
 - 統合テストの実行経路が1本になり、`docs/test.md` の「2つのプール」という説明も1本に単純化された。CI の integration matrix / build matrix も畳めた。
 - Workers 設定から打ち消しの `exclude` が消えた代わりに、`include` を「ディレクトリの明示的な許可リスト」として運用する方針が前面に出た。サフィックスだけでは拾われないため、新しいディレクトリに統合テストを置くときは同じ変更で `include` に追記する必要がある（この運用ルールは `vitest.config.integration.ts` 冒頭のコメントと `docs/test.md` に記載）。
 - Workers アイソレートで動かせない統合テストが将来必要になった場合、Node プール設定を書き直す必要がある。`vitest.config.ts` が雛形になるため実コストは小さい。
-- `pnpm test:integration` と `pnpm test:integration:cf` が同義になり、名前としては冗長な状態が残る。スクリプト名の整理は Cloudflare 向けスクリプト再編（Issue #37）に委ねている。
+- `pnpm test:integration` と `pnpm test:integration:cf` が同義になり、名前としては冗長な状態が残る。スクリプト名の整理は Cloudflare 向けスクリプト再編（Issue #37）に委ねている。**#37 で解消済み** — `test:integration:cf` を削除し、`pnpm test:integration` の1本にした。
+- **本 ADR の射程は統合テストであり、その後に第3のスイートが加わった。** #37 が起動スモークテスト（`vitest.config.smoke.ts` / `pnpm test:smoke`）を別レイヤーとして置いている。これは Node プールで miniflare に `scriptPath` を渡し、**ビルド成果物**が workerd で起動するかだけを問うもので、「アイソレートへ import したコードを検証する」統合テストとは問いが違う。したがって本 ADR の「Workers プール1本」は破られていない — スモークは統合テストではない。`docs/test.md` は3スイート構成として記述してある。

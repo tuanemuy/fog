@@ -1,8 +1,13 @@
-# LOCAL DEV ONLY — `pnpm dev` / `pnpm build` auto-discover this file via
-# `@cloudflare/vite-plugin`. Do NOT run `wrangler deploy` against it:
-# the resource names below lack the stage suffix that keeps environments
-# from colliding. Deploy via `wrangler.staging.toml` / `wrangler.production.toml`.
-name = "tanstack-start-template"
+# LOCAL DEV ONLY — the **request Worker**. `pnpm dev` / `pnpm build` auto-discover
+# this file via `@cloudflare/vite-plugin`. Do NOT run `wrangler deploy` against it:
+# the names below lack the stage suffix that keeps environments from colliding.
+# Deploy via the rendered `wrangler.request.<stage>.toml` (`pnpm cf:render:<stage>`).
+name = "fog"
+# **Source entry, on purpose.** The vite plugin resolves this `main` as its own
+# entry module and throws when the path does not exist, so pointing it at
+# `dist/server/index.js` would make a clean clone unbuildable and would make a
+# stale build output become the entry. Only the routes wrangler reads on its own
+# (`wrangler.state.toml` and the four rendered stage configs) name build output.
 main = "app/server.cloudflare.ts"
 compatibility_date = "2026-05-01"
 # `nodejs_compat` is required because @tanstack/react-start imports
@@ -17,10 +22,16 @@ binding = "ASSETS"
 [vars]
 APP_URL = "http://localhost:8787"
 
-# D1: read/write for the request path.
-# See packages/core/src/adapters/d1/.
-[[d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+# The Durable Object classes live in the **state Worker** (`wrangler.state.toml`),
+# which is why every binding here carries `script_name`: one namespace per class,
+# owned by one Worker. `pnpm dev` boots that Worker as an auxiliary worker — see
+# `auxiliaryWorkers` in `vite.config.cloudflare.ts`.
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+script_name = "fog-state"
+
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"
+script_name = "fog-state"

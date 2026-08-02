@@ -1,0 +1,40 @@
+# LOCAL DEV ONLY — the **state Worker**, which owns the Durable Object classes.
+# It has no public routes; the request Worker reaches it through the bindings in
+# `wrangler.toml`. Run it on its own with `pnpm dev:state`, or let `pnpm dev`
+# boot it as the auxiliary worker configured in `vite.config.cloudflare.ts`.
+# Deploy via the rendered `wrangler.state.<stage>.toml` (`pnpm cf:render:<stage>`).
+name = "fog-state"
+# Build output, unlike `wrangler.toml`'s: this file is outside the vite plugin's
+# reach, so nothing resolves `main` until wrangler itself does.
+main = "dist/state/index.js"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+APP_URL = "http://localhost:8787"
+
+# Declarative Durable Object class lifecycle. This form and the `[[migrations]]`
+# array are **mutually exclusive** — wrangler's config validation rejects a file
+# carrying both — and `storage = "sqlite"` is what makes `ctx.storage.sql`
+# available. Verified against wrangler 4.114.0 with
+# `wrangler deploy -c wrangler.state.toml --dry-run`.
+#
+# One-way door: once a namespace has been deployed through `exports`, it cannot
+# be moved back to a `[[migrations]]` entry.
+[exports.UserDataDurableObject]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.IdentityDirectoryDurableObject]
+type = "durable-object"
+storage = "sqlite"
+
+# DO-to-DO RPC from inside the state Worker: both bindings are wired back to
+# this same script, so they carry no `script_name`.
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"

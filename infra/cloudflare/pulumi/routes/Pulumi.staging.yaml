@@ -1,3 +1,3 @@
 config:
-  tanstack-start-template-cf-routes:accountId: REPLACE_WITH_CF_ACCOUNT_ID
-  tanstack-start-template-cf-routes:resourcesStackRef: organization/tanstack-start-template-cf-resources/staging
+  fog-cf-routes:accountId: REPLACE_WITH_CF_ACCOUNT_ID
+  fog-cf-routes:resourcesStackRef: organization/fog-cf-resources/staging

@@ -62,7 +62,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Integration tests
-        run: pnpm test:integration:cf
+        run: pnpm test:integration
 
   build:
     name: Build

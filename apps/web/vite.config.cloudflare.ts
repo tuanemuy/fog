@@ -15,6 +15,23 @@ export default defineConfig({
       // Declare `rsc` as a child of the workerd-backed `ssr` env so the
       // RSC plugin's module runner is initialised inside the worker.
       viteEnvironment: { name: "ssr", childEnvironments: ["rsc"] },
+      // The Durable Object classes live in a second Worker, so `pnpm dev` has
+      // to boot both: the DO bindings in `wrangler.toml` name `fog-state`, and
+      // a binding whose script is absent resolves to nothing at call time.
+      auxiliaryWorkers: [
+        {
+          configPath: "./wrangler.state.toml",
+          // Dev only. The deployable state Worker is built by
+          // `vite.config.state.ts` (the second stage of `build:cf`), which is
+          // what `wrangler.state.toml`'s `main` points at; letting this plugin
+          // build it too would emit a second, unused copy.
+          devOnly: true,
+          // Overrides that `main`, because the vite plugin resolves it as a
+          // source entry and a clean clone has no `dist/` yet.
+          config: { main: "app/worker/cloudflare/state.ts" },
+          viteEnvironment: { name: "state" },
+        },
+      ],
     }),
     tanstackStart({
       srcDirectory: "app",

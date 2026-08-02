@@ -1,5 +1,8 @@
 # Backend Implementation Guide
 
+> [!WARNING]
+> **本書は D1 + Outbox 時代の例であり、現行の構成を反映していない。** #37 が撤去した機構 — Outbox / ドメインイベント / `collectEvents` / `PendingBatch` / `_occ_guard` / D1 アダプター群 — を前提に書かれている。現行は SQLite-backed Durable Object + Alarm ジョブ、`UnitOfWorkProvider.run` は完全同期、OCC は `UPDATE … RETURNING 1` の0行検出である。**書き換えは [#38](https://github.com/tuanemuy/fog/issues/38) が担当する。** それまでは構造（層の分け方・ポートの置き場・エラー翻訳の位置）だけを読み、API と永続化の具体は `CLAUDE.md`「Key concepts」と `spec/database/index.md`、そして `packages/core/src/adapters/cloudflare/` の実物を正本とすること。
+
 The snippets use a `Todo` domain — the template's sample, deleted from this repository. The domain that actually ships is `identity` (`packages/core/src/domain/identity/`, `packages/core/src/application/identity/`); read it for the same structure in working code, and follow that structure when adding a domain.
 
 > For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".

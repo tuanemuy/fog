@@ -1,19 +1,22 @@
 /**
- * Render `wrangler.<stage>.toml` from a `.tpl` template by substituting
- * placeholders with outputs from the Cloudflare resources Pulumi stack.
+ * Render `wrangler.<role>.<stage>.toml` from the matching `.tpl` template by
+ * substituting placeholders with outputs from the Cloudflare resources Pulumi
+ * stack.
  *
  * Usage:
  *   pnpm cf:render:<stage>
  *
- * Placeholders recognised in the template (any `${NAME}` occurrence is
+ * Two roles are rendered per stage, because the app deploys as two Workers: the
+ * `request` Worker that serves HTTP and the `state` Worker that owns the
+ * Durable Object classes. The stage stays the script's only argument — a role
+ * is never rendered on its own, since the request config names the state
+ * Worker's script and the two must agree on the prefix.
+ *
+ * Placeholders recognised in the templates (any `${NAME}` occurrence is
  * substituted; unknown names abort the run so we never ship a half-rendered
  * config):
  *   ${APP_URL}            — public URL of the deployment
- *   ${D1_DATABASE_ID}     — D1 database id
- *   ${D1_DATABASE_NAME}   — D1 database name
- *   ${EVENTS_QUEUE_NAME}  — primary events queue name
- *   ${DLQ_QUEUE_NAME}     — dead-letter queue name
- *   ${RESOURCE_PREFIX}    — worker / resource name prefix (e.g. `…-staging`)
+ *   ${RESOURCE_PREFIX}    — worker / resource name prefix (e.g. `fog-staging`)
  *
  * Pulumi outputs are read via `pulumi -C <dir> -s <stage> stack output --json`
  * — the CLI must already be authenticated and the resources stack already
@@ -26,6 +29,8 @@ import { fileURLToPath } from "node:url";
 
 const SUPPORTED_STAGES = ["staging", "production"] as const;
 type Stage = (typeof SUPPORTED_STAGES)[number];
+
+const ROLES = ["request", "state"] as const;
 
 function isStage(value: string): value is Stage {
   return (SUPPORTED_STAGES as readonly string[]).includes(value);
@@ -41,8 +46,6 @@ const stage: Stage = stageArg;
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(webRoot, "../..");
 const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
-const templatePath = resolve(webRoot, `wrangler.${stage}.toml.tpl`);
-const outPath = resolve(webRoot, `wrangler.${stage}.toml`);
 
 const raw = execFileSync(
   "pulumi",
@@ -62,24 +65,25 @@ const outputs = JSON.parse(raw) as Record<string, string>;
 
 const substitutions: Record<string, string | undefined> = {
   APP_URL: outputs.exportedAppUrl,
-  D1_DATABASE_ID: outputs.databaseId,
-  D1_DATABASE_NAME: outputs.databaseName,
-  EVENTS_QUEUE_NAME: outputs.eventsQueueName,
-  DLQ_QUEUE_NAME: outputs.dlqQueueName,
   RESOURCE_PREFIX: outputs.exportedPrefix,
 };
 
-const template = readFileSync(templatePath, "utf8");
-const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
-  const value = substitutions[name];
-  if (value === undefined) {
-    throw new Error(
-      `Unknown placeholder \${${name}} in ${templatePath}. ` +
-        `Known: ${Object.keys(substitutions).join(", ")}`,
-    );
-  }
-  return value;
-});
+for (const role of ROLES) {
+  const templatePath = resolve(webRoot, `wrangler.${role}.${stage}.toml.tpl`);
+  const outPath = resolve(webRoot, `wrangler.${role}.${stage}.toml`);
 
-writeFileSync(outPath, rendered);
-console.log(`wrote ${outPath}`);
+  const template = readFileSync(templatePath, "utf8");
+  const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
+    const value = substitutions[name];
+    if (value === undefined) {
+      throw new Error(
+        `Unknown placeholder \${${name}} in ${templatePath}. ` +
+          `Known: ${Object.keys(substitutions).join(", ")}`,
+      );
+    }
+    return value;
+  });
+
+  writeFileSync(outPath, rendered);
+  console.log(`wrote ${outPath}`);
+}

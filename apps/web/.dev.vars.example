@@ -1,30 +1,77 @@
 # Wrangler `.dev.vars` template — copy to `.dev.vars` for local development.
 #
 # `wrangler dev` (including the workerd-backed `pnpm dev` via
-# `@cloudflare/vite-plugin`) auto-loads this file from the project root
-# and exposes each entry as a Worker binding, mirroring `wrangler secret
-# put` for production. Never commit the real `.dev.vars` — it is listed
-# in `.gitignore`.
+# `@cloudflare/vite-plugin`) auto-loads this file and exposes each entry as a
+# Worker binding, mirroring `wrangler secret put` for production. Never commit
+# the real `.dev.vars` — it is listed in `.gitignore`.
 #
-# Non-secret config (e.g. `APP_URL`) belongs in the matching
-# `wrangler*.toml` `[vars]`, not here — `wrangler.toml` for local dev,
-# `wrangler.staging.toml` / `wrangler.production.toml` for remote
-# deploys. Reserve this file for credentials and tokens that must not
-# be checked in.
+# Non-secret config (e.g. `APP_URL`) belongs in the matching `wrangler*.toml`
+# `[vars]`, not here. Reserve this file for credentials that must not be
+# checked in.
 #
-# HMAC key that signs session cookies. Left empty on purpose: a value
-# published in this file would be a valid key for anyone who reads the
-# repository, and copying it into a deployment hands out every account.
-# Generate your own — the Worker refuses every request until you do:
+# === Distribution boundary ===============================================
+# The app deploys as two Workers and **the two sets below do not overlap**.
+#   request Worker (`wrangler.request.<stage>.toml`)
+#     SESSION_SECRET / AI_CLIENT_TOKEN_SECRET / DIRECTORY_ROUTING_SECRET
+#   state Worker (`wrangler.state.<stage>.toml`)
+#     IDENTITY_MAIL_ENCRYPTION_KEY / IDENTITY_RESET_TOKEN_KEY
+#
+# The split is load-bearing, not tidiness. `DIRECTORY_ROUTING_SECRET` must
+# never reach the state Worker: a bucket that holds it can derive its own name
+# from a raw address, which is the single property the HMAC routing exists to
+# remove. Symmetrically the request Worker never needs to open a sealed address
+# or mint a reset token, so it does not get those two keyrings.
+#
+# For deployed environments, set each secret against its own config:
+#   wrangler secret put SESSION_SECRET -c wrangler.request.staging.toml
+#   wrangler secret put IDENTITY_RESET_TOKEN_KEY -c wrangler.state.staging.toml
+#
+# **Local dev is the one place the boundary is not enforced**, because both
+# Workers boot from this directory and therefore read this one file. That is a
+# limitation of `wrangler dev`, not a licence to merge the sets when deploying.
+# =========================================================================
+#
+# Every value below is left empty on purpose: a secret published in this file
+# would be a valid key for anyone who reads the repository. Generate your own —
+# each Worker refuses to serve until its own set is present.
 #
 #   openssl rand -base64 48
 #
-# At least 32 characters. Deliberately a secret rather than a `[vars]`
-# entry — `wrangler.toml` does not inherit `[vars]` across `[env.*]`
-# blocks, so a var would have to be duplicated per environment in
-# plaintext. For deployed environments use `wrangler secret put
-# SESSION_SECRET`. Only the request-path Worker needs it.
+# Single-value secrets need at least 32 characters. Keyring secrets are a JSON
+# array of `{ generation, key, role? }`, with exactly one `active` entry (the
+# default when `role` is omitted) and at most one `"previous"`, so that a
+# rotation can keep reading what the old key wrote.
+
+# --- request Worker ------------------------------------------------------
+
+# HMAC key that signs session cookies.
 SESSION_SECRET=""
 
-# Example (uncomment and replace when you add a secret-backed feature):
-# SOME_THIRD_PARTY_API_KEY="replace-me"
+# Signing key for AI client tokens (#13). Deliberately **not** the session
+# secret: the two token kinds differ in TTL and in how they are revoked, so
+# sharing a key would drag one rotation into the other.
+AI_CLIENT_TOKEN_SECRET=""
+
+# Keyring that HMACs a canonical address into an Identity Directory bucket
+# name. Each entry additionally carries `bucketCount` — how many buckets that
+# generation was split into. It cannot be defaulted: a Durable Object's name
+# records the bucket *index*, not the count, so a previous generation's modulus
+# is unrecoverable if it was not written down.
+#
+#   DIRECTORY_ROUTING_SECRET='[{"generation":1,"key":"<48+ random chars>","bucketCount":16}]'
+DIRECTORY_ROUTING_SECRET=""
+
+# --- state Worker --------------------------------------------------------
+
+# Keyring that seals `credential_mappings.encrypted_canonical` (AES-256-GCM).
+# **Signup fails without it**: a reservation whose address can never be
+# recovered is worse than a refused signup, so the write refuses loudly.
+#
+#   IDENTITY_MAIL_ENCRYPTION_KEY='[{"generation":1,"key":"<48+ random chars>"}]'
+IDENTITY_MAIL_ENCRYPTION_KEY=""
+
+# Keyring that signs password-reset tokens. Each token row records the
+# generation that signed it, so a rotation can still verify tokens in flight.
+#
+#   IDENTITY_RESET_TOKEN_KEY='[{"generation":1,"key":"<48+ random chars>"}]'
+IDENTITY_RESET_TOKEN_KEY=""
