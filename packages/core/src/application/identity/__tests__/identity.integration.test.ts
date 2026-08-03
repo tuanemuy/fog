@@ -148,6 +148,27 @@ async function askForResetLink(email: string): Promise<void> {
 }
 
 /**
+ * Moves the mapping's reset stamp into an earlier window.
+ *
+ * A mapping is created with `last_reset_requested_at = created_at`, so an
+ * account is deliberately **not** eligible for a reset link inside the very
+ * window it was signed up in (ADR-121): a request made against the same address
+ * while it was still unregistered may already have spent that window's
+ * `send-mail` key. Cases whose subject is the delivery rather than the throttle
+ * say so here instead of waiting out a fifteen-minute window.
+ */
+async function signedUpInAnEarlierWindow(email: string): Promise<void> {
+  const locator = (await container().directoryLocator.forCanonical(email))[0];
+  if (locator === undefined) throw new Error("no locator");
+  await inDirectoryOf(email, (sql) =>
+    sql.exec(
+      "UPDATE credential_mappings SET last_reset_requested_at = 0 WHERE kind = 'email' AND hmac = ?",
+      locator.hmac,
+    ),
+  );
+}
+
+/**
  * Runs the bucket's due jobs against a recording sender and reports every
  * recipient. The DO's own `alarm()` would use the noop sender — an unbound
  * `MAIL_SENDER` is what the suite runs with — so the send has to be driven with
@@ -952,6 +973,7 @@ describe("requestPasswordReset", () => {
       container: container(),
       input: { email, password: "correct horse battery staple" },
     });
+    await signedUpInAnEarlierWindow(email);
     await askForResetLink(email);
 
     // Nothing seeded the ciphertext: the recipient is recovered from what the

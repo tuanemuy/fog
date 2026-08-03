@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { SqlStorage } from "@cloudflare/workers-types";
+import { enqueueJob } from "@repo/core/adapters/cloudflare/jobs/table";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
 import { IdentityDirectoryDurableObject } from "../identityDirectory";
@@ -23,6 +24,8 @@ import { UserDataDurableObject } from "../userData";
 
 const AHEAD = 99;
 const HMAC = "ab".repeat(32);
+/** Far enough ahead that the platform never delivers it during the run. */
+const ARMED_AT = 4_000_000_000_000;
 const FAIL_CLOSED = "Schema version is newer than this deployment";
 
 /** Everything on the prototype that is not an RPC entry. */
@@ -251,5 +254,52 @@ describe("IdentityDirectoryDurableObject's RPC entries", () => {
     const ids = await directory.listBucketUserIds(null, 10);
     expect(ids.ok).toBe(true);
     expect(ids.ok && ids.value).toEqual([]);
+  });
+
+  /**
+   * AC-12 (iii) for **this class**.
+   *
+   * The arming wrapper itself is covered by
+   * `jobs/__tests__/alarm.integration.test.ts`'s "the RPC entry wrapper", and
+   * the User Data class's use of it by `cleanup.integration.test.ts` — which
+   * left "the Directory class goes through `runRpcEntry`" as the one link
+   * nothing observed. Measured: replacing `entry()` with a hand-written gate and
+   * envelope that never arms leaves the whole integration suite green.
+   *
+   * The arm is read with `getAlarm()`, which is only sound because the queued
+   * time is far away. An alarm armed for the next second comes back `null` here
+   * (and would be delivered mid-test); one armed for 2096 comes back exactly —
+   * the same trick, and the same constant, `cleanup.integration.test.ts` uses.
+   * Nothing needs `disarm` for that reason either.
+   */
+  it("arms the alarm its queue asks for on the way out of a gated entry", async () => {
+    seq += 1;
+    const ns = env.IDENTITY_DIRECTORY;
+    const stub = ns.get(ns.idFromName(`entries-arming-${seq}`));
+    const directory = stub as unknown as IdentityDirectoryDurableObject;
+    // Creates the schema. Nothing is queued yet, so nothing is armed yet.
+    await directory.checkPreviousGeneration("email", HMAC);
+    await runInDurableObject(stub, (_instance, ctx) => {
+      enqueueJob(ctx.storage.sql as SqlStorage, 0, {
+        kind: "sweep-reservations",
+        operationKey: "sweep-reservations",
+        payload: {},
+        nextRunAt: ARMED_AT,
+      });
+    });
+    const before = await runInDurableObject(stub, (_instance, ctx) =>
+      ctx.storage.getAlarm(),
+    );
+
+    const envelope = await directory.checkPreviousGeneration("email", HMAC);
+
+    const after = await runInDurableObject(stub, (_instance, ctx) =>
+      ctx.storage.getAlarm(),
+    );
+    expect(envelope.ok).toBe(true);
+    // `before` is the control: the row alone arms nothing, so the alarm below is
+    // the entry's doing rather than `enqueueJob`'s.
+    expect(before).toBeNull();
+    expect(after).toBe(ARMED_AT);
   });
 });

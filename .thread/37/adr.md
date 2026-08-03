@@ -2222,3 +2222,85 @@ ADR-047 は `activate` / `promote` に `RETURNING 1` を入れ、`cancel` / `del
 
 - 良い点: `TEST_DIRECTORY_ROUTING_SECRET` の `bucketCount` を 1 に落として**全アドレスを同一 bucket に衝突させる**変異で、旧クエリは `expected … to have a length of 1 but got 2` で赤、新クエリは緑（実測）。1/256 の潜在バグが実在することと、修正がそれを塞いでいることの両方を確認した。
 - トレードオフ: `instr(...) = 1` は `LIKE` より読みづらい。理由をコメントに残した。
+
+## ADR-120: `armAfterRpc` は前倒し専用にする（Alarm 武装の単調性）
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 3周目レビュー adapter-infra W-001 への対応）
+
+### Context
+
+`armAfterRpc` は `persist(ctx, cache, clamp(now, earliest))` を呼び、`persist` は `cache.scheduledAt !== at` なら無条件に `setAlarm(at)` する。DO の Alarm は1本で `setAlarm` は既存を上書きするので、**この経路は武装を未来へ押し出す方向にも動く**。`clamp` が due な行を `now + 1000` に倒すため、`next_run_at <= now` の行がある DO へ1秒より短い間隔で RPC が届き続けるかぎり、武装は毎回「直近の `now` + 1000」へ張り直され、**due な行が一度も配信されない**。Identity Directory は bucket 単位で多数の利用者が相乗りし `lookupCredential` がログイン1回につき1本入るので、到達しうるレートである。止まるのは `send-mail`（唯一の外部 I/O）と `resume-signup`。
+
+一方 `jobs` 行の側（1周目 W-006 / AC-12 (iv)）は既に単調（`nextRunAt` は前倒しにしか動かない）で、**Alarm の側だけが単調でなかった**。
+
+### Decision
+
+`armAfterRpc` にのみ「既に張られている武装より後ろへは動かさない」条件を置く。
+
+```ts
+const at = clamp(now, earliest);
+if (cache.scheduledAt !== null && cache.scheduledAt <= at) return;
+await persist(ctx, cache, at);
+```
+
+- **他の3経路には置かない。** `rearmBeforeWork` / `settleAlarm` は `alarm()` の中から権威ある値を書く（settle は正しい時刻へ後ろ倒しする必要があり、実行可能集合が空なら `deleteAlarm()` してキャッシュを `null` にする）。`rearmFailClosed` は fail-closed の固定間隔。**後ろへ倒したい正当な経路はすべて `alarm()` の内側にあり、RPC 経路には無い。**
+- 早すぎる武装を残すコストは有界である — その起床は走り、実行可能な行が無ければ `settleAlarm` が正しい時刻を書くか `deleteAlarm()` する。インスタンスが作り直された直後は `cache.scheduledAt === null` なので必ず1回張る（安全側）。
+- `AlarmCache` はインスタンス状態なので、この条件は「このインスタンスが張ったと信じている値」に対する単調性であって、ストレージの実値に対するものではない。`settleAlarm` の `deleteAlarm()` だけがキャッシュを `null` にし、それ以外に武装を消す本番経路は無いので、両者は乖離しない。
+
+### Consequences
+
+- 良い点: 高レートの bucket でも「ジョブは高々1回の起床遅れで走る」が成立する。検証は `alarm.integration.test.ts` の "never pushes an existing arm later from an RPC entry"（due な行に対し `now` を進めながら3回叩き、`setAlarm` の書き込みが1回だけであること）。**変異試験で確認** — 条件を外すと同テストのみが赤（`[t+2000] → [t+2000, t+2500, t+2900]`）。
+- 良い点: テスト側の偶発的な再武装も減る。`disarm(stub)` は `AlarmCache` を触らないので、以後の RPC は「キャッシュ済みの武装以降」を要求するかぎり `setAlarm` を発行しない。
+- トレードオフ: 武装が実際より早いまま残る窓ができ、無駄な起床が1回増えうる。行は失われず自己回復する。
+- 引き継ぎ: 起床回数そのものの計測・調整は #38。
+
+## ADR-121: 写像行は `last_reset_requested_at` を `created_at` で作る（NULL で作らない）
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 3周目レビュー adapter-infra W-002 への対応）
+
+### Context
+
+ADR-043 / ADR-091 の不変条件「適格な依頼は必ず未使用の `operationKey` に着地する」は、`last_reset_requested_at` が**全依頼で**前進することに依存している。しかし前進するのは行が存在するときだけで、**行が無い間の依頼は何も残さない**。一方 `send-mail` 行は列挙オラクル対策として写像の有無にかかわらず必ず1行書かれ、`SEND_MAIL_RETENTION_MS`（= 窓）ぶん `done` のまま残る。
+
+したがって同一窓 k の中で「未登録アドレスへの依頼 → そのアドレスで signup（`reserve` が `last_reset_requested_at = NULL` の行を作る）→ 同じアドレスへのリセット依頼」が起きると、`last` が NULL なので適格になり、トークンを発行したうえで `send-mail:{kind}:{H}:{k}` に衝突する。`send-mail` は再武装種ではないので `done` 行は復活せず、**トークンだけが発行されて配送ジョブが立たない**（最大1窓ぶんの未達）。写像行を削除して同じ窓で作り直す経路（`cancel` / `delete`）も同型。
+
+### Decision
+
+`reserve` の `INSERT` で `last_reset_requested_at` に **NULL ではなく `timestamp`（= その行の `created_at`）** を入れる。
+
+- 窓 k で生まれた写像が最初に適格になりうるのは窓 k+1 以降。窓 k+1 に先行する依頼があればその依頼が `last` を k+1 へ進めるので現在の依頼は非適格になり、適格な依頼はやはり必ずその窓の最初の1件である。行の削除→再作成も同様に閉じる。
+- `isResetRequestAllowed` の `lastResetRequestedAt === null` 分岐は**残す**（この書き込み以前の既存行のため）。
+- 列挙オラクルには触れない — 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）の行数・`next_run_at`・応答はいずれも適格性を見ずに決まる。非適格ケースの形は `sendMail.integration.test.ts` の `throttled` が既に固定しており、本変更で「登録直後」がその形に1件加わるだけである。
+
+### Consequences
+
+- 良い点: 不変条件が全称に戻り、`lib/jobBudgets.ts` / `identityDirectory/facade.ts` / `mappingOperations.ts` の3箇所の断定と実装が一致する（#12 / #44 がこの宣言を前提に読む）。`jobBudgets.ts` には「写像行の生成をまたいでも成立するのはこの書き込みのため」を明記した。
+- 良い点: **変異試験で確認** — バインドを `null` へ戻すと `sendMail.integration.test.ts` の "does not let a mapping born mid-window spend a send-mail key an earlier request already used" が `expected 1 to be +0`（トークンだけが存在する状態）で赤。
+- トレードオフ: **登録直後の窓ではリセット依頼が適格にならない**（最大15分）。パスワードを設定した直後の利用者がリセットを必要とする確率と、無言の未達を残す確率を較べての判断である。`identity.integration.test.ts` の "sends the link to the address the signup itself sealed" は主題が配送（ADR-030 → ADR-036 の閉ループ）なので、`signedUpInAnEarlierWindow` で「以前の窓に作られた口座」に均してから測る形にした。
+- 記録: `spec/database/index.md` の `last_reset_requested_at` 行に「新しい行は `created_at` で作る」を追記。
+
+## ADR-122: DO クラス経由の武装は「遠未来の武装」で観測する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 3周目レビュー test W-001 への対応）
+
+### Context
+
+AC-12 (iii)（RPC 経路が `setAlarm` を発行する）は、共有実装（`runRpcEntry`）を `jobs/__tests__/alarm.integration.test.ts` が、User Data クラス経由を `cleanup.integration.test.ts` が押さえていたが、**Identity Directory クラスが共有実装を経由し続けること**だけ観測点が無かった。`entry()` から `runRpcEntry` を外して手書きのゲート + envelope に置き換えても統合スイートは全緑になる（レビュアーの MUT-6、修正前のツリーでも同様＝既存の欠落）。
+
+観測が難しいのは ADR-110 の測定どおり `getAlarm()` が**武装済みで未配送の alarm に `null` を返す**ためで、`alarmEntry.integration.test.ts` はこの理由で `getAlarm()` を使わない方針を明記している。
+
+### Decision
+
+`rpcEntries.integration.test.ts`（DO クラスそのものを主題にする唯一のファイル）に1本足す。**`nextRunAt` を遠未来（`4_000_000_000_000`）にしたジョブを `enqueueJob` で直接入れ、ゲート付き RPC を1本叩き、`getAlarm()` がその時刻を返すことを見る。**
+
+- 遠未来の武装に対しては `getAlarm()` が正しい値を返す（`cleanup.integration.test.ts` の `ARMED_AT` が現にそれを assert している）。同じ定数・同じ手口を使う。
+- プラットフォーム配信が起こりえないので `disarm` は不要（ADR-110 の規則は「自分でキューを駆動ないし観測するテスト」に掛かるもので、ここは武装そのものが観測対象である）。
+- RPC の**前**にも `getAlarm()` を読み、`null` であることを陰性対照にする。これが無いと「`enqueueJob` が張った」可能性を排除できない。
+
+### Consequences
+
+- 良い点: **変異試験で確認** — `entry()` を「`this.gate()` → `ok(body())` / `err(error)`」の手書き（arming 無し）へ置き換えると本テストが `expected null to be 4000000000000` で赤。レビュアーが検出されないと実測した MUT-6 が検出されるようになった。
+- トレードオフ: 「ゲートの全数表」を主題とするファイルに武装の観測が1本混じる。DO クラスを主題にするファイルは他に無く、`cleanup` 側（User Data）との対称性が読み手にとって最も明快だと判断した。

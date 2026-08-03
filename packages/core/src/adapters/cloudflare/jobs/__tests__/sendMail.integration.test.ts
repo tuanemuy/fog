@@ -15,7 +15,10 @@ import {
 import { describe, expect, it } from "vitest";
 import { inIdentityDirectory } from "../../__tests__/doHarness";
 import { assertNoForbiddenValue } from "../../__tests__/forbiddenValues";
-import { encryptCanonical } from "../../identityDirectory/canonicalCipher";
+import {
+  encryptCanonical,
+  sealCanonical,
+} from "../../identityDirectory/canonicalCipher";
 import * as facade from "../../identityDirectory/facade";
 import {
   deriveProviderIdempotencyKey,
@@ -105,6 +108,13 @@ type Io = {
   sent: Sent[];
   lines: string[];
   request: (kind: "email" | "sso", hmac: string, now?: number) => Promise<void>;
+  /** Signup's own two phases, so the row is the one `reserve` actually writes. */
+  register: (args: {
+    hmac: string;
+    credentialId: string;
+    canonical: string;
+    passwordVerifier: string;
+  }) => Promise<void>;
   drain: (now?: number) => Promise<void>;
 };
 
@@ -145,6 +155,40 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
           now,
           material,
           providerIdempotencyKey,
+        );
+      },
+      register: async (args) => {
+        const sealed = await sealCanonical(MAIL_KEYRING, args.canonical, {
+          kind: "email",
+          credentialId: args.credentialId,
+        });
+        facade.reserveCredential(
+          { uow },
+          {
+            kind: "email",
+            hmac: args.hmac,
+            generation: 1,
+            credentialId: args.credentialId,
+            canonical: args.canonical,
+            candidateUserId: "user-1",
+            operationId: "op-1",
+            callerToken: "caller-1",
+            // Far enough out that the `sweep-reservations` row this enqueues is
+            // never due inside a case.
+            reservedUntil: NOW + 24 * 60 * 60 * 1000,
+            isCoordinator: false,
+            passwordVerifier: args.passwordVerifier,
+          },
+          sealed,
+          NOW,
+        );
+        facade.activateReservation(
+          { uow },
+          "email",
+          args.hmac,
+          "op-1",
+          "user-1",
+          "caller-1",
         );
       },
       drain: (now = NOW) =>
@@ -563,6 +607,63 @@ describe("send-mail", () => {
     expect(result.armed[0]?.next_run_at).toBe(NOW + RESET_TOKEN_TTL_MS);
     expect(result.before).toBe(1);
     expect(result.after).toBe(0);
+  });
+
+  /**
+   * The invariant `RESET_REQUEST_WINDOW_MS` states — an eligible request always
+   * lands on an `operationKey` no earlier request could have created — has to
+   * hold across the instant the mapping row itself appears. Requests made while
+   * the address was unregistered leave a `send-mail` row and no row to stamp, so
+   * a mapping that started eligible could walk straight into a key that is
+   * already `done`: `send-mail` is not a re-arming kind, the enqueue converges
+   * silently, and the token would exist with no job left to deliver it.
+   */
+  it("does not let a mapping born mid-window spend a send-mail key an earlier request already used", async () => {
+    const result = await harness(
+      async ({ sql, request, register, drain, sent }) => {
+        const hmac = "de".repeat(32);
+        // Unregistered: a row is written all the same — that uniformity is what
+        // stops the four cases being told apart — and it runs to `done` having
+        // sent nothing.
+        await request("email", hmac);
+        await drain();
+        const spent = mailJobs(sql);
+
+        // The address is signed up for inside that same window.
+        await register({
+          hmac,
+          credentialId: "cred-1",
+          canonical: "user@example.com",
+          passwordVerifier: "verifier",
+        });
+
+        await request("email", hmac);
+        const sameWindow = { rows: mailJobs(sql), tokens: tokenCount(sql) };
+        await drain();
+
+        // Positive control: the next window's key is unused, so the request
+        // that becomes eligible there is delivered.
+        await request("email", hmac, NEXT_WINDOW);
+        await drain(NEXT_WINDOW);
+        return {
+          spent,
+          sameWindow,
+          sent: sent.length,
+          rows: mailJobs(sql),
+          tokens: tokenCount(sql),
+        };
+      },
+    );
+    expect(result.spent).toHaveLength(1);
+    expect(result.spent[0]?.status).toBe("done");
+    // The load-bearing pair: the only row for this window is the finished one,
+    // and no token was minted that it could not carry.
+    expect(result.sameWindow.rows).toHaveLength(1);
+    expect(result.sameWindow.rows[0]?.status).toBe("done");
+    expect(result.sameWindow.tokens).toBe(0);
+    expect(result.rows).toHaveLength(2);
+    expect(result.sent).toBe(1);
+    expect(result.tokens).toBe(1);
   });
 
   it("keeps PII out of the log when there is no recipient to resolve", async () => {

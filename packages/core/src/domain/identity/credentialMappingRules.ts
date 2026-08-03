@@ -93,6 +93,12 @@ export function isUsableForLogin(
  * The cost is that two requests straddling a boundary both issue, so the second
  * replaces the first one's still-live link. That is the same trade-off the
  * window already accepts for the mail itself.
+ *
+ * A `null` stamp is unconditionally eligible, and that arm is for rows that
+ * predate the write which now stamps a new mapping at its own `created_at`: a
+ * freshly created mapping must *not* be eligible in the window it was born in,
+ * because a request made against the same address while it was unregistered may
+ * already have spent that window's `send-mail` key.
  */
 export function isResetRequestAllowed(
   mapping: CredentialMapping,

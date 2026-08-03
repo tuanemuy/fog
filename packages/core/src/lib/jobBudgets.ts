@@ -51,6 +51,13 @@ export const POISON_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  * when its window number is strictly greater than that of the last request, so
  * the row it enqueues is always one no earlier request could have created.
  *
+ * That is a statement about *every* request, including the ones made while the
+ * address was unregistered — those leave a `send-mail` row behind and no
+ * mapping to stamp. It stays exact only because a mapping is created with
+ * `last_reset_requested_at = created_at` rather than NULL
+ * (`adapters/cloudflare/identityDirectory/mappingOperations.ts`), which keeps a
+ * row's first eligible window strictly after the window it was born in.
+ *
  * ## Why the comparison is on window numbers and not on elapsed time
  *
  * A sliding `last + window <= now` test gives the same throttle and one extra

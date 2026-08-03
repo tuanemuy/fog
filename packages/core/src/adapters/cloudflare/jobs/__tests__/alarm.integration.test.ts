@@ -151,6 +151,43 @@ describe("alarm arming", () => {
     expect(at).toBeNull();
   });
 
+  it("never pushes an existing arm later from an RPC entry", async () => {
+    const result = await harness(async ({ ctx, sql }) => {
+      const cache = createAlarmCache();
+      // Due already, so every call clamps to `its own now + 1000` — the shape a
+      // bucket taking more than one RPC per second is in.
+      enqueueJob(sql, 0, {
+        kind: "send-mail",
+        operationKey: "b",
+        payload: {},
+        nextRunAt: BASE + 500,
+      });
+      const writes: number[] = [];
+      const real = ctx.storage.setAlarm.bind(ctx.storage);
+      ctx.storage.setAlarm = (at: number | Date) => {
+        writes.push(typeof at === "number" ? at : at.getTime());
+        return real(at);
+      };
+      try {
+        await armAfterRpc(ctx, sql, BASE + 1_000, cache);
+        await armAfterRpc(ctx, sql, BASE + 1_500, cache);
+        await armAfterRpc(ctx, sql, BASE + 1_900, cache);
+        return {
+          writes: [...writes],
+          armed: await ctx.storage.getAlarm(),
+          cached: cache.scheduledAt,
+        };
+      } finally {
+        ctx.storage.setAlarm = real;
+      }
+    });
+    // The second and third calls would each have written `now + 1000`, which is
+    // later than what is already armed: the due row would then never come up.
+    expect(result.writes).toEqual([BASE + 2_000]);
+    expect(result.armed).toBe(BASE + 2_000);
+    expect(result.cached).toBe(BASE + 2_000);
+  });
+
   it("re-arms a fail-closed DO at a fixed interval without deleting the alarm", async () => {
     const result = await harness(async ({ ctx }) => {
       const cache = createAlarmCache();

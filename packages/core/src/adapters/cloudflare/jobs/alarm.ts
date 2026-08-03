@@ -88,6 +88,22 @@ export async function settleAlarm(
  *
  * Issued straight after `run()` returns with no `await` in between, so nothing
  * can interleave between the commit and the arming decision.
+ *
+ * **Forward-only, and this is the one arming path that has to say so.** `clamp`
+ * pushes an already-due job to `now + 1000`, and a Durable Object has a single
+ * alarm that `setAlarm` overwrites — so without the guard below, a bucket
+ * receiving RPCs more often than once a second would re-arm to
+ * `latest now + 1000` on every call and never deliver the wake-up its due rows
+ * are waiting for. That rate is reachable: `lookupCredential` runs once per
+ * login and an Identity Directory bucket is shared by many users. The other
+ * three paths need no guard — `rearmBeforeWork` / `settleAlarm` write the
+ * authoritative time from inside `alarm()`, and `rearmFailClosed` is a fixed
+ * fail-closed interval.
+ *
+ * Keeping an *earlier* alarm than the queue asks for is free: that wake-up runs,
+ * finds nothing runnable and `settleAlarm` writes the exact time or deletes the
+ * alarm outright. An instance that was just recreated has no cached time and so
+ * always arms once, which is the safe direction.
  */
 export async function armAfterRpc(
   ctx: DurableObjectState,
@@ -97,7 +113,9 @@ export async function armAfterRpc(
 ): Promise<void> {
   const earliest = earliestNextRunAt(sql);
   if (earliest === null) return;
-  await persist(ctx, cache, clamp(now, earliest));
+  const at = clamp(now, earliest);
+  if (cache.scheduledAt !== null && cache.scheduledAt <= at) return;
+  await persist(ctx, cache, at);
 }
 
 /** The fixed re-arm a fail-closed DO uses. No backoff is applied. */

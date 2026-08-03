@@ -86,7 +86,7 @@ export function createCredentialMappingStore(
              ?, NULL, NULL, NULL,
              0, ?, ?,
              ?, 0, NULL,
-             NULL, ?,
+             ?, ?,
              ?, ?, NULL, ?,
              ?, ?, ?, ?
            )`,
@@ -98,6 +98,17 @@ export function createCredentialMappingStore(
           args.sealedCanonical.ciphertext,
           args.sealedCanonical.generation,
           args.sealedCanonical.nonce,
+          // `last_reset_requested_at` starts at `created_at`, not NULL. The
+          // window-uniqueness invariant `recordResetRequested` maintains only
+          // covers instants at which the row exists; a row born NULL is
+          // immediately eligible, and an earlier request against the *same
+          // address while it was unregistered* has already left a `send-mail`
+          // row under this window's key — `send-mail` does not re-arm, so the
+          // token would be minted with no job left to deliver it. Stamping the
+          // row's own birth instant closes that gap: the first window in which
+          // a fresh mapping can be eligible is the one after it was created,
+          // and no request can have run in that window yet.
+          timestamp,
           args.operationId,
           args.candidateUserId,
           args.reservedUntil,

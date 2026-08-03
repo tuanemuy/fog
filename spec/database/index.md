@@ -583,7 +583,7 @@ DO ごとのメタ情報。単一行。
 |---|---|---|
 | `failed_attempts` | INTEGER | NOT NULL。既定 0 |
 | `next_attempt_allowed_at` | INTEGER | nullable。ロックアウトの解除時刻 |
-| `last_reset_requested_at` | INTEGER | nullable。リセット依頼のスロットル判定 |
+| `last_reset_requested_at` | INTEGER | nullable。リセット依頼のスロットル判定。**新しい行は `created_at` で作る**（NULL ではない） — NULL で作ると生まれた窓で即座に適格になり、同じ窓に未登録アドレス宛の依頼が残した `send-mail` の `done` 行と衝突して、トークンだけが発行され配送ジョブが立たない。NULL は写像行の生成をまたぐ既存行のためだけに残る |
 
 **saga コーディネーター状態:**
 
