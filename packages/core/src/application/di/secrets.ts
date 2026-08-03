@@ -14,8 +14,8 @@ import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/lib/secretLengths";
  * The split between the two shapes is the distribution boundary itself.
  * `DIRECTORY_ROUTING_SECRET` is on the request side **only**: handing it to the
  * state Worker would let a bucket derive its own name from a raw address, which
- * is exactly what the design spends the HMAC to prevent (ADR-016). Symmetrically
- * the mail-encryption and reset-token keyrings are state-side only.
+ * is exactly what the design spends the HMAC to prevent. Symmetrically the
+ * mail-encryption and reset-token keyrings are state-side only.
  */
 export type RequestSecrets = Readonly<{
   sessionSecret: SessionSecret;
@@ -47,8 +47,7 @@ export type SessionSecret = string & { readonly [sessionSecretBrand]: true };
  * Signing key for AI client tokens. **A separate key from the session secret**,
  * because the two token kinds differ in TTL, in how they are revoked and in
  * when they are issued — sharing a key would make either rotation drag the
- * other down with it. #37 supplies the container; the `typ: "aiClient"` codec
- * itself is #13.
+ * other down with it.
  */
 export type AiClientTokenSecret = string & {
   readonly [aiClientTokenSecretBrand]: true;
@@ -67,8 +66,8 @@ export type KeyringEntry = Readonly<{
  * A **non-empty** tuple, because `requireKeyring` — the single construction
  * site — rejects anything that does not declare exactly one active generation.
  * Saying so in the type is what lets `forCanonical` promise at least one
- * locator, and that promise is what removes the "the keyring produced no
- * active locator" throw from the signup saga (ADR-073).
+ * locator, so the signup saga needs no "the keyring produced no active
+ * locator" branch.
  */
 export type Keyring = Readonly<{
   entries: readonly [KeyringEntry, ...KeyringEntry[]];

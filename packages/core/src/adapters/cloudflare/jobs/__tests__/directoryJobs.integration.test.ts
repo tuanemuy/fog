@@ -278,7 +278,7 @@ describe("resume-signup", () => {
       return {
         outcome,
         // The reverse information a rollback will need is still on the row:
-        // deleting it here would destroy the evidence before #45 reads it.
+        // deleting it here would destroy the evidence before anything reads it.
         locators: sql
           .exec<{ locators: string | null; caller_token: string | null }>(
             "SELECT locators, caller_token FROM credential_mappings",

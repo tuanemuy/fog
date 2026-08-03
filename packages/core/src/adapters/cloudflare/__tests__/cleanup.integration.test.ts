@@ -8,8 +8,7 @@ import { enqueueJob } from "../jobs/table";
  *
  * Every other integration file derives a **fresh Durable Object name** per
  * test from a module-scope counter, so removing either cleanup call leaves them
- * all green — measured. That is a fine first line of defence, and it is also
- * why the cleanup had no test: nothing observed it.
+ * all green — measured.
  *
  * The two cases below are deliberately **identical** and share one fixed name.
  * Whichever runs second can only pass if, between them, two things happened:
@@ -22,16 +21,10 @@ import { enqueueJob } from "../jobs/table";
  * **Measured, `reset()` alone does both**, so it is the only load-bearing half
  * of the `afterEach`: removing it turns this file red, while removing
  * `evictAllDurableObjects()` leaves the whole integration suite green. The
- * second call is insurance against that changing, and `setup.ts` says the same
- * — a redundant call believed to be load-bearing is how a real cleanup gap gets
- * misdiagnosed, so the two comments must not drift apart.
+ * second call is insurance against that changing.
  *
  * Being identical is what makes the pair independent of execution order, which
  * matters because CI runs the suite under `--sequence.shuffle`.
- *
- * `gate.integration.test.ts` already uses fixed names (`gate-ud-tables` and
- * friends), so this is not a hypothetical style — it is the style that was
- * already relying on a cleanup nothing checked.
  */
 
 // Far enough ahead that the platform never delivers it during the run, and a

@@ -43,11 +43,10 @@ export interface AccountStore {
   /**
    * Creates the account row. Signup phase 2 is the only caller.
    *
-   * `spec/domains/identity.md` lists three methods and then hands the writers
-   * of `status` / `deleted_at` / `caller_token` to #37 explicitly; this is that
-   * decision for the creation side (ADR-025). `account` carries the OCC
-   * `version` and is on the aggregate side, so adding a method here does not
-   * disturb the non-aggregate-store roster.
+   * `spec/domains/identity.md` leaves the writer of `status` / `deleted_at` /
+   * `caller_token` open; this is it. `account` carries the OCC `version` and is
+   * on the aggregate side, so adding a method here does not disturb the
+   * non-aggregate-store roster.
    */
   initialize(callerToken: string, now: Date): void;
 

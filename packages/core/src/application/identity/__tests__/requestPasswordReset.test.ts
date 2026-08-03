@@ -10,13 +10,14 @@ import { requestPasswordReset } from "../requestPasswordReset";
 /**
  * Which buckets a reset request reaches.
  *
- * `loginWithPassword` has always walked every generation the keyring carries;
- * this asked the active one only. During a routing-key rotation that produced a
- * user who could sign in but could not reset — the request landed in an empty
- * new-generation bucket, the send found no mapping and settled `done`, and
- * because the four cases answer identically neither the user nor an operator
- * could see it. A recovery path disappearing silently for the length of a
- * rotation is a security problem, not an availability one.
+ * The request has to walk every generation the keyring carries, as
+ * `loginWithPassword` does. Asking the active one only leaves a user whose
+ * mapping a routing-key rotation has not remapped yet able to sign in but
+ * unable to reset — the request lands in an empty new-generation bucket, the
+ * send finds no mapping and settles `done`, and because the four cases answer
+ * identically neither the user nor an operator can see it. A recovery path
+ * disappearing silently for the length of a rotation is a security problem, not
+ * an availability one.
  */
 
 const LOCATORS: readonly [DirectoryLocator, ...DirectoryLocator[]] = [

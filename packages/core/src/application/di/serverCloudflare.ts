@@ -51,7 +51,7 @@ export type ServerEnv = Readonly<{
   // Delivered as wrangler secrets (`wrangler secret put` / `.dev.vars`), never
   // as `[vars]` entries. `DIRECTORY_ROUTING_SECRET` is on this side and **not**
   // on the state Worker's: a bucket that could derive its own name from an
-  // address would defeat the point of the HMAC (ADR-016).
+  // address would defeat the point of the HMAC.
   SESSION_SECRET?: string;
   AI_CLIENT_TOKEN_SECRET?: string;
   DIRECTORY_ROUTING_SECRET?: string;

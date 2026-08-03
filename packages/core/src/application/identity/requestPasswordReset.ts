@@ -20,13 +20,13 @@ export type RequestPasswordResetInput = {
  * ## Every generation, not just the active one
  *
  * `forCanonical` yields the active generation first and the previous one while
- * the keyring still carries it, and `loginWithPassword` has always walked both.
- * Asking only the active bucket left a user whose mapping had not yet been
- * remapped able to sign in but unable to reset — the request would reach an
- * empty bucket, the send would find no mapping and settle `done`, and the
- * uniform answer meant neither the user nor an operator could see it. Recovery
- * quietly disappearing for the length of a rotation is a security problem, not
- * merely an availability one.
+ * the keyring still carries it, and `loginWithPassword` walks both. Asking only
+ * the active bucket leaves a user whose mapping a rotation has not remapped yet
+ * able to sign in but unable to reset — the request reaches an empty bucket,
+ * the send finds no mapping and settles `done`, and the uniform answer means
+ * neither the user nor an operator can see it. Recovery quietly disappearing
+ * for the length of a rotation is a security problem, not merely an
+ * availability one.
  *
  * The request goes to **every** locator rather than to the first one holding a
  * row: each bucket writes exactly one job row whatever it finds, so an
@@ -34,15 +34,15 @@ export type RequestPasswordResetInput = {
  * whether — the mapping exists. Probing first would reintroduce the very
  * distinction the uniform path removes.
  *
- * **Handoff to #44.** While a rotation has the same credential mapped in two
+ * **Known overlap.** While a rotation has the same credential mapped in two
  * generations at once, both buckets find a row, both judge themselves eligible
  * and both issue — so one request produces two mails carrying two independently
  * live links. Issuing deletes the credential's earlier unused tokens, but that
  * delete is scoped to the bucket it runs in and cannot reach across
  * generations, and consuming one link leaves the other redeemable until its TTL
  * expires. Narrowing the fan-out is not the answer (it is what restores the
- * oracle); folding the overlap belongs to the transfer procedure, which is
- * #44's. #37 has no transfer, so the state is unreachable here.
+ * oracle); folding the overlap belongs to the transfer procedure. There is no
+ * transfer procedure today, so the state is unreachable here.
  */
 export async function requestPasswordReset({
   container,

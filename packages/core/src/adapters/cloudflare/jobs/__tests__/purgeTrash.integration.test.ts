@@ -331,7 +331,7 @@ describe("purge-trash", () => {
     // Wake-up 1 spends both chunks recomputing and yields with nothing deleted;
     // wake-up 2 finds the recomputation predicate empty and only then starts
     // deleting. Nothing is destroyed before the phase that recomputes it has
-    // come back empty, which is the ordering AC-10 asks for.
+    // come back empty.
     expect(result.outcomes).toEqual(["yield", "yield", "done"]);
     expect(result.survivors).toEqual([2, 1, 0]);
   });

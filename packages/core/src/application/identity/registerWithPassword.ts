@@ -25,9 +25,7 @@ export type RegisterWithPasswordOutput = {
  *
  * **No `catch` translating unique-constraint violations.** With a synchronous
  * commit the violation is raised in the adapter's own frame, so
- * `createCredentialMappingStore` translates it — which is where it belonged all
- * along. The old comment here conceded the translation was only safe given what
- * that one unit of work happened to write.
+ * `createCredentialMappingStore` translates it.
  */
 export async function registerWithPassword({
   container,

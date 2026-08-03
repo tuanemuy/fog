@@ -26,7 +26,7 @@ import { exists, one, type Sql } from "../sql/exec";
  * The responsibilities therefore split at the boundary: **canonicalisation
  * (`Email.create` / `ssoCanonical`) and HMAC derivation
  * (`directoryLocator.forCanonical`) run in the request Worker; resolving a row
- * from `(kind, hmac)` runs here** (ADR-016). The email / SSO distinction is not
+ * from `(kind, hmac)` runs here**. The email / SSO distinction is not
  * lost — it survives as the `kind` argument, supplied by the side that knows
  * which canonical it built.
  */

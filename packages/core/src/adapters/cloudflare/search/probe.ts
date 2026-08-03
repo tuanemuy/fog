@@ -4,10 +4,8 @@ import { normalizeForIndex } from "./normalize";
 /**
  * The **minimum** read needed to verify the tokenizer in the real runtime. It
  * is not `SearchIndexPort`: ranking policy, snippets and the opaque-cursor
- * snapshot are #10's, and building them here would duplicate that work.
- *
- * #10 either absorbs these two functions into its `SearchIndexPort`
- * implementation or deletes them.
+ * snapshot belong to that port's implementation, which either absorbs these
+ * two functions or deletes them.
  *
  * Two paths, because `tokenize='trigram'` cannot index a sequence shorter than
  * three characters: a 1–2 character query matches **nothing** through `MATCH`

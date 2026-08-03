@@ -28,8 +28,8 @@ export async function CurrentUserPanel() {
   );
 
   // The address itself is deliberately absent: the original lives encrypted in
-  // the Identity Directory and is decrypted one at a time through an entry this
-  // issue does not implement (#12). What is shown here is the non-PII summary.
+  // the Identity Directory and is decrypted one at a time through an entry
+  // point that does not exist yet. What is shown here is the non-PII summary.
   const signInMethods = user.credentials.filter(
     (credential) => credential.usableForLogin,
   );

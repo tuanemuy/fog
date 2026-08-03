@@ -20,21 +20,20 @@ import type { JobRow } from "../table";
  * ## The payload carries the request, never the answer
  *
  * All the row holds is the `(kind, hmac)` the caller asked about — the same
- * pair its `operation_key` already carries, alongside the request window
- * (ADR-043). Everything else is resolved from this
- * bucket's tables at send time. Two things force that shape. A job row is
- * readable by anyone who can read the table and survives in the
- * point-in-time-recovery log for thirty days after pruning, so a token on it
- * would be a secret at rest; and a payload that varied with the outcome would
- * make a burst against a registered address collide on `payload_digest` while a
- * burst against an unregistered one did not — a timing-free enumeration oracle
- * (`.thread/37/adr.md` ADR-029).
+ * pair its `operation_key` already carries, alongside the request window.
+ * Everything else is resolved from this bucket's tables at send time. Two things
+ * force that shape. A job row is readable by anyone who can read the table and
+ * survives in the point-in-time-recovery log for thirty days after pruning, so a
+ * token on it would be a secret at rest; and a payload that varied with the
+ * outcome would make a burst against a registered address collide on
+ * `payload_digest` while a burst against an unregistered one did not — a
+ * timing-free enumeration oracle.
  *
  * The link's secret half is `HMAC(IDENTITY_RESET_TOKEN_KEY[generation],
  * tokenId)`, derived moments before the send from
  * `identityDirectory/resetTokenCrypto.ts` — the same module the issuing entry
  * point hashed the row's `token_hash` with, which is what makes issue, delivery
- * and consumption compose (ADR-042). Neither a database dump nor the key alone
+ * and consumption compose. Neither a database dump nor the key alone
  * reproduces it: the dump lacks the key, and the key lacks 128 bits of
  * `tokenId`.
  *
@@ -54,7 +53,7 @@ import type { JobRow } from "../table";
  * enqueue time and therefore stable across every redelivery of the same row.
  * Deriving it from the message instead would give each retry a new key, and
  * sending the `operation_key` itself would put the canonical address's
- * full-length HMAC in a header bound for a third party (ADR-092). There is no
+ * full-length HMAC in a header bound for a third party. There is no
  * fallback to that column: a `send-mail` row without the derived key was
  * written by something other than the reset-request path, and refusing it is
  * cheaper than leaking the key it was standing in for.
@@ -160,7 +159,7 @@ export const sendMail: JobHandler<IdentityDirectoryJobContext> = async (
   // so "is there an address" would answer yes and send a link that promotes a
   // reservation into a way in. The test is the verifier, not the address — and
   // it is the domain's, so that the lookup entry, the reset request and this
-  // send cannot drift apart (ADR-072).
+  // send cannot drift apart.
   if (
     mapping === null ||
     !holdsPasswordVerifier({ passwordVerifier: mapping.password_verifier })

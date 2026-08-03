@@ -41,10 +41,10 @@ export type ResetTokenIssueMaterial = Readonly<{
  * Both take a value that has **already been hashed** by the caller. The port is
  * synchronous because it sits on a unit-of-work context, WebCrypto is not, so
  * hashing happens one level out in the Durable Object's RPC entry point — the
- * same shape `reserveCredential` uses for the sealed canonical (ADR-036 /
- * ADR-042). `adapters/cloudflare/identityDirectory/resetTokenCrypto.ts` is the
- * single place the derivation chain is written, and issuing, sending and
- * verifying all read it, so the three cannot drift into disagreement again.
+ * same shape `reserveCredential` uses for the sealed canonical.
+ * `adapters/cloudflare/identityDirectory/resetTokenCrypto.ts` is the single
+ * place the derivation chain is written, and issuing, sending and verifying all
+ * read it, so the three cannot drift into disagreement.
  *
  * ## What the row guarantees, precisely
  *
@@ -72,9 +72,8 @@ export interface PasswordResetTokenPort {
   ): void;
   /**
    * `tokenHash` is `SHA-256` of the secret parsed out of the link the user
-   * followed — not the link, and not `token_id`. #12 owns the consumption
-   * entry point and computes it there, asynchronously, before opening its unit
-   * of work.
+   * followed — not the link, and not `token_id`. The consumption entry point
+   * computes it there, asynchronously, before opening its unit of work.
    */
   verifyAndConsume(
     tokenHash: string,

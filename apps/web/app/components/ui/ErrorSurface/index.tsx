@@ -5,9 +5,8 @@ import { ERROR_TITLE, ErrorRetry } from "@/components/ui/ErrorRetry";
  *
  * Rendered by `_app`'s `errorComponent` (which stands in for a whole
  * protected screen) and by any route that needs a boundary of its own
- * (`/settings`, so its sign-out survives the panel failing). Both used to
- * carry a verbatim copy of this body; sharing it is what keeps a change to
- * one from silently leaving the other behind.
+ * (`/settings`, so its sign-out survives the panel failing). Sharing one body
+ * is what keeps a change to one from silently leaving the other behind.
  *
  * `className` carries the only intended difference between them: `_app`
  * replaces the screen and pads both ends, while a route-level surface

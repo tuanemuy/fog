@@ -12,9 +12,9 @@ import { describe, expect, it } from "vitest";
  * hand-off searches in the same stroke, and doing it silently.
  *
  * Scoped to the whole TypeScript tree rather than to `valueObject.ts` alone: a
- * single-file guard is what let a raw NUL reach the shared forbidden-value
- * fixture, where it silently disabled `grep` over the one module whose job is
- * to catch leaks.
+ * single-file guard leaves the shared forbidden-value fixtures free to carry a
+ * raw NUL, which silently disables `grep` over the very modules whose job is to
+ * catch leaks.
  */
 
 const ROOTS = ["packages/core/src", "apps/web/app"];

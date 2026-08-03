@@ -7,23 +7,22 @@ import type { JobRow } from "../table";
  *
  * ## What it does today, and what it deliberately does not
  *
- * The saga's phases 1b → 4 are cross-Durable-Object calls. #37 confines the
- * Durable-Object selection point to the request Worker's composition root, so a
+ * The saga's phases 1b → 4 are cross-Durable-Object calls. The Durable-Object
+ * selection point is confined to the request Worker's composition root, so a
  * bucket holds no way to reach another DO and the *re-drive* half of this job
  * cannot be written without moving that boundary. What is implemented here is
  * the half that needs no stubs: observe the coordinator's reservation row, let
  * a saga that finished settle quietly, and take an abandoned one to the uniform
- * terminus. See `.thread/37/adr.md` ADR-031.
+ * terminus.
  *
  * ## The terminus writes nothing away
  *
  * `poison` + `terminal_reason` is where an abandoned signup stops, and the
  * reservation row is left exactly as it is — `locators`, `candidate_user_id`
- * and `caller_token` are the only reverse information a rollback will have, and
- * #45 is the issue that consumes them. Deleting them here would remove the
- * evidence before anything read it. Expired reservations are reclaimed by
- * `sweep-reservations`, which is a different question from whether the saga
- * itself can still advance.
+ * and `caller_token` are the only reverse information a rollback will have.
+ * Deleting them here would remove the evidence before anything read it.
+ * Expired reservations are reclaimed by `sweep-reservations`, which is a
+ * different question from whether the saga itself can still advance.
  */
 
 function readOperationId(row: JobRow): string | null {

@@ -17,8 +17,8 @@ import type { IdentityDirectoryJobContext, JobHandler } from "../registry";
  *
  * The reservation row itself is *not* the saga's terminus — the reverse
  * information a recovery needs (`locators`, `candidate_user_id`, `caller_token`)
- * lives on it, and #45 designs what reads them. What this sweep deletes is only
- * a reservation whose TTL ran out with no commit anywhere.
+ * lives on it. What this sweep deletes is only a reservation whose TTL ran out
+ * with no commit anywhere.
  */
 
 function deleteExpiredChunk(sql: Sql, now: number, limit: number): number {

@@ -54,11 +54,11 @@ export interface UserDataUnitOfWorkContext {
    * items it governs commit together.
    *
    * It is on the context rather than behind a memo / knowledge repository
-   * because #37 builds none of those (ADR-001) while it does own the retention
-   * setting. The predicate behind it is self-consuming, so a change whose trash
-   * is larger than one transaction leaves the remainder to the `purge-trash`
-   * job — which recomputes before it deletes anything, and therefore cannot
-   * purge an item on a window the user has just lengthened.
+   * because no such repository exists, while the retention setting itself is
+   * owned here. The predicate behind it is self-consuming, so a change whose
+   * trash is larger than one transaction leaves the remainder to the
+   * `purge-trash` job — which recomputes before it deletes anything, and
+   * therefore cannot purge an item on a window the user has just lengthened.
    */
   recalcTrashPurgeAfter(retentionDays: number, limit: number): number;
 
@@ -94,7 +94,7 @@ export interface UserDataUnitOfWorkContext {
 export interface IdentityDirectoryUnitOfWorkContext {
   /** Reads. The DO-side shape — see the port's JSDoc for why it differs. */
   credentialMappingRepository: CredentialMappingRepository;
-  /** Writes, as CAS operations (ADR-012). */
+  /** Writes, as CAS operations. */
   credentialMappingStore: CredentialMappingStore;
   resetTokenStore: PasswordResetTokenPort;
   rotationCheckpointStore: RotationCheckpointStore;

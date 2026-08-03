@@ -8,8 +8,8 @@ import { one, run, type Sql } from "../sql/exec";
 /**
  * `rotation_checkpoints`, keyed by `(rotation_kind, bucket_index, generation)`.
  *
- * **Nothing in #37 ever writes here** — the transfer procedure that would is
- * #44's. The store exists so the table has the single write path the
+ * **Nothing writes here yet** — the transfer procedure that would is not
+ * implemented. The store exists so the table has the single write path the
  * non-aggregate-store roster claims it has, rather than being listed with no
  * way to reach it.
  */

@@ -7,9 +7,9 @@ import { matchFts, matchShortKeyword } from "../probe";
 import { upsertSearchEntry } from "../projection";
 
 // Standing evidence for `.adr/003`: `tokenize='trigram'` is not documented for
-// workerd, so measurement is the only ground the decision stands on. These
-// cases were first run as the #37 step-1 spike; keeping them permanent is what
-// makes a workerd upgrade that breaks the tokenizer visible in CI.
+// workerd, so measurement is the only ground the decision stands on. Keeping
+// these cases permanent is what makes a workerd upgrade that breaks the
+// tokenizer visible in CI.
 
 const SEED = [
   { id: "a", body: "東京駅の構内を歩く", timestamp: 300 },
@@ -54,8 +54,8 @@ function seeded<T>(fn: (sql: SqlStorage) => T) {
  * `body-hit` carries it in its body and the newer one. `ORDER BY bm25(...),
  * e.timestamp DESC` therefore puts `body-hit` first on every tie — so
  * `title-hit` leading is attributable to the 3.0 title weight and to nothing
- * else. The seeded corpus for the cases above has no titles at all, which is
- * why that weight went unexercised.
+ * else. The seeded corpus for the cases above has no titles at all, so that
+ * weight is unexercised there.
  */
 const RANKED = [
   {
@@ -165,8 +165,8 @@ describe("FTS5 trigram tokenizer", () => {
   it("treats FTS5 operators in a keyword as text rather than syntax", async () => {
     // Every one of these parses as an expression on the right-hand side of
     // `MATCH`: an unbalanced quote is a syntax error, `AND` / `NEAR` are
-    // operators, `*` is a prefix marker and `(` opens a group. Unquoted they
-    // surfaced to the user as a 500 on any search containing them — and the
+    // operators, `*` is a prefix marker and `(` opens a group. Unquoted, each
+    // surfaces to the user as a 500 on any search containing it — and the
     // trigram tokenizer indexes punctuation, so symbols in a query are ordinary
     // search terms rather than an exotic case.
     const keywords = [

@@ -5,8 +5,8 @@
  * `loginWithPassword` (application) levels its response time by verifying a
  * dummy hash that declares this cost; `pbkdf2PasswordHasher` (adapters) types
  * its `DEFAULT_PBKDF2_ITERATIONS` as `typeof` this constant so the two cannot
- * drift. Before it moved here the adapter imported the application module,
- * which is the reversed dependency AC-25 forbids.
+ * drift. Neither may own the number: an adapter importing an application
+ * module is a reversed dependency.
  *
  * An import-free leaf: `lib/` is what every layer may depend on.
  */

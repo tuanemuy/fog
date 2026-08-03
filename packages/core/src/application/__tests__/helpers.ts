@@ -15,7 +15,7 @@
 // Importing a concrete adapter here is deliberate and is why
 // `application/**/__tests__/` is excluded from the reversed-import check: a
 // harness plays the composition root's role, which is to hand the code under
-// test the real thing (ADR-018).
+// test the real thing.
 import { env } from "cloudflare:test";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import type { RequestContainer } from "@repo/core/application/di/types";

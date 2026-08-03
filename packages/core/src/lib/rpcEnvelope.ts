@@ -8,9 +8,9 @@ import type { SerializedErrorBase } from "./error";
  *
  * The types live in `lib/` rather than in `adapters/cloudflare/platform/`
  * because the restoration side (`application/rpc/restoreError.ts`) needs them
- * too, and an application → adapters import would be a reversed dependency
- * (ADR-014). `lib/` is what `CLAUDE.md` defines as the structural primitives
- * every layer may depend on.
+ * too, and an application → adapters import would be a reversed dependency.
+ * `lib/` is what `CLAUDE.md` defines as the structural primitives every layer
+ * may depend on.
  *
  * Note the payload type is deliberately *not* presentation's `SerializedError`
  * union: that union is assembled in `apps/web/app/presentation/errorResponse.ts`

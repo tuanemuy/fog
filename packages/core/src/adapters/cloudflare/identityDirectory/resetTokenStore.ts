@@ -24,7 +24,7 @@ function randomHex(byteLength: number): string {
  * generation all arrive as arguments, because the derivation is WebCrypto and a
  * `run()` callback is type-rejected from being asynchronous — so it happens one
  * level out, in the Durable Object's RPC entry point
- * (`identityDirectory/resetTokenCrypto.ts`, ADR-042). The same reason
+ * (`identityDirectory/resetTokenCrypto.ts`). The same reason
  * `reserveCredential` takes a sealed canonical rather than a plaintext one.
  *
  * What the row therefore holds is `token_id` — an identifier, never accepted as
@@ -39,7 +39,7 @@ function randomHex(byteLength: number): string {
  * credential rather than per request. Its reach is this bucket: rows for the
  * same credential in another routing generation are not visible from here — see
  * `application/identity/requestPasswordReset.ts` for what that means during a
- * rotation (#44).
+ * rotation.
  *
  * That delete is **not** the table's cleanup. It leaves consumed rows
  * (`used_at` set, and carrying a `change_auth_token`) and every expired row for

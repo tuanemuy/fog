@@ -9,8 +9,7 @@ import type { UsecaseContainer } from "../types";
  * The account-creation saga, orchestrated from the request Worker.
  *
  * There is no distributed transaction between Durable Objects, so this is a
- * resumable saga instead. Phases 0–4 below correspond one-to-one with
- * `.thread/34/design.md` §6.3.
+ * resumable saga instead, in the five phases marked out below.
  *
  * ## Nothing here is supplied by the client
  *
@@ -59,10 +58,9 @@ type ResolvedCredential = Readonly<{
 const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
 /**
- * @param credentials A **non-empty** tuple. "A signup with no credentials"
- *   used to be guarded by a runtime `throw` of a bare `Error`, which carries no
- *   `kind` and would therefore have surfaced as a 500; the tuple type makes the
- *   caller unable to reach that state at all (ADR-073).
+ * @param credentials A **non-empty** tuple, which makes "a signup with no
+ *   credentials" unreachable for the caller instead of a runtime guard whose
+ *   `kind`-less throw would surface as a 500.
  */
 export async function runSignupSaga(
   container: UsecaseContainer,

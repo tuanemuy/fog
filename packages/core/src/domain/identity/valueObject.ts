@@ -139,9 +139,9 @@ const DOMAIN_LABEL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
  * `:`, `/`, `?` and `#`, so without this `a@example.com/evil` becomes a
  * canonical address — the value that is simultaneously the uniqueness key, the
  * HMAC input and the recipient of a reset mail — and mail to it is never
- * delivered. The non-ASCII route reached `URL` and rejected the same shapes
- * there; the ASCII route reached nothing at all, and that asymmetry was the
- * hole.
+ * delivered. The non-ASCII route passes through `URL`, which rejects the same
+ * shapes; the ASCII route passes through nothing else, so this is the only gate
+ * it has.
  *
  * Applied after punycode, never before: `xn--` labels are LDH, and checking
  * the pre-conversion form would reject every internationalised domain.
@@ -308,7 +308,7 @@ const SSO_CANONICAL_SEPARATOR = "\u0000";
  * would put our notion of sameness out of step with theirs.
  *
  * Deriving the bucket from this value belongs to the request Worker; the
- * Identity Directory only ever sees `(kind, hmac)` (ADR-016).
+ * Identity Directory only ever sees `(kind, hmac)`.
  */
 export function ssoCanonical(
   provider: SsoProvider,

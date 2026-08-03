@@ -152,10 +152,10 @@ async function askForResetLink(email: string): Promise<void> {
  *
  * A mapping is created with `last_reset_requested_at = created_at`, so an
  * account is deliberately **not** eligible for a reset link inside the very
- * window it was signed up in (ADR-121): a request made against the same address
- * while it was still unregistered may already have spent that window's
- * `send-mail` key. Cases whose subject is the delivery rather than the throttle
- * say so here instead of waiting out a fifteen-minute window.
+ * window it was signed up in: a request made against the same address while it
+ * was still unregistered may already have spent that window's `send-mail` key.
+ * Cases whose subject is the delivery rather than the throttle say so here
+ * instead of waiting out a fifteen-minute window.
  */
 async function signedUpInAnEarlierWindow(email: string): Promise<void> {
   const locator = (await container().directoryLocator.forCanonical(email))[0];
@@ -977,9 +977,8 @@ describe("requestPasswordReset", () => {
     await askForResetLink(email);
 
     // Nothing seeded the ciphertext: the recipient is recovered from what the
-    // signup wrote, which closes the loop the write side used to leave open
-    // (ADR-030 → ADR-036). An unregistered address in the same run produces the
-    // same job row and no recipient at all.
+    // signup wrote. An unregistered address in the same run produces the same
+    // job row and no recipient at all.
     expect(await deliverDueMail(email)).toEqual([email]);
 
     const unknown = address();

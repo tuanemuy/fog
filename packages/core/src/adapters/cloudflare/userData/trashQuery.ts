@@ -3,15 +3,15 @@ import { all, one, run, type Sql } from "../sql/exec";
 /**
  * Queries backing the `purge-trash` job.
  *
- * They live apart from the memo / knowledge repositories because #37 does not
- * build those (ADR-001) but does have to run trash retention, which needs
- * exactly these three shapes across the three trashable tables.
+ * They live apart from the memo / knowledge repositories: those do not exist
+ * yet, while trash retention already has to run, and it needs exactly these
+ * three shapes across the three trashable tables.
  */
 
 // Interpolated into SQL below. Safe, and deliberately not parameterised: a
 // table name cannot be a bind parameter, and this tuple is a closed literal no
-// caller can influence. ADR-009's ban on `${` covers the DDL strings, whose
-// point is that they are transcribed verbatim from the spec.
+// caller can influence. The ban on `${` covers the DDL strings, whose point is
+// that they are transcribed verbatim from the spec.
 const TRASHABLE = ["memos", "topics", "documents"] as const;
 
 export type TrashItemType = "memo" | "topic" | "document";

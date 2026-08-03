@@ -25,7 +25,7 @@ export type ReserveCredentialArgs = Readonly<{
   /**
    * The CAS key. There is no `payload_digest` column on `credential_mappings`
    * (`spec/database/index.md` lists the columns and has none), so a replay is
-   * recognised by `operationId` alone — see ADR-024.
+   * recognised by `operationId` alone.
    */
   operationId: string;
   callerToken: string;
@@ -43,11 +43,11 @@ export type ReserveCredentialArgs = Readonly<{
   coordinatorLocator?: string;
   /**
    * Required, on every reservation. The bucket's row is the single place the
-   * raw address survives (`.thread/34/design.md` §6.2.1 (a)), so a row written
-   * without it silently loses the account's only recoverable recipient — the
-   * failure would first surface at that user's first password reset, long after
-   * the signup that caused it. Sealing is asynchronous, so it happens in the
-   * RPC entry *before* the transaction opens and arrives here as a value.
+   * raw address survives, so a row written without it silently loses the
+   * account's only recoverable recipient — the failure would first surface at
+   * that user's first password reset, long after the signup that caused it.
+   * Sealing is asynchronous, so it happens in the RPC entry *before* the
+   * transaction opens and arrives here as a value.
    */
   sealedCanonical: SealedCanonical;
 }>;
@@ -57,8 +57,7 @@ export type ReserveCredentialArgs = Readonly<{
  *
  * Deliberately **not** methods on `CredentialMappingRepository`:
  * `spec/domains/identity.md` says so outright — these are operations a
- * multi-step procedure issues, not domain-typed reads — and leaves the
- * implementation shape to #37 (ADR-012).
+ * multi-step procedure issues, not domain-typed reads.
  *
  * Every method is a CAS conditioned on some combination of `operationId`,
  * `payloadDigest`, `status` and `changeState`. **None takes an
@@ -70,7 +69,8 @@ export type ReserveCredentialArgs = Readonly<{
  * `IdentityDirectoryUnitOfWorkContext`. Without it the Directory would have no
  * write path through a unit of work at all, and "the reservation row and its
  * `sweep-reservations` job are written in one `transactionSync`" could only be
- * expressed by putting raw `sql` on the context — which §8.2 forbids.
+ * expressed by putting raw `sql` on the context, which the unit-of-work
+ * contract forbids.
  */
 export interface CredentialMappingStore {
   /**
@@ -162,12 +162,11 @@ export interface CredentialMappingStore {
   /**
    * Stamps `last_reset_requested_at`, the throttle window for reset requests.
    *
-   * The eighth method, where `spec/domains/identity.md` names six and ADR-012
-   * adds `reportResult` as the seventh. That column is listed with no writer
-   * anywhere, and the reset-request entry cannot throttle on a value nothing
-   * ever sets — see ADR-026. Like the rest it must run inside the same
+   * Beyond the methods `spec/domains/identity.md` names: the column is listed
+   * there with no writer anywhere, and the reset-request entry cannot throttle
+   * on a value nothing ever sets. Like the rest it must run inside the same
    * transaction as the job row, so it belongs on this port rather than beside
-   * it. The window's size, ceiling and decay are #18's.
+   * it.
    *
    * Called on **every** request, whether or not it was allowed to issue and
    * whether or not the locator names a row: the stamp is what

@@ -16,10 +16,9 @@ export type RotationCheckpoint = Readonly<{
  * Per-bucket progress of a key rotation, keyed by
  * `(rotationKind, bucketIndex, generation)` — an upsert, not an append.
  *
- * **Nothing in #37 writes here.** The writer is the transfer procedure, which
- * #44 designs; the columns and the write path exist now so that the retirement
- * argument ("no row of the previous generation remains") has somewhere to land
- * when it arrives.
+ * **Nothing writes here yet.** The writer is the transfer procedure; the
+ * columns and the write path exist now so that the retirement argument ("no row
+ * of the previous generation remains") has somewhere to land when it arrives.
  */
 export interface RotationCheckpointStore {
   record(checkpoint: RotationCheckpoint): void;

@@ -7,15 +7,13 @@ import { describe, expect, it } from "vitest";
  * No module of the application layer imports `adapters/`, except the two
  * composition roots.
  *
- * This is AC-25 (ii) with its exclusion tightened. The plan's `grep` excludes
- * `di/` wholesale, on the grounds that a composition root is the one legitimate
- * place concrete adapters are assembled — and that grounds covers exactly two
- * files. `di/facades.ts` assembles nothing; it is a contract module, and it sat
- * inside the exclusion importing seven adapter-owned types that travelled on
- * `RequestContainer` into four usecases. The mechanical check passed while the
- * rule it stands for was broken, twice over (ADR-071).
+ * The exclusion names two files rather than covering `di/` wholesale. Being a
+ * composition root is what earns the exemption, and that covers exactly two
+ * modules: `di/facades.ts` assembles nothing — it is a contract module — so a
+ * directory-wide exclusion lets it import adapter-owned types that then travel
+ * on `RequestContainer` into usecases while this check still passes.
  *
- * Narrowing the exclusion to *value* imports would not work: both roots
+ * Narrowing the exclusion to *value* imports would not work either: both roots
  * `import type` an adapter's `*FacadeDeps` and `DirectoryLocator` as part of
  * the same assembly. Naming the two files is what makes the check say what the
  * rule says.

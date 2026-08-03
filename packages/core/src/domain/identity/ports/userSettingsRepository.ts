@@ -5,7 +5,7 @@ import type {
 import type { User } from "../entity";
 
 /**
- * The per-user settings half of what used to be `UserRepository`.
+ * Persistence for the per-user settings aggregate.
  *
  * **No `findById`.** `userId` was consumed when the Durable Object stub was
  * selected, and one instance holds exactly one user's settings — a lookup
@@ -20,8 +20,8 @@ import type { User } from "../entity";
  * `CredentialLocatorStore.record` / `deleteByCredentialId`, and `save` is only
  * ever about `trashRetentionDays` and the OCC `version`. `User` deliberately
  * offers no `addCredential` / `removeCredential`: a call that bumped `version`
- * and left the set untouched would make the procedure look like it worked
- * (ADR-070). The "at least one way in" check that an unlink owes is
+ * and left the set untouched would make the procedure look like it worked. The
+ * "at least one way in" check that an unlink owes is
  * `User.loginCredentialCount`.
  *
  * Follows the `TransactionalRepository` OCC convention (insert for first-time

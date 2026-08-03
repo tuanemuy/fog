@@ -25,7 +25,7 @@ import type { SharedDeps } from "./types";
  * is not here**. Canonicalisation and HMAC derivation belong to the request
  * Worker, and giving a bucket the routing secret would let it reconstruct its
  * own name from an address — the exact property the design spends the HMAC to
- * remove (ADR-016).
+ * remove.
  */
 export type StateEnv = Readonly<{
   USER_DATA: DurableObjectNamespace;
@@ -89,29 +89,24 @@ export function createIdentityDirectoryContainer(
     appUrl: env.APP_URL,
     // Unbound `MAIL_SENDER` falls back to the noop, which warns on every call.
     // Silently dropping mail in production is the failure mode this makes
-    // impossible to miss (ADR-007).
+    // impossible to miss.
     mailSender:
       env.MAIL_SENDER === undefined
         ? createNoopMailSender(shared.logger)
         : createBindingMailSender(env.MAIL_SENDER, env.APP_URL, shared.logger),
     // No reset-token generation is threaded through here. The generation is
     // decided where the token is derived — the RPC entry point, which reads the
-    // keyring itself — and travels to the row as part of the issue material
-    // (ADR-042). Reading a keyring in a Durable Object's constructor would also
-    // mean an unset optional binding could take `alarm()` down with it.
+    // keyring itself — and travels to the row as part of the issue material.
+    // Reading a keyring in a Durable Object's constructor would also mean an
+    // unset optional binding could take `alarm()` down with it.
     uow: createIdentityDirectoryUnitOfWorkProvider(ctx, shared.clock),
   };
 }
 
 /**
- * The state Worker's secrets, validated strictly. Held in their own object and
- * never merged into a container's public surface, for the same reason the
- * request side nests `RequestSecrets`: a flat placement rides a rest-spread out
- * of the module.
- */
-/**
- * The same secrets, for a caller that must not be taken down by an unset
- * optional binding — the Durable Object's `alarm()`, which may never throw.
+ * The same secrets as `readStateSecrets`, for a caller that must not be taken
+ * down by an unset optional binding — the Durable Object's `alarm()`, which may
+ * never throw.
  *
  * `null` means "this deployment binds neither key". A job that actually needs
  * one then fails on its own, loudly, and lands in `poison` with a reason; the
@@ -128,6 +123,12 @@ export function readStateSecretsOrNull(env: StateEnv): StateSecrets | null {
   return readStateSecrets(env);
 }
 
+/**
+ * The state Worker's secrets, validated strictly. Held in their own object and
+ * never merged into a container's public surface, for the same reason the
+ * request side nests `RequestSecrets`: a flat placement rides a rest-spread out
+ * of the module.
+ */
 export function readStateSecrets(env: StateEnv): StateSecrets {
   return {
     mailEncryptionKeyring: requireKeyring(

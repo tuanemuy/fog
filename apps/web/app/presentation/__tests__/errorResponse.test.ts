@@ -129,7 +129,7 @@ describe("redactForClient", () => {
 
   // The leak this closes: a job-table conflict interpolates the job's
   // `operationKey` into its message, and for `send-mail` that key is derived
-  // from an HMAC. `conflict` used to pass through untouched.
+  // from an HMAC.
   it("drops a server-minted key carried in a conflict message", () => {
     const operationKey = "send-mail:9f2c1d0e8a7b6c5d4e3f2a1b0c9d8e7f";
     const redacted = redactForClient(

@@ -8,8 +8,7 @@ import { normalizeForIndex } from "./normalize";
  * call into this module from inside the *same* `transactionSync`. Forgetting
  * to raises no exception — the row is written, the index silently goes stale,
  * and nothing surfaces until a user notices a search result that should not
- * exist. #37 owns no memo / knowledge repository, so the obligation is carried
- * by #2〜#6; this JSDoc is where that obligation is stated.
+ * exist.
  *
  * The subtraction side is written with FTS5's special command syntax and the
  * **old** values:

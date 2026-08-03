@@ -10,16 +10,15 @@ import { createRequestContainer } from "../serverCloudflare";
 
 // The stub guard the composition root wraps every Durable Object stub in.
 //
-// `translateStubError` has had unit tests since it was written, but nothing
-// exercised the wiring that is supposed to call it, and the wiring was where
-// the hole was: the guard recognised a pending call with `instanceof Promise`,
-// which is false for every real stub call, so **only** a synchronous throw was
-// ever translated (`.thread/37/manual-test/results/TC-E03.md`).
+// `translateStubError` has unit tests of its own; what needs exercising here is
+// the wiring that is supposed to call it.
 //
 // So the fixture below is the whole point of this file. A workerd JS RPC call
 // returns `Rpc.Result<R>` — a custom thenable that is not a `Promise` — and a
 // fake built out of `async` methods would reproduce the translation while
-// leaving the hole untested, which is exactly the state the suite was in.
+// leaving the wiring untested: a guard that recognises a pending call by
+// `instanceof Promise` passes against such a fake and translates **only** a
+// synchronous throw of a real one.
 
 const SESSION_SECRET = requireSessionSecret("0123456789abcdef0123456789abcdef");
 const AI_CLIENT_TOKEN_SECRET = requireAiClientTokenSecret(

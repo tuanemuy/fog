@@ -13,8 +13,8 @@ import {
 } from "../secrets";
 import { createRequestContainer } from "../serverCloudflare";
 
-// AC-3: canonical addresses, their HMACs, the derived Durable Object locator
-// and the opaque bindings must not be recoverable from operational output.
+// Canonical addresses, their HMACs, the derived Durable Object locator and the
+// opaque bindings must not be recoverable from operational output.
 //
 // The composition root is where the first three are *produced*, so this walks
 // the routing half of it — the locator derivation and the two stub factories,
@@ -26,10 +26,9 @@ import { createRequestContainer } from "../serverCloudflare";
 // **The values asserted on are the ones this run derived**, not the fixed
 // strings in that list. A hard-coded hmac or locator is never the one a given
 // run produces, so a check against the list alone passes while the real value
-// leaks — which is exactly how the job runner logged a full-length hmac for as
-// long as it did. The two haystacks are also kept apart: what the namespace was
-// asked to address is recorded separately from what was logged, so the
-// assertion no longer has to exclude the value it most needs to look for.
+// leaks. The two haystacks are also kept apart: what the namespace was asked to
+// address is recorded separately from what was logged, so the assertion does
+// not have to exclude the value it most needs to look for.
 
 const SESSION_SECRET = requireSessionSecret("0123456789abcdef0123456789abcdef");
 const AI_CLIENT_TOKEN_SECRET = requireAiClientTokenSecret(
@@ -107,9 +106,9 @@ describe("routing material never reaches observable output", () => {
   });
 
   it("keeps the shared list's placeholder locator in the shape a real one takes", () => {
-    // The list carried `dir:g1:b0042` for a while, and a zero-padded index is
-    // something the derivation never emits — so every assertion that consulted
-    // it for a locator leak was structurally unable to fire.
+    // A placeholder the derivation never emits — a zero-padded index, say —
+    // leaves every assertion that consults the list for a locator leak
+    // structurally unable to fire.
     const placeholders = FORBIDDEN_VALUES.filter((value) =>
       value.startsWith("dir:"),
     );

@@ -10,9 +10,8 @@ const BAR = "h-skeleton-line w-full max-w-skeleton-short";
  * including how it is carried (the leading row's `mt-sm`, not a margin under
  * the label).
  *
- * One row, because every account this issue can create holds exactly one
- * login credential (`registerWithPassword` records the email one and nothing
- * else). Revisit together with the multi-credential list in #12.
+ * One row, because every account holds exactly one login credential
+ * (`registerWithPassword` records the email one and nothing else).
  *
  * The sign-out affordance is deliberately absent: it renders outside the
  * streamed fragment (`routes/_app/settings.tsx`), so it is already on screen

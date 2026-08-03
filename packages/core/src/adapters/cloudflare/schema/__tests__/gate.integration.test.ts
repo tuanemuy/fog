@@ -233,8 +233,8 @@ describe("migration gate — Identity Directory DO", () => {
 });
 
 // Every column of every table is written and read back once. Without a typed
-// query builder (ADR-009) a column-name typo is otherwise invisible until it
-// reaches production.
+// query builder a column-name typo is otherwise invisible until it reaches
+// production.
 describe("every column round-trips", () => {
   it("User Data DO", async () => {
     const values = await inUserData("gate-ud-columns", ({ ctx, sql }) => {

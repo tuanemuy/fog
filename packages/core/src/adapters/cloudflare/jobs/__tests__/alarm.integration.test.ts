@@ -247,8 +247,9 @@ describe("alarm arming", () => {
  *
  * The cases above call `armAfterRpc` themselves, which is the right granularity
  * for the arming rules but skips the two decisions `runRpcEntry` owns: that the
- * arm happens **after a body that threw** — AC-12 (iii)'s "on both paths" — and
- * that an arm which cannot be persisted turns a successful body into an `err`.
+ * arm happens **after a body that threw**, on both the success and the failure
+ * path, and that an arm which cannot be persisted turns a successful body into
+ * an `err`.
  * Move the `armAfterRpc` call inside the `try` block and nothing else in this
  * repository notices; the first case below does.
  */

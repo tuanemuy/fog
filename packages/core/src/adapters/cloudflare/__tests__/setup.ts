@@ -14,11 +14,11 @@ import { afterEach } from "vitest";
  * - `reset()` deletes the data in every binding, which is what a fixed-name
  *   test needs: Durable Object SQLite is persistent storage and nothing rolls
  *   it back for us. Removing this line turns `cleanup.integration.test.ts` red
- *   (measured 2026-08).
+ *   (measured).
  * - `evictAllDurableObjects()` is intended to destroy the instances while
  *   keeping their durable storage, which is what would clear **in-memory**
  *   state — the `AlarmCache` above all — without giving the production DO
- *   classes a test-only reset method (ADR-015). **Measured, it is currently
+ *   classes a test-only reset method. **Measured, it is currently
  *   redundant**: after `reset()` alone, a Durable Object comes back with its
  *   alarm cleared *and* re-arms on the next RPC, which a surviving `AlarmCache`
  *   would have suppressed. So `reset()` is already discarding the instance in
@@ -31,9 +31,8 @@ import { afterEach } from "vitest";
  *
  * **This does not lean on an automatic rollback.** `isolatedStorage` does not
  * exist in `@cloudflare/vitest-pool-workers@0.16.20` (verified against the
- * installed package, 2026-08). A future version that brings automatic rollback
- * back would make `reset()` redundant too — the judgement is version-specific
- * on purpose.
+ * installed package). A future version that brings automatic rollback would
+ * make `reset()` redundant too — the judgement is version-specific on purpose.
  */
 afterEach(async () => {
   await reset();

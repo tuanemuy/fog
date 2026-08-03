@@ -33,18 +33,17 @@ export type SharedDeps = Readonly<{
  * Request-path container. Handed to the presentation layer for SSR head/meta
  * via `config`, and to usecases for everything else.
  *
- * **No `unitOfWorkProvider`.** Units of work run inside a Durable Object now;
- * the request Worker reaches one through a stub factory instead.
+ * **No `unitOfWorkProvider`.** Units of work run inside a Durable Object; the
+ * request Worker reaches one through a stub factory instead.
  *
- * Repositories stay out, and the JSDoc invariant that put them there still
- * holds: `UnitOfWorkContext` is their single point of issue, which is what
- * keeps every aggregate access inside a unit of work. **A DO facade is
- * transport, not a repository** — it takes primitives, returns primitives, and
- * exposes no repository type and no context type on this side.
+ * Repositories stay out: `UnitOfWorkContext` is their single point of issue,
+ * which is what keeps every aggregate access inside a unit of work. **A DO
+ * facade is transport, not a repository** — it takes primitives, returns
+ * primitives, and exposes no repository type and no context type on this side.
  *
- * `passwordHasher` is a deliberate exception, as before: a domain port that
- * touches no storage, and hashing must happen *before* a unit of work opens so
- * a CPU-bound derivation never sits inside a transaction.
+ * `passwordHasher` is a deliberate exception: a domain port that touches no
+ * storage, and hashing must happen *before* a unit of work opens so a
+ * CPU-bound derivation never sits inside a transaction.
  *
  * `sessionCodec` is for the presentation layer only — usecases are handed
  * `UsecaseContainer`, which omits it.
@@ -64,7 +63,7 @@ export type RequestContainer = SharedDeps &
       locator: DirectoryLocator,
     ) => IdentityDirectoryFacade;
     /**
-     * canonical → bucket locators. Request-side only, by design (ADR-016).
+     * canonical → bucket locators. Request-side only, by design.
      *
      * Non-empty: the active generation is `[0]`, and every write goes there.
      */

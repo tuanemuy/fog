@@ -11,12 +11,12 @@ import {
 import { createCredentialMappingStore } from "../mappingOperations";
 
 /**
- * `activate` as a **compare-and-set**, which the module claimed to be and was
- * not: it issued an unconditional `UPDATE`, never read the matched-row count,
- * and reported success when nothing had been promoted. Signup's phase 3 then
- * ran to completion over a reservation that was swept, or that belonged to
- * another operation, leaving an account nobody can ever sign in to and no
- * signal anywhere saying why.
+ * `activate` as a **compare-and-set**.
+ *
+ * A predicate that matched nothing must not report success: signup's phase 3
+ * would then run to completion over a reservation that was swept, or that
+ * belonged to another operation, leaving an account nobody can ever sign in to
+ * and no signal anywhere saying why.
  *
  * The binding is `callerToken` as well as `operationId`, for the reason
  * `recordCredentialLocator` states about itself: `operationId` is a value the
@@ -116,8 +116,7 @@ describe("credential mapping activate", () => {
   it("refuses when the reservation is gone", async () => {
     const error = await seeded(({ sql, store }) => {
       sql.exec("DELETE FROM credential_mappings");
-      // Exactly what `sweep-reservations` leaves behind. It used to report
-      // success and let the saga finish over nothing.
+      // Exactly what `sweep-reservations` leaves behind.
       return caught(() =>
         store.activate(KIND, HMAC, OPERATION, CANDIDATE, CALLER),
       );
@@ -179,12 +178,12 @@ describe("credential mapping promote", () => {
 });
 
 /**
- * The same shape as `activate` and `promote`, and it was the one write of the
- * eight that reported success on a predicate that had matched nothing.
+ * The same shape as `activate` and `promote`.
+ *
  * `change_state IS NULL` genuinely misses whenever another change is in flight,
  * and this write is the instant the old material stops verifying — so a silent
- * no-op hands #12 a saga that believes a fail-closed window opened when it did
- * not.
+ * no-op leaves the caller a saga that believes a fail-closed window opened when
+ * it did not.
  */
 describe("credential mapping beginChange", () => {
   it("starts a change on a credential with none in flight", async () => {

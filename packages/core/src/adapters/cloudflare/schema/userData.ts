@@ -11,12 +11,12 @@ import { codeVersionOf, type MigrationStep } from "./types";
  * `schema_version` stays in one place (`schema/gate.ts`).
  *
  * Statements are plain strings, never template literals: no column name is
- * ever interpolated (ADR-009), so what is written here is what runs.
+ * ever interpolated, so what is written here is what runs.
  *
  * The single-row tables (`account` / `user_settings`) carry no business
- * primary key, and the spec explicitly leaves the mechanism to #37. It is a
- * unique index over a constant-valued expression rather than a surrogate `id`
- * column, so the column list stays verbatim identical to the spec.
+ * primary key, and the spec leaves the mechanism open. It is a unique index
+ * over a constant-valued expression rather than a surrogate `id` column, so
+ * the column list stays verbatim identical to the spec.
  */
 const V1: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS account (

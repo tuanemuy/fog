@@ -6,11 +6,9 @@ import type { JobKind } from "./jobKind";
  * Like `jobKind.ts` this is a leaf: the only import is a *type* import, so no
  * module here is ever evaluated by pulling a constant in. Composition roots
  * and DO execution modules must read tuning values from this file and from
- * nowhere else — an execution module that exports its own `DEFAULT_*` is what
- * dragged module-scope randomness into the top-level Worker in #40.
- *
- * The values are the starting points measured in the #37 spike
- * (`.thread/37/adr.md` の付録). Operational tuning is #38.
+ * nowhere else — an execution module that exports its own `DEFAULT_*` drags
+ * that module into the top-level Worker's graph, where workerd rejects any
+ * module-scope evaluation it carries.
  */
 
 /** Outer bound on how many jobs one alarm wake-up may run. */
@@ -39,11 +37,10 @@ export const POISON_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  *
  * **One number governs two things that must never disagree**: how often a
  * credential may mint a new reset token, and which `send-mail` row a request
- * converges onto (`send-mail:{kind}:{hmac}:{floor(now / this)}`). Splitting
- * them is what produced the failure this constant now closes — a request could
- * pass the issue throttle, delete the live token and then collide with the
- * previous window's `done` row, so the user's working link was destroyed and no
- * replacement was sent.
+ * converges onto (`send-mail:{kind}:{hmac}:{floor(now / this)}`). Split them
+ * and a request can pass the issue throttle, delete the live token and then
+ * collide with the previous window's `done` row — destroying the user's working
+ * link without sending a replacement.
  *
  * With the two equal the invariant is exact, because eligibility is decided on
  * the *same* `floor(t / window)` the key carries
@@ -67,7 +64,7 @@ export const POISON_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  * permanently false and the victim can never receive a reset link again.
  * Window numbers remove it: whoever asks first in a window is eligible, so a
  * link goes to the registered address at least once per window no matter who
- * asked (ADR-091). Bounding the request rate itself remains #18's.
+ * asked. Bounding the request rate itself is a separate concern.
  */
 export const RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
 

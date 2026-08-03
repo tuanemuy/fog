@@ -4,16 +4,15 @@ import type { CredentialMapping } from "./ports/credentialMappingRepository";
  * "Is this mapping a way in, and may it be used right now?" — as pure
  * predicates over {@link CredentialMapping}.
  *
- * These used to be three slightly different inline conditions in the adapter
- * layer (login's lookup, the reset request's eligibility, the send job's
- * recipient test). They implement one domain rule —
- * `spec/domains/identity.md`'s "the test is whether password verification
- * material exists, not whether a credential exists" — and a rule written three
- * times is a rule that gets amended twice. Living here, they are what #12 and
- * #18 amend when they add a condition.
+ * They implement one domain rule — `spec/domains/identity.md`'s "the test is
+ * whether password verification material exists, not whether a credential
+ * exists". Login's lookup, the reset request's eligibility and the send job's
+ * recipient test all consult it; a rule written three times inline is a rule
+ * that gets amended twice.
  *
- * The throttle windows stay out: their size, ceiling and decay are #18 / #38's
- * to decide, so they arrive as arguments rather than as constants here.
+ * The throttle windows stay out: their size, ceiling and decay are an
+ * operational concern, so they arrive as arguments rather than as constants
+ * here.
  */
 
 /**
@@ -94,8 +93,8 @@ export function isUsableForLogin(
  * replaces the first one's still-live link. That is the same trade-off the
  * window already accepts for the mail itself.
  *
- * A `null` stamp is unconditionally eligible, and that arm is for rows that
- * predate the write which now stamps a new mapping at its own `created_at`: a
+ * A `null` stamp is unconditionally eligible, which is why a new mapping is
+ * created with `last_reset_requested_at = created_at` rather than NULL: a
  * freshly created mapping must *not* be eligible in the window it was born in,
  * because a request made against the same address while it was unregistered may
  * already have spent that window's `send-mail` key.

@@ -18,8 +18,8 @@ import { RESET_REQUEST_WINDOW_MS } from "@repo/core/lib/jobBudgets";
  * address. `providerIdempotencyKey` is handed to the mail provider as an
  * `Idempotency-Key` header, i.e. it crosses the boundary the routing secret
  * defines. Sending the key itself would let an (address, HMAC) table accumulate
- * outside — the same argument ADR-045 made for the runner's logs, one hop
- * further out (ADR-092).
+ * outside — the same argument that keeps the HMAC out of the runner's logs, one
+ * hop further out.
  *
  * SHA-256 keeps every property the header needs: it is a deterministic function
  * of the `operationKey`, so a redelivery of one row presents the same key and a

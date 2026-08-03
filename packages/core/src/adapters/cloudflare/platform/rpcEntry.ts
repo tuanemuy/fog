@@ -26,14 +26,10 @@ export type RpcEntryDeps = Readonly<{
  * `sweep-reservations` insert. Arming only on success would leave that job
  * sitting until some unrelated RPC happened to arrive.
  *
- * **This is not the `finally` the notes warn about.** That warning is about CPU
- * eviction, where the isolate is killed and no `finally` runs at all; nothing
- * can be recovered there. An exception is an ordinary control-flow path and is
- * recoverable. The two have different scopes and must not be conflated.
- *
- * The broad `catch` here is the one `CLAUDE.md` designates for "the Durable
- * Object's RPC entry points": a thrown class does not survive the RPC boundary,
- * so it has to become a value.
+ * **Do not conflate this with CPU eviction.** The warning against recovering in
+ * a `finally` is about eviction, where the isolate is killed and no `finally`
+ * runs at all; nothing can be recovered there. An exception is an ordinary
+ * control-flow path and is recoverable.
  */
 export async function runRpcEntry<T>(
   deps: RpcEntryDeps,

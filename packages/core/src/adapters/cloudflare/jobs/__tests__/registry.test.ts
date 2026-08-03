@@ -5,11 +5,10 @@ import {
   USER_DATA_JOB_HANDLERS,
 } from "../registry";
 
-// ADR-002 fixes the counts: 12 kinds are declared, 7 get handlers. The gap of
-// 5 (`finalize-withdrawal` / `resume-link` / `resume-credential-change` /
-// `sweep-orphan-mapping` / `rotate-encryption`) belongs to #12 / #44 / #45,
-// and pinning the number is what keeps it from drifting silently.
-//
+// The counts are fixed: 12 kinds are declared, 7 get handlers. The gap of 5
+// (`finalize-withdrawal` / `resume-link` / `resume-credential-change` /
+// `sweep-orphan-mapping` / `rotate-encryption`) is deliberate, and pinning the
+// number is what keeps it from drifting silently.
 const EXPECTED_USER_DATA_HANDLERS = ["migrate-bulk", "purge-trash", "reindex"];
 const EXPECTED_DIRECTORY_HANDLERS = [
   "resume-signup",

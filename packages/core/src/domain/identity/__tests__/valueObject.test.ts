@@ -142,11 +142,11 @@ describe("Email", () => {
     expect(Email.create("user@日本語.jp")).toBe("user@xn--wgv71a119e.jp");
   });
 
-  // The same four shapes on an **ASCII** domain used to pass untouched: that
-  // route never reached `URL`, so nothing looked at the domain at all and
-  // `a@example.com/evil` became a canonical address — a uniqueness key, an
-  // HMAC input and a mail recipient that no mail can reach. The label grammar
-  // now runs on the converted form, so both routes pass one gate.
+  // The **ASCII** route never reaches `URL`, so without the label grammar
+  // nothing would look at the domain at all and `a@example.com/evil` would
+  // become a canonical address — a uniqueness key, an HMAC input and a mail
+  // recipient that no mail can reach. The grammar runs on the converted form,
+  // so both routes pass one gate.
   it.each([
     ["a port", "user@example.com:8080"],
     ["a path", "user@example.com/evil"],

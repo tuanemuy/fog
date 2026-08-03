@@ -32,10 +32,10 @@ import type { JobRow } from "../table";
  * normalisation change, which needs the originals in `memos.body` /
  * `documents.title` / `documents.body`.
  *
- * Those live behind repositories #37 does not own (ADR-001), so a normalisation
- * change is carried out by re-running the *projection* from the aggregate side
- * and belongs to #2〜#6 along with the rest of that obligation. `spec/database`
- * describes this job as covering both; the narrower half is what exists.
+ * Those live behind repositories this adapter does not own, so a normalisation
+ * change is carried out by re-running the *projection* from the aggregate side.
+ * `spec/database` describes this job as covering both; the narrower half is what
+ * exists.
  */
 
 const STEP_NAME = "reindex";

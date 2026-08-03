@@ -12,10 +12,10 @@ import { UserDataDurableObject } from "../userData";
  * The claim is that the migration gate sits at the head of **every** RPC entry,
  * with exactly two exemptions — the operator diagnostics `read-schema-version`
  * and `list-bucket-user-ids`, which have to keep answering precisely when the
- * gate refuses to let anything else through. Until now that was checked by
- * reading the source; here every entry is actually called on a Durable Object
- * whose `schema_version` is ahead of this deployment, and the two exemptions
- * are called on the same one.
+ * gate refuses to let anything else through. Every entry is actually called on
+ * a Durable Object whose `schema_version` is ahead of this deployment, and the
+ * two exemptions are called on the same one — reading the source cannot show
+ * that.
  *
  * The membership of the two lists is also checked against the class's own
  * prototype, so adding an entry without deciding which side it belongs on

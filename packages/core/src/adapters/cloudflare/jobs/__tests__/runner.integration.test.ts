@@ -351,9 +351,9 @@ describe("job runner", () => {
     });
     assertNoForbiddenValue([result.reason]);
     expect(result.reason).toBe("ConflictError:UNIQUE_VIOLATION");
-    // The log obeys the same rule as `terminal_reason`, and used to not: it
-    // carried the whole `operation_key` and the raw exception. Both are
-    // projected now — a correlation digest and the failure's identity.
+    // The log obeys the same rule as `terminal_reason`: neither carries the
+    // whole `operation_key` or the raw exception, only a correlation digest and
+    // the failure's identity.
     //
     // Positive control, not decoration: `assertNoForbiddenValue` over an empty
     // array passes, so the claim below is only worth anything once the runner

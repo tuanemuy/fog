@@ -40,7 +40,7 @@ export type CredentialMapping = Readonly<{
  * `(kind, full-length hmac)`, and `DIRECTORY_ROUTING_SECRET` — the material the
  * HMAC needs — is distributed to the request Worker only. Handing it to the
  * state Worker as well would break the non-duplicated-distribution rule that
- * keeps the raw address out of the Directory (ADR-016).
+ * keeps the raw address out of the Directory.
  *
  * So the split is: **canonicalisation (`Email.create` / `ssoCanonical`) and
  * HMAC derivation (`directoryLocator.forCanonical`) belong to the request

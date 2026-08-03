@@ -7,8 +7,8 @@ import type { Email } from "@repo/core/domain/identity/valueObject";
 /**
  * The two `MailSender` implementations.
  *
- * No mail provider has been chosen yet (that is #38), so the binding-backed
- * adapter stays deliberately thin: it POSTs to whatever Worker is bound as
+ * No mail provider has been chosen yet, so the binding-backed adapter stays
+ * deliberately thin: it POSTs to whatever Worker is bound as
  * `MAIL_SENDER` and lets that Worker own the provider. Building the reset link
  * is the adapter's job, per `spec/domains/identity.md`.
  */

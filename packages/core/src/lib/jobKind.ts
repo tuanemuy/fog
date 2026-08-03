@@ -4,8 +4,8 @@
  *
  * This module has **no imports**: it is read by the composition roots, by the
  * DO-side execution modules and by unit tests alike, and a value import from
- * an execution module into a composition root is exactly the cycle that made
- * the top-level Worker evaluate module-scope randomness (#40).
+ * an execution module into a composition root is exactly the cycle that makes
+ * the top-level Worker evaluate module-scope randomness, which workerd rejects.
  *
  * `spec/database/index.md` (the `kind` full-count table) is the source of
  * truth. Adding a `kind` means editing that table, the four-category table in

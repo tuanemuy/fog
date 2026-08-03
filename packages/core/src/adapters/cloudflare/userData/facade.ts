@@ -26,25 +26,6 @@ import { CHUNK_BUDGETS } from "@repo/core/lib/jobBudgets";
 /**
  * The User Data DO's usecase facade.
  *
- * ## The full RPC-entry table (`.thread/34/design.md` §5.1)
- *
- * The design's table has 26 rows: one class-(1) row, 11 class-(2) rows and 14
- * class-(3) rows. The class-(1) row is a *category* — "every user-data usecase
- * facade" — not a named entry, so the named entries number 11 + 14 = 25, of
- * which #37 implements 12 and leaves 13 to later issues. Rows belonging to the
- * Identity Directory are listed in that class's facade.
- *
- * | Entry | Class | Status |
- * |---|---|---|
- * | user-data usecase facades (category) | (1) | #37 implements `getCurrentUser` / `changeTrashRetentionDays`; memo / knowledge / search / trash / export / AI connections are #2–#10, #13 |
- * | `initialize-account` | (2) | implemented |
- * | `verify-login` | (2) | implemented |
- * | `exchange-authz-code` | (2) | **not implemented** — OAuth token endpoint → #13 |
- * | `advance-credential-change` | (3-d) | **not implemented** → #12 |
- * | `record-credential-locator` | (3-d) | implemented (signup phase 4; the rotation caller's protocol is #44) |
- * | `abandon-account` | (3-a) | **not implemented** — issued only by the automatic recovery → #45 |
- * | `read-schema-version` | (3-c) | implemented, and deliberately outside `runRpcEntry` |
- *
  * ## Two rules every entry here obeys
  *
  * 1. **Primitives only.** Brands exist at the type level and structured clone
@@ -59,9 +40,9 @@ import { CHUNK_BUDGETS } from "@repo/core/lib/jobBudgets";
  * Not here. `application/di/facades.ts` declares them alongside the
  * `UserDataFacade` interface these functions realise, because they travel on
  * that interface into `RequestContainer` and from there into the usecases —
- * and a usecase written in a type this module owns is a reversed dependency
- * (ADR-071). `CurrentUserView` is likewise the application's outbound DTO,
- * which this entry projects onto rather than restating.
+ * and a usecase written in a type this module owns is a reversed dependency.
+ * `CurrentUserView` is likewise the application's outbound DTO, which this
+ * entry projects onto rather than restating.
  */
 
 export type UserDataFacadeDeps = Readonly<{

@@ -6,10 +6,8 @@ import { runMigrationGate } from "../../schema/gate";
 import { USER_DATA_CODE_VERSION, USER_DATA_STEPS } from "../../schema/userData";
 import { conditionalUpdate } from "../../sql/occ";
 
-// Misattribution is the failure this file exists for, and it is the one #26
-// recorded against the D1 stack: there, a batch of statements was guarded by
-// inserts into an `_occ_guard` table whose CHECK fired somewhere in the batch,
-// so "which write lost" had to be inferred from a driver message. Nothing here
+// Misattribution is the failure this file exists for: inferring "which write
+// lost" from anything other than the losing statement itself. Nothing here
 // infers anything — `UPDATE … RETURNING 1` reports its own matched-row count,
 // inside the statement that did the matching.
 
@@ -80,12 +78,12 @@ describe("DO-side OCC", () => {
         stale: attempt("present", 9),
       };
     });
-    // AC-6 asks that the two are not *confused*, which they are not: nothing
-    // here infers an outcome from another statement. It does not ask that they
-    // be told apart, and they deliberately are not — see `sql/occ.ts` for why a
-    // second read to publish the distinction buys no caller anything. Pinning
-    // the equality is what stops a later change from adding a `NotFoundError`
-    // arm without noticing that it changes a documented contract.
+    // The two are not *confused*: nothing here infers an outcome from another
+    // statement. They are also deliberately not told apart — see `sql/occ.ts`
+    // for why a second read to publish the distinction buys no caller
+    // anything. Pinning the equality is what stops a later change from adding
+    // a `NotFoundError` arm without noticing that it changes a documented
+    // contract.
     expect(outcome.missing).toBe(
       "OPTIMISTIC_LOCK_FAILURE:Optimistic lock failure while saving memo absent",
     );
@@ -100,9 +98,9 @@ describe("DO-side OCC", () => {
   });
 
   it("does not read another statement's success as its own", async () => {
-    // The shape #26 was about: two guarded writes in one transaction, one of
-    // which matches. A judgement taken from the transaction rather than from
-    // the statement would call the losing write a success.
+    // Two guarded writes in one transaction, one of which matches. A judgement
+    // taken from the transaction rather than from the statement would call the
+    // losing write a success.
     const outcome = await fresh(({ ctx, sql }) => {
       sql.exec(MEMO_INSERT, "hit", "a", 0);
       sql.exec(MEMO_INSERT, "miss", "b", 5);
@@ -161,8 +159,9 @@ describe("DO-side OCC", () => {
       });
       return {
         body: bodyOf(sql, "m1"),
-        // There is no `_occ_guard`, and no table like it: the whole mechanism
-        // that made misattribution possible is absent from the schema.
+        // No guard table of any kind: a side table whose CHECK fires somewhere
+        // in a batch is the mechanism that makes misattribution possible, and
+        // the schema has none.
         guardTables: sql
           .exec<{ name: string }>(
             `SELECT name FROM sqlite_master

@@ -22,16 +22,12 @@ import { createResetTokenStore } from "../resetTokenStore";
 /**
  * **Issue → the link in the mail → verify**, composed end to end.
  *
- * The three used to be written against three different values — the row stored
- * a hash of `token_id`, the mail carried an HMAC of `token_id`, and
- * `verifyAndConsume` re-hashed whatever it was handed — so the value a user
- * received could never find its row, while the value sitting in the primary key
- * in the clear always could. Nothing failed, because nothing joined them up.
- * This suite is that join: the token it verifies is the string the mail
+ * The three derive their values independently, so only a composed test shows
+ * that they agree: the token this suite verifies is the string the mail
  * actually carried, parsed out of it and nothing else.
  *
- * It also fixes the property in the opposite direction: submitting `token_id`,
- * the value a database dump hands over, must match no row.
+ * The opposite direction is pinned too: submitting `token_id`, the value a
+ * database dump hands over, must match no row.
  */
 
 const HMAC = "a1".repeat(32);
@@ -189,7 +185,7 @@ function consume(
 }
 
 /**
- * What #12's consumption entry will do, and the only shape this suite offers a
+ * What the consumption entry will do, and the only shape this suite offers a
  * value in: parse the link, hash its secret half, hand the digest to the
  * synchronous port. Anything unparseable is `null` without a query, which is
  * the same answer an unknown token gets.
@@ -248,9 +244,9 @@ describe("the password reset token", () => {
     };
 
     // Everything the dump hands over, offered back the way a user offers a
-    // link. `token_id` is the value that used to work — it is the pre-image the
-    // mailed secret is derived from, and it sits in the primary key in the
-    // clear — and `token_hash` is the lookup key itself.
+    // link. `token_id` is the pre-image the mailed secret is derived from and
+    // it sits in the primary key in the clear; `token_hash` is the lookup key
+    // itself.
     expect(await redeem(stub, row.token_id)).toBeNull();
     expect(
       await redeem(stub, formatResetToken(routing, row.token_id)),
@@ -284,7 +280,7 @@ describe("the password reset token", () => {
   /**
    * The coordinates are the one piece of Durable Object addressing that has to
    * come from an unauthenticated URL, so they are bounded here rather than at
-   * whatever `idFromName` call site #12 eventually writes. Refusing looks
+   * whatever `idFromName` call site eventually consumes them. Refusing looks
    * exactly like an unknown token, so the bound adds no observable.
    */
   it("refuses routing coordinates the keyring does not declare", async () => {

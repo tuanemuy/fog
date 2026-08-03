@@ -12,9 +12,9 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
  * ```
  *
  * **Issuing, delivering and verifying all read this module**, which is the
- * point: they used to derive three different things and could never agree, so
- * a link that was mailed could not be looked up and a value that could be
- * looked up (`token_id`, sitting in the clear in the primary key) was never
+ * point: three independent derivations cannot be relied on to agree, and their
+ * disagreement is silent — a mailed link that finds no row, or a value that
+ * finds one (`token_id`, sitting in the clear in the primary key) but was never
  * mailed.
  *
  * ## What a database dump does not yield
@@ -22,8 +22,8 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
  * The row holds `token_id` and `SHA-256(secret)`. Producing `secret` from
  * `token_id` needs the reset-token keyring, which is a state-Worker secret and
  * is not in the database; producing it from the hash needs a SHA-256 pre-image.
- * Submitting `token_id` itself no longer matches, because the row is keyed by
- * the hash of the *derived* secret and not by a hash of `token_id`.
+ * Submitting `token_id` itself matches nothing, because the row is keyed by the
+ * hash of the *derived* secret and not by a hash of `token_id`.
  *
  * ## Why this is asynchronous while the port is not
  *
@@ -31,7 +31,7 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
  * asynchronous, so every function here runs in the Durable Object's **RPC entry
  * point**, before the transaction opens, and hands plain strings to the
  * synchronous port. That is the same shape `sealCanonical` uses for the
- * encrypted canonical (ADR-036).
+ * encrypted canonical.
  */
 
 const TOKEN_ID_BYTES = 16;
@@ -146,7 +146,7 @@ export async function mintResetTokenMaterial(
  * The two numbers are the issuing bucket's own routing coordinates, so the
  * consumption endpoint can address the bucket back **without** the routing
  * secret — which lives on the request Worker and is deliberately not
- * distributed to the state Worker (ADR-016). They are the *routing* generation;
+ * distributed to the state Worker. They are the *routing* generation;
  * the reset-token key generation is a separate number system and stays on the
  * row.
  *

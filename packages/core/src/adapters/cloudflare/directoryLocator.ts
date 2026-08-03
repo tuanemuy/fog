@@ -11,7 +11,7 @@ import type { DirectoryLocator } from "@repo/core/lib/directoryLocator";
  * is not a state-Worker binding, so a bucket cannot derive its own name; that
  * asymmetry is what keeps a raw address from being reconstructable inside the
  * Directory, and it is why the DO-side repository is keyed on `(kind, hmac)`
- * rather than on an address (ADR-016).
+ * rather than on an address.
  *
  * The output is a two-stage structure. The bucket index is the first two bytes
  * of the HMAC read big-endian, modulo that generation's bucket count —

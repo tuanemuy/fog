@@ -71,8 +71,8 @@ export type JobOutcome =
    * distinct from throwing, which asks for a retry. It reaches the *same*
    * terminus as an exhausted retry budget (`poison` + `terminal_reason`,
    * written in one statement), because "the terminal state is uniform" has to
-   * hold however the job got there: the recovery designed in #45 reads those
-   * rows and cannot afford a second shape.
+   * hold however the job got there: the recovery that reads those rows cannot
+   * afford a second shape.
    *
    * `reason` obeys the same rule as any `terminal_reason` — the failure's
    * identity only, never PII and never a reusable secret.
@@ -120,7 +120,7 @@ export const IDENTITY_DIRECTORY_JOB_HANDLERS: Partial<
 
 /**
  * Reason recorded for a `kind` that reaches the runner with no handler. This
- * is fail-closed for a future implementation gap: #37 creates no rows of the
+ * is fail-closed for a future implementation gap: nothing creates rows of the
  * five unimplemented kinds, so it is unreachable in normal operation.
  */
 export const UNIMPLEMENTED_JOB_KIND = "UNIMPLEMENTED_JOB_KIND";

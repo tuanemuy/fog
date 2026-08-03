@@ -23,7 +23,7 @@ import type { SealedCanonical } from "@repo/core/domain/identity/ports/credentia
  * asynchronous and a `run()` callback is not, so the only place a bucket can
  * encrypt is the entry point, which is asynchronous by construction. The reader
  * is {@link decryptCanonical}, called by the `send-mail` job and later by
- * `rotate-encryption` (#44). See `.thread/37/adr.md` ADR-030 / ADR-036.
+ * `rotate-encryption`.
  */
 
 const NONCE_BYTES = 12;
@@ -86,8 +86,7 @@ export type CanonicalAad = Readonly<{
  * The separator is written as an escape, never as a raw NUL byte — the rule
  * `SSO_CANONICAL_SEPARATOR` states, for the same reason: a raw NUL makes `grep`
  * treat this file as binary and report zero matches, so every mechanical check
- * over it fails silently. The bytes encoded are identical either way, so this
- * is a source-level correction and not a format change.
+ * over it fails silently. The bytes encoded are identical either way.
  */
 function aadBytes(aad: CanonicalAad): Uint8Array<ArrayBuffer> {
   return copyBytes(

@@ -10,10 +10,9 @@ import { defineConfig } from "vitest/config";
 // these run in the Node pool and drive Miniflare directly, pointing it at
 // `dist/` with `scriptPath`.
 //
-// It exists because #40 slipped through everything else. A module-scope
-// `crypto.randomUUID()` type-checks, lints and passes every integration test,
-// and only fails when workerd evaluates the top-level module — which nothing
-// else in CI ever did.
+// It exists because nothing else catches a module-scope `crypto.randomUUID()`:
+// it type-checks, lints and passes every integration test, and fails only when
+// workerd evaluates the top-level module.
 export default defineConfig({
   resolve: {
     tsconfigPaths: true,

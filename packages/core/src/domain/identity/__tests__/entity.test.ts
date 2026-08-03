@@ -27,7 +27,7 @@ const ADDRESS_ONLY = credential("cred-email", { usableForLogin: false });
 
 // `credentials` is a read projection of `credential_locators`, so a test
 // standing in for a stored account overlays the set the way `find` does —
-// there is no transition on the aggregate that writes it (ADR-070).
+// there is no transition on the aggregate that writes it.
 function userWith(credentials: readonly CredentialRef[]) {
   return { ...User.initialize({ id: ID }, NOW), credentials };
 }
@@ -62,8 +62,7 @@ describe("User.loginCredentialCount", () => {
 
   // An SSO-only account holds an email entry purely to reserve the address.
   // Counting entries instead of login-capable ones would let an unlink drop
-  // the SSO link and leave the account with no way in at all. This predicate
-  // is what #12 consults before deleting the locator rows.
+  // the SSO link and leave the account with no way in at all.
   it("does not count an address-only entry as a way in", () => {
     expect(User.loginCredentialCount(userWith([ADDRESS_ONLY, SSO]))).toBe(1);
   });

@@ -43,8 +43,7 @@ import {
  * arbitrary error string can contain a canonical address, an hmac, a locator,
  * a caller token or a reset token, and `terminal_reason` is read by operators
  * and retained for the row's lifetime. The log line below obeys the same rule
- * through the same helper — the two used to disagree, and the log was the one
- * that leaked.
+ * through the same helper.
  */
 
 /**

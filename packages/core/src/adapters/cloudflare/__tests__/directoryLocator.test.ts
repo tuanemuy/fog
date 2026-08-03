@@ -5,10 +5,9 @@ import { createDirectoryLocator } from "../directoryLocator";
 /**
  * The bucket-index derivation, as a unit.
  *
- * `docs/test.md` names it as a unit target and nothing covered it: the routing
- * non-exposure suite only checked the *shape* of `doName`, which a derivation
- * reading the wrong two bytes, applying the wrong modulus or returning the
- * generations in the wrong order would satisfy just as well.
+ * The routing non-exposure suite only checks the *shape* of `doName`, which a
+ * derivation reading the wrong two bytes, applying the wrong modulus or
+ * returning the generations in the wrong order would satisfy just as well.
  *
  * The two generations deliberately declare **different** bucket counts, since
  * that is the property `secrets.ts` says cannot be defaulted — a Durable Object

@@ -8,8 +8,8 @@ import {
  * Construction helpers for the RPC value envelope. The *types* live in
  * `@repo/core/lib/rpcEnvelope` and are deliberately not re-exported here —
  * re-exporting would let `application/rpc/restoreError.ts` reach the adapter
- * layer under a different name and revive the reversed dependency ADR-014
- * exists to remove.
+ * layer under a different name, which reverses the inward-only dependency
+ * direction.
  */
 
 export function ok<T>(value: T): RpcEnvelope<T> {

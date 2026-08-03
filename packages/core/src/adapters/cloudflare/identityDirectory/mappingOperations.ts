@@ -43,7 +43,7 @@ import { matchOpaque } from "./opaqueBinding";
  * A facade never imports this module. It reaches these operations only through
  * the context `identityDirectory/unitOfWork.ts` assembles, which is what keeps
  * "the reservation row and its jobs are written in one `transactionSync`"
- * expressible without putting raw `sql` on a context (ADR-012).
+ * expressible without putting raw `sql` on a context.
  */
 export function createCredentialMappingStore(
   sql: Sql,
@@ -63,8 +63,8 @@ export function createCredentialMappingStore(
         // Re-sending the same operation converges on the same row rather than
         // failing: an application-level retry after a lost response lands here.
         // The comparison is on `operationId` alone because the table has no
-        // `payload_digest` column (ADR-024); the digest CAS lives on the User
-        // Data side's `operations` row.
+        // `payload_digest` column; the digest CAS lives on the User Data side's
+        // `operations` row.
         if (existing.operation_id === args.operationId) return;
         throw alreadyRegistered(args.kind);
       }
@@ -306,8 +306,7 @@ export function createCredentialMappingStore(
       }
       // Attempts made while already throttled do not advance the counter —
       // without that, an attacker refreshes the lockout indefinitely and the
-      // ceiling and decay rules below stop meaning anything. The ceiling and
-      // the decay curve themselves are #18.
+      // ceiling and decay rules below stop meaning anything.
       run(
         sql,
         `UPDATE credential_mappings
@@ -336,8 +335,8 @@ export function createCredentialMappingStore(
       // before it, so no row can already exist under the key it enqueues. Do
       // not "optimise" this into an eligible-only write.
       //
-      // It is safe against the lockout the sliding form used to allow, because
-      // eligibility compares window numbers rather than elapsed time
+      // It creates no lockout of its own, because eligibility compares window
+      // numbers rather than elapsed time
       // (`domain/identity/credentialMappingRules.ts`).
       run(
         sql,
@@ -354,8 +353,8 @@ export function createCredentialMappingStore(
 }
 
 /**
- * Placeholder throttle window. The ceiling, the decay and the real numbers are
- * #18; what #37 owns is the column and the update point.
+ * Placeholder throttle window. The ceiling and the decay curve are not
+ * implemented yet; what exists is the column and the update point.
  */
 const FAILED_ATTEMPT_BACKOFF_MS = 30_000;
 
@@ -376,8 +375,8 @@ function notActivatable(): ConflictError {
 /**
  * One answer for both ways `beginChange` can miss — no such credential, and a
  * change already in flight — for the same reason `notActivatable` is undivided:
- * splitting them would report on a bucket's contents. #12 owns the entry that
- * calls this and may narrow the answer there, where the caller is authenticated.
+ * splitting them would report on a bucket's contents. The entry that calls this
+ * may narrow the answer there, where the caller is authenticated.
  */
 function notStartable(): ConflictError {
   return new ConflictError(

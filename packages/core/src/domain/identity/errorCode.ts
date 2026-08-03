@@ -2,12 +2,11 @@ export const IdentityErrorCode = {
   InvalidUserId: "IDENTITY_INVALID_USER_ID",
   InvalidCredentialId: "IDENTITY_INVALID_CREDENTIAL_ID",
   InvalidEmail: "IDENTITY_INVALID_EMAIL",
-  // No thrower yet, deliberately. The credential set is a projection, so the
-  // "last way in" refusal belongs to `unlinkSsoCredential` (#12); what #37
-  // supplies is the predicate (`User.loginCredentialCount`) and this code.
+  // No thrower yet, deliberately: the credential set is a projection, so the
+  // "last way in" refusal belongs to `unlinkSsoCredential`, and what exists
+  // here is the code paired with the predicate `User.loginCredentialCount`.
   // Named after `spec/usecases/identity.md`'s `LastCredentialRemoval` rather
-  // than after the predicate: #12 reads the spec to build the thrower, and two
-  // names for one refusal is a decision it would have to re-make.
+  // than after the predicate, so one refusal keeps one name.
   LastCredentialRemoval: "IDENTITY_LAST_CREDENTIAL_REMOVAL",
   PasswordTooWeak: "IDENTITY_PASSWORD_TOO_WEAK",
   InvalidPasswordHash: "IDENTITY_INVALID_PASSWORD_HASH",

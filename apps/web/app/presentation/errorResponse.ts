@@ -100,8 +100,8 @@ const REDACTED_MESSAGE = "Request failed";
  * - `notFound` / `conflict` / `unauthorized` / `forbidden` keep `code` and
  *   lose `message`. `code` is their whole contract (`errorDisplay` renders
  *   these four from it and never reads their message), while the message is
- *   free-form server prose that has already been observed to embed
- *   server-minted keys — `JOB_PAYLOAD_MISMATCH` interpolates a job's
+ *   free-form server prose that can embed server-minted keys —
+ *   `JOB_PAYLOAD_MISMATCH` interpolates a job's
  *   `operationKey`, which for `send-mail` is derived from an HMAC.
  * - `business` / `validation` pass through. Their message is written for the
  *   end user and `errorDisplay` falls back to it whenever no code-specific

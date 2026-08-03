@@ -41,8 +41,7 @@ export type User = Readonly<{
    * `CredentialLocatorStore.record` / `deleteByCredentialId`, driven from the
    * Identity Directory's verdict. That is why no `addCredential` /
    * `removeCredential` exists here — a method that bumped `version` and left
-   * the set untouched would make the spec's own procedure a silent no-op
-   * (`.thread/37/adr.md` ADR-070).
+   * the set untouched would make the spec's own procedure a silent no-op.
    */
   credentials: readonly CredentialRef[];
   trashRetentionDays: TrashRetentionDays;
@@ -63,7 +62,7 @@ export type User = Readonly<{
  * This is the **predicate form** of the "at least one way in" invariant. Since
  * the credential set is a projection, the invariant cannot be enforced by a
  * transition on this aggregate: an unlink checks it here and then removes the
- * locator rows (#12).
+ * locator rows.
  */
 function loginCredentialCount(user: User): number {
   const ids = new Set<string>();

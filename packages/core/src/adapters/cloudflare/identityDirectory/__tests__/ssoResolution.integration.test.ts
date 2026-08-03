@@ -26,8 +26,8 @@ import { createIdentityDirectoryUnitOfWorkProvider } from "../unitOfWork";
  * composed: which bucket a canonical lands in, and what happens when two kinds
  * share one.
  *
- * #37 owns no path that *writes* an `kind = 'sso'` mapping (SSO signup and link
- * are #12), so the rows are inserted directly. What is fixed here is the read.
+ * No write path for a `kind = 'sso'` mapping exists yet, so the rows are
+ * inserted directly. What is under test is the read.
  */
 
 const NOW = 1_800_000_000_000;

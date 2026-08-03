@@ -474,10 +474,10 @@ describe("send-mail", () => {
         sent: sent.map((entry) => entry.resetToken),
       };
 
-      // A legitimate second request, once the window has turned. This is the
-      // path that used to fail: the throttle opened, a fresh token replaced the
-      // live one, and the enqueue then collided with the finished row — so the
-      // user's working link was destroyed and no replacement was ever sent.
+      // A legitimate second request, once the window has turned. The failure
+      // this guards against: the throttle opens, a fresh token replaces the live
+      // one, and the enqueue collides with the finished row — so the user's
+      // working link is destroyed and no replacement is ever sent.
       await request("email", "99".repeat(32), NEXT_WINDOW);
       await drain(NEXT_WINDOW);
       return {
@@ -574,9 +574,9 @@ describe("send-mail", () => {
 
   /**
    * The enqueue point, not the handler. `directoryJobs.integration.test.ts`
-   * calls `sweepResetTokens` directly, which is exactly why the missing
-   * `enqueueJob` went unnoticed: the handler was correct and unreachable, so
-   * `password_reset_tokens` grew without bound in a bucket many users share.
+   * calls `sweepResetTokens` directly, so a handler that is correct but never
+   * enqueued passes there — and `password_reset_tokens` then grows without bound
+   * in a bucket many users share.
    */
   it("arms the sweep that eventually clears the rows this path writes", async () => {
     const result = await harness(async ({ sql, request, drain }) => {

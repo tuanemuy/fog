@@ -126,8 +126,8 @@ export function createUserSettingsRepository(
  * counting that as "not a way in" would let the "last way in" check lock a user
  * out mid-transfer. The surviving row's `label` comes along with the vote that
  * won — mirrored fields do not vary between generations today (a provider name,
- * or the empty string for an address), so there is nothing to reconcile. If
- * #44's transfer ever makes them vary, that is the assumption to revisit.
+ * or the empty string for an address), so there is nothing to reconcile. A
+ * transfer that ever makes them vary is what would break this assumption.
  */
 function dedupeByCredentialId(rows: readonly LocatorProjectionRow[]): readonly {
   credentialId: string;

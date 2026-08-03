@@ -14,11 +14,11 @@ import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
  *
  * **The argument and result shapes are declared here too, and that is the
  * point.** They appear in these signatures, so they ride `RequestContainer`
- * into the usecases; a usecase written in types the adapter owns is the
- * `application → adapters` reversal AC-25 forbids, whatever `import type`
- * makes it look like. Declaring them beside the interface puts the whole
- * contract inward of its implementations, and the Durable Object facades
- * import *from here* — which is the permitted direction (ADR-071).
+ * into the usecases; a usecase written in types the adapter owns is an
+ * `application → adapters` dependency reversal, whatever `import type` makes it
+ * look like. Declaring them beside the interface puts the whole contract inward
+ * of its implementations, and the Durable Object facades import *from here* —
+ * which is the permitted direction.
  *
  * They belong in `di/` rather than in `lib/` because they are not structural
  * primitives: `InitializeAccountArgs` names `LocatorRef` and the facades name
@@ -95,7 +95,7 @@ export interface IdentityDirectoryFacade {
   // still exposes it as an operator diagnostic, but it enumerates every
   // `userId` in a bucket and a `userId` is what addresses a user's own Durable
   // Object — so it has no business on the interface the composition root hands
-  // to request-path code. Binding it to an operator secret is #38's.
+  // to request-path code.
 }
 
 export type InitializeAccountArgs = Readonly<{
@@ -146,11 +146,10 @@ type UsedLocator = Readonly<{
  * combinations that cannot occur cannot be written.
  *
  * As a flat record with four independently-nullable fields it could express
- * "holds a verifier but has no `credentialId`", and the caller paid for that
- * with a `?? ""` that turned into `CredentialId.create("")` deep inside the
- * next RPC — a `BusinessRuleError` escaping through the one usecase whose
- * central contract is that *every* failure looks like
- * `ValidationError("INVALID_CREDENTIALS")`.
+ * "holds a verifier but has no `credentialId`", which forces the caller into a
+ * `?? ""` that becomes `CredentialId.create("")` deep inside the next RPC — a
+ * `BusinessRuleError` escaping through the one usecase whose central contract
+ * is that *every* failure looks like `ValidationError("INVALID_CREDENTIALS")`.
  *
  * `credentialVersion` and `usedLocator` sit on every arm because the uniform
  * answer has to be the same shape as a real one; `none` covers all four
@@ -195,15 +194,15 @@ export type ReserveCredentialFacadeArgs = Readonly<{
    * The bucket has to store a reversible copy of the address, and neither side
    * can produce it alone: the request Worker holds the plaintext but no
    * encryption key, and the state Worker holds the key but derives no canonical
-   * (`DIRECTORY_ROUTING_SECRET` is not distributed to it, ADR-016). So the
-   * plaintext travels one hop inward and is sealed by the entry point before the
+   * (`DIRECTORY_ROUTING_SECRET` is not distributed to it). So the plaintext
+   * travels one hop inward and is sealed by the entry point before the
    * transaction opens.
    *
-   * This is not the thing AC-3 forbids. That rule bars a raw address from a
-   * Durable Object *name*, and from logs, errors and URLs; the value here is an
-   * RPC argument inside the trust boundary, one per signup rather than in bulk
-   * (`.thread/34/design.md` §5.2.3). **It must never be written as-is, logged or
-   * echoed in an error** — the ciphertext is what reaches the row.
+   * This is not what the non-exposure rule forbids: that bars a raw address
+   * from a Durable Object *name*, and from logs, errors and URLs, while the
+   * value here is an RPC argument inside the trust boundary, one per signup
+   * rather than in bulk. **It must never be written as-is, logged or echoed in
+   * an error** — the ciphertext is what reaches the row.
    */
   canonical: string;
   candidateUserId: string;

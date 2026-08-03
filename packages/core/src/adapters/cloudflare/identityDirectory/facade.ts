@@ -25,7 +25,7 @@ import { sendMailOperationKey } from "./resetRequestKeys";
 /**
  * The Identity Directory bucket's RPC facade.
  *
- * ## Its share of the full entry table (`.thread/34/design.md` §5.1)
+ * ## Its share of the full entry table
  *
  * | Entry | Class | Status |
  * |---|---|---|
@@ -33,19 +33,19 @@ import { sendMailOperationKey } from "./resetRequestKeys";
  * | `report-login-result` | (2) | implemented |
  * | `reserve-credential` | (2) | implemented |
  * | `request-password-reset` | (2) | implemented |
- * | `lookup-credential-by-locator` | (2) | **not implemented** — password change phase 0 → #12 |
- * | `report-verify-result` | (2) | **not implemented** → #12 |
- * | `begin-credential-change` | (2) / (3-d) | **not implemented** → #12 |
- * | `consume-reset-token` | (2) | **not implemented** — reset completion → #12 |
+ * | `lookup-credential-by-locator` | (2) | **not implemented** — password change phase 0 |
+ * | `report-verify-result` | (2) | **not implemented** |
+ * | `begin-credential-change` | (2) / (3-d) | **not implemented** |
+ * | `consume-reset-token` | (2) | **not implemented** — reset completion |
  * | `activate-reservation` | (3-a) | implemented |
  * | `cancel-reservation` | (3-a) | implemented |
- * | `promote-verifier` | (3-a) | **not implemented**, including the `'advanced'`-only guard → #12 |
- * | `propagate-saga-committed` | (3-a) | **not implemented** → #45 |
+ * | `promote-verifier` | (3-a) | **not implemented**, including the `'advanced'`-only guard |
+ * | `propagate-saga-committed` | (3-a) | **not implemented** |
  * | `check-previous-generation` | (3-c) | implemented |
- * | `read-own-canonical` | (3-b) | **not implemented** — settings-screen address display → #12 |
- * | `delete-mapping` | (3-b) | **not implemented** → #12 / #45. It is the *only* deletion path used by withdrawal step 3, unlink step 3 and `sweep-orphan-mapping` — which is precisely why `account.caller_token` is not cleared before a withdrawal completes (AC-27 iii). Without that note the next issue has to rediscover the reason. |
- * | `purge-user-mappings` | (3-c) | **not implemented** — operator last resort → #45 |
- * | `rotate-encryption` start | (3-c) | **not implemented** → #44 |
+ * | `read-own-canonical` | (3-b) | **not implemented** — settings-screen address display |
+ * | `delete-mapping` | (3-b) | **not implemented**. It is the *only* deletion path used by withdrawal step 3, unlink step 3 and `sweep-orphan-mapping` — which is precisely why `account.caller_token` is not cleared before a withdrawal completes (AC-27 iii). |
+ * | `purge-user-mappings` | (3-c) | **not implemented** — operator last resort |
+ * | `rotate-encryption` start | (3-c) | **not implemented** |
  * | `list-bucket-user-ids` | (3-c) | implemented on the DO class, deliberately outside `runRpcEntry` |
  *
  * Every entry takes primitives and rebuilds value objects inside, and none of
@@ -54,7 +54,7 @@ import { sendMailOperationKey } from "./resetRequestKeys";
  * The argument and result shapes live in `application/di/facades.ts` for the
  * reason spelled out there and in the User Data facade: they ride the
  * `IdentityDirectoryFacade` interface into the usecases, so declaring them
- * here would write a usecase in an adapter-owned type (ADR-071).
+ * here would write a usecase in an adapter-owned type.
  */
 
 export type IdentityDirectoryFacadeDeps = Readonly<{
@@ -82,7 +82,7 @@ export type IdentityDirectoryFacadeDeps = Readonly<{
  *
  * The three conditions are `domain/identity/credentialMappingRules.ts`'s, not
  * this module's: the same rule decides the reset request below and the send
- * job's recipient, and three copies of it is three places to amend (ADR-072).
+ * job's recipient, and three copies of it is three places to amend.
  */
 export function lookupCredential(
   deps: IdentityDirectoryFacadeDeps,
@@ -155,7 +155,7 @@ export function reportLoginResult(
  * That is what the whole `CredentialMappingStore` port exists for: without a
  * write path on the context, this would have to reach for raw SQL or open its
  * own transaction, and either way the Directory would have no unit of work at
- * all (ADR-012).
+ * all.
  *
  * `sweep-reservations` is enqueued by whichever bucket wrote a row — cleanup
  * only runs where the row is. `resume-signup` is enqueued by the coordinator
@@ -221,11 +221,11 @@ export function reserveCredential(
 /**
  * Class (3-a), signup phase 3.
  *
- * Takes the `callerToken` as well as the `operationId`, and the asymmetry that
- * used to exist here was the bug: `operationId` is a value the design permits
- * in unauthenticated logs, so binding a write to knowledge of it alone would
- * turn a logged value into a capability — the reason `recordCredentialLocator`
- * and `cancelReservation` are `callerToken`-bound is exactly the same one.
+ * Takes the `callerToken` as well as the `operationId`: `operationId` is a value
+ * the design permits in unauthenticated logs, so binding a write to knowledge of
+ * it alone would turn a logged value into a capability — the reason
+ * `recordCredentialLocator` and `cancelReservation` are `callerToken`-bound is
+ * exactly the same one.
  */
 export function activateReservation(
   deps: IdentityDirectoryFacadeDeps,
@@ -287,12 +287,12 @@ export function checkPreviousGeneration(
  * ## The window, and why the token and the mail share one
  *
  * `operationKey` carries `floor(now / RESET_REQUEST_WINDOW_MS)` and the issue
- * throttle decides eligibility on the same number. That equality is the fix for
- * a real failure: with a one-minute throttle and a `done` row that refused
- * re-enqueues for a day, the second request of an hour issued a fresh token —
- * deleting the live one the user was holding — and then collided with the
- * finished row, so no mail went out and the working link was gone. Sharing the
- * number makes it impossible: eligibility requires the request's window to be
+ * throttle decides eligibility on the same number. Letting the two differ
+ * breaks: with a one-minute throttle and a `done` row that refuses re-enqueues
+ * for a day, the second request of an hour issues a fresh token — deleting the
+ * live one the user is holding — and then collides with the finished row, so no
+ * mail goes out and the working link is gone. Sharing the number makes that
+ * impossible: eligibility requires the request's window to be
  * strictly past the last request's, so an eligible request always lands on an
  * `operationKey` no row exists for yet.
  *

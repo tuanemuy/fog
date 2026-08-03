@@ -55,8 +55,7 @@ import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
  * credential → `userId` mappings, reset tokens and the bucket's own jobs.
  *
  * The bucket name is derived from an HMAC by the *request* Worker; neither the
- * raw email nor the SSO subject nor the routing secret ever reaches this class
- * (ADR-016).
+ * raw email nor the SSO subject nor the routing secret ever reaches this class.
  */
 export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
   /** See `UserDataDurableObject.alarmCache` — same ownership rule. */
@@ -95,7 +94,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
    * work's callback is type-rejected from being asynchronous — so the only
    * moment a bucket can encrypt is here, in the entry point, which is
    * asynchronous by construction. The ciphertext then crosses into the
-   * transaction as a plain value (ADR-036).
+   * transaction as a plain value.
    *
    * The failure is returned as an envelope like any other: a deployment with no
    * mail-encryption key must fail the signup rather than write a reservation
@@ -175,7 +174,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
    * of the result — because WebCrypto is asynchronous and a unit of work's
    * callback is type-rejected from being asynchronous. Only the two derived
    * strings cross into the transaction, and the row keeps the hash, so a
-   * database dump yields nothing that can be redeemed (ADR-042).
+   * database dump yields nothing that can be redeemed.
    *
    * **Minted unconditionally.** Whether the address is registered is decided
    * inside the transaction, and the four cases have to cost the same; deriving
@@ -185,9 +184,9 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
    * The provider idempotency key is derived here too, and for the same
    * structural reason: it is `SHA-256` of the job's `operationKey`, so that the
    * canonical address's full-length HMAC stays inside the trust boundary
-   * instead of riding an `Idempotency-Key` header out to the mail provider
-   * (ADR-092). Both derivations read the *same* `now` the transaction does, so
-   * the key and the row's `operation_key` cannot fall into different windows.
+   * instead of riding an `Idempotency-Key` header out to the mail provider.
+   * Both derivations read the *same* `now` the transaction does, so the key and
+   * the row's `operation_key` cannot fall into different windows.
    */
   async requestPasswordReset(
     kind: CredentialMappingKind,
@@ -233,7 +232,7 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
    * `userId` in a bucket, and a `userId` is a value that lets its holder address
    * the user's Durable Object. Keeping it off the interface the composition root
    * holds means no request-path code can call it even by mistake. Binding it to
-   * an operator secret is #38's.
+   * an operator secret is still outstanding.
    *
    * Goes through the SQL helpers like every other statement in the two classes,
    * so a driver failure is translated before it reaches the envelope; skipping

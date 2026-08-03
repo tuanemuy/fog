@@ -9,9 +9,10 @@ import { payloadDigest } from "../table";
  */
 describe("payloadDigest", () => {
   it("is a function of the value, not of key insertion order", () => {
-    // `JSON.stringify` follows insertion order, so these two used to differ —
-    // meaning the same logical payload could be rejected as a conflicting one
-    // purely because a caller wrote the object literal the other way round.
+    // `JSON.stringify` follows insertion order, so without a stable
+    // serialisation these two differ — meaning the same logical payload would be
+    // rejected as a conflicting one purely because a caller wrote the object
+    // literal the other way round.
     expect(payloadDigest({ a: 1, b: 2 })).toBe(payloadDigest({ b: 2, a: 1 }));
     expect(payloadDigest({ outer: { x: "1", y: "2" }, list: [1, 2] })).toBe(
       payloadDigest({ list: [1, 2], outer: { y: "2", x: "1" } }),

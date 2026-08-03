@@ -128,11 +128,11 @@ describe("isResetRequestAllowed", () => {
   });
 
   /**
-   * The regression that made the sliding form unusable: the stamp advances on
-   * every request, so an unauthenticated third party asking just inside the
-   * window kept `last + window <= now` false forever and the victim could never
-   * receive a link again. Under window numbers the request one millisecond
-   * before the boundary cannot push the next window out.
+   * What makes the sliding form unusable: the stamp advances on every request,
+   * so an unauthenticated third party asking just inside the window keeps
+   * `last + window <= now` false forever and the victim can never receive a
+   * link again. Under window numbers the request one millisecond before the
+   * boundary cannot push the next window out.
    */
   it("cannot be held shut by a request just before the boundary", () => {
     expect(

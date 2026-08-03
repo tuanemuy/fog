@@ -8,10 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  * Does the built bundle start under workerd?
  *
  * That question has one honest answer and it is not obtainable from any other
- * suite. Type checking, linting and the Workers-pool integration tests all
- * passed while #40 was live, because none of them ever asked workerd to
- * evaluate the top-level module of the shipped bundle — which is where the
- * platform enforces its global-scope restrictions.
+ * suite. Type checking, linting and the Workers-pool integration tests never
+ * ask workerd to evaluate the top-level module of the shipped bundle — which
+ * is where the platform enforces its global-scope restrictions.
  *
  * **The assertions are deliberately weak.** Two claims only: the fetch returns
  * *a* response, whatever its status, and starting up does not throw
@@ -139,7 +138,7 @@ describe("the built Workers boot under workerd", () => {
     // build ran before the change under test". This suite exists to detect a
     // regression that only the *shipped* module graph shows, so a green against
     // a stale bundle is the dangerous kind — the developer who just edited the
-    // top-level Worker would be told #40 has not come back when nothing asked.
+    // top-level Worker would be told it is clear when nothing asked.
     const newestSource = Math.max(...SOURCE_ROOTS.map(newestSourceMtime));
     for (const artefact of [requestWorker, stateWorker]) {
       expect(
