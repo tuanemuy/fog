@@ -39,13 +39,6 @@ let seq = 0;
 type Io = {
   sql: SqlStorage;
   ctx: DurableObjectState;
-  /**
-   * Everything the handler logged. The handler logs on exactly one path — the
-   * clamp, which fires only when the drive signal and the work predicate have
-   * drifted apart — so an empty array *is* the invariant, and every case below
-   * asserts it.
-   */
-  lines: string[];
   run: (now?: number) => Promise<{ kind: string; nextRunAt?: number }>;
   /** The same handler at a shrunken chunk budget. */
   runBounded: (
@@ -54,10 +47,20 @@ type Io = {
   ) => Promise<{ kind: string; nextRunAt?: number }>;
 };
 
+/**
+ * Runs one case, and asserts the handler's log was empty afterwards.
+ *
+ * The handler logs on exactly one path — the clamp, which fires only when the
+ * drive signal and the work predicate have drifted apart — so an empty log *is*
+ * the invariant "the clamp never fired". It is asserted here rather than in
+ * each case because it holds for **every** fixture in this file, and a claim
+ * that only some cases check is the kind of assertion that quietly stops being
+ * true as fixtures are added.
+ */
 function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
   seq += 1;
   const name = `purge-${seq}`;
-  return inUserData(name, ({ ctx, sql }) => {
+  return inUserData(name, async ({ ctx, sql }) => {
     runMigrationGate(ctx, USER_DATA_STEPS, USER_DATA_CODE_VERSION, name);
     const { logger, lines } = recordingLogger();
     const context = (now: number): UserDataJobContext => ({
@@ -74,7 +77,9 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
       budget: { chunkRowLimit: number; maxChunks: number },
       now = NOW,
     ) => createPurgeTrash(budget)(context(now), row);
-    return fn({ sql, ctx, lines, run, runBounded });
+    const result = await fn({ sql, ctx, run, runBounded });
+    expect(lines).toEqual([]);
+    return result;
   }) as Promise<T>;
 }
 
@@ -233,12 +238,12 @@ describe("purge-trash", () => {
   });
 
   it("leaves the drive signal strictly in the future after a run", async () => {
-    const result = await harness(async ({ sql, run, lines }) => {
+    const result = await harness(async ({ sql, run }) => {
       setRetention(sql, 7);
       addMemo(sql, "due", NOW - 9 * DAY, purgeAt(NOW - 9 * DAY, 7));
       addMemo(sql, "not-due", NOW - 2 * DAY, purgeAt(NOW - 2 * DAY, 7));
       addTopic(sql, "t-due", NOW - 8 * DAY, purgeAt(NOW - 8 * DAY, 7));
-      return { outcome: await run(), lines };
+      return { outcome: await run() };
     });
     // This is the invariant the clamp inside the handler exists to defend: the
     // drive signal is the minimum over the *same* predicate the deletion uses,
@@ -246,15 +251,14 @@ describe("purge-trash", () => {
     // the two queries have drifted apart and the DO would wake forever.
     expect(result.outcome.kind).toBe("rearm");
     expect(result.outcome.nextRunAt ?? 0).toBeGreaterThan(NOW);
-    // The clamp is the handler's only log line, so an empty log is the direct
-    // statement that it did not fire — which is the same invariant read off the
-    // other side. No fixture can reach the clamp while the two queries agree,
-    // and that is exactly why the observation worth making is this one.
-    expect(result.lines).toEqual([]);
+    // The other side of the same invariant — that the clamp never fired — is
+    // the empty log the harness asserts after every case in this file. No
+    // fixture can reach the clamp while the two queries agree, which is exactly
+    // why the observation is worth making everywhere rather than here.
   });
 
   it("does not enter the deletion phase while recomputation is unfinished", async () => {
-    const result = await harness(async ({ sql, runBounded, lines }) => {
+    const result = await harness(async ({ sql, runBounded }) => {
       setRetention(sql, 7);
       // Both rows carry a *stale* `purge_after` that is already past, while the
       // value the current window implies is in the future. A wake-up that ran
@@ -274,7 +278,6 @@ describe("purge-trash", () => {
           purgeAfterOf(sql, "memos", "m2"),
           purgeAfterOf(sql, "memos", "m3"),
         ],
-        lines,
       };
     });
     expect(result.outcome).toEqual({ kind: "yield" });
@@ -287,11 +290,10 @@ describe("purge-trash", () => {
       (value) => (value ?? 0) > NOW,
     ).length;
     expect(recomputed).toBe(2);
-    expect(result.lines).toEqual([]);
   });
 
   it("reports unfinished recomputation as a yield even when nothing is due", async () => {
-    const result = await harness(async ({ sql, runBounded, lines }) => {
+    const result = await harness(async ({ sql, runBounded }) => {
       setRetention(sql, 7);
       // Stale values that are *not* due, so the "is anything left to purge"
       // check at the end of the handler answers no. Only the explicit
@@ -303,15 +305,14 @@ describe("purge-trash", () => {
         addMemo(sql, id, NOW - DAY, NOW + 100 * DAY);
       }
       const outcome = await runBounded({ chunkRowLimit: 1, maxChunks: 2 });
-      return { outcome, memos: ids(sql, "memos"), lines };
+      return { outcome, memos: ids(sql, "memos") };
     });
     expect(result.outcome).toEqual({ kind: "yield" });
     expect(result.memos).toEqual(["m1", "m2", "m3"]);
-    expect(result.lines).toEqual([]);
   });
 
   it("resumes the recomputation on the next wake-up, then purges", async () => {
-    const result = await harness(async ({ sql, runBounded, lines }) => {
+    const result = await harness(async ({ sql, runBounded }) => {
       setRetention(sql, 7);
       // Stale and, once recomputed, genuinely expired: the deletion phase is
       // reached only after the recomputation phase comes back empty.
@@ -325,7 +326,7 @@ describe("purge-trash", () => {
         outcomes.push(outcome.kind);
         survivors.push(ids(sql, "memos").length);
       }
-      return { outcomes, survivors, lines };
+      return { outcomes, survivors };
     });
     // Wake-up 1 spends both chunks recomputing and yields with nothing deleted;
     // wake-up 2 finds the recomputation predicate empty and only then starts
@@ -333,7 +334,6 @@ describe("purge-trash", () => {
     // come back empty, which is the ordering AC-10 asks for.
     expect(result.outcomes).toEqual(["yield", "yield", "done"]);
     expect(result.survivors).toEqual([2, 1, 0]);
-    expect(result.lines).toEqual([]);
   });
 
   it("drops a restored item out of the drive signal", async () => {

@@ -12,16 +12,22 @@ import { enqueueJob } from "../jobs/table";
  * why the cleanup had no test: nothing observed it.
  *
  * The two cases below are deliberately **identical** and share one fixed name.
- * Whichever runs second can only pass if, between them:
+ * Whichever runs second can only pass if, between them, two things happened:
+ * the durable data was deleted — otherwise the `jobs` table still holds the
+ * previous case's row and the first assertion fails — and the instance was
+ * discarded — otherwise the surviving `AlarmCache` still reads `ARMED_AT`,
+ * `persist()` skips the `setAlarm` as redundant, and the alarm the reset just
+ * cleared is never re-armed.
  *
- * - `reset()` deleted the durable data — otherwise the `jobs` table still holds
- *   the previous case's row and the first assertion fails;
- * - `evictAllDurableObjects()` destroyed the instance — otherwise the surviving
- *   `AlarmCache` still reads `ARMED_AT`, `persist()` skips the `setAlarm` as
- *   redundant, and the alarm the reset just cleared is never re-armed.
+ * **Measured, `reset()` alone does both**, so it is the only load-bearing half
+ * of the `afterEach`: removing it turns this file red, while removing
+ * `evictAllDurableObjects()` leaves the whole integration suite green. The
+ * second call is insurance against that changing, and `setup.ts` says the same
+ * — a redundant call believed to be load-bearing is how a real cleanup gap gets
+ * misdiagnosed, so the two comments must not drift apart.
  *
  * Being identical is what makes the pair independent of execution order, which
- * matters because the suite is also run under `--sequence.shuffle`.
+ * matters because CI runs the suite under `--sequence.shuffle`.
  *
  * `gate.integration.test.ts` already uses fixed names (`gate-ud-tables` and
  * friends), so this is not a hypothetical style — it is the style that was

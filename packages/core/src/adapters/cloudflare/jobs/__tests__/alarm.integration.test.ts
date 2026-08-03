@@ -2,6 +2,7 @@ import type { DurableObjectState, SqlStorage } from "@cloudflare/workers-types";
 import { MIN_RESUME_INTERVAL_MS } from "@repo/core/lib/jobBudgets";
 import { describe, expect, it } from "vitest";
 import { inUserData } from "../../__tests__/doHarness";
+import { runRpcEntry } from "../../platform/rpcEntry";
 import { runMigrationGate } from "../../schema/gate";
 import { USER_DATA_CODE_VERSION, USER_DATA_STEPS } from "../../schema/userData";
 import {
@@ -201,5 +202,126 @@ describe("alarm arming", () => {
     expect(result.afterFirst).toBe(1);
     expect(result.writes).toEqual([BASE + 40_000, BASE + 20_000]);
     expect(result.cached).toBe(BASE + 20_000);
+  });
+});
+
+/**
+ * The wrapper every RPC entry goes through, driven directly.
+ *
+ * The cases above call `armAfterRpc` themselves, which is the right granularity
+ * for the arming rules but skips the two decisions `runRpcEntry` owns: that the
+ * arm happens **after a body that threw** — AC-12 (iii)'s "on both paths" — and
+ * that an arm which cannot be persisted turns a successful body into an `err`.
+ * Move the `armAfterRpc` call inside the `try` block and nothing else in this
+ * repository notices; the first case below does.
+ */
+describe("the RPC entry wrapper", () => {
+  const nothing = () => undefined;
+
+  it("arms the alarm even when the body throws after committing", async () => {
+    const result = await harness(async ({ ctx, sql }) => {
+      const cache = createAlarmCache();
+      const envelope = await runRpcEntry(
+        { ctx, sql, cache, gate: nothing },
+        BASE + 1_000,
+        () => {
+          // The failure mode the design names: a transaction commits and a
+          // later statement in the same entry still throws. The row is real, so
+          // the wake-up it needs has to be armed anyway.
+          enqueueJob(sql, 0, {
+            kind: "send-mail",
+            operationKey: "b",
+            payload: {},
+            nextRunAt: BASE + 40_000,
+          });
+          throw new Error("a later statement blew up");
+        },
+      );
+      return { envelope, armed: await ctx.storage.getAlarm() };
+    });
+    expect(result.envelope.ok).toBe(false);
+    expect(result.armed).toBe(BASE + 40_000);
+  });
+
+  it("arms the alarm when the gate refuses before the body runs", async () => {
+    const result = await harness(async ({ ctx, sql }) => {
+      const cache = createAlarmCache();
+      // A job left behind by an earlier, successful call. A fail-closed entry
+      // must not strand it, which is why the gate's throw lands in the same
+      // `catch` as the body's.
+      enqueueJob(sql, 0, {
+        kind: "purge-trash",
+        operationKey: "a",
+        payload: {},
+        nextRunAt: BASE + 90_000,
+      });
+      let bodyRan = false;
+      const envelope = await runRpcEntry(
+        {
+          ctx,
+          sql,
+          cache,
+          gate: () => {
+            throw new Error("Schema version is newer than this deployment");
+          },
+        },
+        BASE + 1_000,
+        () => {
+          bodyRan = true;
+          return null;
+        },
+      );
+      return { envelope, bodyRan, armed: await ctx.storage.getAlarm() };
+    });
+    expect(result.envelope.ok).toBe(false);
+    expect(result.bodyRan).toBe(false);
+    expect(result.armed).toBe(BASE + 90_000);
+  });
+
+  it("reports an arm it could not persist as a failed call", async () => {
+    const result = await harness(async ({ ctx, sql }) => {
+      const cache = createAlarmCache();
+      enqueueJob(sql, 0, {
+        kind: "send-mail",
+        operationKey: "b",
+        payload: {},
+        nextRunAt: BASE + 40_000,
+      });
+      const real = ctx.storage.setAlarm.bind(ctx.storage);
+      ctx.storage.setAlarm = () => {
+        throw new Error("storage refused the alarm");
+      };
+      try {
+        const envelope = await runRpcEntry(
+          { ctx, sql, cache, gate: nothing },
+          BASE + 1_000,
+          () => "the body's own answer",
+        );
+        return { envelope, cached: cache.scheduledAt };
+      } finally {
+        ctx.storage.setAlarm = real;
+      }
+    });
+    // The body succeeded and its value is discarded on purpose: answering `ok`
+    // would tell the caller its work is scheduled when no wake-up exists to run
+    // it.
+    expect(result.envelope.ok).toBe(false);
+    // …and nothing was cached, so the next entry retries the write rather than
+    // skipping it as redundant.
+    expect(result.cached).toBeNull();
+  });
+
+  it("answers a successful body with its value", async () => {
+    // Positive control for the three refusals above: the same wrapper, the same
+    // harness, and an entry that queued nothing still comes back `ok`.
+    const envelope = await harness(({ ctx, sql }) =>
+      runRpcEntry(
+        { ctx, sql, cache: createAlarmCache(), gate: nothing },
+        BASE + 1_000,
+        () => "the body's own answer",
+      ),
+    );
+    expect(envelope.ok).toBe(true);
+    expect(envelope.ok && envelope.value).toBe("the body's own answer");
   });
 });

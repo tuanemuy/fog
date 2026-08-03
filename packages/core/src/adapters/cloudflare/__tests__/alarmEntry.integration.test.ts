@@ -3,6 +3,7 @@ import type { SqlStorage } from "@cloudflare/workers-types";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
 import type { JobRow } from "../jobs/table";
+import { disarm } from "./doHarness";
 
 /**
  * enqueue → alarm → `done`, driven through the **real Durable Object class**.
@@ -34,6 +35,27 @@ function bucket() {
   seq += 1;
   const ns = env.IDENTITY_DIRECTORY;
   return ns.get(ns.idFromName(`dir:g1:b01${seq}`));
+}
+
+/**
+ * A reset request, followed immediately by `disarm`.
+ *
+ * Every case below drives `alarm()` by hand, and the RPC arms a real one a
+ * second out — so without this the platform is a second driver of the same
+ * queue and the counts below become a race against the wall clock. Routing the
+ * call through one helper is what keeps that from being something each case has
+ * to remember; see `disarm` for the mechanism.
+ */
+async function request(
+  stub: ReturnType<typeof bucket>,
+  hmac: string,
+): Promise<RpcEnvelope<null>> {
+  const answered = await (stub as unknown as Bucket).requestPasswordReset(
+    "email",
+    hmac,
+  );
+  await disarm(stub);
+  return answered;
 }
 
 /**
@@ -72,6 +94,12 @@ function fire(stub: ReturnType<typeof bucket>): Promise<void> {
  * call itself can be observed, and "did the DO delete its alarm" is the half of
  * the fail-closed contract that no other suite reaches through the real entry
  * point.
+ *
+ * **The count is only evidence if this wake-up is the only one.** A spy on
+ * `ctx.storage` sees every call the instance makes, the platform's own
+ * deliveries included, so a second wake-up landing inside the window is
+ * indistinguishable from the one under test calling twice. That is why every
+ * request above goes through `request`, which disarms.
  */
 function fireCountingDeletes(stub: ReturnType<typeof bucket>): Promise<number> {
   return runInDurableObject(stub, async (instance, ctx) => {
@@ -96,10 +124,7 @@ function fireCountingDeletes(stub: ReturnType<typeof bucket>): Promise<number> {
 describe("the Durable Object's alarm entry point", () => {
   it("runs the work an RPC queued, and settles the row", async () => {
     const stub = bucket();
-    const answered = await (stub as unknown as Bucket).requestPasswordReset(
-      "email",
-      "ab".repeat(32),
-    );
+    const answered = await request(stub, "ab".repeat(32));
     expect(answered.ok).toBe(true);
     expect((await jobsIn(stub)).map((row) => row.kind)).toEqual([
       "send-mail",
@@ -121,10 +146,7 @@ describe("the Durable Object's alarm entry point", () => {
   it("converges a burst of requests onto one row", async () => {
     const stub = bucket();
     for (let i = 0; i < 4; i += 1) {
-      await (stub as unknown as Bucket).requestPasswordReset(
-        "email",
-        "cd".repeat(32),
-      );
+      await request(stub, "cd".repeat(32));
     }
     // `send-mail` is not a re-arming kind, so once the row is `done` a repeat
     // request does not revive it: wake-ups scale with the throttle window, not
@@ -138,10 +160,7 @@ describe("the Durable Object's alarm entry point", () => {
 
   it("tolerates a duplicate delivery of the same alarm", async () => {
     const stub = bucket();
-    await (stub as unknown as Bucket).requestPasswordReset(
-      "email",
-      "ef".repeat(32),
-    );
+    await request(stub, "ef".repeat(32));
     await fire(stub);
     // At-least-once execution makes this an ordinary occurrence, not an error.
     await fire(stub);
@@ -152,13 +171,9 @@ describe("the Durable Object's alarm entry point", () => {
 
   it("never throws out of alarm() when the schema is fail-closed", async () => {
     const stub = bucket();
-    await (stub as unknown as Bucket).requestPasswordReset(
-      "email",
-      "12".repeat(32),
-    );
-    // Let the platform's own delivery happen first, then re-open the row by
-    // hand. Bumping the version while an alarm was still in flight would be
-    // racing a different question.
+    await request(stub, "12".repeat(32));
+    // Drain the queue first, then re-open the row by hand. Bumping the version
+    // with work still runnable would be racing a different question.
     await fire(stub);
     await runInDurableObject(stub, (_instance, ctx) => {
       const sql = ctx.storage.sql as SqlStorage;
@@ -187,10 +202,7 @@ describe("the Durable Object's alarm entry point", () => {
 
   it("does not delete its alarm when the schema is fail-closed", async () => {
     const stub = bucket();
-    await (stub as unknown as Bucket).requestPasswordReset(
-      "email",
-      "56".repeat(32),
-    );
+    await request(stub, "56".repeat(32));
     // Drain what the request queued first. The reset path arms the bucket's
     // `sweep-reset-tokens` two hours out as well, so the runnable set is not
     // empty until that has run too — and an alarm is correctly *kept* while it
@@ -220,10 +232,7 @@ describe("the Durable Object's alarm entry point", () => {
 
   it("never throws out of alarm() when storage itself fails", async () => {
     const stub = bucket();
-    await (stub as unknown as Bucket).requestPasswordReset(
-      "email",
-      "34".repeat(32),
-    );
+    await request(stub, "34".repeat(32));
     // The failure the design actually predicts is a DO at its 10 GB ceiling,
     // where writes fail while reads and deletes still succeed — so `claimJob`
     // throws with no per-job guard around it and `purge-trash`, the only

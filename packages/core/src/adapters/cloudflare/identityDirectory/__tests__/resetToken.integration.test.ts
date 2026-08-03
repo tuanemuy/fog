@@ -8,6 +8,7 @@ import {
 import type { Email } from "@repo/core/domain/identity/valueObject";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
+import { disarm } from "../../__tests__/doHarness";
 import { IDENTITY_DIRECTORY_JOB_HANDLERS } from "../../jobs/registry";
 import { runDueJobs } from "../../jobs/runner";
 import { encryptCanonical } from "../canonicalCipher";
@@ -113,6 +114,20 @@ function bucketFor(name: string) {
   return ns.get(ns.idFromName(name));
 }
 
+/**
+ * The reset request, followed immediately by `disarm`.
+ *
+ * `deliver` below runs the bucket's jobs against a sender this file can read,
+ * which only works while nothing else has already run them. The RPC arms a real
+ * alarm a second out and the Durable Object's own wake-up would consume the
+ * `send-mail` row with the noop sender — leaving `deliver` an empty array and
+ * the assertions below reading a race. See `disarm`.
+ */
+async function request(stub: ReturnType<typeof bucketFor>): Promise<void> {
+  await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+  await disarm(stub);
+}
+
 /** Runs the bucket's due jobs with a sender the test can read. */
 function deliver(stub: ReturnType<typeof bucketFor>): Promise<string[]> {
   const links: string[] = [];
@@ -191,7 +206,7 @@ async function redeem(
 describe("the password reset token", () => {
   it("composes from the mailed link all the way to a consumed row", async () => {
     const stub = await registeredBucket();
-    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    await request(stub);
 
     const links = await deliver(stub);
     expect(links).toHaveLength(1);
@@ -214,7 +229,7 @@ describe("the password reset token", () => {
 
   it("refuses the same link twice", async () => {
     const stub = await registeredBucket();
-    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    await request(stub);
     const parsed = parseResetToken((await deliver(stub))[0] as string, ROUTING);
     const digest = await resetTokenDigest(parsed?.secret ?? "");
 
@@ -224,7 +239,7 @@ describe("the password reset token", () => {
 
   it("stores nothing a database dump could redeem", async () => {
     const stub = await registeredBucket();
-    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    await request(stub);
     const link = (await deliver(stub))[0] as string;
     const row = await tokenRow(stub);
     const routing = parseResetToken(link, ROUTING) as {
@@ -258,7 +273,7 @@ describe("the password reset token", () => {
 
   it("rejects a malformed link the same way as an unknown one", async () => {
     const stub = await registeredBucket();
-    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    await request(stub);
     await deliver(stub);
 
     expect(parseResetToken("not-a-token", ROUTING)).toBeNull();
@@ -274,7 +289,7 @@ describe("the password reset token", () => {
    */
   it("refuses routing coordinates the keyring does not declare", async () => {
     const stub = await registeredBucket();
-    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    await request(stub);
     const link = (await deliver(stub))[0] as string;
     const secret = link.slice(link.lastIndexOf(".") + 1);
 

@@ -2150,3 +2150,75 @@ ADR-047 は `activate` / `promote` に `RETURNING 1` を入れ、`cancel` / `del
 
 - 良い点: リポジトリ全体で名前が1つになった（`grep` でコード1件・spec 6件がすべて `LastCredentialRemoval`）。
 - 影響なし: throw する実装はまだ無いので、挙動は変わらない。
+
+---
+
+## ADR-110: 統合テストは「その DO の起床を駆動する唯一の主体」であることを明示的に確保する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー test B-001 への対応）
+
+### Context
+
+`alarmEntry.integration.test.ts` の "does not delete its alarm when the schema is fail-closed" が、フルスイート実行時に確率的に `expected 2 to be 1` で落ちる（レビュアー実測で22回中2回）。同根の潜在箇所として `resetToken.integration.test.ts` と `identity.integration.test.ts` が挙がっていた。
+
+真因は**プラットフォーム自身の Alarm 配信**である。ゲート付き RPC エントリは必ず `armAfterRpc` で終わり、`clamp` は「すでに due なジョブ」を `setAlarm(now + 1000)` に倒す（`jobs/alarm.ts`）。つまり **RPC の1秒後に workerd が本物の `alarm()` を配信する**。その起床は同じキューの**第二の駆動者**であり、DO 自身の依存（`MAIL_SENDER` 未バインドなので noop sender）でジョブを走らせ、行を settle し、実行可能集合が空になれば `deleteAlarm()` する。
+
+したがって RPC 後に「行数」「受信者」「`deleteAlarm` の回数」を数えるテストは、**経過時間に依存する**。1秒以内に assert が終われば緑、スイートが遅い日は赤になる。順序でも名前でもないので、`docs/test.md` が第一防衛線と呼ぶ名前のユニーク化でも `afterEach` でも防げない。
+
+**再現の確立**: 本機ではフルスイート25回連続で自然再現しなかった（レビュアーの環境より速い）。そこで機構そのものを決定的に再現した。
+- `resetToken` / `identity`: RPC 直後に 2000ms 待つ1行を注入 → **どちらも決定的に赤**（`TypeError: … reading 'generation'` と `expected [] to deeply equal [...]`）。
+- `alarmEntry`: 数える窓を 2000ms 開いたまま保持し、事前ドレインを外す（＝ RPC が張った `now+1000` が生きている状態で窓を開く）→ **`AssertionError: expected 2 to be 1` を決定的に再現**。レビュー報告と同一のメッセージ。
+
+### Decision
+
+**症状ごとの対症療法ではなく、観測方法の側を直す。** 武装済みの Alarm の配信を抑止する手段は無いので、**武装を残さない**ことを規則にする。
+
+`adapters/cloudflare/__tests__/doHarness.ts` に `disarm(stub)` を置き、**自分でジョブを駆動ないし観測するテストは、実 RPC エントリを叩いた直後に必ずこれを呼ぶ**。3ファイルとも、素の RPC 呼び出しを「RPC + `disarm`」の小さなヘルパ（`request` / `askForResetLink`）に閉じ込め、各ケースが憶えていなくてよい形にした。規則は `docs/test.md`「Timeout / flakiness」に、機構は `disarm` の JSDoc に書いた。
+
+`deleteAlarm` を数える窓については、これに加えて「窓の中でプラットフォームの起床が起こりえないこと」が数値の前提であることを `fireCountingDeletes` の JSDoc に明記した — スパイは `ctx.storage` に掛かるので、第二の起床は「対象が2回呼んだ」と区別できない。
+
+### Consequences
+
+- 良い点: 修正後、注入した 2000ms 遅延を4箇所に置いたままフルスイートが**緑**。逆に `disarm` を no-op へ潰すと同じ遅延で**3本が赤**（陰性対照）。効いているのが再構成ではなく `disarm` であることが確かめられている。
+- 良い点: 規則が「RPC を叩いたら disarm」という1行なので、新しい RPC 駆動テストにも機械的に適用できる。
+- トレードオフ: `disarm` はインスタンスの `AlarmCache` を触らないので、**武装そのものが主題のスイート**（`jobs/__tests__/alarm.integration.test.ts`）では使えない。JSDoc にその境界を書いた。
+- 採らなかった案: 「遅い日でも間に合うようにタイムアウトを伸ばす」「観測前に行を pending へ戻す」はどちらも競合を残したまま確率を下げるだけなので採らない。
+
+## ADR-111: 全ケースで成り立つ不変条件はケースではなくハーネスで assert する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー test W-006 への対応）
+
+### Context
+
+`purgeTrash.integration.test.ts` の `Io.lines` の JSDoc が「ハンドラのログが空であること（＝ clamp が火を噴かないこと）は every case below asserts it」と断定していたが、実際に assert しているのは12ケース中4ケースだった（ADR-081 で死に変数から不変条件の言明へ変えた際に、適用範囲だけが追随しなかった）。
+
+### Decision
+
+`lines` を `Io` から外し、**ハーネスがケース本体の後で `expect(lines).toEqual([])` を実行する**形にした。断定と実態が構造的に一致し、フィクスチャを足しても勝手に外れない。
+
+### Consequences
+
+- 良い点: ハンドラの先頭に無条件の `logger.warn` を1行入れる変異で、**12ケース中11ケースが赤**（残る1本はハンドラを呼ばない enqueue のテスト）。変更前は同じ変異で4本しか赤にならなかった。
+- トレードオフ: 「このケースでは clamp が火を噴かない」という説明が個々のケースから消える。代表ケース（"leaves the drive signal strictly in the future after a run"）にはハーネス側を指すコメントを残した。
+
+## ADR-112: 行数を数えるクエリは hmac で絞り、「別の行であること」を witness で固定する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー test W-003 への対応）
+
+### Context
+
+`identity.integration.test.ts` の「登録済み / 未登録で行数が同じ」テストは、同ファイルの `mappingRowsFor` が hmac で絞っている（「2つのアドレスが同じ bucket に落ちうる」とコメント付き）のに対し、`jobsFor` は `kind = 'send-mail'` だけで絞っていた。2アドレスが同じ bucket を引くと両方の `toHaveLength(1)` が 2 を見る。いまは `seq` が決定的なので当たっていないだけである。
+
+### Decision
+
+`send-mail` の `operation_key` は `send-mail:{kind}:{hmac}:{window}` なので、**hmac の前方一致で絞る**。`LIKE` は使わない — SQLite の `SQLITE_MAX_LIKE_PATTERN_LENGTH` が既定 50 で、64桁 hex を含むパターンは `LIKE or GLOB pattern too complex` で失敗する（実測）。`instr(operation_key, ?) = 1` にした。窓番号は焼き込まない（実行が窓境界をまたいでも壊れないため）。
+
+あわせて **witness を1本置いた** — 2つのクエリが返した `operation_key` が異なること。これが無いと、「同じ1行を2回返すクエリ」でも2つの `toHaveLength(1)` は満たされてしまい、未登録アドレスについて何も主張しないテストになる。
+
+### Consequences
+
+- 良い点: `TEST_DIRECTORY_ROUTING_SECRET` の `bucketCount` を 1 に落として**全アドレスを同一 bucket に衝突させる**変異で、旧クエリは `expected … to have a length of 1 but got 2` で赤、新クエリは緑（実測）。1/256 の潜在バグが実在することと、修正がそれを塞いでいることの両方を確認した。
+- トレードオフ: `instr(...) = 1` は `LIKE` より読みづらい。理由をコメントに残した。

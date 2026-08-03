@@ -17,6 +17,7 @@ import type {
 import { ssoCanonical } from "@repo/core/domain/identity/valueObject";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
+import { disarm } from "../../../adapters/cloudflare/__tests__/doHarness";
 import {
   createTestContainer,
   setupTestContainer,
@@ -124,6 +125,26 @@ function stateSecrets(): StateSecrets {
       { requireBucketCount: false },
     ),
   };
+}
+
+/**
+ * Asks for a reset link and then takes the bucket's alarm away from the
+ * platform.
+ *
+ * The usecase's RPC ends in `armAfterRpc`, and the `send-mail` row it queued is
+ * due immediately, so the clamp arms a genuine alarm one second out. The
+ * Durable Object's own wake-up would then run the row with the *noop* sender —
+ * an unbound `MAIL_SENDER` is what this suite runs with — and `deliverDueMail`
+ * below would find nothing to send and report no recipient. The window is one
+ * second wide, so the assertions pass on a fast run and fail on a slow one;
+ * disarming is what makes the observation the test's own. See `disarm`.
+ */
+async function askForResetLink(email: string): Promise<void> {
+  await requestPasswordReset({ container: container(), input: { email } });
+  const locator = (await container().directoryLocator.forCanonical(email))[0];
+  if (locator === undefined) throw new Error("no locator");
+  const ns = env.IDENTITY_DIRECTORY;
+  await disarm(ns.get(ns.idFromName(locator.doName)));
 }
 
 /**
@@ -881,6 +902,12 @@ describe("requestPasswordReset", () => {
     });
     const unknownAddress = address();
 
+    // Filtered on the hmac, like `mappingRowsFor` and for the same reason: two
+    // addresses in one test can legitimately share a bucket (there are 256 of
+    // them), and `kind` alone would then count both requests' rows twice over.
+    // A `send-mail` key is `send-mail:{kind}:{hmac}:{window}`, so the hmac is
+    // what narrows it to *this* address without pinning the window the run fell
+    // into.
     const jobsFor = async (email: string) => {
       const locator = (
         await container().directoryLocator.forCanonical(email)
@@ -892,26 +919,31 @@ describe("requestPasswordReset", () => {
         (_i, ctx) =>
           (ctx.storage.sql as SqlStorage)
             .exec<{ kind: string; operation_key: string }>(
-              "SELECT kind, operation_key FROM jobs WHERE kind = 'send-mail'",
+              `SELECT kind, operation_key FROM jobs
+                WHERE kind = 'send-mail' AND instr(operation_key, ?) = 1`,
+              `send-mail:email:${locator.hmac}:`,
             )
             .toArray(),
       ) as Promise<{ kind: string; operation_key: string }[]>;
     };
 
-    await requestPasswordReset({
-      container: container(),
-      input: { email: registeredAddress },
-    });
-    await requestPasswordReset({
-      container: container(),
-      input: { email: unknownAddress },
-    });
+    await askForResetLink(registeredAddress);
+    await askForResetLink(unknownAddress);
 
     // Identical row count and identical shape: the difference between the two
     // is confined to what the send resolves later, so the enqueue itself is not
     // an enumeration oracle.
-    expect(await jobsFor(registeredAddress)).toHaveLength(1);
-    expect(await jobsFor(unknownAddress)).toHaveLength(1);
+    const registeredRows = await jobsFor(registeredAddress);
+    const unknownRows = await jobsFor(unknownAddress);
+    expect(registeredRows).toHaveLength(1);
+    expect(unknownRows).toHaveLength(1);
+    // Witness that the filter above narrowed to two *different* rows. Without
+    // it, a query that answered the same single row twice — which is what a
+    // shared bucket plus an over-broad predicate produces — would satisfy the
+    // two counts and assert nothing about the unregistered address at all.
+    expect(registeredRows[0]?.operation_key).not.toBe(
+      unknownRows[0]?.operation_key,
+    );
   });
 
   it("sends the link to the address the signup itself sealed", async () => {
@@ -920,7 +952,7 @@ describe("requestPasswordReset", () => {
       container: container(),
       input: { email, password: "correct horse battery staple" },
     });
-    await requestPasswordReset({ container: container(), input: { email } });
+    await askForResetLink(email);
 
     // Nothing seeded the ciphertext: the recipient is recovered from what the
     // signup wrote, which closes the loop the write side used to leave open
@@ -929,10 +961,7 @@ describe("requestPasswordReset", () => {
     expect(await deliverDueMail(email)).toEqual([email]);
 
     const unknown = address();
-    await requestPasswordReset({
-      container: container(),
-      input: { email: unknown },
-    });
+    await askForResetLink(unknown);
     expect(await deliverDueMail(unknown)).toEqual([]);
   });
 });
