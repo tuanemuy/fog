@@ -654,7 +654,7 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
 | フィールド | 型 |
 |---|---|
 | userId | `string` |
-| email | `string` |
+| email | `string`（**#12 で入る**。原本は認証情報側にあり、復号は `read-own-canonical` の実装とセットである。#37 が返すのは `userId` / `credentials` / `trashRetentionDays` の3つで、`email` の欠落は実装漏れではない） |
 | credentials | `{ credentialId: string; kind: "email" \| "sso"; label: string; usableForLogin: boolean }[]`（保有クレデンシャルの要約。`label` は SSO なら provider 名、メールなら空文字。`usableForLogin` はその要素だけでログインできるかで、パスワード変更フォームの表示判定に使う） |
 | trashRetentionDays | `number` |
 
@@ -662,7 +662,7 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
 
 1. `UserId.create(input.userId)` で値オブジェクトを構築する
 2. `UserSettingsRepository.find()` でクレデンシャル要約と設定を取得する（読み取りのみ。UoW 不要）。不在なら `NotFoundError("USER_NOT_FOUND")`
-3. **認証情報側**からメールアドレスの原本を1件だけ復号して取得する（本人の自己参照であり、一覧のために複数件をまとめて復号する経路は開かない）
+3. **認証情報側**からメールアドレスの原本を1件だけ復号して取得する（本人の自己参照であり、一覧のために複数件をまとめて復号する経路は開かない）。**この手順の実装は #12** — 復号の入口である `read-own-canonical` が #12 の担当なので、#37 の実装は本手順を持たず出力 DTO からも `email` を落としている
 4. view に射影して返す。**解除操作を出してよいのは `kind: "sso"` の要素だけである**（`kind: "email"` の解除経路は存在しない。権威はドメイン側にあり、UI の出し分けは二重の防波堤である）。**パスワード変更フォームの表示判定は `usableForLogin` が真の `kind: "email"` の要素があるかで行う** — SSO 専用アカウントにもメールの要素は置かれるので、`kind` だけでは決まらない
 
 ### エラーケース

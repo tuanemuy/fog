@@ -108,7 +108,8 @@ const REDACTED_MESSAGE = "Request failed";
  *   wording exists, so redacting it would blank the auth forms.
  *
  * Apply at the response boundary only — server-side logs must use the raw
- * form so operators retain the original code / message for triage.
+ * form so operators retain the original code / message for triage. Which
+ * kinds *need* that log is {@link redactsMessage}.
  */
 export function redactForClient(serialized: SerializedError): SerializedError {
   switch (serialized.kind) {
@@ -127,6 +128,31 @@ export function redactForClient(serialized: SerializedError): SerializedError {
     case "business":
     case "validation":
       return serialized;
+  }
+}
+
+/**
+ * Whether {@link redactForClient} drops this kind's `message`.
+ *
+ * The transport boundary logs exactly these kinds, because for them the
+ * server log is the *only* remaining copy of the original prose: `business`
+ * and `validation` keep their message on the wire, everything else loses it.
+ * Deriving the log condition from redaction rather than listing kinds again
+ * is what keeps the pair from drifting — a `conflict` whose message never
+ * reached a client and never reached a log would be untriageable.
+ */
+export function redactsMessage(kind: SerializedErrorKind): boolean {
+  switch (kind) {
+    case "business":
+    case "validation":
+      return false;
+    case "system":
+    case "unknown":
+    case "notFound":
+    case "conflict":
+    case "unauthorized":
+    case "forbidden":
+      return true;
   }
 }
 

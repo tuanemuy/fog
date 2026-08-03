@@ -45,6 +45,7 @@
 | DOM-identity-042 | CredentialLocatorStore.record | spec/domains/identity.md#CredentialLocatorStore | upsert。既存があれば `credentialVersion` / `usableForLogin` / `label` を上書きする。**`credentialVersion` は `credentialId` 単位で単調非減少**（引数と既存の最大値のうち大きいほう）。**既存行があれば何もしない no-op にしてはならない**（記録が空振りすると到達性検査が利用者を締め出す） |
 | DOM-identity-043 | CredentialLocatorStore.advanceCredentialVersion | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の `credentialVersion` を1つ進める。**その credential のすべての行に同時に効く**（1つだけ更新すると認証情報側との食い違いが残る） |
 | DOM-identity-044 | CredentialLocatorStore.deleteByCredentialId | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の行をすべて消す。「無ければ成功」の冪等操作。SSO 連携の解除・退会が使う（消す前に写像材料を控える。消した後は認証情報側の行へ辿り着けない） |
+| DOM-identity-045 | credentialMappingRules（ドメインサービス） | spec/domains/identity.md#認証情報の可否判定credentialMappingRules | `CredentialMapping` に対する4つの純粋述語 `isSettled` / `holdsPasswordVerifier` / `isUsableForLogin` / `isResetRequestAllowed` を**ドメイン層に1本化する**（ログインの写像解決・リセット依頼の適格判定・`send-mail` の宛先判定の3箇所が同じ規則を読む。アダプターに3重に書かない）。**リセットの窓判定は経過時間ではなく窓番号 `floor(t / windowMs)` の比較である** — `last_reset_requested_at` は全依頼で前進するので、sliding だと未認証の第三者がリセットを恒久的に封じられる。`windowMs` は引数で、実値・天井・減衰は #18 / #38。条件を足すのは #12 / #18 |
 
 ## memo
 

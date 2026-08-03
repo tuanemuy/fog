@@ -106,24 +106,64 @@ describe("isResetRequestAllowed", () => {
     expect(isResetRequestAllowed(mapping(), NOW, WINDOW_MS)).toBe(true);
   });
 
-  it("is false inside the request window", () => {
+  // `NOW` is a window boundary, so `NOW + WINDOW_MS / 2` is the same window.
+  it("is false for a second request inside the same window", () => {
     expect(
       isResetRequestAllowed(
-        mapping({ lastResetRequestedAt: NOW - WINDOW_MS + 1 }),
-        NOW,
+        mapping({ lastResetRequestedAt: NOW }),
+        NOW + WINDOW_MS / 2,
         WINDOW_MS,
       ),
     ).toBe(false);
   });
 
-  it("holds again once the window has elapsed exactly", () => {
+  it("holds again at the first instant of the next window", () => {
     expect(
       isResetRequestAllowed(
-        mapping({ lastResetRequestedAt: NOW - WINDOW_MS }),
-        NOW,
+        mapping({ lastResetRequestedAt: NOW }),
+        NOW + WINDOW_MS,
         WINDOW_MS,
       ),
     ).toBe(true);
+  });
+
+  /**
+   * The regression that made the sliding form unusable: the stamp advances on
+   * every request, so an unauthenticated third party asking just inside the
+   * window kept `last + window <= now` false forever and the victim could never
+   * receive a link again. Under window numbers the request one millisecond
+   * before the boundary cannot push the next window out.
+   */
+  it("cannot be held shut by a request just before the boundary", () => {
+    expect(
+      isResetRequestAllowed(
+        mapping({ lastResetRequestedAt: NOW + WINDOW_MS - 1 }),
+        NOW + WINDOW_MS,
+        WINDOW_MS,
+      ),
+    ).toBe(true);
+  });
+
+  // The other half of the same rule: an attacker hammering every few seconds
+  // still lets one request through per window, forever.
+  it("lets one request through per window under a sustained flood", () => {
+    const perWindow = 16;
+    const windows = 10;
+    const flood = perWindow * windows;
+    let last: number | null = null;
+    let eligible = 0;
+    for (let i = 0; i < flood; i += 1) {
+      const at = NOW + (i * WINDOW_MS) / perWindow;
+      const allowed = isResetRequestAllowed(
+        mapping({ lastResetRequestedAt: last }),
+        at,
+        WINDOW_MS,
+      );
+      if (allowed) eligible += 1;
+      // The adapter stamps unconditionally, eligible or not.
+      last = at;
+    }
+    expect(eligible).toBe(windows);
   });
 
   it("is false without verification material (an SSO-only account)", () => {

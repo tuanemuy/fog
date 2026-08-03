@@ -45,11 +45,34 @@ export const POISON_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  * previous window's `done` row, so the user's working link was destroyed and no
  * replacement was sent.
  *
- * With the two equal the invariant is exact: a request is eligible to issue
- * only when `last + window <= now`, which forces `floor(now / window)` past the
- * window of every earlier request, so the row it enqueues is always a new one.
+ * With the two equal the invariant is exact, because eligibility is decided on
+ * the *same* `floor(t / window)` the key carries
+ * (`domain/identity/credentialMappingRules.ts`): a request is eligible only
+ * when its window number is strictly greater than that of the last request, so
+ * the row it enqueues is always one no earlier request could have created.
+ *
+ * ## Why the comparison is on window numbers and not on elapsed time
+ *
+ * A sliding `last + window <= now` test gives the same throttle and one extra
+ * property nobody wants: because `last_reset_requested_at` advances on *every*
+ * request — which is what keeps the invariant above exact — an unauthenticated
+ * third party asking slightly more often than the window keeps the test
+ * permanently false and the victim can never receive a reset link again.
+ * Window numbers remove it: whoever asks first in a window is eligible, so a
+ * link goes to the registered address at least once per window no matter who
+ * asked (ADR-091). Bounding the request rate itself remains #18's.
  */
 export const RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * How long a mailed reset link stays redeemable. Hours, not days: it is a
+ * bearer credential.
+ *
+ * Lives here rather than beside the row it stamps because the `sweep-reset-tokens`
+ * enqueue point needs the same number — the sweep is armed for the moment the
+ * token it was issued alongside expires.
+ */
+export const RESET_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Retention for a `send-mail` row, **applied whatever the outcome was**.

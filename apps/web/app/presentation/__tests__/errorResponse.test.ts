@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   httpStatusFor,
   redactForClient,
+  redactsMessage,
   SERIALIZED_ERROR_KINDS,
   type SerializedError,
   type SerializedErrorKind,
@@ -80,6 +81,19 @@ const PASSED_THROUGH_KINDS = KINDS.filter(
 describe("serializeError", () => {
   it.each(KINDS)("projects the %s sample onto that kind", (kind) => {
     expect(SAMPLES[kind].kind).toBe(kind);
+  });
+});
+
+// The transport boundary logs whatever this reports as dropped, so the two
+// have to stay in step: a kind that redaction blanks while `redactsMessage`
+// says otherwise loses its message on the wire *and* in the log.
+describe("redactsMessage", () => {
+  it.each(KINDS)("agrees with what redaction does to %s", (kind) => {
+    const sample = SAMPLES[kind];
+
+    expect(redactsMessage(kind)).toBe(
+      redactForClient(sample).message !== sample.message,
+    );
   });
 });
 

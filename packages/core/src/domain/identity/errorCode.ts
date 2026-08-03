@@ -5,7 +5,10 @@ export const IdentityErrorCode = {
   // No thrower yet, deliberately. The credential set is a projection, so the
   // "last way in" refusal belongs to `unlinkSsoCredential` (#12); what #37
   // supplies is the predicate (`User.loginCredentialCount`) and this code.
-  LastLoginCredential: "IDENTITY_LAST_LOGIN_CREDENTIAL",
+  // Named after `spec/usecases/identity.md`'s `LastCredentialRemoval` rather
+  // than after the predicate: #12 reads the spec to build the thrower, and two
+  // names for one refusal is a decision it would have to re-make.
+  LastCredentialRemoval: "IDENTITY_LAST_CREDENTIAL_REMOVAL",
   PasswordTooWeak: "IDENTITY_PASSWORD_TOO_WEAK",
   InvalidPasswordHash: "IDENTITY_INVALID_PASSWORD_HASH",
   UnsupportedSsoProvider: "IDENTITY_UNSUPPORTED_SSO_PROVIDER",

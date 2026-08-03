@@ -7,6 +7,7 @@ import {
   httpStatusFor,
   isAppServerError,
   redactForClient,
+  redactsMessage,
   type SerializedError,
   serializeError,
 } from "./errorResponse";
@@ -64,7 +65,10 @@ async function toClientError(error: unknown): Promise<AppServerError> {
     ? error.serialized
     : serializeError(error);
 
-  if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
+  // Log whatever redaction is about to blank, not just the operational
+  // kinds: a `conflict` / `notFound` / `unauthorized` / `forbidden` message
+  // is server prose that leaves no other trace once the wire copy is gone.
+  if (redactsMessage(rawSerialized.kind)) {
     await logServerError(error, rawSerialized);
   }
 

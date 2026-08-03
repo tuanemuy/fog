@@ -72,6 +72,27 @@ export function isUsableForLogin(
  * Deliberately **not** {@link isUsableForLogin} plus a window: the failed-login
  * backoff must not gate recovery, or an attacker could lock a user out of the
  * one path back in by failing logins against them.
+ *
+ * ## Fixed windows, not a sliding one
+ *
+ * The comparison is between **window numbers** — `floor(t / windowMs)` — and
+ * not `last + windowMs <= now`. The two throttle identically for a single
+ * well-behaved caller, and differ in exactly one case that matters: the stamp
+ * is advanced by every request, eligible or not (that unconditional advance is
+ * what makes the window number of an eligible request unused, which the
+ * `send-mail` `operationKey` relies on). Under a sliding test, an
+ * unauthenticated third party asking slightly faster than the window keeps
+ * `last` moving and the victim never becomes eligible again — password
+ * recovery, the one path back in, closes permanently and the uniform response
+ * means neither the user nor an operator can see it. With window numbers the
+ * first request of any window is always eligible, because the stamp it compares
+ * against was necessarily written in an earlier window; a link therefore
+ * reaches the registered address at least once per window regardless of who
+ * asked for it.
+ *
+ * The cost is that two requests straddling a boundary both issue, so the second
+ * replaces the first one's still-live link. That is the same trade-off the
+ * window already accepts for the mail itself.
  */
 export function isResetRequestAllowed(
   mapping: CredentialMapping,
@@ -82,6 +103,7 @@ export function isResetRequestAllowed(
     isSettled(mapping) &&
     holdsPasswordVerifier(mapping) &&
     (mapping.lastResetRequestedAt === null ||
-      mapping.lastResetRequestedAt + windowMs <= now)
+      Math.floor(mapping.lastResetRequestedAt / windowMs) <
+        Math.floor(now / windowMs))
   );
 }

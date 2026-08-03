@@ -61,8 +61,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Integration tests
-        run: pnpm test:integration
+      # Shuffled rather than in file order, and in place of a plain run so the
+      # job costs the same: order independence rests on a per-test Durable
+      # Object name, which nothing checks unless the order actually varies.
+      # The seed is the run id, so a red run is reproducible locally with
+      # `pnpm test:integration:shuffle --sequence.seed=<id>`.
+      - name: Integration tests (shuffled)
+        run: pnpm test:integration:shuffle --sequence.seed=${{ github.run_id }}
 
   build:
     name: Build

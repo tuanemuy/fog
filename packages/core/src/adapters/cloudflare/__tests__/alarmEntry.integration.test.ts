@@ -36,12 +36,27 @@ function bucket() {
   return ns.get(ns.idFromName(`dir:g1:b01${seq}`));
 }
 
+/**
+ * Ordered by `operation_key`, so `send-mail:…` comes first and the bucket's
+ * `sweep-reset-tokens` row second. Every reset request arms both — the sweep is
+ * what eventually clears `password_reset_tokens` — so the row count here is two
+ * per bucket, not one.
+ */
 function jobsIn(stub: ReturnType<typeof bucket>): Promise<JobRow[]> {
   return runInDurableObject(stub, (_instance, ctx) =>
     (ctx.storage.sql as SqlStorage)
       .exec<JobRow>("SELECT * FROM jobs ORDER BY operation_key")
       .toArray(),
   ) as Promise<JobRow[]>;
+}
+
+/** Pulls every pending row forward so one wake-up drains the bucket. */
+function makeAllDue(stub: ReturnType<typeof bucket>): Promise<void> {
+  return runInDurableObject(stub, (_instance, ctx) => {
+    (ctx.storage.sql as SqlStorage).exec(
+      "UPDATE jobs SET next_run_at = 0 WHERE status = 'pending'",
+    );
+  }) as Promise<void>;
 }
 
 function fire(stub: ReturnType<typeof bucket>): Promise<void> {
@@ -86,7 +101,10 @@ describe("the Durable Object's alarm entry point", () => {
       "ab".repeat(32),
     );
     expect(answered.ok).toBe(true);
-    expect(await jobsIn(stub)).toHaveLength(1);
+    expect((await jobsIn(stub)).map((row) => row.kind)).toEqual([
+      "send-mail",
+      "sweep-reset-tokens",
+    ]);
 
     await fire(stub);
 
@@ -110,8 +128,12 @@ describe("the Durable Object's alarm entry point", () => {
     }
     // `send-mail` is not a re-arming kind, so once the row is `done` a repeat
     // request does not revive it: wake-ups scale with the throttle window, not
-    // with how often somebody asks.
-    expect(await jobsIn(stub)).toHaveLength(1);
+    // with how often somebody asks. The sweep has a per-bucket constant key, so
+    // four requests converge on one of those too.
+    expect((await jobsIn(stub)).map((row) => row.kind)).toEqual([
+      "send-mail",
+      "sweep-reset-tokens",
+    ]);
   });
 
   it("tolerates a duplicate delivery of the same alarm", async () => {
@@ -124,7 +146,7 @@ describe("the Durable Object's alarm entry point", () => {
     // At-least-once execution makes this an ordinary occurrence, not an error.
     await fire(stub);
     const rows = await jobsIn(stub);
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     expect(rows[0]?.status).toBe("done");
   });
 
@@ -169,9 +191,15 @@ describe("the Durable Object's alarm entry point", () => {
       "email",
       "56".repeat(32),
     );
-    // Positive control first: a wake-up that finds nothing runnable *does*
-    // delete the alarm, which is what makes the zero below evidence rather than
-    // a spy that was never wired to anything.
+    // Drain what the request queued first. The reset path arms the bucket's
+    // `sweep-reset-tokens` two hours out as well, so the runnable set is not
+    // empty until that has run too — and an alarm is correctly *kept* while it
+    // is outstanding.
+    await fire(stub);
+    await makeAllDue(stub);
+    // Positive control: a wake-up that finds nothing runnable *does* delete the
+    // alarm, which is what makes the zero below evidence rather than a spy that
+    // was never wired to anything.
     expect(await fireCountingDeletes(stub)).toBe(1);
 
     await runInDurableObject(stub, (_instance, ctx) => {

@@ -24,6 +24,7 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.config.integration.ts",
+    "test:integration:shuffle": "vitest run --config vitest.config.integration.ts --sequence.shuffle",
     "test:smoke": "vitest run --config vitest.config.smoke.ts",
     "cf:types": "pnpm --filter @repo/web cf:types",
     "cf:render:staging": "pnpm --filter @repo/infra-cloudflare render staging",

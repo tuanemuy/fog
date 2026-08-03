@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/layout/AppShell";
-import { ERROR_TITLE, ErrorRetry } from "@/components/ui/ErrorRetry";
+import { ErrorSurface } from "@/components/ui/ErrorSurface";
 import { readAuthStateFn } from "@/presentation/authState";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { toSafeRedirect } from "@/presentation/redirectSearch";
@@ -51,13 +51,7 @@ function AppLayout() {
 function ShellErrorScreen({ message }: { message: string }) {
   return (
     <AppShell>
-      <section className="flex flex-col gap-lg py-2xl">
-        <h2 className="text-xl font-bold leading-tight">{ERROR_TITLE}</h2>
-        {message === ERROR_TITLE ? null : (
-          <p className="text-base text-neutral-600 text-balance">{message}</p>
-        )}
-        <ErrorRetry />
-      </section>
+      <ErrorSurface message={message} />
     </AppShell>
   );
 }

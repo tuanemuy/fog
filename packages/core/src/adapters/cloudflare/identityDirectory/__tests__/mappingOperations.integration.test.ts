@@ -177,3 +177,70 @@ describe("credential mapping promote", () => {
     );
   });
 });
+
+/**
+ * The same shape as `activate` and `promote`, and it was the one write of the
+ * eight that reported success on a predicate that had matched nothing.
+ * `change_state IS NULL` genuinely misses whenever another change is in flight,
+ * and this write is the instant the old material stops verifying — so a silent
+ * no-op hands #12 a saga that believes a fail-closed window opened when it did
+ * not.
+ */
+describe("credential mapping beginChange", () => {
+  it("starts a change on a credential with none in flight", async () => {
+    const row = await seeded(({ sql, store }) => {
+      store.beginChange(
+        "cred-1" as CredentialId,
+        "new-verifier",
+        "reset",
+        "op-2",
+      );
+      return sql
+        .exec<{ change_state: string | null; pending_verifier: string | null }>(
+          "SELECT change_state, pending_verifier FROM credential_mappings",
+        )
+        .toArray()[0];
+    });
+    expect(row?.change_state).toBe("pending");
+    expect(row?.pending_verifier).toBe("new-verifier");
+  });
+
+  it("refuses a second change while one is already in flight", async () => {
+    const result = await seeded(({ sql, store }) => {
+      store.beginChange("cred-1" as CredentialId, "first", "reset", "op-2");
+      const error = caught(() =>
+        store.beginChange(
+          "cred-1" as CredentialId,
+          "second",
+          "password-change",
+          "op-3",
+        ),
+      );
+      return {
+        error,
+        row: sql
+          .exec<{ pending_verifier: string | null }>(
+            "SELECT pending_verifier FROM credential_mappings",
+          )
+          .toArray()[0],
+      };
+    });
+    expect(isConflictError(result.error)).toBe(true);
+    expect((result.error as { code: string }).code).toBe(
+      "CREDENTIAL_CHANGE_NOT_STARTABLE",
+    );
+    // The first change is untouched — the refusal is not a partial write.
+    expect(result.row?.pending_verifier).toBe("first");
+  });
+
+  it("refuses a credential that is not there at all, with the same answer", async () => {
+    const error = await seeded(({ store }) =>
+      caught(() =>
+        store.beginChange("cred-absent" as CredentialId, "v", "reset", "op-2"),
+      ),
+    );
+    expect((error as { code: string }).code).toBe(
+      "CREDENTIAL_CHANGE_NOT_STARTABLE",
+    );
+  });
+});

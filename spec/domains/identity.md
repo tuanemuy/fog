@@ -353,11 +353,25 @@ export const TokenScope = {
 
 ## ドメインサービス
 
-なし。
+エンティティを跨ぐビジネスロジックは無い。ただし**写像の可否判定だけは純関数の述語としてドメインに置く**（`credentialMappingRules`）。
 
 - パスワードの照合・ハッシュ化は暗号計算であり `PasswordHasher` ポートに置く
 - メール一意性・SSO主体一意性の検証はリポジトリへの問い合わせを伴うため、登録ユースケースが行う
 - 複数エンティティにまたがるビジネスロジックは現状存在しない
+
+### 認証情報の可否判定（credentialMappingRules）
+
+`CredentialMapping`（`CredentialMappingRepository` の戻り）に対する4つの純粋述語。**アダプターに書かない** — ログインの `lookupCredential`、リセット依頼の適格判定、`send-mail` の宛先判定の3箇所が同じ規則を使うので、3箇所に書くと2箇所だけ直る。#12（クレデンシャル変更・SSO 解除）と #18（レート制限）が条件を足す先はここである。
+
+| 述語 | 契約 |
+|---|---|
+| `isSettled(mapping)` | `status` が `active` で、かつ `changeState` が `null`。**予約行（`reserved`）は phase 1a の時点で `passwordVerifier` を持つ**ので `status` の検査は省けない。`changeState` は `pending` / `advanced` をまとめて弾く（変更の飛行中は新旧どちらのパスワードでもログインさせない = fail closed） |
+| `holdsPasswordVerifier(mapping)` | `passwordVerifier` が非 NULL。**「クレデンシャルが存在するか」ではない** — SSO 専用アカウントも一意性の予約としてメールの写像行を持ち、その行は原本もクレデンシャルも持つが検証材料を持たない。未登録アドレスと同じ扱いにするのはこの述語である |
+| `isUsableForLogin(mapping, now)` | `isSettled` かつ失敗回数のバックオフ（`nextAttemptAllowedAt`）を過ぎている。検証材料の有無は含めない（SSO 行は正当にログイン可能で材料を持たない） |
+| `isResetRequestAllowed(mapping, now, windowMs)` | `isSettled` かつ `holdsPasswordVerifier` かつ**リセット依頼の窓が前進している**。**ログインのバックオフを含めないのは意図的である** — 回復経路をログイン失敗で塞げると、攻撃者は「戻る唯一の道」を閉じられる |
+
+- **リセットの窓は経過時間（sliding）ではなく窓番号（`floor(t / windowMs)`）で判定する。** `last_reset_requested_at` は適格・非適格を問わず全依頼で前進する（`send-mail` の `operation_key` が持つ窓の一意性がそれに依存している）ため、sliding だと未認証の第三者が窓より短い間隔で叩き続けるだけで被害者のリセット発行を**恒久的に**封じられる。窓番号なら「その窓で最初に叩いた者」が必ず適格になるので、誰が叩いても登録済みアドレスには窓あたり1通が届く。代償は窓境界をまたぐ2依頼が両方発行して直前のリンクを失効させることで、これは窓の設計が既に受け入れている性質と同種である
+- **窓の大きさ・上限・減衰の実値はここに置かない**（`windowMs` は引数）。値は #18 / #38 が決める
 
 ## ポート
 

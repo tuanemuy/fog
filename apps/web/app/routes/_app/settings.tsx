@@ -6,7 +6,7 @@ import { navTitle } from "@/components/layout/AppShell/navItems";
 import { LogoutButton } from "@/components/settings/LogoutButton";
 import { SettingsSkeleton } from "@/components/settings/SettingsSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
-import { ERROR_TITLE, ErrorRetry } from "@/components/ui/ErrorRetry";
+import { ErrorSurface } from "@/components/ui/ErrorSurface";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
@@ -69,16 +69,11 @@ function SettingsPage() {
 }
 
 function SettingsErrorScreen({ error }: { error: unknown }) {
-  const message = sanitizeRouteError(error);
   return (
     <SettingsScreen>
-      <section className="flex flex-col gap-lg pb-2xl">
-        <h2 className="text-xl font-bold leading-tight">{ERROR_TITLE}</h2>
-        {message === ERROR_TITLE ? null : (
-          <p className="text-base text-neutral-600 text-balance">{message}</p>
-        )}
-        <ErrorRetry />
-      </section>
+      {/* Bottom padding only: the sign-out block below is what this surface
+          is replacing the panel for, so it keeps the shell's own top edge. */}
+      <ErrorSurface message={sanitizeRouteError(error)} className="pb-2xl" />
     </SettingsScreen>
   );
 }

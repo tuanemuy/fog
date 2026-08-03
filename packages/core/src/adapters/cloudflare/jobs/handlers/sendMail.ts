@@ -50,9 +50,14 @@ import type { JobRow } from "../table";
  * ## Idempotency
  *
  * Execution is at-least-once, so the provider is handed the job's
- * `provider_idempotency_key`, which is derived from the `operation_key` and is
- * therefore stable across every redelivery of the same row. Deriving it from
- * the message instead would give each retry a new key.
+ * `provider_idempotency_key` — `SHA-256` of the `operation_key`, derived at
+ * enqueue time and therefore stable across every redelivery of the same row.
+ * Deriving it from the message instead would give each retry a new key, and
+ * sending the `operation_key` itself would put the canonical address's
+ * full-length HMAC in a header bound for a third party (ADR-092). There is no
+ * fallback to that column: a `send-mail` row without the derived key was
+ * written by something other than the reset-request path, and refusing it is
+ * cheaper than leaking the key it was standing in for.
  */
 
 type TokenRow = {
@@ -137,6 +142,10 @@ export const sendMail: JobHandler<IdentityDirectoryJobContext> = async (
   if (target === null) {
     return { kind: "terminal", reason: "SEND_MAIL_PAYLOAD_INVALID" };
   }
+  const providerIdempotencyKey = row.provider_idempotency_key;
+  if (providerIdempotencyKey === null) {
+    return { kind: "terminal", reason: "SEND_MAIL_IDEMPOTENCY_KEY_MISSING" };
+  }
 
   const mapping = one<MappingRow>(
     sql,
@@ -215,7 +224,7 @@ export const sendMail: JobHandler<IdentityDirectoryJobContext> = async (
   await mailSender.sendPasswordResetMail(
     address as Email,
     resetToken,
-    row.provider_idempotency_key ?? row.operation_key,
+    providerIdempotencyKey,
   );
   return { kind: "done" };
 };

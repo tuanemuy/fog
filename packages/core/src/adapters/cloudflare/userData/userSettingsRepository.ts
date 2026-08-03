@@ -119,6 +119,15 @@ export function createUserSettingsRepository(
  * persistence values and nothing here has checked them; `User.reconstruct` is
  * the one place that does, and a declared type claiming otherwise would only
  * mislead the next reader.
+ *
+ * **`usableForLogin` is taken as an OR across the generations, not last-write.**
+ * A rotation moves rows one at a time, so during it a credential legitimately
+ * has a row in each generation and one of them may not have been remapped yet;
+ * counting that as "not a way in" would let the "last way in" check lock a user
+ * out mid-transfer. The surviving row's `label` comes along with the vote that
+ * won — mirrored fields do not vary between generations today (a provider name,
+ * or the empty string for an address), so there is nothing to reconcile. If
+ * #44's transfer ever makes them vary, that is the assumption to revisit.
  */
 function dedupeByCredentialId(rows: readonly LocatorProjectionRow[]): readonly {
   credentialId: string;
@@ -129,8 +138,8 @@ function dedupeByCredentialId(rows: readonly LocatorProjectionRow[]): readonly {
   const seen = new Map<string, LocatorProjectionRow>();
   for (const row of rows) {
     const existing = seen.get(row.credential_id);
-    // Later generations win on the mirrored fields, matching
-    // `CredentialLocatorStore.record`'s overwrite semantics.
+    // Strictly greater, so a usable row replaces an unusable one and never the
+    // other way round: this is the OR above, not a last-write-wins.
     if (
       existing === undefined ||
       row.usable_for_login > existing.usable_for_login

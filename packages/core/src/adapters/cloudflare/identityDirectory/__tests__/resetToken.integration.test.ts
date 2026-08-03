@@ -53,6 +53,14 @@ const SECRETS: StateSecrets = {
   resetTokenKeyring: RESET_KEYRING,
 };
 
+/**
+ * The routing bound `parseResetToken` checks the link's coordinates against.
+ * They are unauthenticated input on the consumption side and they address a
+ * Durable Object, so parsing them is not enough — only the routing keyring
+ * knows a generation's bucket count.
+ */
+const ROUTING = [{ generation: 1, bucketCount: 1024 }] as const;
+
 type Bucket = {
   requestPasswordReset(
     kind: "email" | "sso",
@@ -175,7 +183,7 @@ async function redeem(
   stub: ReturnType<typeof bucketFor>,
   link: string,
 ): Promise<{ userId: string; changeAuthToken: string } | null> {
-  const parsed = parseResetToken(link);
+  const parsed = parseResetToken(link, ROUTING);
   if (parsed === null) return null;
   return consume(stub, await resetTokenDigest(parsed.secret));
 }
@@ -188,7 +196,7 @@ describe("the password reset token", () => {
     const links = await deliver(stub);
     expect(links).toHaveLength(1);
 
-    const parsed = parseResetToken(links[0] as string);
+    const parsed = parseResetToken(links[0] as string, ROUTING);
     // The routing coordinates are the bucket's own, so the consumption endpoint
     // can address it back without the routing secret.
     expect(parsed).not.toBeNull();
@@ -207,7 +215,7 @@ describe("the password reset token", () => {
   it("refuses the same link twice", async () => {
     const stub = await registeredBucket();
     await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
-    const parsed = parseResetToken((await deliver(stub))[0] as string);
+    const parsed = parseResetToken((await deliver(stub))[0] as string, ROUTING);
     const digest = await resetTokenDigest(parsed?.secret ?? "");
 
     expect(await consume(stub, digest)).not.toBeNull();
@@ -219,7 +227,7 @@ describe("the password reset token", () => {
     await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
     const link = (await deliver(stub))[0] as string;
     const row = await tokenRow(stub);
-    const routing = parseResetToken(link) as {
+    const routing = parseResetToken(link, ROUTING) as {
       generation: number;
       bucket: number;
     };
@@ -253,8 +261,29 @@ describe("the password reset token", () => {
     await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
     await deliver(stub);
 
-    expect(parseResetToken("not-a-token")).toBeNull();
-    expect(parseResetToken("1.7.short")).toBeNull();
+    expect(parseResetToken("not-a-token", ROUTING)).toBeNull();
+    expect(parseResetToken("1.7.short", ROUTING)).toBeNull();
     expect(await consume(stub, "0".repeat(64))).toBeNull();
+  });
+
+  /**
+   * The coordinates are the one piece of Durable Object addressing that has to
+   * come from an unauthenticated URL, so they are bounded here rather than at
+   * whatever `idFromName` call site #12 eventually writes. Refusing looks
+   * exactly like an unknown token, so the bound adds no observable.
+   */
+  it("refuses routing coordinates the keyring does not declare", async () => {
+    const stub = await registeredBucket();
+    await (stub as unknown as Bucket).requestPasswordReset("email", HMAC);
+    const link = (await deliver(stub))[0] as string;
+    const secret = link.slice(link.lastIndexOf(".") + 1);
+
+    // A generation nobody deployed, and a bucket past that generation's count.
+    expect(parseResetToken(`9.0.${secret}`, ROUTING)).toBeNull();
+    expect(parseResetToken(`1.1024.${secret}`, ROUTING)).toBeNull();
+    expect(parseResetToken(`1.99999999.${secret}`, ROUTING)).toBeNull();
+    // Positive control: the same secret under coordinates that do exist parses.
+    expect(parseResetToken(`1.1023.${secret}`, ROUTING)).not.toBeNull();
+    expect(parseResetToken(link, ROUTING)).not.toBeNull();
   });
 });

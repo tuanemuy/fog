@@ -149,6 +149,10 @@ export async function mintResetTokenMaterial(
  * distributed to the state Worker (ADR-016). They are the *routing* generation;
  * the reset-token key generation is a separate number system and stays on the
  * row.
+ *
+ * They travel in a URL and come back as unauthenticated input, so the reverse
+ * direction is not symmetric: {@link parseResetToken} takes the keyring and
+ * refuses coordinates it does not declare.
  */
 export function formatResetToken(
   routing: Readonly<{ generation: number; bucket: number }>,
@@ -164,18 +168,48 @@ export type ParsedResetToken = Readonly<{
 }>;
 
 /**
+ * The routing shape a generation was deployed with. Structurally satisfied by
+ * `DirectoryRoutingKeyring["entries"]`, so the caller passes the keyring it
+ * already holds rather than assembling a second table that could drift.
+ */
+export type RoutingBounds = readonly Readonly<{
+  generation: number;
+  bucketCount: number;
+}>[];
+
+/**
  * The inverse of {@link formatResetToken}. `null` for anything malformed — an
  * unparseable token is exactly as invalid as an unknown one, and the caller
  * must not be able to tell the two apart.
+ *
+ * ## The two numbers are checked against the keyring, not merely parsed
+ *
+ * They come from an unauthenticated URL and they are Durable Object addressing
+ * coordinates: a caller who could put arbitrary values through them would mint
+ * arbitrary new buckets, each running its migration gate and writing `_meta`.
+ * AC-4's guarantee is that no external input reaches `idFromName`, and reset
+ * consumption is the one flow that must route by a token rather than by a
+ * verified session — so the bound has to be enforced *here*, before a name is
+ * built. `bucketCount` is per generation, and only the keyring knows it: the
+ * name carries the bucket index, never the modulus.
+ *
+ * An out-of-range coordinate answers `null`, the same answer an unknown token
+ * gets, so the check adds no observable.
  */
-export function parseResetToken(token: string): ParsedResetToken | null {
+export function parseResetToken(
+  token: string,
+  routing: RoutingBounds,
+): ParsedResetToken | null {
   const match = /^(\d+)\.(\d+)\.([0-9a-f]{64})$/.exec(token);
   if (match === null) return null;
-  return {
-    generation: Number(match[1]),
-    bucket: Number(match[2]),
-    secret: match[3] as string,
-  };
+  const generation = Number(match[1]);
+  const bucket = Number(match[2]);
+  const entry = routing.find(
+    (candidate) => candidate.generation === generation,
+  );
+  if (entry === undefined) return null;
+  if (bucket >= entry.bucketCount) return null;
+  return { generation, bucket, secret: match[3] as string };
 }
 
 /** Loud rather than silent: an unconfigured keyring must not mint a dead link. */

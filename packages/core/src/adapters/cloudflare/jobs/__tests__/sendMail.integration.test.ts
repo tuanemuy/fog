@@ -8,12 +8,19 @@ import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
 import type { Logger } from "@repo/core/application/ports/logger";
 import type { MailSender } from "@repo/core/domain/identity/ports/mailSender";
 import type { Email } from "@repo/core/domain/identity/valueObject";
-import { RESET_REQUEST_WINDOW_MS } from "@repo/core/lib/jobBudgets";
+import {
+  RESET_REQUEST_WINDOW_MS,
+  RESET_TOKEN_TTL_MS,
+} from "@repo/core/lib/jobBudgets";
 import { describe, expect, it } from "vitest";
 import { inIdentityDirectory } from "../../__tests__/doHarness";
 import { assertNoForbiddenValue } from "../../__tests__/forbiddenValues";
 import { encryptCanonical } from "../../identityDirectory/canonicalCipher";
 import * as facade from "../../identityDirectory/facade";
+import {
+  deriveProviderIdempotencyKey,
+  sendMailOperationKey,
+} from "../../identityDirectory/resetRequestKeys";
 import { mintResetTokenMaterial } from "../../identityDirectory/resetTokenCrypto";
 import { createIdentityDirectoryUnitOfWorkProvider } from "../../identityDirectory/unitOfWork";
 import { runMigrationGate } from "../../schema/gate";
@@ -122,12 +129,23 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
       ctx,
       sent,
       lines,
-      // Mirrors the RPC entry: the token is derived outside the transaction and
-      // arrives as a value, so the suite exercises the same composition the DO
-      // class does rather than a shortcut only the test can take.
+      // Mirrors the RPC entry: the token and the provider key are derived
+      // outside the transaction and arrive as values, so the suite exercises
+      // the same composition the DO class does rather than a shortcut only the
+      // test can take.
       request: async (kind, hmac, now = NOW) => {
         const material = await mintResetTokenMaterial(RESET_KEYRING);
-        facade.requestPasswordReset({ uow }, kind, hmac, now, material);
+        const providerIdempotencyKey = await deriveProviderIdempotencyKey(
+          sendMailOperationKey(kind, hmac, now),
+        );
+        facade.requestPasswordReset(
+          { uow },
+          kind,
+          hmac,
+          now,
+          material,
+          providerIdempotencyKey,
+        );
       },
       drain: (now = NOW) =>
         runDueJobs(
@@ -194,6 +212,15 @@ function jobs(sql: SqlStorage): JobRow[] {
     .toArray();
 }
 
+/**
+ * Every request also arms the bucket's `sweep-reset-tokens` row, which is what
+ * eventually removes the rows this path writes. It is a per-bucket constant, so
+ * assertions about *this request* read the mail rows.
+ */
+function mailJobs(sql: SqlStorage): JobRow[] {
+  return jobs(sql).filter((row) => row.kind === "send-mail");
+}
+
 function tokenHashes(sql: SqlStorage): string[] {
   return sql
     .exec<{ token_hash: string }>(
@@ -222,9 +249,9 @@ describe("send-mail", () => {
         passwordVerifier: "verifier",
       });
       await request("email", "aa".repeat(32));
-      const beforeRun = jobs(sql);
+      const beforeRun = mailJobs(sql);
       await drain();
-      return { beforeRun, after: jobs(sql), sent };
+      return { beforeRun, after: mailJobs(sql), sent };
     });
     expect(result.beforeRun).toHaveLength(1);
     expect(result.beforeRun[0]?.status).toBe("pending");
@@ -234,12 +261,18 @@ describe("send-mail", () => {
     // `{routingGeneration}.{bucketIndex}.{hmac}` — routable back to this bucket
     // without the routing secret, which is not distributed to the state Worker.
     expect(result.sent[0]?.resetToken).toMatch(/^1\.7\.[0-9a-f]{64}$/);
-    // Derived from the `operationKey`, so a redelivery presents the same key —
-    // and the request window is part of it, so the *next* window's request is
-    // not deduplicated against this one on the provider's side.
+    // `SHA-256` of the `operationKey`, so a redelivery presents the same key —
+    // and the request window is part of the pre-image, so the *next* window's
+    // request is not deduplicated against this one on the provider's side.
     expect(result.sent[0]?.idempotencyKey).toBe(
-      `send-mail:email:${"aa".repeat(32)}:${WINDOW_OF_NOW}`,
+      await deriveProviderIdempotencyKey(
+        `send-mail:email:${"aa".repeat(32)}:${WINDOW_OF_NOW}`,
+      ),
     );
+    // And the pre-image itself never leaves: the canonical address's
+    // full-length HMAC is what a mapping row is keyed by.
+    expect(result.sent[0]?.idempotencyKey).not.toContain("aa".repeat(32));
+    expect(result.sent[0]?.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("keeps the raw link out of the job row", async () => {
@@ -252,7 +285,7 @@ describe("send-mail", () => {
         passwordVerifier: "verifier",
       });
       await request("email", "bb".repeat(32));
-      const payload = jobs(sql)[0]?.payload ?? "";
+      const payload = mailJobs(sql)[0]?.payload ?? "";
       await drain();
       return { payload, token: sent[0]?.resetToken ?? "" };
     });
@@ -326,18 +359,20 @@ describe("send-mail", () => {
     });
 
     const shapeOf = (result: { rows: JobRow[] }) => ({
-      rows: result.rows.length,
-      kind: result.rows[0]?.kind,
+      // Both rows, in both kinds: the sweep is enqueued whatever the case
+      // decides, so its presence cannot answer "is this address registered?".
+      kinds: result.rows.map((row) => row.kind),
       status: result.rows[0]?.status,
       // Identical `next_run_at` means the alarm the RPC arms is identical too.
       nextRunAt: result.rows[0]?.next_run_at,
+      sweepNextRunAt: result.rows[1]?.next_run_at,
     });
 
     const expected = {
-      rows: 1,
-      kind: "send-mail",
+      kinds: ["send-mail", "sweep-reset-tokens"],
       status: "pending",
       nextRunAt: NOW,
+      sweepNextRunAt: NOW + RESET_TOKEN_TTL_MS,
     };
     expect(shapeOf(registered)).toEqual(expected);
     expect(shapeOf(unregistered)).toEqual(expected);
@@ -366,13 +401,13 @@ describe("send-mail", () => {
         passwordVerifier: "verifier",
       });
       for (let i = 0; i < 5; i += 1) await request("email", "55".repeat(32));
-      const before = jobs(sql);
+      const before = mailJobs(sql);
       await drain();
       // `send-mail` is not a re-arming kind, so the surviving `done` row is
       // what refuses the repeat — reviving it would make wake-ups scale with
       // request count.
       for (let i = 0; i < 5; i += 1) await request("email", "55".repeat(32));
-      return { before, after: jobs(sql) };
+      return { before, after: mailJobs(sql) };
     });
     expect(result.before).toHaveLength(1);
     expect(result.after).toHaveLength(1);
@@ -407,7 +442,7 @@ describe("send-mail", () => {
           tokens: tokenHashes(sql),
           sent: sent.map((entry) => entry.resetToken),
         },
-        rows: jobs(sql),
+        rows: mailJobs(sql),
       };
     });
 
@@ -462,7 +497,10 @@ describe("send-mail", () => {
       await request("email", "66".repeat(32));
       await drain();
       // Stands in for a DO reset between the send and the row settling.
-      sql.exec("UPDATE jobs SET status='pending', next_run_at=?", NOW);
+      sql.exec(
+        "UPDATE jobs SET status='pending', next_run_at=? WHERE kind='send-mail'",
+        NOW,
+      );
       await drain();
       return sent;
     });
@@ -484,10 +522,47 @@ describe("send-mail", () => {
       await request("email", "77".repeat(32));
       sql.exec("UPDATE password_reset_tokens SET expires_at = ?", NOW - 1);
       await drain();
-      return { sent: sent.length, status: jobs(sql)[0]?.status };
+      return { sent: sent.length, status: mailJobs(sql)[0]?.status };
     });
     expect(result.sent).toBe(0);
     expect(result.status).toBe("done");
+  });
+
+  /**
+   * The enqueue point, not the handler. `directoryJobs.integration.test.ts`
+   * calls `sweepResetTokens` directly, which is exactly why the missing
+   * `enqueueJob` went unnoticed: the handler was correct and unreachable, so
+   * `password_reset_tokens` grew without bound in a bucket many users share.
+   */
+  it("arms the sweep that eventually clears the rows this path writes", async () => {
+    const result = await harness(async ({ sql, request, drain }) => {
+      await insertMapping(sql, {
+        kind: "email",
+        hmac: "ce".repeat(32),
+        credentialId: "cred-1",
+        canonical: "user@example.com",
+        passwordVerifier: "verifier",
+      });
+      await request("email", "ce".repeat(32));
+      await drain();
+      // Consumption stamps `used_at` and leaves a reusable `change_auth_token`
+      // behind. `issue` only ever deletes *unused* rows, so without the sweep
+      // nothing removes this one — ever.
+      sql.exec(
+        "UPDATE password_reset_tokens SET used_at = ?, change_auth_token = 'change-auth'",
+        NOW,
+      );
+      const armed = jobs(sql).filter(
+        (row) => row.kind === "sweep-reset-tokens",
+      );
+      const before = tokenCount(sql);
+      await drain(NOW + RESET_TOKEN_TTL_MS + 1);
+      return { armed, before, after: tokenCount(sql) };
+    });
+    expect(result.armed).toHaveLength(1);
+    expect(result.armed[0]?.next_run_at).toBe(NOW + RESET_TOKEN_TTL_MS);
+    expect(result.before).toBe(1);
+    expect(result.after).toBe(0);
   });
 
   it("keeps PII out of the log when there is no recipient to resolve", async () => {

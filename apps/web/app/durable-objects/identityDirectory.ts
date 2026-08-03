@@ -5,6 +5,10 @@ import type {
 } from "@cloudflare/workers-types";
 import { sealCanonical } from "@repo/core/adapters/cloudflare/identityDirectory/canonicalCipher";
 import * as facade from "@repo/core/adapters/cloudflare/identityDirectory/facade";
+import {
+  deriveProviderIdempotencyKey,
+  sendMailOperationKey,
+} from "@repo/core/adapters/cloudflare/identityDirectory/resetRequestKeys";
 import * as resetTokenCrypto from "@repo/core/adapters/cloudflare/identityDirectory/resetTokenCrypto";
 import {
   type AlarmCache,
@@ -177,17 +181,29 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
    * inside the transaction, and the four cases have to cost the same; deriving
    * only when eligible would make the work itself the oracle the uniform path
    * exists to close.
+   *
+   * The provider idempotency key is derived here too, and for the same
+   * structural reason: it is `SHA-256` of the job's `operationKey`, so that the
+   * canonical address's full-length HMAC stays inside the trust boundary
+   * instead of riding an `Idempotency-Key` header out to the mail provider
+   * (ADR-092). Both derivations read the *same* `now` the transaction does, so
+   * the key and the row's `operation_key` cannot fall into different windows.
    */
   async requestPasswordReset(
     kind: CredentialMappingKind,
     hmac: string,
   ): Promise<RpcEnvelope<null>> {
+    const now = this.now();
     let material: ResetTokenIssueMaterial;
+    let providerIdempotencyKey: string;
     try {
       material = await resetTokenCrypto.mintResetTokenMaterial(
         resetTokenCrypto.requireResetTokenKeyring(
           readStateSecretsOrNull(this.env)?.resetTokenKeyring ?? null,
         ),
+      );
+      providerIdempotencyKey = await deriveProviderIdempotencyKey(
+        sendMailOperationKey(kind, hmac, now),
       );
     } catch (error) {
       // A deployment with no reset-token key can neither derive a link nor
@@ -200,8 +216,9 @@ export class IdentityDirectoryDurableObject extends DurableObject<StateEnv> {
         this.container,
         kind,
         hmac,
-        this.now(),
+        now,
         material,
+        providerIdempotencyKey,
       );
       return null;
     });

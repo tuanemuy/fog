@@ -2,10 +2,15 @@ import { FakeLogger } from "@repo/core/application/__tests__/fakes";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
   SystemError,
   SystemErrorCode,
+  UnauthorizedError,
   ValidationError,
 } from "@repo/core/application/errors";
+import { BusinessRuleError } from "@repo/core/domain/error";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { content } from "@repo/core/config";
 import {
@@ -156,6 +161,78 @@ describe("errorResponseMiddleware", () => {
       message: LOGIN_FAILURE_MESSAGE,
       retryable: false,
       fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
+    });
+    expect(mocks.statuses).toEqual([422]);
+    expect(logger.entries).toEqual([]);
+  });
+
+  // These four keep their `code` on the wire and lose their message, so the
+  // log is the only place the server's own prose survives. `conflict` is the
+  // case that reaches a server function in practice
+  // (`OPTIMISTIC_LOCK_FAILURE`, `JOB_PAYLOAD_MISMATCH`), and it is exactly
+  // the one an operator has to triage from the log alone.
+  it.each([
+    [
+      "notFound",
+      () => new NotFoundError("USER_NOT_FOUND", INTERNAL_DETAIL),
+      404,
+    ],
+    [
+      "conflict",
+      () => new ConflictError("JOB_PAYLOAD_MISMATCH", INTERNAL_DETAIL),
+      409,
+    ],
+    [
+      "unauthorized",
+      () => new UnauthorizedError("SESSION_REQUIRED", INTERNAL_DETAIL),
+      401,
+    ],
+    [
+      "forbidden",
+      () => new ForbiddenError("NOT_RESOURCE_OWNER", INTERNAL_DETAIL),
+      403,
+    ],
+  ] as const)(
+    "logs the raw message of a %s it blanks on the wire",
+    async (kind, build, status) => {
+      const thrown = build();
+
+      const caught = await captureFrom(run, thrown);
+
+      const serialized = serializedOf(caught);
+      expect(serialized).toMatchObject({ kind, code: thrown.code });
+      expect(serialized.message).not.toContain("user_settings");
+      expect(mocks.statuses).toEqual([status]);
+
+      expect(logger.byLevel("error")).toEqual([
+        {
+          level: "error",
+          message: "Server function failed",
+          meta: {
+            kind,
+            code: thrown.code,
+            message: INTERNAL_DETAIL,
+            cause: thrown,
+          },
+        },
+      ]);
+    },
+  );
+
+  // The other half of the same rule: a message that reaches the client is
+  // not an incident, and logging it would turn every rejected form into one.
+  it("neither redacts nor logs a business rule violation", async () => {
+    const thrown = new BusinessRuleError(
+      "IDENTITY_EMAIL_TOO_LONG",
+      "Email is too long",
+    );
+
+    const caught = await captureFrom(run, thrown);
+
+    expect(serializedOf(caught)).toMatchObject({
+      kind: "business",
+      code: "IDENTITY_EMAIL_TOO_LONG",
+      message: "Email is too long",
     });
     expect(mocks.statuses).toEqual([422]);
     expect(logger.entries).toEqual([]);

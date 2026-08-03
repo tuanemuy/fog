@@ -439,7 +439,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `status` | TEXT | NOT NULL, CHECK (`status IN ('pending','running','done','poison')`) |
 | `lease_until` | INTEGER | nullable。claim の有効期限 |
 | `owner_token` | TEXT | nullable。claim した実行主体の識別子。完了は CAS でこれを照合する |
-| `provider_idempotency_key` | TEXT | nullable。外部 I/O のプロバイダへ渡す冪等キー。`operation_key` から決定的に導く |
+| `provider_idempotency_key` | TEXT | nullable。外部 I/O のプロバイダへ渡す冪等キー。`operation_key` から決定的に導く。**`operation_key` そのものを渡さない** — `send-mail` のキーは canonical アドレスの全長 HMAC（写像行の主キー）を含むので、`SHA-256(operation_key)` を渡して原文を信頼境界の内側に留める。列が NULL の `send-mail` 行は生キーへフォールバックせず `poison`（`.thread/37/adr.md` ADR-092） |
 | `terminal_reason` | TEXT | nullable。終端の理由 |
 | `completed_at` | INTEGER | nullable。**`done` / `poison` へ落ちた時刻**。`pending` / `running` では `NULL`。`next_run_at` では代用できない（あちらはバックオフで未来へ先送りされる列である） |
 
@@ -662,6 +662,8 @@ secret    --ルーティング座標を前置---------------------------->  メ�
 - **書き込み口は UoW コンテキストの `resetTokenStore` だけである**（ドメイン側のポート名は `PasswordResetTokenPort` で、同じものを指す）。発行・消費・一括削除・期限切れ掃除の4つが書き込み箇所であり、これが全数である
 - **削除の射程は経路ごとに違う。** クレデンシャル変更の開始時は「未使用行を全削除し、残る全行の `change_auth_token` を `NULL` にする」の2段、SSO 連携解除と退会はその `credential_id` の行を `used_at` の有無を問わず全削除である
 - 新しいトークンの発行は、同じトランザクションでその `credential_id` の未使用行を全削除する
+- **その全削除の射程は bucket 内に限られる。** ローテーションの移送中は同じクレデンシャルが2世代の bucket に active な写像を持ちうるので、1回のリセット依頼が両方の bucket でそれぞれトークンを発行し、**有効なリンクが同時に2本立つ**（片方を消費してももう片方は TTL まで生き残る）。依頼側のファンアウトを「ヒットした bucket だけ」に狭めるのは列挙オラクルを作るので採らない。**この重なりを移送手順のどこで畳むかは #44 が決める**
+- **期限切れ行・消費済み行の掃除は `sweep-reset-tokens` が行い、その投入点はリセットトークン行を発行するのと同じトランザクション（`request-password-reset` を受けた `transactionSync`）である。** 発行時の未使用行削除はこの掃除の代わりにならない — 消費済み行（`used_at` 非 NULL）と他クレデンシャルの期限切れ行はそちらでは消えず、bucket は多数の利用者が相乗りしたまま 10 GB 上限を共有する。**依頼が適格かどうかに関わらず投入する**（投入の有無が4ケースの差になると列挙オラクルになるため）。定数キーなので連打しても行は1本に収束し、以後は再武装（(3) の5種）で自走する
 
 ### jobs（Identity Directory DO）
 

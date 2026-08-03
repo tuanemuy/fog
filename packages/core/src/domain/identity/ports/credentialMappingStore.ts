@@ -123,6 +123,12 @@ export interface CredentialMappingStore {
    * Starts a verifier replacement: stores the new material as pending, sets
    * `changeState` to `'pending'` and records the origin. From this moment the
    * old material no longer verifies (fail closed).
+   *
+   * Passes **only** while `changeState` is `null`; a predicate that matches
+   * nothing raises `ConflictError` rather than reporting a change that never
+   * started. Not "absent is success" — this is the transition that closes the
+   * old material, and a caller told it happened when it did not would advance a
+   * saga against a credential that still verifies the old password.
    */
   beginChange(
     credentialId: CredentialId,
@@ -162,6 +168,11 @@ export interface CredentialMappingStore {
    * ever sets — see ADR-026. Like the rest it must run inside the same
    * transaction as the job row, so it belongs on this port rather than beside
    * it. The window's size, ceiling and decay are #18's.
+   *
+   * Called on **every** request, whether or not it was allowed to issue and
+   * whether or not the locator names a row: the stamp is what
+   * `isResetRequestAllowed` compares the current window against, and a locator
+   * naming no row writes nothing while still costing one statement.
    */
   recordResetRequested(
     kind: CredentialMappingKind,

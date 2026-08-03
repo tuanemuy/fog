@@ -1,5 +1,6 @@
 import { ConflictError } from "@repo/core/application/errors";
 import { BusinessRuleError } from "@repo/core/domain/error";
+import { IdentityErrorCode } from "@repo/core/domain/identity/errorCode";
 import { RPC_ENVELOPE_VERSION } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
 import { err, ok } from "../platform/envelope";
@@ -34,7 +35,10 @@ describe("rpc envelope", () => {
 
   it("serializes domain errors through the same path", () => {
     const envelope = err(
-      new BusinessRuleError<string>("LAST_LOGIN_CREDENTIAL", "cannot remove"),
+      new BusinessRuleError<string>(
+        IdentityErrorCode.LastCredentialRemoval,
+        "cannot remove",
+      ),
     );
     expect(!envelope.ok && envelope.error.kind).toBe("business");
   });

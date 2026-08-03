@@ -25,10 +25,12 @@ main = "dist/server/index.js"
 # which takes wrangler off the `.wrangler/deploy/config.json` redirect and
 # therefore away from the `dist/server/wrangler.json` the framework generates
 # — including its `no_bundle` / `rules`. Without these two, wrangler re-bundles
-# 77 ES modules into one file, i.e. deploys a differently-shaped artifact than
-# the one `pnpm start` and the smoke test boot. Measured with
-# `wrangler deploy -c … --dry-run`: 77 modules / 1682 KiB either way with them,
-# a single 1658 KiB `index.js` without.
+# every emitted ES module into one file, i.e. deploys a differently-shaped
+# artifact than the one `pnpm start` and the smoke test boot. Verify after a
+# change: `pnpm build:cf`, then compare `wrangler deploy -c <rendered file>
+# --dry-run` with the redirect route (`wrangler deploy --dry-run`, no `-c`) —
+# the module count and total upload size must match. Those absolute numbers
+# move with every build, so they belong in the PR, not in this file.
 no_bundle = true
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]

@@ -16,7 +16,11 @@ import type { CredentialMappingKind } from "@repo/core/domain/identity/ports/cre
 import type { SealedCanonical } from "@repo/core/domain/identity/ports/credentialMappingStore";
 import type { ResetTokenIssueMaterial } from "@repo/core/domain/identity/ports/passwordResetTokenPort";
 import { CredentialId } from "@repo/core/domain/identity/valueObject";
-import { RESET_REQUEST_WINDOW_MS } from "@repo/core/lib/jobBudgets";
+import {
+  RESET_REQUEST_WINDOW_MS,
+  RESET_TOKEN_TTL_MS,
+} from "@repo/core/lib/jobBudgets";
+import { sendMailOperationKey } from "./resetRequestKeys";
 
 /**
  * The Identity Directory bucket's RPC facade.
@@ -283,19 +287,36 @@ export function checkPreviousGeneration(
  * ## The window, and why the token and the mail share one
  *
  * `operationKey` carries `floor(now / RESET_REQUEST_WINDOW_MS)` and the issue
- * throttle uses the same span. That equality is the fix for a real failure:
- * with a one-minute throttle and a `done` row that refused re-enqueues for a
- * day, the second request of an hour issued a fresh token — deleting the live
- * one the user was holding — and then collided with the finished row, so no
- * mail went out and the working link was gone. Sharing the number makes it
- * impossible: eligibility requires `last + window <= now`, which puts `now`
- * past the window of every earlier request, so an eligible request always lands
- * on an `operationKey` no row exists for yet.
+ * throttle decides eligibility on the same number. That equality is the fix for
+ * a real failure: with a one-minute throttle and a `done` row that refused
+ * re-enqueues for a day, the second request of an hour issued a fresh token —
+ * deleting the live one the user was holding — and then collided with the
+ * finished row, so no mail went out and the working link was gone. Sharing the
+ * number makes it impossible: eligibility requires the request's window to be
+ * strictly past the last request's, so an eligible request always lands on an
+ * `operationKey` no row exists for yet.
+ *
+ * `recordResetRequested` therefore runs on **every** request, eligible or not
+ * and registered or not: it is what puts the last request's window on the row,
+ * and an unregistered locator names no row so the statement writes nothing.
  *
  * `material` is minted by the entry point **unconditionally** and discarded
  * here when the request is not eligible — two WebCrypto operations are a
  * measurable amount of work, so making them conditional would answer "is this
- * address registered?" through a timing channel.
+ * address registered?" through a timing channel. `providerIdempotencyKey`
+ * arrives the same way, for the same reason it cannot be computed here: it is a
+ * SHA-256 and a `run()` callback is type-rejected from being asynchronous.
+ *
+ * ## Two job rows, always the same two
+ *
+ * `send-mail` carries the request; `sweep-reset-tokens` is what eventually
+ * removes the rows this path writes — consumed rows keep a `change_auth_token`,
+ * and a bucket is shared by many users under one 10 GB cap, so a table nothing
+ * ever deletes from is not an option. Both are enqueued whatever the four cases
+ * decide, so the row count, the digests and the armed alarm stay identical
+ * across them; `sweep-reset-tokens` has a per-bucket constant key, so repeated
+ * requests converge on one row and it re-arms itself from `min(expires_at)`
+ * thereafter.
  */
 export function requestPasswordReset(
   deps: IdentityDirectoryFacadeDeps,
@@ -303,8 +324,8 @@ export function requestPasswordReset(
   hmac: string,
   now: number,
   material: ResetTokenIssueMaterial,
+  providerIdempotencyKey: string,
 ): void {
-  const window = Math.floor(now / RESET_REQUEST_WINDOW_MS);
   deps.uow.run((ctx) => {
     const mapping = ctx.credentialMappingRepository.findByLocatorKey(
       kind,
@@ -317,9 +338,7 @@ export function requestPasswordReset(
     if (eligible && mapping !== null) {
       ctx.resetTokenStore.issue(mapping.credentialId, material, new Date(now));
     }
-    if (mapping !== null) {
-      ctx.credentialMappingStore.recordResetRequested(kind, hmac, now);
-    }
+    ctx.credentialMappingStore.recordResetRequested(kind, hmac, now);
 
     // **The payload is the request's own input and nothing else.** It carries
     // no token, no token id and no derived state, for two reasons that both
@@ -332,14 +351,20 @@ export function requestPasswordReset(
     // close. The send resolves everything it needs from this bucket's own rows.
     ctx.enqueueJob({
       kind: "send-mail",
-      operationKey: `send-mail:${kind}:${hmac}:${window}`,
+      operationKey: sendMailOperationKey(kind, hmac, now),
       payload: { kind, hmac },
       nextRunAt: now,
-      // Windowed too, and necessarily: derived from the `operationKey`, it is
-      // stable across every redelivery of one row — but a *new* window has to
-      // present a new key, or the provider would dedupe a legitimate second
-      // request against the first one's send.
-      providerIdempotencyKey: `send-mail:${kind}:${hmac}:${window}`,
+      providerIdempotencyKey,
+    });
+    ctx.enqueueJob({
+      kind: "sweep-reset-tokens",
+      operationKey: "sweep-reset-tokens",
+      payload: {},
+      // The TTL of the token this request may have just issued. Convergence
+      // only ever pulls a pending row earlier, so an already-armed sweep keeps
+      // its earlier time and re-arms itself on the real `min(expires_at)` when
+      // it runs.
+      nextRunAt: now + RESET_TOKEN_TTL_MS,
     });
   });
 }

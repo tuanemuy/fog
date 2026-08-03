@@ -19,16 +19,26 @@ import { matchOpaque } from "./opaqueBinding";
  *
  * ## Which ones read the match back, and why the others do not
  *
- * `activate` and `promote` count the matched rows and raise `ConflictError` on
- * zero. They advance a saga, so a predicate that matched nothing means the saga
- * cannot complete — reporting success would let signup run to the end with a
- * reservation still `reserved`, producing an account that can never log in and
- * gives no reason why.
+ * **All eight are classified here; the three groups are exhaustive.**
+ *
+ * `activate`, `promote` and `beginChange` count the matched rows and raise
+ * `ConflictError` on zero. They advance a saga, so a predicate that matched
+ * nothing means the saga cannot complete — reporting success would let signup
+ * run to the end with a reservation still `reserved`, producing an account that
+ * can never log in and gives no reason why. `beginChange`'s predicate
+ * (`change_state IS NULL`) genuinely misses whenever another change is already
+ * in flight, and it is the instant from which the old material stops verifying,
+ * so a silent no-op would hand the caller a fail-closed state it never entered.
  *
  * `cancel`, `delete` and `reportResult` deliberately treat an absent row as
  * success. The first two are recovery, which is retried and whose goal a row
  * somebody else already removed has met; the third must answer identically for
  * a locator naming no row, or it becomes an enumeration oracle.
+ * `recordResetRequested` is in this group for the same reason as `reportResult`.
+ *
+ * `reserve` is the remaining one and reads nothing back on purpose: it is an
+ * `INSERT`, so the primary key — not a matched-row count — is what decides the
+ * race, and the driver's violation is translated in place.
  *
  * A facade never imports this module. It reaches these operations only through
  * the context `identityDirectory/unitOfWork.ts` assembles, which is what keeps
@@ -199,18 +209,25 @@ export function createCredentialMappingStore(
       origin: "password-change" | "reset",
       operationId: string,
     ): void {
-      run(
+      // `change_state IS NULL` is a predicate that really misses — a second
+      // change started while one is in flight — and this write is the moment
+      // the old material stops verifying. Zero rows therefore has to be a
+      // conflict, not a quiet success that leaves the caller believing a
+      // fail-closed window opened when it did not.
+      const updated = all(
         sql,
         `UPDATE credential_mappings
             SET pending_verifier = ?, change_state = 'pending', change_origin = ?,
                 operation_id = ?, updated_at = ?
-          WHERE credential_id = ? AND change_state IS NULL`,
+          WHERE credential_id = ? AND change_state IS NULL
+        RETURNING 1`,
         pendingVerifier,
         origin,
         operationId,
         now(),
         credentialId,
       );
+      if (updated.length === 0) throw notStartable();
     },
 
     promote(credentialId: CredentialId, operationId: string): void {
@@ -301,8 +318,16 @@ export function createCredentialMappingStore(
       hmac: string,
       at: number,
     ): void {
-      // Unconditional on the row's state: it must run for a throttled request
-      // too, or a caller could hold the window open by retrying.
+      // Unconditional on the row's state, and that is what makes the reset
+      // request's `operationKey` window-unique: because every request — not
+      // only the eligible ones — leaves its own instant here, an eligible
+      // request's window number is provably greater than that of any request
+      // before it, so no row can already exist under the key it enqueues. Do
+      // not "optimise" this into an eligible-only write.
+      //
+      // It is safe against the lockout the sliding form used to allow, because
+      // eligibility compares window numbers rather than elapsed time
+      // (`domain/identity/credentialMappingRules.ts`).
       run(
         sql,
         `UPDATE credential_mappings
@@ -334,6 +359,19 @@ function notActivatable(): ConflictError {
   return new ConflictError(
     "RESERVATION_NOT_ACTIVATABLE",
     "No matching reservation could be activated",
+  );
+}
+
+/**
+ * One answer for both ways `beginChange` can miss — no such credential, and a
+ * change already in flight — for the same reason `notActivatable` is undivided:
+ * splitting them would report on a bucket's contents. #12 owns the entry that
+ * calls this and may narrow the answer there, where the caller is authenticated.
+ */
+function notStartable(): ConflictError {
+  return new ConflictError(
+    "CREDENTIAL_CHANGE_NOT_STARTABLE",
+    "No credential change could be started",
   );
 }
 

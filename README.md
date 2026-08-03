@@ -89,7 +89,7 @@ pnpm build
 
 `pnpm start` (`wrangler dev` against the build output) and `pnpm preview` (`vite preview`) both serve that build; each runs the request Worker alone, so run `pnpm dev:state` alongside them for flows that reach a Durable Object.
 
-Both wrangler configs set `APP_URL` to `http://localhost:3000` — `pnpm dev`'s port, and the base for canonical URLs and for the password-reset link the state Worker mails. `pnpm start` / `pnpm dev:state` serve on wrangler's own `8787`, so edit `apps/web/wrangler.toml` and `apps/web/wrangler.state.toml` together if you develop through those.
+Both wrangler configs set `APP_URL` to `http://localhost:3000` — `pnpm dev`'s port, and the base for canonical URLs and for the password-reset link the state Worker mails. That port is `strictPort`, so `pnpm dev` fails to start rather than sliding onto `3001` and serving links that point at a port nothing listens on. `pnpm start` / `pnpm dev:state` serve on wrangler's own `8787`, so edit `apps/web/wrangler.toml` and `apps/web/wrangler.state.toml` together if you develop through those.
 
 Deployment is in "Deployment" below; which secret belongs to which Worker is in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example).
 

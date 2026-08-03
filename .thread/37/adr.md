@@ -1899,3 +1899,254 @@ AC-6 が禁じているのは**誤帰属**であって区別の欠如ではな�
 - 良い点: AC-16 (i) が grep から機械検査になった。`readSchemaVersion` / `listBucketUserIds` が fail-closed 中に答えることが初めて検証された。変異試験2本（1エントリを `entry()` の外へ出す / 新メソッドを足す）がそれぞれ別のテストを赤にする。
 - トレードオフ: `apps/web` 側に `cloudflare:test` の型宣言（`__tests__/env.d.ts`）が要る。`packages/core` 側の同名ファイルと重複するが、両パッケージが独立に typecheck する以上どちらにも要る（core 側の JSDoc が既にその理由を書いている）。
 - 内部メソッド名の一覧をテストが持つので、`private` メソッドの改名がこのテストを赤にする。分類を強制する仕組みの代償として受け入れる。
+
+---
+
+## ADR-100: ワイヤから message を落とす kind は必ずサーバログに残す
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2回目レビュー presentation-config W-001 への対応）
+
+### Context
+
+ADR-061 で `redactForClient` を3分類にし、`notFound` / `conflict` / `unauthorized` / `forbidden` の `message` をワイヤから落とした。ところが `errorResponseMiddleware.toClientError` のログ発火条件は `system` / `unknown` のままだったので、この4 kind のサーバ側自由文が**ワイヤからもログからも消えた**。ADR-061 の Consequences「運用側は raw を見るので triage は影響を受けない」と `errorResponse.ts` の JSDoc の断定が、実装と食い違っていた。実害が出るのは `OPTIMISTIC_LOCK_FAILURE` や `JOB_PAYLOAD_MISMATCH` のようにサーバ関数境界まで上がってくる `conflict` で、ジョブランナー側のログがある経路とは違って他に痕跡が残らない。
+
+### Decision
+
+**ログ条件を「kind の列挙」ではなく「redact が message を落とすか」から導く。** `errorResponse.ts` に `redactsMessage(kind)` を置き（`redactForClient` と同じ網羅 `switch`）、middleware は `if (redactsMessage(rawSerialized.kind))` でログする。`business` / `validation` はワイヤに message が残るのでログしない — フォーム却下を運用インシデントにしない、という ADR-061 以前からの線はそのまま。
+
+対称性はテストで固定する: `redactsMessage(kind) === (redactForClient(sample).message !== sample.message)` を8 kind 全部について突き合わせる（`errorResponse.test.ts`）。middleware 側は4 kind それぞれについて「ワイヤは blank、ログには raw が1件」を assert し、`business` は「redact も log もしない」を assert する。
+
+### Consequences
+
+- 良い点: 「ワイヤにもログにも無い」kind が構造的に作れなくなる。新しい kind を足すときは `redactForClient` の網羅 `switch` を通るので、ログ有無の判断も同時に強制される。
+- トレードオフ: `notFound` / `unauthorized` はクライアント都合でも起きる（存在しない ID、失効セッション）ので、`error` レベルのログ量が増える。増える分は kind 付きなのでフィルタできる、という前提で受け入れた。量が問題になったら「redact する = ログする」の線ではなく Logger 側のレベル分けで解く。
+- ADR-061 の Consequences のうち「運用側は raw を見る」は、本 ADR で**初めて真になった**（当時は偽）。
+
+---
+
+## ADR-101: `pnpm dev` のポートは `strictPort` で 3000 に固定する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2回目レビュー presentation-config W-002 への対応）
+
+### Context
+
+ADR-063 で `APP_URL` を `http://localhost:3000`（`pnpm dev`）に統一したが、vite は既定でポートが塞がっていれば黙って +1 していく。レビュー環境では実際に 3013 で起動し、`og:url` が到達しないポートを指した。ADR-063 が潰したはずの「リセットリンクが届かない」が、設定側は正しいまま実ポート側の理由で再発する形になっていた。README が「3000」と正しく書いてあるぶん気づきにくい。
+
+### Decision
+
+**`vite.config.cloudflare.ts` の `server` に `strictPort: true` を足す。** 3000 が塞がっていれば `Port 3000 is already in use` で起動が失敗する。設定（`APP_URL`）と実ポートが黙って割れる状態が構造的に起きなくなる。
+
+### Consequences
+
+- 良い点: 実測で確認 — 3000 を別プロセスが握った状態では起動が失敗し、空いた状態では 3000 に bind して `og:url` / canonical とも `http://localhost:3000/login` になる。
+- トレードオフ: 3000 を使う別プロセス（古い dev サーバの残骸を含む）があると `pnpm dev` が起動しない。黙って別ポートで動くより、落として気づかせるほうが安い — 開発者が対処すべきは「どちらの 3000 が本物か」だから。
+- ポート自体を変えたくなったら、`vite.config.cloudflare.ts` と `wrangler.toml` / `wrangler.state.toml` の `APP_URL` と README を同時に直す。3箇所に散る点は ADR-063 のまま変わっていない。
+
+---
+
+## ADR-102: シェル内のエラー面は `ErrorSurface` 1つに寄せ、差は padding だけ prop で受ける
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2回目レビュー presentation-config W-003 への対応）
+
+### Context
+
+ADR-060 で `/settings` に自前の `errorComponent` を置いた結果、エラー面が3つになった（`__root` / `_app` / `/settings`）。うち `_app` と `/settings` は見出し・条件つきメッセージ・`ErrorRetry` の3要素が逐語コピーで、しかも**マージ前の時点で既に割れていた** — `py-2xl` と `pb-2xl`。差が意図的であることはどこにも書かれていなかった。
+
+### Decision
+
+**`components/ui/ErrorSurface` に中身（`<section>` + 見出し + 条件つきメッセージ + `ErrorRetry`）を抽出し、`_app` と `/settings` の両方がそれを描く。** 唯一の差である余白は `className` prop（既定 `py-2xl`、`/settings` は `pb-2xl`）で受け、なぜ違うのかを `ErrorSurface` の JSDoc と `/settings` 側のコメントに書く。`__root` は `AuthSheet` の `title` / `description` 経路で DOM の形が違うので寄せない（`ERROR_TITLE` と `ErrorRetry` の共有はこれまで通り）。
+
+### Consequences
+
+- 良い点: 3箇所あった同じ構造が2箇所（`ErrorSurface` と `__root` の sheet）になり、片方だけ直して割れる余地が消えた。余白差が「実装の差」ではなく「呼び出し側が明示的に渡す値」になった。
+- トレードオフ: `ui/` のコンポーネントが1つ増える。`ErrorRetry` に押し込む案もあったが、`ErrorRetry` は `__root` の `fullWidth` 経路でも単体で使われるので、面全体を持たせると2つの役割が同居する。
+- `ErrorSurface` は `"use client"` を持たない（`ErrorRetry` が持つ）。エラー面はどちらの経路からもクライアントで描かれるので、境界は `ErrorRetry` の1枚のままでよい。
+
+---
+
+## ADR-103: 統合テストの CI 実行はシャッフル固定（seed は GitHub run id）にする
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2回目レビュー presentation-config W-006 / test W-004 への対応）
+
+### Context
+
+`docs/test.md`:68 と `cleanup.integration.test.ts` の JSDoc がどちらも「スイートは `--sequence.shuffle` で走らせている」と書いていたが、その運用はリポジトリのどこにも無かった（`package.json` / `.github/workflows/ci.yml` に 0 件）。順序独立性を「テストごとに新しい DO 名を作る」に寄せた設計（ADR-082）は妥当だが、それを**破ったときに気づく仕組み**が無い。記述を落として手順に降格させる案と、実際に走らせる案があった。
+
+### Decision
+
+**CI の integration ジョブを `pnpm test:integration` から `pnpm test:integration:shuffle --sequence.seed=${{ github.run_id }}` に置き換える。** 追加のジョブではなく置き換えなので CI 時間は増えない（同じスイートを順序だけ変えて1回走らせる）。seed を run id にしたのは、赤くなった実行を `--sequence.seed=<id>` でローカル再現でき、同じ実行を re-run すれば同じ順序になるから。`test:integration:shuffle` はルート `package.json` のスクリプトとして生やし、`docs/test.md` の Commands 表にも載せる。
+
+### Consequences
+
+- 良い点: 「シャッフルで走らせている」という2箇所の記述が初めて真になった。固定 DO 名を持ち込んだ変更は、遅くとも CI で当たる。
+- トレードオフ: 順序依存が入り込んだとき、CI は**確率的に**赤くなる（毎回同じ順序ではない）。再現手段が seed で確保されているので受け入れる。順序依存を隠したまま緑を維持するより、まれに赤いほうが安い。
+- `--sequence.shuffle` はファイル順・ファイル内のテスト順の両方をシャッフルする。既存スイートはレビュー側で7シード分の順序独立性が確認済みで、`cleanup` の2ケースは互いに同一に書かれている（順序に依存しない）。
+- 順序を固定して切り分けたいときは `pnpm test:integration`（無印）がそのまま残っている。
+
+---
+
+## ADR-090: `sweep-reset-tokens` の投入点はリセット依頼のトランザクションであり、適格性に関わらず無条件に投入する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー adapter-infra B-001 / security W-002 への対応）
+
+### Context
+
+`sweep-reset-tokens` はハンドラも `registry` 登録も `CHUNK_BUDGETS` の枠もあるのに、**`enqueueJob` する経路がリポジトリに1行も無かった。** `spec/database/index.md` の `kind` 全数表は投入点欄を「リセットトークン行を発行するのと同じトランザクション」と名指ししているので、これは仕様との食い違いである。
+
+帰結は2つ。(i) `password_reset_tokens` から行が**一切消えない** — `issue` が消すのは同一 `credential_id` の**未使用**行だけなので、消費済み行（`used_at` 非 NULL・再利用可能な `change_auth_token` を保持）と他クレデンシャルの期限切れ行は誰も消さない。Directory は多数の利用者が相乗りする bucket で 10 GB 上限も共有する。(ii) `prt_expires_idx` の唯一の読み手が居なくなる。
+
+**検出できなかった理由も設計上の教訓である** — `directoryJobs.integration.test.ts` はハンドラを直接呼ぶので、ハンドラが正しくかつ到達不能という状態に緑を返す。対になる `sweep-reservations` は `reserveCredential` に投入点があるため、対称性で見落としやすい。
+
+### Decision
+
+`identityDirectory/facade.ts` の `requestPasswordReset` の `run()` 内で、`send-mail` と並べて無条件に投入する。
+
+```ts
+ctx.enqueueJob({
+  kind: "sweep-reset-tokens",
+  operationKey: "sweep-reset-tokens",   // bucket ごとの定数キー
+  payload: {},
+  nextRunAt: now + RESET_TOKEN_TTL_MS,
+});
+```
+
+- **`eligible` 分岐には置かない。** 置くと4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）の行数が割れ、`send-mail` の一様性を守るために払ってきたコストが無意味になる。定数キーなので連打は1行に収束し、収束規則 (1) は `next_run_at` を早める方向にしか動かさないので、無条件投入で余計な起床は増えない。
+- **`RESET_TOKEN_TTL_MS` を `resetTokenStore.ts` の private 定数から `lib/jobBudgets.ts` へ移す。** 投入点が同じ数値を必要とし、`lib/` は両者から import できる唯一の置き場である（`facade` → `resetTokenStore` の value import を作らない）。
+- 掃除は再武装5種の1つなので、1回 `done` に落ちても次の依頼が収束規則 (3) で復活させ、以後は `min(expires_at)` から自走する。
+
+### Consequences
+
+- 良い点: 消費済み行と期限切れ行が実際に消える。統合テストは**投入経路を通す** — `sendMail.integration.test.ts` の "arms the sweep that eventually clears the rows this path writes" が、依頼 → 配送 → 消費済みへの書き換え → TTL 経過後の起床 → 行0件、を実 job table 越しに通す（ハンドラを直接呼ばない）。
+- トレードオフ: **リセット依頼を1度でも受けた bucket は、掃除が空になるまで Alarm を保持する。** 実行可能集合が空でなくなるためで、`deleteAlarm()` は掃除が `done` に落ちてから起きる。仕様どおりの挙動だが、`alarmEntry.integration.test.ts` の「何も無い起床は `deleteAlarm` する」陽性対照は、掃除を先に流してから測る形へ書き換えた。
+- トレードオフ: 1依頼あたりの `jobs` 行が 1 → 2 になる。定数キーなので bucket あたり最大1行で、依頼数には比例しない。
+
+---
+
+## ADR-091: リセット依頼の適格判定を sliding から「窓番号の比較」へ変える
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー security W-001 / adapter-infra W-001 への対応）
+
+### Context
+
+`recordResetRequested` は適格・非適格を問わず無条件に `last_reset_requested_at = now` を書き、`isResetRequestAllowed` は `last + window <= now` の sliding 判定だった。したがって**窓より短い間隔で依頼を送り続けるかぎり、その宛先は永久に適格にならない。** 未認証の第三者が victim のアドレスへ 15 分未満の間隔で `request-password-reset` を投げ続けるだけで、victim はパスワードリセットを恒久的に受け取れなくなる。応答は4ケースで一様なので、victim にもオペレーターにも観測できない。
+
+ADR-043 が窓を 60 秒から 15 分へ広げたことで、必要な攻撃レートは 1/15 に下がっている。同じファイルの `reportResult` は**まったく同じ問題を認識して塞いでいる**（「スロットル中の試行はカウンタを進めない — 進めると攻撃者が締め出しを無限に更新できる」）ので、リセット側だけが逆向きだった。
+
+**無条件記録を消す解は採れない。** ADR-043 の不変条件（適格な依頼の窓番号には行がまだ無い）は、`last` が全依頼で前進することに依存している。適格時だけ書く形にすると1周目 B-001 が別の入口から再発する（発行が `t=0.5w` → `[w,1.5w)` の非適格依頼が窓1の行を作る → `t=1.5w` の依頼が適格になり窓1の `done` 行に衝突する）。
+
+### Decision
+
+**判定式だけを窓（floor）判定へ変える。** 記録は無条件のまま残す。
+
+```ts
+Math.floor(mapping.lastResetRequestedAt / windowMs) < Math.floor(now / windowMs)
+```
+
+- ADR-043 の不変条件は保たれる — ある窓 k の**最初の**依頼は必ず適格（`last` は窓 k 未満）で、そのとき窓 k の `operationKey` の行はまだ存在しない。2回目以降は同じ窓なので非適格。
+- 恒久ロックアウトが消える — 誰が叩いても「その窓で最初の1回」は適格なので、登録済みアドレスには窓あたり1通が必ず届く。攻撃者が発行させたトークンのリンクは victim のアドレスへ届くので、victim はそれを使える。
+- あわせて `facade` の `if (mapping !== null) recordResetRequested(...)` のガードを外し、**無条件に1文発行する**。未登録アドレスは `WHERE` が0行に当たるだけで、実行される文の数が登録の有無で変わらなくなる。
+
+### Consequences
+
+- 良い点: 未認証の第三者がリセット経路を恒久的に封じる攻撃が成立しなくなる。`credentialMappingRules.test.ts` に境界直前の依頼（`last = 窓末尾 - 1ms`）で次窓が適格になることと、窓の 1/16 間隔で 160 回叩いても適格が窓数と一致することの2本を置いた。
+- トレードオフ: 窓境界をまたいだ2依頼が実質同時でも両方発行され、直前のリンクが失効する（sliding では「同じ生きたリンクの再送」になっていた）。ADR-043 が既に窓境界での二重送信を許容しているので、性質としては同種である。
+- 引き継ぎ: 依頼レート自体の抑制は #18 のまま。本 ADR が消したのは「恒久」であって「1窓ぶんの遅延」ではない。
+- 記録: `recordResetRequested` のコメントを「retry で窓を開けたままにされる」から「**この無条件性が `operationKey` の窓一意性を成立させている**」へ書き直した（2周目 N-002 の指摘どおり、旧文は理由が逆向きに読めた）。
+
+---
+
+## ADR-092: `providerIdempotencyKey` は `operationKey` の SHA-256 とし、生の `operation_key` へのフォールバックを落とす
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー security W-004 への対応）
+
+### Context
+
+`providerIdempotencyKey` は `operationKey` と**同一文字列**だった。`operationKey` は `send-mail:{kind}:{hmac}:{window}` で、`hmac` は canonical アドレスの**全長 HMAC**、すなわち mapping 行の主キーであり、`DIRECTORY_ROUTING_SECRET` の秘匿が「候補アドレスから bucket を計算できない」という性質を支えている値そのものである。それが `Idempotency-Key` ヘッダとしてメール送信 Worker → プロバイダへ出ていく。CLAUDE.md の非同期実行契約 (3) は "derived deterministically from the job's `operationKey`" と書いており、実装は導出ではなく同値だった。ADR-045 が DO のログから消した値が、より外側の境界から出ている。
+
+`sendMail.ts` の `row.provider_idempotency_key ?? row.operation_key` フォールバックは、その抜け道を常設していた。
+
+### Decision
+
+- `providerIdempotencyKey` を **`SHA-256(operationKey)` の hex 64桁**にする。決定性は保たれるので、同一行の再配送は同じキー・新しい窓は新しいキーという性質は変わらない。
+- 導出は**非同期**なので DO の RPC エントリで行う（`reserveCredential` の封緘・`mintResetTokenMaterial` と同じ形）。`operationKey` の組み立てと SHA-256 を `identityDirectory/resetRequestKeys.ts` の2関数に置き、**facade とエントリが同じ関数を読む**（2箇所で文字列を組み立てると窓がずれる）。エントリは `this.now()` を1回だけ読んでトランザクションへ渡す。
+- **フォールバックを落とす。** `provider_idempotency_key` が NULL の `send-mail` 行は `terminal`（`SEND_MAIL_IDEMPOTENCY_KEY_MISSING`）にする。リセット依頼の投入点が必ず埋めるので、NULL は「別の何かが書いた行」であり、代わりに生キーを送るより拒否するほうが安い。
+
+### Consequences
+
+- 良い点: 全長 HMAC が信頼境界の外に出なくなった。テストは値の一致だけでなく「キーが hmac を含まないこと」「64桁 hex であること」も見る。
+- トレードオフ: リセット依頼1回につき WebCrypto 操作が1つ増える（合計3）。無条件に実行されるので4ケースの一様性には影響しない。
+- 記録: `mailSender.ts` 側は変更なし（キーは引数で受け取るだけ）。プロバイダ側の実装は #38。
+
+---
+
+## ADR-093: `beginChange` も一致行数を読み戻し、0行は一様な `ConflictError` にする
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー adapter-infra W-002 への対応）
+
+### Context
+
+ADR-047 は `activate` / `promote` に `RETURNING 1` を入れ、`cancel` / `delete` / `reportResult` を「absent is success」として書き分け、モジュール JSDoc に分類節を新設した。しかし **8つの書き込みのうち `beginChange` だけがどちらの列挙にも入らず**、実装も素の `run(...)` だった。`WHERE credential_id = ? AND change_state IS NULL` は実際に外れうる述語（別の変更が飛行中）であり、しかも `beginChange` は「この瞬間から旧材料では検証が通らない」という遷移の起点なので、0行を成功として返すと「変更を開始したつもりで何も起きていない」状態が saga に流れる。1周目 W-001 が `activate` について指摘したのと同一の形である。
+
+### Decision
+
+- `promote` と同形にする（`RETURNING 1` + 0行で `ConflictError`）。
+- **コードは `CREDENTIAL_CHANGE_NOT_STARTABLE` にする**（レビューの提案 `CREDENTIAL_CHANGE_ALREADY_IN_FLIGHT` は採らない）。0行は「飛行中の変更がある」と「その credential が無い」の両方を意味するので、`notActivatable()` と同じく**理由で割らない**。割ると bucket の中身を報告することになる。認証済みの呼び出し元で答えを細分化するかは、エントリを持つ #12 の判断に残す。
+- モジュール JSDoc の分類節を**8つ全数**へ書き直す（読み戻す3つ / absent is success の4つ / `reserve` の1つ）。今の書き方が「列挙が全数である」と読ませてしまうのが問題の半分だった。ポート側 JSDoc にも `promote` と同じ一文を足す。
+
+### Consequences
+
+- 良い点: 「7つ／8つの書き込みはすべて CAS である」という全数主張が実際に全数になった。`mappingOperations.integration.test.ts` に3本（開始できる / 飛行中は拒否して先行の `pending_verifier` を壊さない / 存在しない credential も同じ答え）。
+- 今日は呼び出し元が無い（`begin-credential-change` は #12）ので挙動の変化は無い。#12 はこの契約を引き継ぐ。
+
+---
+
+## ADR-094: `parseResetToken` はルーティング座標をキーリングで範囲検査する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー security W-003 への対応）
+
+### Context
+
+リセットリンクは `{routingGeneration}.{bucketIndex}.{secret}` で、`parseResetToken` はその2数を**範囲検査なしの整数**として返し、JSDoc は「消費エンドポイントが bucket を addressing するための座標」と契約していた。#12 が素直に配線すると、**未認証・クライアント供給の値が `idFromName("dir:g{n}:b{m}")` へ到達する。** AC-4 の保証は「`idFromName` の呼び出し点が合成ルート1箇所に閉じており、外部入力がそこへ到達する経路が無い」であり、リセット消費は本質的にトークンでルーティングせざるを得ないので、この経路だけが唯一の例外になる。範囲検査が無いと `999999999.999999999.<64桁hex>` を投げるだけで任意個の新規 DO を生成でき、各生成で migration と `_meta` 書き込みが走る。
+
+`bucketCount` は世代ごとの値で、**DO 名は bucket の index を運ぶが modulus は運ばない** — キーリングにしか無い。
+
+### Decision
+
+`parseResetToken(token, routing)` にし、`routing` は `readonly { generation, bucketCount }[]`（`DirectoryRoutingKeyring["entries"]` が構造的に満たす）とする。宣言に無い `generation`、または `bucket >= bucketCount` は `null` を返す。`null` は既に「解析不能なトークンは未知のトークンと同じ」に均されているので、応答の一様性は変わらない。
+
+引数を任意にせず**必須**にしたのは、#12 が「後で足す」を選べないようにするためである。
+
+### Consequences
+
+- 良い点: 座標の妥当性が `idFromName` の呼び出し点ではなく**型で強制される**。`resetToken.integration.test.ts` に「未宣言の世代」「`bucketCount` 以上の index」を拒否し、実在する座標は通る（陽性対照2本つき）テストを追加した。
+- トレードオフ: 純粋な文字列パーサだった関数がキーリングを要求する。呼び出し元はリクエスト Worker 側（キーリングを持つ側）なので、追加の配布は生じない。
+- 引き継ぎ: #12 は消費エントリで `Referrer-Policy: no-referrer` と即時消費を入れること（2周目 security N-012）。
+
+---
+
+## ADR-095: 「最後のログイン手段」のエラーコードは spec 側の名前へ寄せる
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 2周目レビュー domain-usecase W-001 への対応）
+
+### Context
+
+#37 は #12 のための引き継ぎ資材として `IdentityErrorCode.LastLoginCredential`（`"IDENTITY_LAST_LOGIN_CREDENTIAL"`）を置いたが、spec 側は `BusinessRuleError(LastCredentialRemoval)` のままで、`LastCredentialRemoval` という識別子はコードのどこにも無い（spec 6箇所 / コード0件）。**throw の実装者は #12 なので、名前が割れていることに気づく機会は #12 の実装時しかなく、そのときに spec とコードのどちらが正かを再判断する羽目になる。**
+
+### Decision
+
+**コード側を spec の名前へ寄せる** — `LastCredentialRemoval: "IDENTITY_LAST_CREDENTIAL_REMOVAL"`。spec 6箇所（`usecases/identity.md` ×2 / `testcases/identity/unlinkSsoCredential.md` / `inventory/test.md` / `manual-tests/account.md` ×2）を触らずに済み、#12 が読むのは spec だからである。`envelope.test.ts` の直書き `"LAST_LOGIN_CREDENTIAL"` も `IdentityErrorCode.LastCredentialRemoval` の参照へ変え、次に名前が動いたときにテストが追随するようにした。
+
+### Consequences
+
+- 良い点: リポジトリ全体で名前が1つになった（`grep` でコード1件・spec 6件がすべて `LastCredentialRemoval`）。
+- 影響なし: throw する実装はまだ無いので、挙動は変わらない。

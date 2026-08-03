@@ -45,6 +45,12 @@ export default defineConfig({
   ],
   server: {
     port: 3000,
+    // `APP_URL` in `wrangler.toml` / `wrangler.state.toml` hard-codes this
+    // port, and absolute links (canonical / `og:url`, password-reset mail)
+    // are built from it. Vite's default is to move to the next free port
+    // silently, which would leave those links pointing at a port nothing is
+    // listening on — failing to boot is the honest outcome.
+    strictPort: true,
     host: true,
     watch: {
       ignored: ["**/.direnv/**"],

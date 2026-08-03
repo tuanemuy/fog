@@ -33,6 +33,16 @@ export type RequestPasswordResetInput = {
  * unconditional fan-out keeps the request count independent of where — or
  * whether — the mapping exists. Probing first would reintroduce the very
  * distinction the uniform path removes.
+ *
+ * **Handoff to #44.** While a rotation has the same credential mapped in two
+ * generations at once, both buckets find a row, both judge themselves eligible
+ * and both issue — so one request produces two mails carrying two independently
+ * live links. Issuing deletes the credential's earlier unused tokens, but that
+ * delete is scoped to the bucket it runs in and cannot reach across
+ * generations, and consuming one link leaves the other redeemable until its TTL
+ * expires. Narrowing the fan-out is not the answer (it is what restores the
+ * oracle); folding the overlap belongs to the transfer procedure, which is
+ * #44's. #37 has no transfer, so the state is unreachable here.
  */
 export async function requestPasswordReset({
   container,

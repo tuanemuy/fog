@@ -5,10 +5,8 @@ import type {
   ResetTokenIssueMaterial,
 } from "@repo/core/domain/identity/ports/passwordResetTokenPort";
 import type { CredentialId } from "@repo/core/domain/identity/valueObject";
+import { RESET_TOKEN_TTL_MS } from "@repo/core/lib/jobBudgets";
 import { one, run, type Sql } from "../sql/exec";
-
-/** Hours, not days: a reset link is a bearer credential. */
-const RESET_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 const CHANGE_AUTH_TOKEN_BYTES = 16;
 
@@ -38,7 +36,15 @@ function randomHex(byteLength: number): string {
  * Issuing deletes every unused token for the same credential **in the same
  * transaction**. Without that, an older link keeps working after the user has
  * asked for a new one, which is the whole reason the port says issuing is per
- * credential rather than per request.
+ * credential rather than per request. Its reach is this bucket: rows for the
+ * same credential in another routing generation are not visible from here — see
+ * `application/identity/requestPasswordReset.ts` for what that means during a
+ * rotation (#44).
+ *
+ * That delete is **not** the table's cleanup. It leaves consumed rows
+ * (`used_at` set, and carrying a `change_auth_token`) and every expired row for
+ * other credentials behind; removing those is `sweep-reset-tokens`, which the
+ * reset-request facade arms in the same transaction as the issue.
  */
 export function createResetTokenStore(sql: Sql): PasswordResetTokenPort {
   return {
