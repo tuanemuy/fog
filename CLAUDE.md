@@ -29,7 +29,7 @@ Run from the repo root — root scripts delegate to `@repo/web` where relevant:
 - `pnpm dev` / `pnpm build` / `pnpm start` / `pnpm preview` (`pnpm dev` boots both Workers — the state Worker runs as an auxiliary worker of the same vite server; `pnpm start` / `pnpm preview` serve the build output and run the request Worker alone, so pair them with `pnpm dev:state` for flows that reach a Durable Object. `pnpm dev:state` rebuilds `dist/state` first, because `wrangler.state.toml`'s `main` is the build output)
 - `pnpm lint` / `pnpm lint:fix` / `pnpm format` / `pnpm format:check` (Biome, whole repo)
 - `pnpm typecheck` (root `tsgo` for the vitest configs + `pnpm -r typecheck` across packages)
-- `pnpm test` / `pnpm test:unit` / `pnpm test:integration` / `pnpm test:smoke` (vitest runs at the root, spanning `apps/web` and `packages/core`; `test:smoke` boots the build output under workerd, so run `pnpm build:cf` first)
+- `pnpm test` / `pnpm test:unit` / `pnpm test:integration` / `pnpm test:integration:shuffle` / `pnpm test:smoke` (vitest runs at the root, spanning `apps/web` and `packages/core`; `test:smoke` boots the build output under workerd, so run `pnpm build:cf` first; CI runs the shuffled variant with the run id as its seed, so a red is reproducible)
 - `pnpm deploy:{staging,production}` deploys both Workers, state first — the request Worker's DO bindings name the state Worker's script
 - Web-only scripts not delegated at the root: `pnpm --filter @repo/web <script>` (or run inside `apps/web`)
 
