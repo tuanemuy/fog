@@ -86,14 +86,38 @@ function buildSharedDeps(): SharedDeps {
 }
 
 /**
+ * Recognises a pending result **structurally**, by `then` alone.
+ *
+ * Neither shortcut works on what workerd's JS RPC actually returns, and both
+ * fail silently — the call still runs, its failure just stops being translated.
+ *
+ * - `instanceof Promise` is **false**. `Rpc.Result<R>` is `Promise<…> &
+ *   Provider<R>`, and the object behind it is a custom thenable
+ *   (`[object JsRpcPromise]`) that workerd's own declarations describe as
+ *   quacking like a `Promise` without being one.
+ * - `typeof value === "object"` is **false too**: it is `"function"`, because
+ *   the same handle doubles as the pipelining provider.
+ *
+ * Both are measured against a real stub in `__tests__/stubGuard.integration.test.ts`.
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+/**
  * Wraps a stub so that platform failures become the same `SerializedError`
  * shape as the ones inside the envelope.
  *
  * Two distinct paths converge here. A failure *inside* the Durable Object comes
  * back as `{ ok: false, error }` and returns normally; a failure to reach the
  * DO at all — overloaded, evicted, `ctx.abort()` — makes the stub call itself
- * throw, and there is no catch point inside the DO for it. The second is what
- * this translates.
+ * fail, and there is no catch point inside the DO for it. The second is what
+ * this translates, and it arrives both ways: synchronously from the call
+ * itself, and asynchronously as a rejection of the thenable it returned.
  */
 function guardStub<T extends object>(stub: T): T {
   return new Proxy(stub, {
@@ -113,8 +137,13 @@ function guardStub<T extends object>(stub: T): T {
             target as Record<PropertyKey, (...a: unknown[]) => unknown>
           )[property];
           const result = method(...args);
-          return result instanceof Promise
-            ? result.catch(translateStubError)
+          // Adopting the thenable settles it into an ordinary `Promise` and so
+          // drops the pipelining handle. The facades are primitives in,
+          // `RpcEnvelope` out — nothing pipelines through them — and a guard
+          // that only translates when the caller happens to have kept a real
+          // `Promise` would be the same hole in a different shape.
+          return isThenable(result)
+            ? Promise.resolve(result).catch(translateStubError)
             : result;
         } catch (error) {
           return translateStubError(error);

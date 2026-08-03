@@ -2304,3 +2304,77 @@ AC-12 (iii)（RPC 経路が `setAlarm` を発行する）は、共有実装（`r
 
 - 良い点: **変異試験で確認** — `entry()` を「`this.gate()` → `ok(body())` / `err(error)`」の手書き（arming 無し）へ置き換えると本テストが `expected null to be 4000000000000` で赤。レビュアーが検出されないと実測した MUT-6 が検出されるようになった。
 - トレードオフ: 「ゲートの全数表」を主題とするファイルに武装の観測が1本混じる。DO クラスを主題にするファイルは他に無く、`cleanup` 側（User Data）との対称性が読み手にとって最も明快だと判断した。
+
+## ADR-130: stub ガードは `instanceof Promise` ではなく `then` の有無で保留中の結果を見分ける
+
+**日付:** 2026-08-03
+**ステータス:** 採用（ブラウザ検証 TC-E03 で検出した本 PR 由来の不具合の是正）
+
+### Context
+
+ADR-035 が直した `guardStub`（`application/di/serverCloudflare.ts`）は、呼び出し結果が保留中かどうかを `result instanceof Promise` で判定していた。**workerd の JS RPC はこの判定を通らない。** `Rpc.Result<R>` は `Promise<…> & Provider<R>` の交差型で、実体は pipelining ハンドルを兼ねるカスタム thenable である（`apps/web/worker-configuration.d.ts` の workerd 自身のコメント: "Technically, we use custom thenables here, but they quack like `Promise`s"）。
+
+結果として `.catch(translateStubError)` の枝には一度も入らず、**DO へ到達できない失敗のうち非同期に届くものは全部未翻訳のまま抜けていた**。同期 throw だけが翻訳されるので `stubErrors.ts` は非同期経路に対して事実上デッドコードであり、`CLAUDE.md` の「the calling adapter additionally translates platform failures raised by the stub call itself」は実際には効いていなかった。TC-E03 の実測（state Worker 停止 → ログイン）で `kind: 'unknown'` / `code: null` / `message: 'Worker "fog-state" not found. Make sure it is running locally.'`。
+
+ユーザー可視の実害は無い（`redactForClient` が `unknown` の message を潰し、HTTP は両者 500）。失われていたのは `retryable` の情報と、ログの `kind` による運用トリアージである。
+
+**検出できなかった理由は観測点の位置である。** `adapters/cloudflare/__tests__/stubErrors.test.ts` は `translateStubError` を直接呼ぶだけで、**`guardStub` 自体のテストが1本も無かった**。ADR-035 の学び（「合成ルートを通すハーネスの価値は、ハーネス自身が使われて初めて出る」）と同じ形が、今度は同じ関数の別の行で起きたことになる。
+
+### Decision
+
+**1. 判定を `then` の有無に変える。**
+
+```ts
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+```
+
+`typeof value === "object"` **だけでは足りない**。実測（下記）では `typeof` が `"function"` である — 同じハンドルが pipelining の provider を兼ねるためで、object だけを見る thenable 判定は `instanceof` と同じく全件を取りこぼす。修正の途中で実際にこの形を書き、統合テストが赤で落ちて判明した。
+
+**2. `guardStub` を `async` にはしない。** 全メソッドを Promise 化すると `UserDataFacade.readSchemaVersion(): Promise<RpcEnvelope<number>> | RpcEnvelope<number>` の同期側が消える。この union は DO クラスのインスタンスをそのまま facade として渡すテスト経路のために意図して書かれているので、ガードの都合で潰さない。非 thenable はそのまま返す。
+
+**3. 翻訳は `Promise.resolve(result).catch(...)` で掛ける。** thenable を adopt するので pipelining ハンドルとしての性質は落ちるが、facade は「primitives in / `RpcEnvelope` out」であり pipelining する呼び出しは1件も無い（`grep` 済み）。`result.then(undefined, translateStubError)` なら元のハンドルの `then` を使えるが、戻り値が何であるかは thenable の実装次第で、契約としては `Promise` を返す側が強い。
+
+**4. AC-4 / AC-25 は動かない。** 変更は `serverCloudflare.ts` 内に閉じ、新しい import も `idFromName` / `getByName` の新しい呼び出し点も増えない。`isThenable` はモジュール内の private ヘルパである。
+
+### Consequences
+
+- 良い点: **実測で翻訳が発火する。** 同じ手順（`pnpm start` を 8787 で起動し fog-state の供給元を止め、login サーバー関数を叩く）で、修正前 `kind: 'unknown'` / `code: null` / `message: 'Worker "fog-state" not found…'` → 修正後 `kind: 'system'` / `code: 'DATABASE_ERROR'` / `message: 'Durable Object call failed'`。クライアントへ返る `SerializedError` に `retryable` が乗るようになった（漏洩は修正前後とも無し）。
+- 良い点: `ServiceOverloaded` の分岐が非同期経路から到達可能になり、DO 過負荷が retryable として扱われる。
+- 良い点: **`guardStub` の観測点ができた。** ADR-131 に置き方を書く。
+- トレードオフ: pipelining を使いたくなったら、この行が最初の障害物になる。facade の契約がそれを許していないので現時点では損失ゼロだが、将来 pipelining を導入するなら翻訳の掛け方（`then` の第2引数）ごと引き直すこと。
+- 学び: **プラットフォームの型に対する `instanceof` は、この runtime では既定で疑うこと。** RPC の結果・エラー・ハンドルはいずれも workerd 側の実装であり、`Promise` / `Error` のサブクラスである保証は無い。構造で見るか、実物を測るテストを1本置くか、どちらかが要る。
+
+---
+
+## ADR-131: `guardStub` の観測点は「作り物の thenable」と「本物の stub」の2本立てにする
+
+**日付:** 2026-08-03
+**ステータス:** 採用（ADR-130 の検証手段）
+
+### Context
+
+ADR-130 の不具合は「workerd の RPC 結果がどんな形か」に対する思い込みだった。**その思い込みは、作り物のフェイクだけでテストしても再現してしまう** — `async` メソッドを持つフェイクは本物の `Promise` を返すので、壊れた `instanceof Promise` 版でも緑になる。現に `di/__tests__/routingNonExposure.test.ts` の `failingNamespace` がその形で、AC-3 の主題（漏洩しないこと）は正しく見ているのに、翻訳が発火しているかどうかは見ていない。
+
+一方、本物の stub だけに頼るのも成り立たない。DO の RPC エントリは失敗を値エンベロープで返すので、**統合環境で「stub 呼び出し自体の非同期失敗」を意図的に起こす手段が無い**（未実装メソッド呼び出しは `@cloudflare/vitest-pool-workers` のラッパ由来、`Symbol.dispose` は同ラッパが露出していない、非 cloneable 引数は workerd が stub 化して通してしまう — 3つとも実測）。
+
+### Decision
+
+**2本立てにする。役割を分ける。**
+
+1. **`application/di/__tests__/stubGuard.test.ts`（unit）** — 翻訳が発火することを見る。フェイクの stub メソッドは `Promise` ではなく**呼び出し可能な thenable**（`Object.assign(() => …, { then })`）を返す。`instanceof Promise` が false かつ `typeof` が `"function"` という2点を、本物の形として最初のケースで陰性対照に固定する。
+2. **`application/di/__tests__/stubGuard.integration.test.ts`（integration）** — フェイクが本物と同じ形であることを見る。合成ルート越しの stub と生の stub を並べ、生の側について `instanceof Promise === false` / `[object JsRpcPromise]` / `then` を持つことを**実測**し、ガードを通った側が本物の `Promise` になっていることを見る。
+
+`ns.idFromName` を直接叩くのは ADR-028 の除外（`__tests__/`）の範囲内である。
+
+### Consequences
+
+- 良い点: **変異試験で両方向を確認した。** (i) `instanceof Promise` へ戻すと unit 2本（`translates a failure that arrives as a rejected RPC result` / `carries the overloaded marker through the asynchronous path`）と integration 1本が赤。(ii) thenable 判定を `typeof value === "object"` だけに狭めても同じ3本が赤。復元はスナップショットからの `cp`。
+- 良い点: 統合側は本物の workerd の形を測っているので、`@cloudflare/vitest-pool-workers` / workerd の更新で `Rpc.Result` の形が変われば、フェイクが古くなった時点で赤くなる。
+- トレードオフ: 統合側は**修正の変異こそ検出するが、翻訳そのものは見ていない**（上記のとおり本物の非同期失敗を作れない）。翻訳の観測は unit 側が持つ、という分担を JSDoc に明記した。
+- トレードオフ: リポジトリ初の `biome-ignore`（`lint/suspicious/noThenProperty`）が入った。フェイクが thenable であることは意図そのものなので、規則の但し書き（"unless you intentionally need a thenable object"）に該当する。
