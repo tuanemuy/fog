@@ -8,6 +8,15 @@ import { all, type Sql } from "./exec";
  * Zero matched rows is a caller-visible signal, not a retry candidate — there
  * is deliberately no application-level OCC retry decorator anywhere in the
  * codebase. The conflict travels out to the transport boundary unswallowed.
+ *
+ * **"The row is gone" and "the version has moved on" are deliberately the same
+ * answer here**, and they are not distinguished by a second read. Both mean the
+ * caller's `Versioned<T>` no longer describes storage, both are resolved the
+ * same way (re-read and retry from the top), and separating them would cost an
+ * extra statement to publish a distinction with no caller. What the design
+ * forbids is *misattribution* — reading some other statement's matched-row
+ * count as this one's — which the per-statement `RETURNING 1` is what rules
+ * out. `userData/__tests__/occ.integration.test.ts` pins both halves.
  */
 export function conditionalUpdate(
   sql: Sql,

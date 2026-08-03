@@ -1,3 +1,4 @@
+import type { CredentialLocatorRef } from "@repo/core/domain/identity/ports/credentialLocatorStore";
 import type { JobKind } from "@repo/core/lib/jobKind";
 
 /**
@@ -38,17 +39,17 @@ export type OperationPhase = "reserving" | "activating" | "done" | "terminated";
 /**
  * One credential locator, as stashed in `operations.target_locators`.
  *
- * An array, not a single value: during a routing-key rotation the same
- * credential has rows in two generations' buckets, and this is the only
+ * An alias, not a second declaration: the same five fields are what a domain
+ * port has to name when a reservation row carries them, and the domain cannot
+ * import this module. So the shape is declared inward, in
+ * `domain/identity/ports/credentialLocatorStore.ts`, and this is the name the
+ * application layer calls it by.
+ *
+ * Stored as an array, not a single value: during a routing-key rotation the
+ * same credential has rows in two generations' buckets, and this is the only
  * reverse information an orphan-mapping sweep can use.
  */
-export type LocatorRef = Readonly<{
-  credentialId: string;
-  kind: "email" | "sso";
-  hmac: string;
-  generation: number;
-  bucketIndex: number;
-}>;
+export type LocatorRef = CredentialLocatorRef;
 
 export type RecordOperationArgs = Readonly<{
   operationId: string;

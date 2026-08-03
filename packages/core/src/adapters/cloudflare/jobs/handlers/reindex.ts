@@ -21,6 +21,21 @@ import type { JobRow } from "../table";
  * the row's own stored values therefore leaves `search_entries` untouched while
  * making the index side idempotent — running the same chunk twice is a no-op
  * rather than a double-index, which is what at-least-once execution requires.
+ *
+ * ## Its reach is the tokenizer, not the normalisation rules
+ *
+ * The input is `search_entries.title` / `.body`, which already hold text
+ * normalised under the rules in force when they were written. Re-running
+ * `normalizeForIndex` over them therefore reproduces the *old* normalisation,
+ * however the rules have since changed. That is enough for a tokenizer change
+ * — the virtual table is rebuilt and every row re-fed — and is not enough for a
+ * normalisation change, which needs the originals in `memos.body` /
+ * `documents.title` / `documents.body`.
+ *
+ * Those live behind repositories #37 does not own (ADR-001), so a normalisation
+ * change is carried out by re-running the *projection* from the aggregate side
+ * and belongs to #2〜#6 along with the rest of that obligation. `spec/database`
+ * describes this job as covering both; the narrower half is what exists.
  */
 
 const STEP_NAME = "reindex";

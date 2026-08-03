@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -33,6 +33,36 @@ const COMPATIBILITY_DATE = "2026-05-01";
 const COMPATIBILITY_FLAGS = ["nodejs_compat"];
 
 const DISALLOWED = "Disallowed operation called within global scope";
+
+/**
+ * The sources that end up inside the two bundles.
+ *
+ * `__tests__` is excluded because nothing under it is shipped — editing this
+ * very file would otherwise report the build as stale — and `*.gen.ts` because
+ * the router's generated tree is rewritten *during* the build, after the first
+ * of the two bundles has already been emitted.
+ */
+const SOURCE_ROOTS = [
+  resolve(here, "../app"),
+  resolve(here, "../../../packages/core/src"),
+];
+
+function newestSourceMtime(directory: string): number {
+  let newest = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === "dist") continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "__tests__") continue;
+      newest = Math.max(newest, newestSourceMtime(path));
+      continue;
+    }
+    if (entry.name.endsWith(".gen.ts")) continue;
+    if (!/\.(ts|tsx|css)$/.test(entry.name)) continue;
+    newest = Math.max(newest, statSync(path).mtimeMs);
+  }
+  return newest;
+}
 
 function createMiniflare(): Miniflare {
   return new Miniflare({
@@ -105,6 +135,18 @@ describe("the built Workers boot under workerd", () => {
       existsSync(stateWorker),
       `${stateWorker} is missing; run \`pnpm build:cf\` first`,
     ).toBe(true);
+    // Existence alone catches "the build never ran"; it does not catch "the
+    // build ran before the change under test". This suite exists to detect a
+    // regression that only the *shipped* module graph shows, so a green against
+    // a stale bundle is the dangerous kind — the developer who just edited the
+    // top-level Worker would be told #40 has not come back when nothing asked.
+    const newestSource = Math.max(...SOURCE_ROOTS.map(newestSourceMtime));
+    for (const artefact of [requestWorker, stateWorker]) {
+      expect(
+        statSync(artefact).mtimeMs,
+        `${artefact} is older than the sources it was built from; re-run \`pnpm build:cf\``,
+      ).toBeGreaterThan(newestSource);
+    }
     miniflare = createMiniflare();
   });
 

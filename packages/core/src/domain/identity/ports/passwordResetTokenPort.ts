@@ -13,6 +13,22 @@ export type ConsumedResetToken = Readonly<{
 }>;
 
 /**
+ * Everything a token row is written from — derived by the caller, never here.
+ *
+ * All three are plain strings and numbers so they survive the RPC hop and so
+ * this port stays synchronous; see the port's own note for why the derivation
+ * cannot live inside the transaction.
+ */
+export type ResetTokenIssueMaterial = Readonly<{
+  /** Row identity, and the pre-image the send job re-derives the link from. */
+  tokenId: string;
+  /** `SHA-256` of the link's secret half. The only value `verifyAndConsume` matches. */
+  tokenHash: string;
+  /** Which reset-token key generation signed the link. */
+  tokenKeyGeneration: number;
+}>;
+
+/**
  * Issue / verify / consume for password reset tokens.
  *
  * **Lives on the Identity Directory side**, because the token rows do. That
@@ -20,8 +36,26 @@ export type ConsumedResetToken = Readonly<{
  * placement — the placement is decided by needing to resolve an unauthenticated
  * request that carries nothing but the token.
  *
- * The raw token is never stored: the row keeps a hash derived from `token_id`,
- * so a database leak yields no usable link.
+ * ## Neither method derives anything, and that is the contract
+ *
+ * Both take a value that has **already been hashed** by the caller. The port is
+ * synchronous because it sits on a unit-of-work context, WebCrypto is not, so
+ * hashing happens one level out in the Durable Object's RPC entry point — the
+ * same shape `reserveCredential` uses for the sealed canonical (ADR-036 /
+ * ADR-042). `adapters/cloudflare/identityDirectory/resetTokenCrypto.ts` is the
+ * single place the derivation chain is written, and issuing, sending and
+ * verifying all read it, so the three cannot drift into disagreement again.
+ *
+ * ## What the row guarantees, precisely
+ *
+ * The row holds `token_id` and `SHA-256(secret)`, where `secret =
+ * HMAC(IDENTITY_RESET_TOKEN_KEY[generation], token_id)` is the bearer half of
+ * the mailed link. A database leak therefore yields no usable link: deriving
+ * `secret` from `token_id` needs the keyring, which is a state-Worker secret
+ * and is not in the database, and deriving it from the hash needs a SHA-256
+ * pre-image. **`token_id` is an identifier and is never accepted as proof** —
+ * submitting it matches no row, because rows are keyed by the hash of the
+ * derived secret.
  *
  * Issuing is per credential: a new token **deletes every unused token for that
  * credential in the same transaction**, so older links stop working. Unlinking
@@ -31,9 +65,19 @@ export type ConsumedResetToken = Readonly<{
  * Invalid, expired and already-used tokens are not errors — they are `null`.
  */
 export interface PasswordResetTokenPort {
-  issue(credentialId: CredentialId, now: Date): string;
+  issue(
+    credentialId: CredentialId,
+    material: ResetTokenIssueMaterial,
+    now: Date,
+  ): void;
+  /**
+   * `tokenHash` is `SHA-256` of the secret parsed out of the link the user
+   * followed — not the link, and not `token_id`. #12 owns the consumption
+   * entry point and computes it there, asynchronously, before opening its unit
+   * of work.
+   */
   verifyAndConsume(
-    token: string,
+    tokenHash: string,
     now: Date,
     operationId: string,
   ): ConsumedResetToken | null;

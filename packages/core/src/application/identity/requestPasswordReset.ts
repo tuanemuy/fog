@@ -16,6 +16,23 @@ export type RequestPasswordResetInput = {
  *
  * A malformed address is the one exception: it never reaches storage and
  * reveals only what the caller already typed.
+ *
+ * ## Every generation, not just the active one
+ *
+ * `forCanonical` yields the active generation first and the previous one while
+ * the keyring still carries it, and `loginWithPassword` has always walked both.
+ * Asking only the active bucket left a user whose mapping had not yet been
+ * remapped able to sign in but unable to reset — the request would reach an
+ * empty bucket, the send would find no mapping and settle `done`, and the
+ * uniform answer meant neither the user nor an operator could see it. Recovery
+ * quietly disappearing for the length of a rotation is a security problem, not
+ * merely an availability one.
+ *
+ * The request goes to **every** locator rather than to the first one holding a
+ * row: each bucket writes exactly one job row whatever it finds, so an
+ * unconditional fan-out keeps the request count independent of where — or
+ * whether — the mapping exists. Probing first would reintroduce the very
+ * distinction the uniform path removes.
  */
 export async function requestPasswordReset({
   container,
@@ -28,13 +45,11 @@ export async function requestPasswordReset({
     return;
   }
 
-  const locators = await container.directoryLocator.forCanonical(email);
-  const locator = locators[0];
-  if (locator === undefined) return;
-
-  unwrap(
-    await container
-      .directoryStubFactory(locator)
-      .requestPasswordReset("email", locator.hmac),
-  );
+  for (const locator of await container.directoryLocator.forCanonical(email)) {
+    unwrap(
+      await container
+        .directoryStubFactory(locator)
+        .requestPasswordReset("email", locator.hmac),
+    );
+  }
 }

@@ -444,7 +444,11 @@ describe("prune", () => {
         payload: {},
         nextRunAt: 1_000_000,
       });
-      const deleted = pruneCompleted(sql, 1_000_100, 100, 1_000, 10_000);
+      const deleted = pruneCompleted(sql, 1_000_100, 100, {
+        done: 1_000,
+        poison: 10_000,
+        sendMail: 1_000,
+      });
       return { deleted, left: rows(sql).map((r) => r.operation_key) };
     });
     expect(result.deleted).toBe(2);
@@ -459,8 +463,39 @@ describe("prune", () => {
           `k${i}`,
         );
       }
-      return pruneCompleted(sql, 1_000_000, 2, 1_000, 1_000);
+      return pruneCompleted(sql, 1_000_000, 2, {
+        done: 1_000,
+        poison: 1_000,
+        sendMail: 1_000,
+      });
     });
     expect(deleted).toBe(2);
+  });
+
+  it("retires a send-mail row on its own window, not on the shared one", async () => {
+    const result = await fresh((sql) => {
+      const seed = (key: string, kind: string, completedAt: number) =>
+        sql.exec(
+          "INSERT INTO jobs (operation_key, kind, payload, payload_digest, attempt, next_run_at, status, lease_until, owner_token, provider_idempotency_key, terminal_reason, completed_at) VALUES (?, ?, '{}', 'd', 0, NULL, 'done', NULL, NULL, NULL, NULL, ?)",
+          key,
+          kind,
+          completedAt,
+        );
+      // Same age, different kinds: only the shorter retention takes its row.
+      seed("mail", "send-mail", 0);
+      seed("purge", "purge-trash", 0);
+      const deleted = pruneCompleted(sql, 20_000, 100, {
+        done: 100_000,
+        poison: 100_000,
+        sendMail: 10_000,
+      });
+      return { deleted, left: rows(sql).map((r) => r.operation_key) };
+    });
+    // The `send-mail` retention *is* the request window: a row that outlived it
+    // would keep refusing legitimate re-requests, and the whole reason it is
+    // kind-scoped rather than outcome-scoped is that a lifetime varying with
+    // the result would be an enumeration oracle.
+    expect(result.deleted).toBe(1);
+    expect(result.left).toEqual(["purge"]);
   });
 });

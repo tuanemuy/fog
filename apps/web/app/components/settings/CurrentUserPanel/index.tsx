@@ -1,5 +1,4 @@
 import { cache } from "react";
-import { LogoutButton } from "@/components/settings/LogoutButton";
 import { requireUserId } from "@/presentation/currentUser";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
@@ -53,9 +52,6 @@ export async function CurrentUserPanel() {
           </span>
         </div>
       ))}
-      <div className="border-t border-neutral-100 pt-lg">
-        <LogoutButton />
-      </div>
     </section>
   );
 }

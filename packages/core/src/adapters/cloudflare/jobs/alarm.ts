@@ -1,4 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
+import type { Logger } from "@repo/core/application/ports/logger";
+import { errorIdentity } from "@repo/core/lib/errorIdentity";
 import { MIN_RESUME_INTERVAL_MS } from "@repo/core/lib/jobBudgets";
 import type { Sql } from "../sql/exec";
 import { earliestNextRunAt } from "./table";
@@ -105,4 +107,42 @@ export async function rearmFailClosed(
   now: number,
 ): Promise<void> {
   await persist(ctx, cache, now + MIN_RESUME_INTERVAL_MS);
+}
+
+/**
+ * The terminus of `alarm()`'s single broad catch, shared by both DO classes.
+ *
+ * **Nothing may escape `alarm()`** — a throw there is handed to the platform,
+ * which is the one place the design refuses to delegate retry to. Four things
+ * can fail outside any per-job guard: the pre-work re-arm, the migration gate,
+ * the runner's own `listRunnable` / `claimJob` / `pruneCompleted`, and the
+ * settle. None of them is caused by one job's data, so none of them belongs in
+ * a `poison` row; all four end the same way a fail-closed schema does, waking
+ * again at a fixed interval without deleting the alarm.
+ *
+ * That is not hypothetical. A Durable Object at its 10 GB ceiling fails writes
+ * while reads and deletes still succeed, so `claimJob`'s `UPDATE` raises
+ * `SystemError(StorageCapacityExceeded)` — and `purge-trash`, the only
+ * automatic way to free space, is behind exactly that claim.
+ *
+ * Logs the failure's identity only, never its message: this runs on the same
+ * path as `terminal_reason` and obeys the same rule.
+ */
+export async function rearmAfterFailure(
+  ctx: DurableObjectState,
+  cache: AlarmCache,
+  logger: Logger,
+  now: number,
+  error: unknown,
+): Promise<void> {
+  logger.error("alarm wake-up failed", { cause: errorIdentity(error) });
+  try {
+    await rearmFailClosed(ctx, cache, now);
+  } catch (rearmError) {
+    // Storage refused the re-arm as well. The wake-up already persisted one
+    // before doing any work, so the DO is normally still scheduled; there is
+    // nothing further to attempt, and throwing from here would be the escape
+    // this whole function exists to prevent.
+    logger.error("alarm re-arm failed", { cause: errorIdentity(rearmError) });
+  }
 }

@@ -15,7 +15,7 @@ import type { MailSender } from "@repo/core/domain/identity/ports/mailSender";
 import { SystemClock } from "../ports/clock";
 import { UuidV7Generator } from "../ports/idGenerator";
 import { ConsoleLogger } from "../ports/logger";
-import { type Keyring, requireKeyring } from "./secrets";
+import { requireKeyring, type StateSecrets } from "./secrets";
 import type { SharedDeps } from "./types";
 
 /**
@@ -37,10 +37,13 @@ export type StateEnv = Readonly<{
   IDENTITY_RESET_TOKEN_KEY?: string;
 }>;
 
-export type StateSecrets = Readonly<{
-  mailEncryptionKeyring: Keyring;
-  resetTokenKeyring: Keyring;
-}>;
+/**
+ * Re-exported, never restated. Two structurally identical declarations would
+ * split silently the first time a key is added to one of them: `registry.ts`
+ * reads the type from `secrets.ts` while the Durable Object builds its value
+ * here, and nothing would report the mismatch.
+ */
+export type { StateSecrets } from "./secrets";
 
 export type UserDataContainer = SharedDeps &
   UserDataFacadeDeps &
@@ -91,31 +94,13 @@ export function createIdentityDirectoryContainer(
       env.MAIL_SENDER === undefined
         ? createNoopMailSender(shared.logger)
         : createBindingMailSender(env.MAIL_SENDER, env.APP_URL, shared.logger),
-    uow: createIdentityDirectoryUnitOfWorkProvider(
-      ctx,
-      shared.clock,
-      activeResetTokenGeneration(env),
-    ),
+    // No reset-token generation is threaded through here. The generation is
+    // decided where the token is derived — the RPC entry point, which reads the
+    // keyring itself — and travels to the row as part of the issue material
+    // (ADR-042). Reading a keyring in a Durable Object's constructor would also
+    // mean an unset optional binding could take `alarm()` down with it.
+    uow: createIdentityDirectoryUnitOfWorkProvider(ctx, shared.clock),
   };
-}
-
-/**
- * The active reset-token key generation, recorded on every token row so a
- * rotation can tell which key signed which token.
- *
- * Read leniently, and **not** through {@link readStateSecrets}: a Durable
- * Object's constructor runs before any entry point, so throwing here would take
- * out `alarm()` and the operator diagnostics as well, in a deployment whose only
- * fault is an unset optional binding. Generation 1 is the pre-rotation value.
- */
-function activeResetTokenGeneration(env: StateEnv): number {
-  if (env.IDENTITY_RESET_TOKEN_KEY === undefined) return 1;
-  const keyring = requireKeyring(
-    env.IDENTITY_RESET_TOKEN_KEY,
-    "IDENTITY_RESET_TOKEN_KEY",
-    { requireBucketCount: false },
-  );
-  return keyring.entries[0]?.generation ?? 1;
 }
 
 /**

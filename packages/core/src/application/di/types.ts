@@ -63,8 +63,14 @@ export type RequestContainer = SharedDeps &
     directoryStubFactory: (
       locator: DirectoryLocator,
     ) => IdentityDirectoryFacade;
-    /** canonical → bucket locators. Request-side only, by design (ADR-016). */
+    /**
+     * canonical → bucket locators. Request-side only, by design (ADR-016).
+     *
+     * Non-empty: the active generation is `[0]`, and every write goes there.
+     */
     directoryLocator: {
-      forCanonical(canonical: string): Promise<readonly DirectoryLocator[]>;
+      forCanonical(
+        canonical: string,
+      ): Promise<readonly [DirectoryLocator, ...DirectoryLocator[]]>;
     };
   }>;

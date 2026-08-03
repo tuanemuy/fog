@@ -35,11 +35,32 @@ export const DONE_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const POISON_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Retention for a `send-mail` row that resolved to no recipient (no mapping,
- * or throttled). `send-mail` is not a re-arming kind, so its surviving `done`
- * row is what refuses a repeat request — this value *is* the throttle window.
+ * The password-reset request window.
+ *
+ * **One number governs two things that must never disagree**: how often a
+ * credential may mint a new reset token, and which `send-mail` row a request
+ * converges onto (`send-mail:{kind}:{hmac}:{floor(now / this)}`). Splitting
+ * them is what produced the failure this constant now closes — a request could
+ * pass the issue throttle, delete the live token and then collide with the
+ * previous window's `done` row, so the user's working link was destroyed and no
+ * replacement was sent.
+ *
+ * With the two equal the invariant is exact: a request is eligible to issue
+ * only when `last + window <= now`, which forces `floor(now / window)` past the
+ * window of every earlier request, so the row it enqueues is always a new one.
  */
-export const SEND_MAIL_EMPTY_RETENTION_MS = 15 * 60 * 1000;
+export const RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Retention for a `send-mail` row, **applied whatever the outcome was**.
+ *
+ * Not "retention for a row that found no recipient": a retention that varied
+ * with the result would make the row's lifetime an enumeration oracle, which is
+ * the one thing the whole uniform reset path exists to prevent. Equal to the
+ * request window, so the row that collapses a burst cannot outlive the window
+ * it belongs to, and rows do not pile up for a day per address.
+ */
+export const SEND_MAIL_RETENTION_MS = RESET_REQUEST_WINDOW_MS;
 
 /** Upper bound on rows deleted by one prune pass. */
 export const PRUNE_ROW_LIMIT = 1000;

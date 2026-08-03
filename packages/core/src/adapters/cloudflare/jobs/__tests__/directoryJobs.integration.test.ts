@@ -29,12 +29,15 @@ const silentMailSender: MailSender = {
   sendPasswordResetMail: () => Promise.resolve(),
 };
 
-function recordingLogger(): { logger: Logger; lines: string[] } {
-  const lines: string[] = [];
-  const push = (message: string) => {
-    lines.push(message);
-  };
-  return { lines, logger: { info: push, warn: push, error: push } };
+/**
+ * None of the three handlers below logs on a path this file exercises, so the
+ * logger is a dependency rather than an observable. A recording one whose lines
+ * no assertion reads is worse than none — it looks like the suite is checking
+ * observability when it is not.
+ */
+function silentLogger(): Logger {
+  const noop = () => undefined;
+  return { info: noop, warn: noop, error: noop };
 }
 
 let seq = 0;
@@ -55,7 +58,7 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
       IDENTITY_DIRECTORY_CODE_VERSION,
       "dir:g1:b0001",
     );
-    const { logger } = recordingLogger();
+    const logger = silentLogger();
     return fn({
       sql,
       ctx,

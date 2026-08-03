@@ -1,11 +1,7 @@
-import {
-  isBusinessRuleError,
-  isRehydrationError,
-} from "@repo/core/domain/error";
+import { isRehydrationError } from "@repo/core/domain/error";
 import { describe, expect, it } from "vitest";
 import type { CredentialRef } from "../entity";
 import { User } from "../entity";
-import { IdentityErrorCode } from "../errorCode";
 import { CredentialId, TrashRetentionDays } from "../valueObject";
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
@@ -29,15 +25,21 @@ const PASSWORD = credential("cred-email");
 const SSO = credential("cred-sso", { kind: "sso", label: "google" });
 const ADDRESS_ONLY = credential("cred-email", { usableForLogin: false });
 
+// `credentials` is a read projection of `credential_locators`, so a test
+// standing in for a stored account overlays the set the way `find` does —
+// there is no transition on the aggregate that writes it (ADR-070).
 function userWith(credentials: readonly CredentialRef[]) {
-  return User.initialize({ id: ID, credentials }, NOW);
+  return { ...User.initialize({ id: ID }, NOW), credentials };
 }
 
 describe("User.initialize", () => {
-  it("starts at version 0 with both timestamps at `now` and the default retention", () => {
-    expect(userWith([PASSWORD])).toEqual({
+  // Signup phase 2 runs before phase 4 writes any `credential_locators` row,
+  // so an empty projection is the only truthful value at first persistence —
+  // and taking no parameter is what stops a caller asserting otherwise.
+  it("starts at version 0 with no credentials, both timestamps at `now` and the default retention", () => {
+    expect(User.initialize({ id: ID }, NOW)).toEqual({
       id: ID,
-      credentials: [PASSWORD],
+      credentials: [],
       trashRetentionDays: 30,
       version: 0,
       createdAt: NOW,
@@ -46,89 +48,7 @@ describe("User.initialize", () => {
   });
 
   it("rejects an empty id through the value object", () => {
-    expect(() => User.initialize({ id: "  ", credentials: [] }, NOW)).toThrow();
-  });
-});
-
-describe("User.addCredential", () => {
-  it("appends and bumps the version", () => {
-    const next = User.addCredential(userWith([PASSWORD]), SSO, LATER);
-
-    expect(next.credentials).toEqual([PASSWORD, SSO]);
-    expect(next.version).toBe(1);
-    expect(next.createdAt).toBe(NOW);
-    expect(next.updatedAt).toBe(LATER);
-  });
-
-  it("replaces an entry with the same credentialId rather than duplicating it", () => {
-    const promoted = credential("cred-sso", { kind: "sso", label: "apple" });
-    const next = User.addCredential(userWith([PASSWORD, SSO]), promoted, LATER);
-
-    expect(next.credentials).toEqual([PASSWORD, promoted]);
-  });
-});
-
-describe("User.removeCredential", () => {
-  it("removes an entry when another way in remains", () => {
-    const next = User.removeCredential(
-      userWith([PASSWORD, SSO]),
-      SSO.credentialId,
-      LATER,
-    );
-
-    expect(next.credentials).toEqual([PASSWORD]);
-    expect(next.version).toBe(1);
-  });
-
-  it("refuses to remove the last credential usable for login", () => {
-    let caught: unknown;
-    try {
-      User.removeCredential(userWith([PASSWORD]), PASSWORD.credentialId, LATER);
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(isBusinessRuleError(caught) && caught.code).toBe(
-      IdentityErrorCode.LastLoginCredential,
-    );
-  });
-
-  // An SSO-only account holds an email entry purely to reserve the address.
-  // Counting entries instead of login-capable ones would let the SSO link be
-  // removed and leave an account with no way in at all.
-  it("does not count an address-only entry as a way in", () => {
-    let caught: unknown;
-    try {
-      User.removeCredential(
-        userWith([ADDRESS_ONLY, SSO]),
-        SSO.credentialId,
-        LATER,
-      );
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(isBusinessRuleError(caught) && caught.code).toBe(
-      IdentityErrorCode.LastLoginCredential,
-    );
-  });
-
-  it("removes an address-only entry without complaint", () => {
-    const next = User.removeCredential(
-      userWith([ADDRESS_ONLY, SSO]),
-      ADDRESS_ONLY.credentialId,
-      LATER,
-    );
-
-    expect(next.credentials).toEqual([SSO]);
-  });
-
-  it("is a no-op for an unknown credential", () => {
-    const user = userWith([PASSWORD]);
-
-    expect(
-      User.removeCredential(user, CredentialId.create("absent"), LATER),
-    ).toBe(user);
+    expect(() => User.initialize({ id: "  " }, NOW)).toThrow();
   });
 });
 
@@ -138,6 +58,18 @@ describe("User.loginCredentialCount", () => {
     const duplicated = userWith([PASSWORD, { ...PASSWORD, label: "" }]);
 
     expect(User.loginCredentialCount(duplicated)).toBe(1);
+  });
+
+  // An SSO-only account holds an email entry purely to reserve the address.
+  // Counting entries instead of login-capable ones would let an unlink drop
+  // the SSO link and leave the account with no way in at all. This predicate
+  // is what #12 consults before deleting the locator rows.
+  it("does not count an address-only entry as a way in", () => {
+    expect(User.loginCredentialCount(userWith([ADDRESS_ONLY, SSO]))).toBe(1);
+  });
+
+  it("is zero while an account's locators have not been recorded yet", () => {
+    expect(User.loginCredentialCount(User.initialize({ id: ID }, NOW))).toBe(0);
   });
 });
 

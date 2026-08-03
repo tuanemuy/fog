@@ -5,10 +5,18 @@ const BAR = "h-skeleton-line w-full max-w-skeleton-short";
 
 /**
  * Streaming placeholder for `CurrentUserPanel`, shaped like the real DOM
- * (section label + two rows + the logout button) so the panel swaps in
- * without shifting the layout. The spacing must be kept in step with
- * `CurrentUserPanel` — including how it is carried (the leading row's
- * `mt-sm`, not a margin under the label).
+ * (section label + one credential row) so the panel swaps in without shifting
+ * the layout. The spacing must be kept in step with `CurrentUserPanel` —
+ * including how it is carried (the leading row's `mt-sm`, not a margin under
+ * the label).
+ *
+ * One row, because every account this issue can create holds exactly one
+ * login credential (`registerWithPassword` records the email one and nothing
+ * else). Revisit together with the multi-credential list in #12.
+ *
+ * The sign-out affordance is deliberately absent: it renders outside the
+ * streamed fragment (`routes/_app/settings.tsx`), so it is already on screen
+ * while this placeholder shows.
  */
 export function SettingsSkeleton() {
   return (
@@ -18,13 +26,6 @@ export function SettingsSkeleton() {
       <div className={`${ROW} mt-sm`}>
         <Skeleton className={BAR} />
         <Skeleton className={BAR} />
-      </div>
-      <div className={`${ROW} border-t border-neutral-100`}>
-        <Skeleton className={BAR} />
-        <Skeleton className={BAR} />
-      </div>
-      <div className="border-t border-neutral-100 pt-lg">
-        <Skeleton className="h-skeleton-title w-skeleton-short" />
       </div>
     </section>
   );

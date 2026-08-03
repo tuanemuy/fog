@@ -102,12 +102,13 @@ function guardStub<T extends object>(stub: T): T {
       if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
         try {
-          // **Invoked as a property of the stub, never as an extracted
-          // function.** A JS RPC stub's method is not an ordinary function: it
-          // is a pipelining handle, and calling it with `apply`/`call` makes
-          // workerd treat the receiver as a value to serialise, which fails
-          // with `ServiceStub serialization requires the 'experimental' compat
-          // flag` before the call ever leaves.
+          // **Never `Reflect.apply` / `.call` / `.bind`.** A JS RPC stub's
+          // method is not an ordinary function but a pipelining handle, and
+          // supplying the receiver explicitly makes workerd treat it as a value
+          // to serialise — failing with `ServiceStub serialization requires the
+          // 'experimental' compat flag` before the call ever leaves. Reading
+          // the property and calling the result is fine, and is what the two
+          // lines below do; it is re-binding the receiver that breaks.
           const method = (
             target as Record<PropertyKey, (...a: unknown[]) => unknown>
           )[property];

@@ -120,6 +120,58 @@ describe("Email", () => {
       IdentityErrorCode.InvalidEmail,
     );
   });
+
+  // The structural check admits `:`, `/`, `?` and `#`, and the punycode step
+  // goes through `URL` — which parses them off as port, path, query and
+  // fragment. Dropping them would collapse four distinct inputs onto one
+  // canonical, at the position that is simultaneously the uniqueness authority
+  // and the address a reset link is mailed to. Rejecting is what "validate at
+  // the boundary" means; truncating at one is not.
+  it.each([
+    ["a port", "user@日本語.jp:8080"],
+    ["a path", "user@日本語.jp/x"],
+    ["a query", "user@日本語.jp?q=1"],
+    ["a fragment", "user@日本語.jp#f"],
+  ])("rejects a non-ASCII domain carrying %s", (_label, input) => {
+    expect(codeOf(() => Email.create(input))).toBe(
+      IdentityErrorCode.InvalidEmail,
+    );
+  });
+
+  it("still accepts the bare non-ASCII domain those cases were built from", () => {
+    expect(Email.create("user@日本語.jp")).toBe("user@xn--wgv71a119e.jp");
+  });
+
+  // The same four shapes on an **ASCII** domain used to pass untouched: that
+  // route never reached `URL`, so nothing looked at the domain at all and
+  // `a@example.com/evil` became a canonical address — a uniqueness key, an
+  // HMAC input and a mail recipient that no mail can reach. The label grammar
+  // now runs on the converted form, so both routes pass one gate.
+  it.each([
+    ["a port", "user@example.com:8080"],
+    ["a path", "user@example.com/evil"],
+    ["a query", "user@example.com?q=1"],
+    ["a fragment", "user@example.com#f"],
+    ["an underscore", "user@exa_mple.com"],
+    ["a leading hyphen", "user@-example.com"],
+    ["a trailing hyphen", "user@example-.com"],
+    ["an empty label", "user@example..com"],
+    ["a trailing dot", "user@example.com."],
+    ["an over-long label", `user@${"a".repeat(64)}.com`],
+  ])("rejects an ASCII domain carrying %s", (_label, input) => {
+    expect(codeOf(() => Email.create(input))).toBe(
+      IdentityErrorCode.InvalidEmail,
+    );
+  });
+
+  it.each([
+    ["a hyphen inside a label", "user@my-host.example.com"],
+    ["digits", "user@host1.example2.com"],
+    ["a 63-character label", `user@${"a".repeat(63)}.com`],
+    ["a single-label domain", "user@localhost"],
+  ])("still accepts an ASCII domain with %s", (_label, input) => {
+    expect(Email.create(input)).toBe(input);
+  });
 });
 
 describe("ssoCanonical", () => {

@@ -35,17 +35,59 @@ export type { EnqueueJobArgs };
 const REARMING: ReadonlySet<string> = new Set(REARMING_KINDS);
 
 /**
+ * Serialises a payload so that two structurally equal values always produce the
+ * same string.
+ *
+ * `JSON.stringify` follows key **insertion** order, so `{a, b}` and `{b, a}`
+ * serialise differently even though they are the same payload — and the digest
+ * below decides whether a re-enqueue is a duplicate or a conflict. Sorting the
+ * keys makes the digest a function of the value rather than of how the object
+ * literal happened to be written.
+ */
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value ?? null) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`);
+  return `{${entries.join(",")}}`;
+}
+
+/**
  * A digest over the payload **excluding** `nextRunAt`. Including it would make
  * every pull-forward re-enqueue look like a conflicting payload.
+ *
+ * 128 bits, in four independently seeded FNV-1a lanes. The width is not
+ * decoration: the digest is the only material behind "a differing payload on a
+ * runnable row is a conflict", and a collision does not surface as an error —
+ * the second request is silently dropped and only its pull-forward survives. A
+ * failure that is quiet has to be made improbable rather than merely unlikely.
  */
 export function payloadDigest(payload: unknown): string {
-  const json = JSON.stringify(payload ?? null);
-  let hash = 0x811c9dc5;
+  const json = stableJson(payload ?? null);
+  // Four lanes, each mixing a different combination of the character, its
+  // position and the string read from the other end: a transposition that
+  // leaves one lane unchanged still moves the rest.
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  let c = 0x85ebca6b;
+  let d = 0xc2b2ae35;
   for (let i = 0; i < json.length; i += 1) {
-    hash ^= json.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+    const forward = json.charCodeAt(i);
+    const backward = json.charCodeAt(json.length - 1 - i);
+    a = Math.imul(a ^ forward, 0x01000193);
+    b = Math.imul(b ^ backward, 0x85ebca6b);
+    c = Math.imul(c ^ (forward + i), 0xc2b2ae35);
+    d = Math.imul(d ^ (backward ^ i), 0x27d4eb2f);
   }
-  return hash.toString(16).padStart(8, "0");
+  return [a, b, c, d]
+    .map((lane) => (lane >>> 0).toString(16).padStart(8, "0"))
+    .join("");
 }
 
 /**
@@ -90,12 +132,13 @@ export function enqueueJob(sql: Sql, _now: number, args: EnqueueJobArgs): void {
       sql,
       `UPDATE jobs
           SET status = 'pending', attempt = 0, next_run_at = ?, payload = ?,
-              payload_digest = ?, lease_until = NULL, owner_token = NULL,
-              completed_at = NULL
+              payload_digest = ?, provider_idempotency_key = ?,
+              lease_until = NULL, owner_token = NULL, completed_at = NULL
         WHERE operation_key = ?`,
       args.nextRunAt,
       payload,
       digest,
+      args.providerIdempotencyKey ?? null,
       args.operationKey,
     );
     return;
@@ -111,12 +154,13 @@ export function enqueueJob(sql: Sql, _now: number, args: EnqueueJobArgs): void {
       sql,
       `UPDATE jobs
           SET status = 'pending', attempt = 0, next_run_at = ?, payload = ?,
-              payload_digest = ?, lease_until = NULL, owner_token = NULL,
-              completed_at = NULL
+              payload_digest = ?, provider_idempotency_key = ?,
+              lease_until = NULL, owner_token = NULL, completed_at = NULL
         WHERE operation_key = ?`,
       args.nextRunAt,
       payload,
       digest,
+      args.providerIdempotencyKey ?? null,
       args.operationKey,
     );
     return;
@@ -124,9 +168,12 @@ export function enqueueJob(sql: Sql, _now: number, args: EnqueueJobArgs): void {
 
   // Runnable set: a differing payload is a genuine conflict.
   if (existing.payload_digest !== digest) {
+    // Named by `kind` and not by `operationKey`: a `send-mail` key embeds the
+    // canonical address's full-length HMAC, and a `conflict` is not one of the
+    // kinds the transport boundary redacts — so the key would reach a browser.
     throw new ConflictError(
       "JOB_PAYLOAD_MISMATCH",
-      `Job ${args.operationKey} is already queued with a different payload`,
+      `A ${args.kind} job is already queued with a different payload`,
     );
   }
 
@@ -305,13 +352,27 @@ export function earliestNextRunAt(sql: Sql): number | null {
   return row?.next_run_at ?? null;
 }
 
+/**
+ * How long a terminal row survives before the runner deletes it.
+ *
+ * `sendMail` is a *kind*-scoped override rather than an outcome-scoped one, and
+ * that distinction is load-bearing: a `send-mail` row is what refuses a repeat
+ * request inside the same window, so it must not linger for a day — and it must
+ * live exactly as long whether the send found a recipient or not, or its
+ * lifetime becomes an enumeration oracle.
+ */
+export type JobRetention = Readonly<{
+  done: number;
+  poison: number;
+  sendMail: number;
+}>;
+
 /** Deletes terminal rows past their retention, bounded by `limit`. */
 export function pruneCompleted(
   sql: Sql,
   now: number,
   limit: number,
-  doneRetentionMs: number,
-  poisonRetentionMs: number,
+  retention: JobRetention,
 ): number {
   const rows = all(
     sql,
@@ -319,16 +380,19 @@ export function pruneCompleted(
       WHERE operation_key IN (
         SELECT operation_key FROM jobs
          WHERE completed_at IS NOT NULL
-           AND (
-             (status = 'done'   AND completed_at < ?) OR
-             (status = 'poison' AND completed_at < ?)
-           )
+           AND status IN ('done','poison')
+           AND completed_at < CASE
+                 WHEN status = 'poison'    THEN ?
+                 WHEN kind = 'send-mail'   THEN ?
+                 ELSE ?
+               END
          ORDER BY completed_at
          LIMIT ?
       )
       RETURNING 1`,
-    now - doneRetentionMs,
-    now - poisonRetentionMs,
+    now - retention.poison,
+    now - retention.sendMail,
+    now - retention.done,
     limit,
   );
   return rows.length;

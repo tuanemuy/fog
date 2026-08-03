@@ -106,51 +106,75 @@ function refreshDocumentProjection(sql: Sql, documentId: string): void {
   });
 }
 
-export const purgeTrash: JobHandler<UserDataJobContext> = async (context) => {
-  const { ctx, sql, now, logger } = context;
-  const budget = CHUNK_BUDGETS["purge-trash"];
-  let chunks = 0;
-  let worked = 0;
+/**
+ * @param budget Chunking bounds. Defaulted rather than read inline so that a
+ *   test can shrink them: the interesting branch — recomputation running out of
+ *   chunks and yielding *without* entering the deletion phase — needs more
+ *   trashed rows than a fixture can carry at the shipped budget
+ *   (20 × 1000). Production takes the default and passes nothing.
+ */
+export function createPurgeTrash(
+  budget: (typeof CHUNK_BUDGETS)["purge-trash"] = CHUNK_BUDGETS["purge-trash"],
+): JobHandler<UserDataJobContext> {
+  return async (context) => {
+    const { ctx, sql, now, logger } = context;
+    let chunks = 0;
+    let worked = 0;
 
-  const retentionDays = readTrashRetentionDays(sql);
+    const retentionDays = readTrashRetentionDays(sql);
 
-  // --- phase 1: recomputation ----------------------------------------------
-  // The predicate is self-consuming, so no cursor is persisted: an interrupted
-  // pass resumes simply by running the same statement again.
-  let recalculated = retentionDays === null;
-  while (!recalculated && retentionDays !== null && chunks < budget.maxChunks) {
-    const updated = ctx.storage.transactionSync(() =>
-      recalcPurgeAfterChunk(sql, retentionDays, budget.chunkRowLimit, now),
-    );
-    chunks += 1;
-    worked += updated;
-    if (updated === 0) recalculated = true;
-  }
-  if (!recalculated) return { kind: "yield" };
+    // --- phase 1: recomputation ---------------------------------------------
+    // The predicate is self-consuming, so no cursor is persisted: an
+    // interrupted pass resumes simply by running the same statement again.
+    let recalculated = retentionDays === null;
+    while (
+      !recalculated &&
+      retentionDays !== null &&
+      chunks < budget.maxChunks
+    ) {
+      const updated = ctx.storage.transactionSync(() =>
+        recalcPurgeAfterChunk(sql, retentionDays, budget.chunkRowLimit, now),
+      );
+      chunks += 1;
+      worked += updated;
+      if (updated === 0) recalculated = true;
+    }
+    if (!recalculated) return { kind: "yield" };
 
-  // --- phase 2: deletion ---------------------------------------------------
-  while (chunks < budget.maxChunks) {
-    const items = listItemsToPurge(sql, now, budget.chunkRowLimit);
-    if (items.length === 0) break;
-    ctx.storage.transactionSync(() => {
-      for (const item of items) {
-        purgeItem(sql, item);
-      }
-    });
-    chunks += 1;
-    worked += items.length;
-  }
-  if (listItemsToPurge(sql, now, 1).length > 0) return { kind: "yield" };
+    // --- phase 2: deletion --------------------------------------------------
+    while (chunks < budget.maxChunks) {
+      const items = listItemsToPurge(sql, now, budget.chunkRowLimit);
+      if (items.length === 0) break;
+      ctx.storage.transactionSync(() => {
+        for (const item of items) {
+          purgeItem(sql, item);
+        }
+      });
+      chunks += 1;
+      worked += items.length;
+    }
+    if (listItemsToPurge(sql, now, 1).length > 0) return { kind: "yield" };
 
-  // --- re-arm (class (A)) ---------------------------------------------------
-  const earliest = findEarliestPurgeAfter(sql);
-  if (earliest === null) return { kind: "done" };
-  if (earliest <= now && worked === 0) {
-    logger.warn(
-      "purge-trash found a due drive signal with no work to do; clamping the re-arm",
-      { earliest },
-    );
-    return { kind: "rearm", nextRunAt: now + MIN_RESUME_INTERVAL_MS };
-  }
-  return { kind: "rearm", nextRunAt: earliest };
-};
+    // --- re-arm (class (A)) -------------------------------------------------
+    const earliest = findEarliestPurgeAfter(sql);
+    if (earliest === null) return { kind: "done" };
+    // Unreachable while the two queries agree, and that is the point: `worked
+    // === 0` says nothing was recomputed or deleted, while `earliest <= now`
+    // says a trashed item is due — and `listItemsToPurge` uses exactly that
+    // predicate, so it would have been deleted above. No fixture can reach this
+    // branch (checked at every chunk budget, including one row per chunk); what
+    // pins the invariant instead is that the suite's recording logger stays
+    // empty. If this ever fires, the drive signal and the work predicate have
+    // drifted apart and the DO would otherwise wake forever.
+    if (earliest <= now && worked === 0) {
+      logger.warn(
+        "purge-trash found a due drive signal with no work to do; clamping the re-arm",
+        { earliest },
+      );
+      return { kind: "rearm", nextRunAt: now + MIN_RESUME_INTERVAL_MS };
+    }
+    return { kind: "rearm", nextRunAt: earliest };
+  };
+}
+
+export const purgeTrash: JobHandler<UserDataJobContext> = createPurgeTrash();

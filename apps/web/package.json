@@ -8,7 +8,7 @@
     "predev:cf": "wrangler types",
     "dev": "pnpm dev:cf",
     "dev:cf": "vite dev --config vite.config.cloudflare.ts",
-    "dev:state": "wrangler dev -c wrangler.state.toml",
+    "dev:state": "vite build --config vite.config.state.ts && wrangler dev -c wrangler.state.toml",
     "build": "pnpm build:cf",
     "build:cf": "vite build --config vite.config.cloudflare.ts && vite build --config vite.config.state.ts",
     "start": "pnpm start:cf",

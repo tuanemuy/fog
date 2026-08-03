@@ -415,7 +415,6 @@ describe("every column round-trips", () => {
   });
 });
 
-// Enabled once the job runner and the alarm entry exist (steps 10 / 16).
-describe.skip("fail-closed alarm", () => {
-  it("runs no jobs, does not deleteAlarm, and re-arms at a fixed interval");
-});
+// The fail-closed alarm — no jobs run, no `deleteAlarm`, a fixed-interval
+// re-arm — is covered by `__tests__/alarmEntry.integration.test.ts` and
+// `jobs/__tests__/alarm.integration.test.ts`, which drive the real DO class.

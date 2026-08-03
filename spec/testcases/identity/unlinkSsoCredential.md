@@ -10,7 +10,7 @@
 | ユーザー単位設定側の手順は完了したが、認証情報側の `deleteMapping` が未了（中間状態） | 同じ SSO 主体でログインを試みる | ログインできない。逆引きが先に消えているので到達性検査が拒否する（「解除したのにログインできる」は起きない。壊れる向きは片方向に固定されている） | |
 | 認証情報側の `deleteMapping` が一度成功したあと、同じ手続きが再実行される | 解除を再実行する | 「無ければ成功」の冪等操作として正常終了する | |
 | `linkSsoCredential` を2回実行して `kind: "sso"` を2件持ち、`kind: "email"`（`usableForLogin: true`）も持つアカウント | 片方の SSO を解除する | 解除に成功する（`usableForLogin` が真の要素が残るため） | |
-| `kind: "email"` の `credentialId` を指定する | 解除する | `BusinessRuleError`（`User.removeCredential` は `kind: "sso"` しか受けない）。メールクレデンシャルの解除経路は存在しない | |
+| `kind: "email"` の `credentialId` を指定する | 解除する | `BusinessRuleError`（解除ユースケースが `kind: "sso"` しか受けない）。メールクレデンシャルの解除経路は存在しない | |
 | `kind: "sso"`（`usableForLogin: true`）1件と `kind: "email"`（`usableForLogin: false`。一意性の予約としてだけ置かれた要素）を持つ SSO 専用アカウント | SSO を解除する | `BusinessRuleError(LastCredentialRemoval)`。数えるのは要素数ではなく `usableForLogin` が真である要素の `credentialId` の異なり数なので、メール要素は残るログイン手段として数えない | |
 | ログイン済みユーザー | クレデンシャル集合に存在しない `credentialId` を指定して解除する | `NotFoundError("CREDENTIAL_NOT_FOUND")` | |
 | セッションの `userId` に対応するユーザーが不在 | 解除する | `NotFoundError("USER_NOT_FOUND")` | |

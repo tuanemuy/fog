@@ -1,0 +1,67 @@
+# PR #49 レビュー指摘のトリアージ
+
+各エージェントが追記する。**既存の行は消さず、追記だけすること。**
+
+| ID | タイトル | 判定(fix/wont-fix/defer) | 理由・対応 |
+|---|---|---|---|
+| presentation-config B-001 | スケルトンが実 DOM と一致しない | fix | `SettingsSkeleton` を1行にし、ログアウト部を落とした（ボタンは断片の外へ移動）。JSDoc も実態へ更新（ADR-060） |
+| presentation-config W-001 | `docs/runtime_cloudflare.md` の陳腐化 | fix | 同ファイル冒頭に `> [!WARNING]` を追加し、README / CLAUDE.md の「正本」名指しを外した。本体改訂は #38 のまま |
+| presentation-config W-002 | 失効セッションでログアウト導線が消える | fix | `LogoutButton` を `Suspense` の外へ + `/settings` に自前 `errorComponent`。提案 (b)（cookie 破棄 + redirect）は応答ヘッダ確定後で成立しないため不採用（ADR-060） |
+| presentation-config W-003 | CLAUDE.md の UoW 記述が実装と不一致 | fix | `recalcTrashPurgeAfter` / `findOperation` の位置づけを CLAUDE.md へ追記。**`spec/` 側への暫定注記は本エージェントの担当ファイル範囲外**（`spec/**` は編集不可）なので未対応 — spec 担当へ引き継ぐ |
+| presentation-config W-004 | `dev:state` がビルド成果物を要求する | fix | `dev:state` を `vite build --config vite.config.state.ts && wrangler dev …` へ。README / CLAUDE.md も更新（ADR-064） |
+| presentation-config W-005 | ローカル `APP_URL` がポート不一致 | fix | 両 toml を `http://localhost:3000`（`pnpm dev`）に統一し、8787 経路の食い違いをコメントと README に明記（ADR-063） |
+| presentation-config W-006 | `deploy:request:*` が成果物を再バンドル | fix | request `.tpl` 2本に `no_bundle = true` + `[[rules]]`。`--dry-run` で 77 modules / 1682.23 KiB と redirect 経路の一致を実測（ADR-062） |
+| security W-003 (presentation 側) | `conflict` が redact 対象外 | fix | `redactForClient` を網羅 `switch` の3分類にし、`notFound` / `conflict` / `unauthorized` / `forbidden` は `code` だけ通す。`adapters/.../jobs/table.ts` 側は別担当（ADR-061） |
+| adapter-infra B-001 / security W-002 | `SEND_MAIL_EMPTY_RETENTION_MS` が死にコード、再依頼が生きたリンクを壊す | fix | `operation_key` / `providerIdempotencyKey` に時間窓を入れ、発行スロットルと同じ `RESET_REQUEST_WINDOW_MS` を共有。`pruneCompleted` を種別別保持（`send-mail` は結果によらず一律）に（ADR-043） |
+| adapter-infra B-002 | `alarm()` から例外が逃げうる | fix | 両 DO クラスで4段すべてを1つの catch に包み、共有 `rearmAfterFailure` へ落とす。ストレージ側 throw の統合テストを追加（ADR-044） |
+| adapter-infra B-003 / security B-001 / security W-001 | リセットトークンの保存形式・FNV・3者の非合成 | fix | 導出鎖を `resetTokenCrypto.ts` に一本化し、RPC エントリで HMAC → SHA-256 まで済ませて同期ポートへ値渡し。行は `SHA-256(secret)` のみ。E2E 統合テストを新設（ADR-042） |
+| adapter-infra W-001 / security W-006 | `activate` / `promote` が一致行数を読まない、`activate` が `callerToken` 非束縛 | fix | `RETURNING 1` で0行を `ConflictError` に。`activate` を `operationId` + `callerToken` + `candidateUserId` の3束縛にし、再実行の冪等性を明示（ADR-047） |
+| adapter-infra W-002 | `reindex` の射程が spec と食い違う | fix | ハンドラ JSDoc に「射程はトークナイザ変更に限る。正規化規則の変更は #2〜#6 の projection 再実行」を明記。**`spec/database/index.md`:695 と steps.md の引き継ぎ文は担当ファイル範囲外**なので未対応 |
+| adapter-infra W-003 | `matchFts` がキーワードを素通し | fix | FTS5 フレーズリテラルとして囲む。演算子8種の統合テストを追加（ADR-048） |
+| adapter-infra W-004 | 診断エントリが `sql/exec.ts` を迂回 | fix | `listBucketUserIds` を `all()` 経由に。`readSchemaVersion` は元から `one()` 経由なので変更なし |
+| adapter-infra W-005 | `payloadDigest` が 32bit・キー順依存 | fix | 安定 stringify（キー順ソート）+ 4レーン 128bit に。純関数の unit テストを新設 |
+| adapter-infra W-006 | 復活時に `provider_idempotency_key` を置換しない | fix | 収束規則 (2)(3) の `UPDATE` に `provider_idempotency_key = ?` を追加 |
+| adapter-infra W-007 | 実装済み性質の空 skip テスト | fix | `gate.integration.test.ts` の `describe.skip` を削除し、実検証の在り処を指すコメントを1行残した |
+| adapter-infra W-008 | `guardStub` の JSDoc とコードが逆 | fix | コメントを実際の制約（`Reflect.apply` / `.call` / `.bind` を使わない）に書き直した |
+| adapter-infra W-009 / security W-004 | リセット依頼が active 世代しか見ない | fix | `loginWithPassword` と同様に全 locator を走査。一様性のため**ヒット判定せず全世代へ無条件に投げる**。unit テストを新設（ADR-046 とは別） |
+| security B-002 | ランナーが `operation_key` と生例外をログに出す | fix | `job: SHA-256(operation_key)[0..8]` + `cause: errorIdentity(error)` に。テストを「除外」から「検知」へ反転（ADR-045） |
+| security W-003 (adapter 側) | `JOB_PAYLOAD_MISMATCH` が `operationKey` を埋め込む | fix | メッセージを `kind` だけにした |
+| security W-005 | AC-3 非露出テストが空振り | fix | `assertNoForbiddenValue(recorded, extra)` で実導出値を検査、haystack を2本に分離、locator の形を実形に修正、生 NUL を JS エスケープへ、`noRawNul.test.ts` の射程を TS 全体へ（ADR-046） |
+| security W-007 | `listBucketUserIds` が facade 型に載る | fix | `IdentityDirectoryFacade` から外し、DO クラスにのみ残した。理由と #38 への引き継ぎを両側の JSDoc に記載 |
+| security W-008 | `Email.create` がポート・パス・クエリを切り捨てる | fix | `toAsciiDomain` で `port` / `pathname` / `search` / `hash` が非空なら `invalidEmail`。4ケースのテストを追加 |
+| security B-001 の spec 訂正 | `spec/database/index.md`:627 / :649 / `spec/inventory/adapter.md` の「`token_id` から導出したハッシュ」 | wont-fix (担当範囲外) | 実装は ADR-042 で `SHA-256(secret)` に変わったが `spec/**` は本エージェントの編集不可範囲。spec 担当へ引き継ぐ |
+| test B-001 (生 NUL) | `forbiddenValues.ts:19` の生 NUL | fix | JS エスケープへ。**`.thread/1/review/review-002-security.md` と `.thread/37/review/review-001-test.md` にも生 NUL があるが、いずれも過去/他レビュアーの作業ログで担当範囲外**（ソースは全ファイル clean） |
+| security N-009 | `StateSecrets` の二重定義 | fix | `stateCloudflare.ts` を `secrets.ts` からの re-export に変更（Note だが低リスクなので同時に対応） |
+| domain-usecase B-001 | `application/di/facades.ts` が adapters から型 import（逆流） | fix | Wave 1 は `facades.ts` を触っていたが逆流は残っていた。7型を `di/facades.ts` へ移し、`CurrentUserPayload` は `CurrentUserView` に一本化。アダプター側 facade と DO クラスが application から import する向きへ。AC-25 (ii) の `di/` 除外は狭められない（両合成ルートが `import type` で具象を名指す）ので、代わりに `application/di/__tests__/noAdapterBackflow.test.ts` でファイル名単位の機械検査を新設（ADR-071） |
+| domain-usecase B-002 | `User` が書けないクレデンシャル集合の遷移を公開している | fix | **(a) 射影に倒した** — `addCredential` / `removeCredential` を削除し、`initialize` からクレデンシャル引数も外した。検査は `loginCredentialCount`（述語）と解除ユースケース（#12）が持つ。`ports/userSettingsRepository.ts` の JSDoc に「`credentials` は書かれない」を明記。**#12 の担当と重ならない** — 追加したのはゼロで、#37 が入れた「呼べるが効かない」API を外しただけ（ADR-070）。spec は #12 へ送らず本 PR で同期させた（規則は変えず、検査の所在だけを書き換え） |
+| domain-usecase W-001 | `credentials ≥1 / usableForLogin ≥1` が未強制 | fix | 不変条件は**アカウントの**不変条件であって `User` 値の毎瞬のそれではない、と spec に書き分けた。signup phase 2〜4 の 0 件は正しい状態。`initialize` から引数を外したので「0件を渡す」経路自体が消え、`entity.test.ts` に 0 件と述語のテストを追加（ADR-070） |
+| domain-usecase W-002 | `removeCredential` の `kind: "sso"` 限定が無く、テストが逆挙動を固定 | fix | `removeCredential` ごと削除したので逆挙動を固定していたテスト（`"removes an address-only entry without complaint"`）も消えた。`kind` 検査の所在は `unlinkSsoCredential`（#12）と spec 3箇所に明記（ADR-070） |
+| domain-usecase W-003 | `LookupCredentialResult` が非ユニオンで `?? ""` / `as PasswordHash` を強いる | fix | `password` / `identity` / `none` の3アーム判別可能ユニオンへ。`?? ""` が消え、`as PasswordHash` は `PasswordHash.create` + 一様な `continue` に（ADR-072） |
+| domain-usecase W-004 | `signupSaga` が起こりえない状態を素の `Error` で守る | fix | `Keyring.entries` / `forCanonical` / `runSignupSaga` の引数を非空タプルにして `throw` 2件を削除。`sort` は in-place にしてタプル型を保つ（ADR-073）。同項が挙げた `requestPasswordReset.ts` の `if (locator === undefined) return;` は **Wave 1 の adapter-infra W-009 で解消済み** |
+| domain-usecase W-005 | ドメインポートの `readonly unknown[]`、`LocatorRef` との二重定義 | fix | `domain/identity/ports/credentialLocatorStore.ts` に `CredentialLocatorRef` を置き、`CredentialLocator` がそれを拡張、`LocatorRef` はその別名に（ADR-075） |
+| domain-usecase W-006 | `Email.create` の canonical 化が ASCII / 非 ASCII で非対称 | fix | **Wave 1 の security W-008 は非 ASCII 経路だけを塞いでいた**（`toAsciiDomain` を通るのがその経路だけのため）。punycode 後にラベル構文検査を掛けて両経路を1ゲートに。ASCII 10ケース + 通り続ける4ケースのテストを追加（ADR-074） |
+| domain-usecase W-007 | 「ログイン手段として成立するか」がアダプターに3重 | fix | `domain/identity/credentialMappingRules.ts` に4述語を新設し、`lookupCredential` / `requestPasswordReset` / `sendMail` が呼ぶ。スロットル窓は引数のまま（#18 / #38 への委譲を崩さない）。純関数の unit テストを新設（ADR-072） |
+| domain-usecase W-008 | `dedupeByCredentialId` の `as CredentialRef[]` | fix | 戻り値型を緩い行の形にして `as` を削除。検証点は `User.reconstruct` の1箇所に残る |
+| spec 同期1（引き継ぎ） | リセットトークンの保存形式が spec と食い違う | fix | `spec/database/index.md#password_reset_tokens` に導出鎖3段を明記し「`token_id` から導出したハッシュを保存するのではない」を追記。`verifyAndConsume` の照合値も訂正。`spec/inventory/adapter.md` の ADP-password-reset-tokens-001 / ADP-identity-014 / ADP-identity-015 と `spec/domains/identity.md#PasswordResetTokenPort` のシグネチャも実装（ADR-042）へ合わせた |
+| spec 同期2（引き継ぎ） | `reindex` の射程が spec と食い違う | fix | `spec/database/index.md`:695 付近に「射程はトークナイザ変更に限る。正規化規則の変更は原文からの projection 再実行で、#2〜#6 の担当」を1項追記 |
+| spec 同期3（引き継ぎ） | `recalcTrashPurgeAfter` の暫定注記が spec に無い | fix | `spec/database/index.md#user_settings` に「置き場は暫定。#2〜#6 が集約リポジトリを作るまでの仮置きで、移設時は UoW コンテキストから外す（二重の書き込み口を作らない）」を追記 |
+| test B-001（再掲・検証） | `forbiddenValues.ts:19` の生 NUL | Wave 1 で解消済み（検証のみ） | `file` は `UTF-8 text`、`grep -rn "FORBIDDEN_VALUES"` に定義行が出る。全 tracked ファイルの NUL 走査は画像5件＋レビューログ2件のみ。`noRawNul.test.ts` も `packages/core/src` / `apps/web/app` 全体の走査へ拡張済みで、`files.length > 100` の空振りガード付き |
+| test B-002 | signup saga の部分失敗・再試行の検証が皆無 | fix | `identity.integration.test.ts` に describe「the signup saga under partial failure」を新設し3本（phase 1b 敗北→`cancelAll` の巻き戻し／phase 2 失敗→予約残留と再試行の `EMAIL_ALREADY_REGISTERED` への収束／応答喪失後の phase 2 再送の冪等性と digest・operationId ミスマッチ）。変異試験4本で検出力を確認（ADR-080） |
+| test B-003 | AC-10 の `changeTrashRetentionDays` が未検証 | fix | 同ファイルに describe を新設し3本（同一トランザクションでの全項目再計算＋`purge-trash` 1行／同値再送で `version` 不動かつジョブ0件／stale session を触る前に拒否）。facade/RPC 経路を実際に通す。変異試験3本（enqueue 削除／recalc 削除／identity 早期 return 削除）が個別に赤 |
+| test B-004 | `docs/test.md` の fake ポリシーが未実装 | fix | (i) 「Directory の `password_verifier` に平文が入らない」assert を追加（fake に平文を埋める変異で赤）、(ii) `createPbkdf2PasswordHasher({ iterations: MIN_PBKDF2_ITERATIONS })` を注入した往復テストを追加（保存形式が `pbkdf2-sha256$1000$…` であること＋正誤2ケースのログイン）。`docs/test.md` の当該2文を実テスト名で裏付ける形に更新 |
+| test W-001 | メール正規化の経路全体の検証が消失 | fix | 「detects a duplicate that only matches after normalisation」（登録側）と「matches on the normalised address」（ログイン側）を追加。`Email.create` の local 小文字化を外す変異と、login が `input.email` を HMAC する変異でそれぞれ赤 |
+| test W-002 | login の入力検証分岐が未到達 | fix | 「answers an unknown address exactly like a wrong password」を4ケース列挙オラクル（誤パスワード／未登録／形式不正／7文字）へ拡張。`sendMail` の同型テストと同じ「1つの `expected` に全ケースを突き合わせる」形。value-object 失敗を素通しする変異で赤 |
+| test W-003 | 禁止語配列の hmac/locator が固定値で空振り | Wave 1 で解消済み（検証のみ） | `assertNoForbiddenValue(recorded, extra)` が実導出の `locator.hmac` / `locator.doName` を受け、haystack が「アドレス指定」と「ログ」に分離済み。配列の locator も `dir:g1:b42` に修正され、`routingNonExposure.test.ts` が placeholder の形（0 詰め無し・256 未満）自体を検査している |
+| test W-004 | backoff の伸びが未検証（`attempts` が死に変数） | fix | 各ラウンドの `attempt` / `next_run_at` / `status` を集め、`attempt` 列＝`[1..7,7,7]`、`status` 列、`next_run_at - now` ＝ `backoffMs(attempt)` の列を assert。単調増加と重複無しも見る。`backoffMs(1)` 固定にする変異で赤 |
+| test W-005 | bm25 の順位を `sort()` で捨てている／title 重み 3.0 が未使用 | fix | title にヒットする行（timestamp が古い）と body にだけヒットする行（新しい）の別フィクスチャを追加し、ソートせずに順序を assert。tie-breaker は全て body 側に有利なので、順位は重みからしか出ない。重み levelling と `ORDER BY bm25` 削除の両変異で赤。既存テストは「集合を返す」名前へ改名 |
+| test W-006 | `reset()` / `evictAllDurableObjects()` がどちらも荷重ゼロ | fix | 固定 DO 名の `cleanup.integration.test.ts` を新設（同一の `it` 2本、順序独立）。`reset()` を消すと赤。`evictAllDurableObjects()` は実測で冗長（`reset()` が既にインスタンスを捨てている）と確定し、`setup.ts` JSDoc と `docs/test.md` の断定を実測へ書き換え（ADR-082 / ADR-083） |
+| test W-007 | 消し忘れ `describe.skip` ／ fail-closed 経路の `deleteAlarm` 未検証 | fix | skip 削除は Wave 1 で解消済み（`describe.skip` は全リポジトリで0件、`1 todo` も消滅）。残っていた「fail-closed の `alarm()` が `deleteAlarm` を呼ばない」を `alarmEntry.integration.test.ts` に追加 — `ctx.storage.deleteAlarm` を数え、正常系で1回（陽性対照）／fail-closed で0回 |
+| test W-008 | `directoryLocator` の unit テスト不在 | fix | `adapters/cloudflare/__tests__/directoryLocator.test.ts` を新設（5本）。active→previous の順序、**各世代自身の** `bucketCount` での剰余（256 と 5 の2世代）、ビッグエンディアン読み、`doName` の合成、決定性。変異3本（active の modulus 流用／リトルエンディアン／順序反転）がそれぞれ赤 |
+| test W-009 | AC-6 の「行が無い」ケースが未検証 | fix | 「行が無い」と「版が古い」が同一の `OPTIMISTIC_LOCK_FAILURE` に落ちることを固定するテストを追加し、同一視が意図であることと理由を `sql/occ.ts` の JSDoc に明記（ADR-084）。実装側の変更は不要と判断 |
+| test W-010 | purge-trash の `yield` 未到達／clamp 未到達／`lines` が死に変数 | fix | `createPurgeTrash(budget)` を追加（既定引数、本番経路は無変更）し、縮小予算で `yield` に到達する3ケースを追加。clamp は**データでは到達不能**（2クエリの述語が同一）と実測で確定し、代わりに全ケースで `lines` が空であることを assert して「clamp が火を噴かない」不変条件の言明へ変えた（ADR-081） |
+| test W-011 | テスト名と assert の乖離2件 | fix | 前者（`terminal_reason` and the log）は Wave 1 の security B-002 で解消済み（`assertNoForbiddenValue(lines, [operationKey])` が実検査）。`lines.length > 0` が陽性対照であることをコメントで明示。後者（`skips the write when the cached time already matches`）は `ctx.storage.setAlarm` をスパイして書き込み回数と引数列を assert する形へ書き換え |
+| test W-012 | 統合スイート内の純関数テスト | fix | 「folds the provider's case but not the subject's」を「`GOOGLE` で導出した locator が `google` で書いた行を引ける」形へ書き換え。バケットと行に到達する主張になり、`valueObject.test.ts` との重複も解消 |
+| test W-013 | `include` の空マッチ | fix | 行を削らず、`apps/web/app/durable-objects/__tests__/rpcEntries.integration.test.ts` を新設（6本）。反射でエントリ表の全数を固定し、fail-closed の DO に対しゲート付きエントリ全部が同一メッセージで拒否／免除2本が応答することを実行で確認（ADR-086）。あわせて `apps/web` 側に `cloudflare:test` の型宣言を追加 |
+| test W-014 | 古い dist に緑を返すスモーク | fix | `beforeAll` で `dist/{server,state}/index.js` の mtime が `apps/web/app` / `packages/core/src` の最新ソース mtime より新しいことを assert（`__tests__` と `*.gen.ts` は除外）。スクリプト側でビルドさせる案は CI がビルドを2回する副作用があるため不採用（ADR-085）。古い dist で赤・ビルド直後で緑を実測 |
+| test W-015 | `getCurrentUser` の失敗系・投影系が消失 | fix | 「creates an account reachable…」に `trashRetentionDays === 30` を追加し、`DELETE FROM user_settings` 後の `NotFoundError("USER_NOT_FOUND")` を1本追加（`ForbiddenError` へ変える変異で赤）。変更の反映は B-003 の describe が担う |
+| test W-016 | 未使用の recordingLogger 2件 | fix | `directoryJobs.integration.test.ts` は `silentLogger()` へ置換（3ハンドラとも当該経路でログを出さない旨をコメント）。`purgeTrash.integration.test.ts` は W-010 のとおり `lines` を全ケースで `toEqual([])` に使い、実際の主張へ変えた |

@@ -12,6 +12,18 @@ import type { User } from "../entity";
  * taking an id would suggest another user's row is reachable from here, and
  * none is.
  *
+ * **`insert` / `save` do not write `User.credentials`, and no transition on
+ * this aggregate can.** `find` projects the set from `CredentialLocatorStore`
+ * (`spec/domains/identity.md`: "`User.credentials` is this store's
+ * projection"), so writing it from here would put two things in charge of one
+ * fact. Linking and unlinking therefore go through
+ * `CredentialLocatorStore.record` / `deleteByCredentialId`, and `save` is only
+ * ever about `trashRetentionDays` and the OCC `version`. `User` deliberately
+ * offers no `addCredential` / `removeCredential`: a call that bumped `version`
+ * and left the set untouched would make the procedure look like it worked
+ * (ADR-070). The "at least one way in" check that an unlink owes is
+ * `User.loginCredentialCount`.
+ *
  * Follows the `TransactionalRepository` OCC convention (insert for first-time
  * persistence, `find` as the issuer of the `ExpectedVersion<User>` token,
  * `save` consuming it) without extending it: the base also mandates `delete`,

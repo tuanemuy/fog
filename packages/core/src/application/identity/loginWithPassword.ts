@@ -1,7 +1,7 @@
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   Email,
-  type PasswordHash,
+  PasswordHash,
   PlainPassword,
 } from "@repo/core/domain/identity/valueObject";
 import { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/lib/passwordHashing";
@@ -79,6 +79,25 @@ async function burnVerificationTime(
 }
 
 /**
+ * The stored verifier as a `PasswordHash`, or `null` if the row holds
+ * something that is not one.
+ *
+ * A branded cast would have the type system assert a validation that never
+ * ran; `create` *is* the validation, and this is the value-object construction
+ * point the two-point rule names. A row that fails it is corrupt rather than
+ * wrong, but it still has to level: skipping the locator sends the attempt
+ * down the same path an unknown address takes, whereas a distinct failure
+ * would tell an unauthenticated caller that this address exists.
+ */
+function toPasswordHash(raw: string): PasswordHash | null {
+  try {
+    return PasswordHash.create(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Authenticates a password account.
  *
  * Every way this can fail — malformed email, password outside the length
@@ -129,11 +148,16 @@ export async function loginWithPassword({
       }),
     );
 
-    if (found.userId === null || found.passwordVerifier === null) continue;
+    // The other two arms carry no verification material at all — an SSO row
+    // resolves an identity but is not a password login, and `none` is the
+    // levelled answer the bucket gives to all four non-usable cases.
+    if (found.outcome !== "password") continue;
+    const verifier = toPasswordHash(found.passwordVerifier);
+    if (verifier === null) continue;
 
     const matches = await container.passwordHasher.verify(
       plainPassword,
-      found.passwordVerifier as PasswordHash,
+      verifier,
     );
     unwrap(await bucket.reportLoginResult("email", locator.hmac, matches));
     if (!matches) throw invalidCredentials();
@@ -141,7 +165,7 @@ export async function loginWithPassword({
     const account = unwrap(
       await container.userDataStubFactory(found.userId).verifyLogin({
         userId: found.userId,
-        credentialId: found.credentialId ?? "",
+        credentialId: found.credentialId,
         credentialVersion: found.credentialVersion,
       }),
     );

@@ -20,7 +20,13 @@ directory = "./dist/client"
 binding = "ASSETS"
 
 [vars]
-APP_URL = "http://localhost:8787"
+# `pnpm dev` — the documented local entry point — serves on vite's port, and
+# this value is what the canonical / og URLs in `presentation/head.ts` are
+# built from. `pnpm start` / `pnpm dev:state` run wrangler's own server on
+# 8787 instead, so those two paths render links pointing at a port they are
+# not on; set the value to match if you work through them. Keep it in step
+# with `wrangler.state.toml`, which builds password-reset links from it.
+APP_URL = "http://localhost:3000"
 
 # The Durable Object classes live in the **state Worker** (`wrangler.state.toml`),
 # which is why every binding here carries `script_name`: one namespace per class,

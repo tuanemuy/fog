@@ -163,7 +163,7 @@ describe("alarm arming", () => {
   });
 
   it("skips the write when the cached time already matches", async () => {
-    const cacheState = await harness(async ({ ctx, sql }) => {
+    const result = await harness(async ({ ctx, sql }) => {
       const cache = createAlarmCache();
       enqueueJob(sql, 0, {
         kind: "send-mail",
@@ -171,12 +171,35 @@ describe("alarm arming", () => {
         payload: {},
         nextRunAt: BASE + 40_000,
       });
-      await armAfterRpc(ctx, sql, BASE + 1_000, cache);
-      const afterFirst = cache.scheduledAt;
-      await armAfterRpc(ctx, sql, BASE + 1_000, cache);
-      return { afterFirst, afterSecond: cache.scheduledAt };
+      // The claim is that the *write* is skipped, so the write is what gets
+      // counted. Reading the cache back would leave "arms every time" green,
+      // since arming again stores the same value.
+      const writes: number[] = [];
+      const real = ctx.storage.setAlarm.bind(ctx.storage);
+      ctx.storage.setAlarm = (at: number | Date) => {
+        writes.push(typeof at === "number" ? at : at.getTime());
+        return real(at);
+      };
+      try {
+        await armAfterRpc(ctx, sql, BASE + 1_000, cache);
+        const afterFirst = writes.length;
+        await armAfterRpc(ctx, sql, BASE + 1_000, cache);
+        // A different earliest time is a real change and must still be written,
+        // so the counter is not simply "at most one write ever".
+        enqueueJob(sql, 0, {
+          kind: "purge-trash",
+          operationKey: "a",
+          payload: {},
+          nextRunAt: BASE + 20_000,
+        });
+        await armAfterRpc(ctx, sql, BASE + 1_000, cache);
+        return { afterFirst, writes: [...writes], cached: cache.scheduledAt };
+      } finally {
+        ctx.storage.setAlarm = real;
+      }
     });
-    expect(cacheState.afterFirst).toBe(BASE + 40_000);
-    expect(cacheState.afterSecond).toBe(BASE + 40_000);
+    expect(result.afterFirst).toBe(1);
+    expect(result.writes).toEqual([BASE + 40_000, BASE + 20_000]);
+    expect(result.cached).toBe(BASE + 20_000);
   });
 });

@@ -1,5 +1,8 @@
 # Runtime: Cloudflare Workers (D1 + Queues)
 
+> [!WARNING]
+> **本書は D1 + Queues 時代の運用手順であり、現行の構成を反映していない。** #37 が撤去した機構 — D1 / Queues / relay・consumer・pruner・dlq の4 Worker / named environment（`--env <role>`）/ `db:*` スクリプト10本 / `OUTBOX_*` 変数 / `wrangler.<stage>.toml` — を前提に書かれている。ここに載っているコマンドの多くは**もう存在しない**。現行は request / state の2 Worker 構成で、永続化はユーザーごとの SQLite-backed Durable Object、非同期処理は `jobs` テーブルと Alarm、マイグレーションは DO 内の lazy gate（適用コマンド無し）である。**書き換えは [#38](https://github.com/tuanemuy/fog/issues/38) が担当する。** それまでの正本は `README.md`「Deployment」（デプロイ手順とスクリプト対応表）と `apps/web/.dev.vars.example`（秘密の配布境界）、そして `CLAUDE.md`「Reference runtime」である。
+
 Multi-Worker, edge-distributed runtime. The main app runs in the `app` Worker; outbox publish, queue consumption, daily pruning, and DLQ surfacing each ship as a sibling Worker driven by Service Bindings, Queues, and Cron Triggers.
 
 ## Table of contents

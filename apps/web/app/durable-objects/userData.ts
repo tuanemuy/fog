@@ -6,8 +6,8 @@ import type {
 import {
   type AlarmCache,
   createAlarmCache,
+  rearmAfterFailure,
   rearmBeforeWork,
-  rearmFailClosed,
   settleAlarm,
 } from "@repo/core/adapters/cloudflare/jobs/alarm";
 import { USER_DATA_JOB_HANDLERS } from "@repo/core/adapters/cloudflare/jobs/registry";
@@ -27,11 +27,17 @@ import {
   USER_DATA_STEPS,
 } from "@repo/core/adapters/cloudflare/schema/userData";
 import * as facade from "@repo/core/adapters/cloudflare/userData/facade";
+import type {
+  InitializeAccountArgs,
+  RecordCredentialLocatorArgs,
+  VerifyLoginArgs,
+} from "@repo/core/application/di/facades";
 import {
   createUserDataContainer,
   type StateEnv,
   type UserDataContainer,
 } from "@repo/core/application/di/stateCloudflare";
+import type { CurrentUserView } from "@repo/core/application/identity/view";
 import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 
 /**
@@ -67,7 +73,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
   getCurrentUser(
     userId: string,
     epoch: number,
-  ): Promise<RpcEnvelope<facade.CurrentUserPayload>> {
+  ): Promise<RpcEnvelope<CurrentUserView>> {
     return this.entry(() =>
       facade.getCurrentUser(this.container, userId, epoch),
     );
@@ -77,7 +83,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     userId: string,
     epoch: number,
     days: number,
-  ): Promise<RpcEnvelope<facade.CurrentUserPayload>> {
+  ): Promise<RpcEnvelope<CurrentUserView>> {
     return this.entry(() =>
       facade.changeTrashRetentionDays(
         this.container,
@@ -89,9 +95,7 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
     );
   }
 
-  initializeAccount(
-    args: facade.InitializeAccountArgs,
-  ): Promise<RpcEnvelope<null>> {
+  initializeAccount(args: InitializeAccountArgs): Promise<RpcEnvelope<null>> {
     return this.entry(() => {
       facade.initializeAccount(this.container, args, this.now());
       return null;
@@ -99,13 +103,13 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
   }
 
   verifyLogin(
-    args: facade.VerifyLoginArgs,
+    args: VerifyLoginArgs,
   ): Promise<RpcEnvelope<{ sessionEpoch: number }>> {
     return this.entry(() => facade.verifyLogin(this.container, args));
   }
 
   recordCredentialLocator(
-    args: facade.RecordCredentialLocatorArgs,
+    args: RecordCredentialLocatorArgs,
   ): Promise<RpcEnvelope<null>> {
     return this.entry(() => {
       facade.recordCredentialLocator(this.container, args);
@@ -135,42 +139,46 @@ export class UserDataDurableObject extends DurableObject<StateEnv> {
    * eviction rather than an exception — the isolate dies and no `finally` runs
    * — so the next wake-up has to be persisted already.
    *
-   * The gate is wrapped because it throws when the DO is fail-closed, and
-   * nothing may ever escape `alarm()`. Catching it skips the run and the settle
-   * and returns **without deleting the alarm**, which is what makes a
-   * fail-closed DO keep retrying at a fixed interval instead of going dormant.
-   * This is a different catch from the runner's per-job one: that catch keeps a
-   * single bad job from stopping the queue, this one keeps a bad *schema* from
-   * stopping the DO forever.
+   * **All four steps sit inside one catch**, because nothing may ever escape
+   * `alarm()` and a fail-closed schema is only one of the ways they can throw:
+   * the runner's own `listRunnable` / `claimJob` / `pruneCompleted` are outside
+   * its per-job guard, and a DO at its storage ceiling fails exactly those
+   * writes while still serving reads. Every one of those ends the same way —
+   * re-arm at a fixed interval, **without** deleting the alarm — because none
+   * of them is caused by a particular job's data. See `rearmAfterFailure`.
+   *
+   * This is a different catch from the runner's per-job one: that one keeps a
+   * single bad job from stopping the queue, this one keeps a bad schema or a
+   * failing storage layer from stopping the DO forever.
    */
   override async alarm(): Promise<void> {
     const now = this.now();
-    await rearmBeforeWork(this.state, this.alarmCache, now);
-    await this.state.storage.sync();
-
     try {
+      await rearmBeforeWork(this.state, this.alarmCache, now);
+      await this.state.storage.sync();
       this.gate();
-    } catch (error) {
-      this.container.logger.error("migration gate is fail-closed", {
-        cause: error,
-      });
-      await rearmFailClosed(this.state, this.alarmCache, now);
-      return;
-    }
-
-    await runDueJobs(
-      {
-        ctx: this.state,
-        sql: this.sql(),
+      await runDueJobs(
+        {
+          ctx: this.state,
+          sql: this.sql(),
+          now,
+          ownerToken: this.container.idGenerator.next(),
+          logger: this.container.logger,
+          idGenerator: this.container.idGenerator,
+        },
+        USER_DATA_JOB_HANDLERS,
         now,
-        ownerToken: this.container.idGenerator.next(),
-        logger: this.container.logger,
-        idGenerator: this.container.idGenerator,
-      },
-      USER_DATA_JOB_HANDLERS,
-      now,
-    );
-    await settleAlarm(this.state, this.sql(), now, this.alarmCache);
+      );
+      await settleAlarm(this.state, this.sql(), now, this.alarmCache);
+    } catch (error) {
+      await rearmAfterFailure(
+        this.state,
+        this.alarmCache,
+        this.container.logger,
+        now,
+        error,
+      );
+    }
   }
 
   private entry<T>(body: () => T): Promise<RpcEnvelope<T>> {

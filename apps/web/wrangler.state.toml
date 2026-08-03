@@ -11,7 +11,13 @@ compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-APP_URL = "http://localhost:8787"
+# The state Worker builds the password-reset link from this, so a wrong value
+# means a mail whose link lands nowhere. It matches `pnpm dev` (vite's port),
+# which is where the browser is — including when this Worker runs as `pnpm
+# dev`'s auxiliary worker. Under `pnpm start` / `pnpm dev:state` the app is on
+# wrangler's 8787 instead; adjust both this file and `wrangler.toml` if you
+# develop through those.
+APP_URL = "http://localhost:3000"
 
 # Declarative Durable Object class lifecycle. This form and the `[[migrations]]`
 # array are **mutually exclusive** — wrangler's config validation rejects a file

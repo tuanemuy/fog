@@ -1,4 +1,4 @@
-import { CodedError } from "@repo/core/lib/error";
+import { errorIdentity } from "@repo/core/lib/errorIdentity";
 import {
   backoffMs,
   DEFAULT_LEASE_MS,
@@ -7,6 +7,7 @@ import {
   MAX_JOBS_PER_ALARM,
   POISON_RETENTION_MS,
   PRUNE_ROW_LIMIT,
+  SEND_MAIL_RETENTION_MS,
 } from "@repo/core/lib/jobBudgets";
 import type { JobKind } from "@repo/core/lib/jobKind";
 import {
@@ -41,16 +42,28 @@ import {
  * Terminal reasons carry the failure's *identity*, never its message: an
  * arbitrary error string can contain a canonical address, an hmac, a locator,
  * a caller token or a reset token, and `terminal_reason` is read by operators
- * and retained for the row's lifetime.
+ * and retained for the row's lifetime. The log line below obeys the same rule
+ * through the same helper — the two used to disagree, and the log was the one
+ * that leaked.
  */
-function terminalReasonFor(error: unknown): string {
-  if (error instanceof CodedError) {
-    return `${error.name}:${error.code}`;
-  }
-  if (error instanceof Error) {
-    return error.name;
-  }
-  return "UnknownError";
+
+/**
+ * A correlation handle for a job, safe to log.
+ *
+ * `operation_key` itself is **not** — a `send-mail` key embeds the canonical
+ * address's full-length HMAC, which `lib/directoryLocator.ts` calls the
+ * mapping's identity, and the log stream is outside the Durable Object's trust
+ * boundary. Eight bytes of SHA-256 correlate two lines about the same row
+ * without being a step towards the HMAC.
+ */
+async function correlationIdFor(operationKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(operationKey),
+  );
+  return [...new Uint8Array(digest).slice(0, 8)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function runOne<TCtx extends JobContextBase>(
@@ -87,15 +100,15 @@ async function runOne<TCtx extends JobContextBase>(
     // The one broad catch the architecture allows outside a boundary: a single
     // failing job must abort neither the rest of the queue nor `alarm()`.
     // An OCC conflict is not swallowed either — it lands in `terminal_reason`.
+    //
+    // The settling write itself is deliberately **not** guarded: if storage
+    // cannot accept an `UPDATE` (a DO at its 10 GB ceiling fails writes while
+    // still serving reads) then nothing else in this queue can make progress
+    // either, so the throw is allowed to stop the wake-up. `alarm()`'s own
+    // catch turns it into a fixed-interval re-arm rather than an escape.
     const attempt = row.attempt + 1;
     if (attempt >= DEFAULT_MAX_ATTEMPTS) {
-      poisonJob(
-        sql,
-        row.operation_key,
-        ownerToken,
-        now,
-        terminalReasonFor(error),
-      );
+      poisonJob(sql, row.operation_key, ownerToken, now, errorIdentity(error));
     } else {
       failJob(
         sql,
@@ -107,10 +120,10 @@ async function runOne<TCtx extends JobContextBase>(
       );
     }
     context.logger.error("job failed", {
-      operationKey: row.operation_key,
+      job: await correlationIdFor(row.operation_key),
       kind: row.kind,
       attempt,
-      cause: error,
+      cause: errorIdentity(error),
     });
     return "settled";
   }
@@ -155,11 +168,9 @@ export async function runDueJobs<TCtx extends JobContextBase>(
     if (!progressed) break;
   }
 
-  pruneCompleted(
-    sql,
-    now,
-    PRUNE_ROW_LIMIT,
-    DONE_RETENTION_MS,
-    POISON_RETENTION_MS,
-  );
+  pruneCompleted(sql, now, PRUNE_ROW_LIMIT, {
+    done: DONE_RETENTION_MS,
+    poison: POISON_RETENTION_MS,
+    sendMail: SEND_MAIL_RETENTION_MS,
+  });
 }

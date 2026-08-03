@@ -61,9 +61,17 @@ export type KeyringEntry = Readonly<{
   bucketCount: number;
 }>;
 
-/** Active generation first, then the previous one if there is one. */
+/**
+ * Active generation first, then the previous one if there is one.
+ *
+ * A **non-empty** tuple, because `requireKeyring` — the single construction
+ * site — rejects anything that does not declare exactly one active generation.
+ * Saying so in the type is what lets `forCanonical` promise at least one
+ * locator, and that promise is what removes the "the keyring produced no
+ * active locator" throw from the signup saga (ADR-073).
+ */
 export type Keyring = Readonly<{
-  entries: readonly KeyringEntry[];
+  entries: readonly [KeyringEntry, ...KeyringEntry[]];
 }> & { readonly [keyringBrand]: true };
 
 export type DirectoryRoutingKeyring = Keyring & {

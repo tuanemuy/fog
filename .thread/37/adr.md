@@ -1238,3 +1238,664 @@ steps.md ステップ32 の項目9 は `npx wrangler deploy -c wrangler.toml --d
 - 良い点: `pnpm --filter @repo/web test:smoke` と `cd apps/web && pnpm test:smoke` のどちらでも動く。
 - トレードオフ: **ルート → web という委譲の向きに対して逆向きの1本ができた。** 再帰の危険は無い（ルートの `test:smoke` は `vitest run` を直接呼び、web へ委譲しない）が、ルート側を委譲形に変える場合はこの1本を先に外す必要がある。
 - 非対称: `test:unit` / `test:integration` には web 側の対応を置かない。どちらも `packages/core` を含む複数パッケージに跨るので、`@repo/web` の名前空間に置くと射程を誤解させる。スモークだけが `apps/web` に閉じている。
+
+---
+
+## ADR-042: リセットトークンは「発行・配送・検証」を1つの導出鎖に閉じ、行にはメール本文の秘密の SHA-256 だけを残す
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー adapter-infra B-003 / security B-001 / security W-001 への対応）
+
+### Context
+
+レビュー2本が独立に同じ設計欠陥へ到達した。実装は3者が別々の値を扱っていた。
+
+- 発行（`resetTokenStore.issue`）: `token_id`（128bit 乱数）を PK 列に**平文で**書き、`token_hash` にはその FNV-1a-64 を書く
+- 配送（`sendMail`）: 利用者へ渡すのは `{routingGen}.{bucket}.{HMAC(IDENTITY_RESET_TOKEN_KEY, tokenId)}`
+- 検証（`verifyAndConsume(token)`）: `token_hash = FNV(token)` で引く
+
+この3つは決して噛み合わない。メールの値からは行へ辿り着けず（機能として死んでいる）、逆に `token_id` 列の値をそのまま出せば必ず一致する（DB 読み取り漏えいで全リンクが消費可能）。さらに FNV-1a-64 は非暗号学的で第二原像耐性が無い。`spec/database/index.md`:627 と `passwordResetTokenPort.ts` の JSDoc が主張する「生トークンは保存しない/DB 漏えいでトークンは使えない」は、いずれも成立していなかった。
+
+「ポートが同期だから WebCrypto を使えない」は理由にならない。**同じ制約を同じ PR が別の場所で解いている** — `reserve-credential` は封緘を `run()` の外（非同期な RPC エントリ）で済ませ、暗号文を値としてトランザクションへ渡す（ADR-036）。
+
+### Decision
+
+導出鎖を1本に確定し、その1本だけを共有モジュール
+`adapters/cloudflare/identityDirectory/resetTokenCrypto.ts` に置く。
+
+```
+tokenId  --HMAC(IDENTITY_RESET_TOKEN_KEY[gen])-->  secret
+secret   --SHA-256-------------------------------> token_hash（行に載る唯一の照合材料）
+secret   --routing 座標を前置---------------------> メール本文のリンク
+```
+
+- **導出は DO の RPC エントリで行う。** `requestPasswordReset` を `reserveCredential` と同じ形にし、`mintResetTokenMaterial(keyring)` が `{ tokenId, tokenHash, tokenKeyGeneration }` を作ってから `run()` へ値で渡す。ポートは同期のまま、WebCrypto の SHA-256 / HMAC が使える。
+- **`PasswordResetTokenPort` の契約を変える。** `issue(credentialId, material, now): void`（`string` を返さない）／`verifyAndConsume(tokenHash, now, operationId)`。**両方とも「導出済みの値を受け取る」**ことを契約として明文化する。#12 の消費エントリも同じモジュールで `parseResetToken` → `resetTokenDigest` を行い、同期ポートへ primitive を渡す。
+- **`token_id` は行の識別子に徹し、証明としては一切受け付けない。** 行が引かれる鍵は「導出された `secret` の SHA-256」なので、`token_id` を提出しても、`token_hash` をそのままリンクとして提出しても一致しない。
+- **導出は不適格でも無条件に実行する。** 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）の一様性を守るため、エントリは常に2回の WebCrypto 操作を払い、facade が不適格なら結果を捨てる。
+- **`activeResetTokenGeneration` の DI 経由の受け渡しを廃止する。** 世代は導出点（エントリ）が keyring から決め、`material` に載せて行まで運ぶ。DO のコンストラクタで keyring を読まなくなるので、未設定の任意バインディングが `alarm()` を巻き添えにする経路も同時に消える。
+
+### Consequences
+
+- 良い点: 行 + 鍵の分離が実際に成立する。ダンプは鍵を持たず（`secret` を作れない）、SHA-256 の原像も作れない。`token_id` を提出する攻撃は構造的に成立しない。
+- 良い点: 発行 → メール本文のリンク → 検証が**実際に合成できる**。`identityDirectory/__tests__/resetToken.integration.test.ts` が実 DO クラスの RPC エントリから送信ジョブ経由でリンクを取り出し、そのリンクだけを入力に消費まで通す。
+- 良い点: `verifyAndConsume` が「誰も満たせない引数」を持ったまま #12 へ渡ることが無くなった。
+- トレードオフ: `IDENTITY_RESET_TOKEN_KEY` 未設定のデプロイでは `request-password-reset` が `SystemError(CryptoError)` の封筒を返す（従来は send-mail ジョブ側で落ちていた）。失敗は宛先に依存しないので列挙オラクルにはならず、「鍵が無いのにリクエストを成功と記録する」ほうが悪い。
+- 引き継ぎ: `spec/database/index.md`:627 / :649 と `spec/inventory/adapter.md` の「`token_id` から導出したハッシュを保存する」は**実装と食い違う記述として残る**。spec は本担当のファイル範囲外なので直していない（`.thread/37/review/triage.md`）。
+
+---
+
+## ADR-043: `send-mail` の `operation_key` に時間窓を入れ、トークン発行スロットルと同じ数値を共有する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー adapter-infra B-001 / security W-002 への対応）
+
+### Context
+
+`SEND_MAIL_EMPTY_RETENTION_MS`（15分）は JSDoc で「`send-mail` は再武装しない種別なので、生き残った `done` 行が再依頼を拒む側であり、この値がそのままスロットル窓である」と宣言していたが、**参照するコードが1行も無かった**。`pruneCompleted` は種別を見ず `DONE_RETENTION_MS`（24時間）を一律に適用していた。
+
+結果として、`RESET_THROTTLE_MS`（60秒）を過ぎた2回目の依頼は「発行は通るが投入は弾かれる」状態になる。`issue` は同一トランザクションでその credential の未使用行を**全削除してから**新しい行を書くので、**利用者が手元に持っている生きたリンクだけが壊れ、新しいリンクは24時間届かない**。しかも応答は成功と区別できない。
+
+### Decision
+
+「トークンを発行するなら必ずメールが出る」を**構造で保証する**。
+
+- `operationKey` / `providerIdempotencyKey` を `send-mail:{kind}:{hmac}:{floor(now / RESET_REQUEST_WINDOW_MS)}` にする（`spec/database/index.md`:24 が言う「対象と時間窓から導く種別」）。
+- **発行スロットル窓を同じ定数にする。** `RESET_REQUEST_WINDOW_MS` 1本が両方を決める。
+
+この等式が不変条件を厳密にする — 発行の条件は `last + window <= now` であり、これが成り立つとき `floor(now/window) > floor(last/window)` が必ず成り立つ。つまり**発行できる依頼は必ずまだ行の無い `operationKey` に着地する**。逆に同じ窓の2回目は必ず発行が拒まれるので、生きたリンクが黙って壊れることも無い。
+
+- `pruneCompleted` は種別ごとの保持期間を取る（`{ done, poison, sendMail }`）。`send-mail` の保持は `SEND_MAIL_RETENTION_MS`（= 窓）で、**結果によらず一律**である（「宛先が無かった行だけ短く保つ」は保持時間が結果に依存する＝列挙オラクルになる。security W-002）。定数名から `EMPTY` を落としたのはこの理由による。
+
+### Consequences
+
+- 良い点: 死に定数が消え、宣言されていた15分の窓が実際にその意味を持つ。
+- 良い点: 窓ごとに `providerIdempotencyKey` が変わるので、プロバイダ側が正当な再依頼を前回の送信と重複排除する副次問題も同時に消える。
+- 良い点: バースト連打は依然1行へ収束する（同じ窓なので同じキー）。
+- トレードオフ: 1アドレスにつき窓ごとに `jobs` 行が1本増えうる。保持が窓と等しいので蓄積は有界（最大でも直近1窓ぶん）。
+- トレードオフ: 窓は floor 分割なので、窓境界の直前と直後の依頼は実質1分間隔でも2通届きうる。スロットル側は sliding なのでトークンは1つしか出ず、2通目は同じ生きたリンクを再送するだけである。運用値の調整は #38。
+
+---
+
+## ADR-044: `alarm()` は4段すべてを1つの catch で包み、失敗はすべて fail-closed と同じ終端に寄せる
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー adapter-infra B-002 への対応）
+
+### Context
+
+`alarm()` の本体は「再武装 → ゲート → 実行 → settle」の4段だが、`try / catch` が掛かっていたのは2段目のゲートだけだった。`rearmBeforeWork` / `runDueJobs` 内の `listRunnable` / `claimJob` / `pruneCompleted` / `settleAlarm`、および `runOne` の catch 節が呼ぶ `poisonJob` / `failJob` はいずれも裸である。
+
+CLAUDE.md「非同期実行契約」(5) は無条件に「Never throw out of `alarm()`」と書く。しかもこれは机上の話ではない — `spec/database/index.md`:20 は「逼迫時は書き込みだけが失敗し読みと削除は通る」を設計前提として明記しており、10 GB に達した DO ではまさに `claimJob` の `UPDATE` が `SQLITE_FULL` で失敗する。`purge-trash`（＝容量を空ける唯一の自動経路）が二度と claim できない。
+
+### Decision
+
+- 両 DO クラスの `alarm()` を **4段すべてを包む1つの `try`** にし、catch は共有ヘルパ `rearmAfterFailure(ctx, cache, logger, now, error)` へ落とす。ヘルパは `errorIdentity` でログし、`rearmFailClosed` を内側の `try` 付きで呼ぶ（再武装自体が失敗しても throw しない）。
+- **fail-closed と同じ終端に寄せる。** どの失敗も「原因は特定のジョブのデータではない」ので `poison` にはせず、固定間隔で起き直す。`deleteAlarm()` はしない。
+- `runOne` の catch 内の `poisonJob` / `failJob` には**内側のガードを置かない**。ストレージが `UPDATE` を受け付けないならキューの残りも前進できないので、throw でその起床を止めるのが正しい。その意図を JSDoc に明示した。
+
+### Consequences
+
+- 良い点: AC-13「`alarm()` から throw しない」が、migration ゲート以外の経路でも成立する。
+- 良い点: `errorIdentity` を `lib/errorIdentity.ts` の leaf に切り出したので、`terminal_reason`・ランナーのログ・`alarm()` のログが同じ射影を共有する（従来は runner.ts 内の私有関数で、60行下のログ行だけがそれに従っていなかった）。
+- トレードオフ: ゲート専用だった "migration gate is fail-closed" というログ文言が "alarm wake-up failed" に一般化した。原因の識別は `cause`（`Name:CODE`）が持つ。
+- 検証: `__tests__/alarmEntry.integration.test.ts` に「ストレージ側が throw するケース（`jobs` テーブルを落とす）でも `alarm()` が throw しない」を1本追加した。
+
+---
+
+## ADR-045: ジョブランナーのログは `operation_key` ではなく相関 ID を出す
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー security B-002 への対応）
+
+### Context
+
+`runner.ts` は失敗のたびに `logger.error("job failed", { operationKey: row.operation_key, …, cause: error })` を出していた。`send-mail` の `operation_key` は **canonical アドレスの完全長 HMAC を含む**（`lib/directoryLocator.ts` 自身が「identity — it is what a mapping row is keyed by」と書いている値）。AC-3 は「HMAC がログに出ない」を受け入れ条件にしている。同じファイルの `terminalReasonFor` が「任意のエラー文字列は canonical / hmac / locator / caller token / reset token を含みうる」と明記して message を捨てているのに、その60行下でその message をログへ流していた。
+
+そしてこの穴はテストで意図的に見逃されていた（`runner.integration.test.ts` が `lines` を `assertNoForbiddenValue` に掛けていなかった）。
+
+### Decision
+
+- `operationKey` を落とし、`job: SHA-256(operation_key) の先頭8バイト` を出す。ログ行どうしの突き合わせには十分で、HMAC の復元にはならない。`runOne` の catch は `async` なので `crypto.subtle` が使える。
+- `cause` を `errorIdentity(error)`（`Name:CODE`）に落とす。`terminal_reason` と同じ射影であり、両者が同じ helper を共有するようにした（ADR-044）。
+- テスト側を「除外」から「検知」へ反転する — 失敗ジョブを `send-mail:email:{禁止リストの hmac}:{窓}` という形の `operationKey` で投入し、`lines` を `assertNoForbiddenValue(lines, [operationKey])` に掛ける。
+
+### Consequences
+
+- 良い点: 相関は保たれたまま、bucket の外へ canonical 由来の識別子が出なくなる。
+- トレードオフ: 失敗ジョブ1件につき SHA-256 が1回増える。失敗経路だけなので実質無視できる。
+- トレードオフ: 運用者がログから直接 `jobs` 行を引けなくなる。相関 ID から逆引きするには DO 側で同じダイジェストを計算する必要がある。運用手順は #38。
+
+---
+
+## ADR-046: 非露出テストは「固定の禁止語」ではなく「その実行が導出した実値」を検査する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー security W-005 への対応）
+
+### Context
+
+AC-3 の検証手段である `routingNonExposure.test.ts` は3点で空振りしていた。(i) 禁止語配列の locator は `dir:g1:b0042` だが、実際の導出は `bucketCount: 256` で0埋めしない `dir:g1:b{0..255}` なので**構造的に一度も一致しない**。(ii) テストが実 `doName` を明示的に haystack から除外していた（`idFromName` の記録と logger の記録が同じ配列だったため）。(iii) 禁止語配列の HMAC は固定文字列で、テストが導出する実 HMAC とは別物。結果として実質検証していたのは「canonical 文字列そのものが出ないこと」だけだった。
+
+### Decision
+
+- `assertNoForbiddenValue(recorded, extra)` に第2引数を足し、**その実行で導出した `canonical` / `hmac` / `doName` の実値**を渡す形にする。固定リストは床であって全体ではない、と JSDoc に明記した。
+- **haystack を2本に分ける。** `idFromName` に渡された名前（＝観測可能な出力ではない）と、logger / エラーメッセージ（＝観測可能な出力）を別配列にする。前者は「導出が実際に行われた」ことの positive control として使い、後者だけを検査する。除外は不要になった。
+- 禁止語配列の locator を `dir:g1:b42` に直し、**「配列中の locator 形の値が実際の導出形と一致すること」を検査するテストを1本足す**（0埋めや 256 以上の index が紛れ込んだら落ちる）。
+- 生 NUL バイトが `forbiddenValues.ts:19` に実在していたので JS エスケープへ直し、あわせて `noRawNul.test.ts` の射程を `valueObject.ts` 1ファイルから `packages/core/src` + `apps/web/app` の TS 全体へ広げた（1ファイル限定のガードだったことが、まさに漏えい検知モジュール自身の `grep` を黙って壊す原因になった）。
+
+### Consequences
+
+- 良い点: 検査が空振りしなくなる。B-002 がテストを素通りした構造的な理由が消えた。
+- トレードオフ: `noRawNul.test.ts` が fs を再帰的に走査するので unit スイートに数 ms のコストが乗る。空振り防止のためファイル数の下限も assert している。
+
+---
+
+## ADR-047: `activate` / `promote` は一致行数を読み戻し、`activate` は `callerToken` と `candidateUserId` にも束縛する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー adapter-infra W-001 / security W-006 への対応）
+
+### Context
+
+`mappingOperations.ts` の JSDoc は「7つの書き込みはすべて CAS である」と宣言し、`spec/database/index.md`:622 も「書き込みはすべて CAS で直列化されている」と書く。しかし `run()` は影響行数を返さず、どのメソッドも一致0行を検出していなかった。signup saga の phase 3 で `activateReservation` が0行にヒットしても saga は完走し、予約行は `reserved` のまま残る。`lookupCredential` は `status === 'active'` を要求するので、利用者は**理由が分からないまま永久にログインできない**。
+
+あわせて `activate` だけが `callerToken` を検証せず `operation_id` の一致だけで `user_id` を書いていた。`userData/facade.ts` が自分で理由を書いている — 「束縛は `callerToken` であって `operationId` ではない。設計は `operationId` が未認証のログに出ることを許容しているので、それを知っているだけで書けるなら、ログに出た値が capability になる」。
+
+### Decision
+
+- `activate` / `promote` は `RETURNING 1` で一致行数を読み、0行を `ConflictError` にする（`RESERVATION_NOT_ACTIVATABLE` / `CREDENTIAL_CHANGE_NOT_ADVANCED`）。
+- `activate` の束縛を3つにする — `operationId` / `callerToken`（`matchOpaque` の定数時間比較）/ `candidateUserId`（`userId` と一致すること）。`callerToken` は SQL で定数時間比較できないので、`cancel` / `delete` と同じ read-then-CAS 形にする（全体が1つの `transactionSync` の中なので割り込みは無い）。
+- **冪等性は明示的に扱う。** `resume-signup` が phase 3 を再実行するので、「同じ operation が既に `active` にした行」は成功として返す（`candidate_user_id` は活性化時に NULL になるため、素朴に CAS すると再実行が conflict になる）。
+- `cancel` / `delete` / `reportResult` の「absent is success」は**意図的な設計として維持**し、なぜ `activate` と扱いが違うのかをモジュール JSDoc に書き分けた。
+
+### Consequences
+
+- 良い点: 予約が消えた／別 operation の行だった場合に saga が沈黙して完走することが無くなる。
+- 良い点: `operationId` を知るだけで予約行を任意の `userId` へ昇格させる経路が塞がる。到達不能ではあったが、#12 / #45 で経路が増えたときここだけが穴として残る形だった。
+- 破壊的変更: `CredentialMappingStore.activate` / facade / DO の RPC / `IdentityDirectoryFacade` / `signupSaga` の呼び出しが5引数になった。`callerToken` は saga が既に持っている値なので追加の採番は無い。
+
+---
+
+## ADR-048: `matchFts` は利用者のキーワードを FTS5 のフレーズリテラルとして囲む
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー adapter-infra W-003 への対応）
+
+### Context
+
+`MATCH` の右辺は文字列リテラルではなく FTS5 のクエリ式である。`"` / `*` / `:` / `^` / `(` `)` や `AND` / `OR` / `NOT` / `NEAR` は演算子として解釈され、閉じていない `"` は構文エラーで例外になる。bind parameter にしても解決しない（bind 後に式としてパースされる）。例外は `translateSqliteError` を通って `SystemError(DatabaseError)` になるので、利用者から見ると「特定の文字を含む検索が 500 になる」形で表面化する。trigram トークナイザは記号もインデックスするため、記号を含む正当な検索語は珍しくない。
+
+### Decision
+
+`'"' + keyword.replaceAll('"', '""') + '"'` でフレーズとして囲む。`tokenizer.integration.test.ts` に演算子8種を含むキーワードが例外にならないことと、素のキーワードの一致が変わらないことを固定した。
+
+### Consequences
+
+- 良い点: 1行で塞がり、trigram の一致性は変わらない。
+- トレードオフ: **利用者が FTS5 のクエリ構文を使えなくなる**（`東京 AND 駅` は AND 検索ではなくその文字列そのものの検索になる）。#10 が検索 UI を作るときに、演算子を意図的に露出するなら専用のパーサを置く判断になる。#37 の `probe.ts` はトークナイザ検証の最小の読みなので、ここでは安全側に倒す。
+
+---
+
+## ADR-060: `/settings` は自前の `errorComponent` を持ち、ログアウト導線をストリーミング断片の外へ出す
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+レビュー W-002（`review-001-presentation-config.md`）— 認可の権威が DO の epoch ガードへ移った結果、失効セッションは `CurrentUserPanel` のストリーミング**中に** `UnauthorizedError("SESSION_REVOKED")` / `ForbiddenError("ACCOUNT_NOT_ACTIVE")` を投げる。`_app.tsx` の `beforeLoad`（`readAuthStateFn`）は DO を叩かないので `authenticated: true` を返し続け、cookie も残る。アプリ唯一のログアウト導線 `LogoutButton` は panel の JSX の内側にあったので、panel が落ちるとログアウトごと消えていた。
+
+レビューの提案 (a) 「`LogoutButton` を `Suspense` の外へ出す」だけでは**塞がらない**。`@tanstack/react-router@1.170.18` の `Match` は `ResolvedCatchBoundary = routeErrorComponent ? CatchBoundary : SafeFragment` であり（`dist/esm/Match.js:78`）、`errorComponent` を持たないルートは境界を作らない。`router.tsx` に `defaultErrorComponent` も無いので、`/settings` の描画時 throw は `_app` の `errorComponent`（`ShellErrorScreen`）まで昇り、**ルートの中身が丸ごと差し替わる** — `SettingsPage` 側へ移したボタンも一緒に消える。
+
+提案 (b)「`guardStreamedRender` で `unauthorized` を検出して cookie を破棄し `/login` へ redirect」は採らない。ストリーミング断片が描画される時点で応答ヘッダは確定済みで、`Set-Cookie` を後から足せない。redirect も同じ理由で信用できない。
+
+### Decision
+
+**2つを組で入れる。**
+
+1. `LogoutButton` を `CurrentUserPanel` から `routes/_app/settings.tsx` の `SettingsScreen` へ移す（`Suspense` の外）。
+2. `/settings` に自前の `errorComponent`（`SettingsErrorScreen`）を置き、そこでも `SettingsScreen` を経由させる。
+
+これで panel の失敗はルート内の境界で止まり、エラー表示とログアウトボタンが同じ画面に並ぶ。`logout` ユースケースは DO を一切叩かない（`application/identity/logout.ts` は `UserId.create` のみ）ので、失効セッションでも cookie は確実に破棄できる。
+
+あわせて `SettingsSkeleton` を実 DOM に揃える（レビュー B-001）: ログアウト部はもうストリーミング断片ではないので落とし、行は1行にする（`registerWithPassword` はメールクレデンシャルを1件だけ記録するので、現行の全アカウントで1行）。
+
+### Consequences
+
+- 良い点: 「ログイン状態に見えるのに設定画面がエラーで、自力でセッションを捨てられない」状態が構造的に発生しなくなる。#12 が epoch を進め始める前に穴が塞がった。
+- 良い点: スケルトンと実 DOM の行数が一致し、`CLAUDE.md`「Frontend」の *without layout shift* が再び真になる。
+- トレードオフ: `/settings` はローダー失敗時も `_app` の `ShellErrorScreen` ではなく自前のエラー面を出すようになった。見た目は同じ構成（`ERROR_TITLE` + メッセージ + `ErrorRetry`）に揃えてあるが、**エラー面が2箇所に増えた**ので、片方だけ直すと割れる。
+- 積み残し: 失効セッションの cookie は「ユーザーがログアウトを押すまで」残る。自動破棄には応答ヘッダを握れる経路（awaited server function 側）が要るので、#12 が epoch を進める経路を実装するときに再検討する。
+- 複数クレデンシャル（#12）が入ったらスケルトンの行数は再検討が要る。`SettingsSkeleton` の JSDoc にその旨を書いてある。
+
+---
+
+## ADR-061: `redactForClient` は kind ごとに3分類し、`code` だけを通す群を作る
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+セキュリティレビュー W-003 — `adapters/cloudflare/jobs/table.ts` の競合エラーが `operationKey` をメッセージへ埋め込み、`conflict` は `redactForClient` の対象外なのでクライアントまで到達しうる。`send-mail` の `operationKey` は HMAC を含む。現状は payload が `operationKey` の関数なので到達不能だが、それは構造ではなく偶然である。
+
+レビューの提案は2つ: (i) メッセージから `operationKey` を落とす（table.ts 側）、(ii) redact を「見せてよい code の allowlist」へ反転させる。本 ADR は presentation 側だけを扱う（table.ts 側は別途）。
+
+(ii) をそのまま採ると壊れる。`errorDisplay.ts` は `business` / `validation` について**コード別の文言が無いとき `error.message` へフォールバックする**設計で、`renderBusinessMessage` / `renderValidationMessage` が `null` を返す経路がまさにそれである。メッセージまで潰すと新しいエラーが黙って空表示になる。
+
+### Decision
+
+**`redactForClient` を kind の網羅 `switch` にし、3分類にする。**
+
+| 群 | kind | 扱い |
+|---|---|---|
+| 全潰し | `system` / `unknown` | `code: null` + 固定文言（従来どおり） |
+| メッセージだけ潰す | `notFound` / `conflict` / `unauthorized` / `forbidden` | `code` は残し、`message` を `"Request failed"` へ |
+| 素通し | `business` / `validation` | 従来どおり |
+
+2群目の根拠は `errorDisplay.ts` の実装そのもの — この4 kind は**固定文言を返す枝しか持たず、`message` を一度も読まない**。したがってメッセージを潰しても UI は変わらず、サーバ側の自由文（キー・識別子・内部語彙が混ざりうる）だけが落ちる。網羅 `switch` なので、`SerializedError` の union に kind を足すと**分類を選ぶまでコンパイルが通らない**。
+
+### Consequences
+
+- 良い点: 「たまたま到達不能」だった経路が、到達しても無害になる。table.ts 側の修正と独立に成立する（二重の防御）。
+- 良い点: 新しい kind を足す人が redact の判断を強制される。
+- トレードオフ: `notFound` / `conflict` / `unauthorized` / `forbidden` のサーバ側メッセージがブラウザの開発者ツールからも読めなくなる。運用側は raw を見る（`errorResponseMiddleware` の logger 経路は redact 前の値を渡している）ので、triage は影響を受けない。
+- 検査: `errorResponse.test.ts` に (a) 4 kind の `code` 保持とメッセージ置換、(b) `JOB_PAYLOAD_MISMATCH` 形の `operationKey` がワイヤに出ないこと、の2本を追加した。
+
+---
+
+## ADR-062: request Worker の `.tpl` は `no_bundle` / `[[rules]]` を自分で持ち、redirect 経路と成果物の形を一致させる
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+レビュー W-006 — `deploy:request:*` は `-c wrangler.request.<stage>.toml` を明示するので `.wrangler/deploy/config.json` の redirect を外れ、フレームワークが生成する `dist/server/wrangler.json`（`no_bundle: true` / `rules: [{type: "ESModule", globs: ["**/*.js","**/*.mjs"]}]`）を受け取らない。redirect を外れること自体は AC-26 が望んだ挙動だが、その副作用として **wrangler が成果物を再バンドルして出荷する**。
+
+実測（wrangler 4.114.0、`--dry-run`）:
+
+| 経路 | 成果物 |
+|---|---|
+| redirect（`wrangler deploy`、`-c` なし） | 77 modules / Total Upload 1682.23 KiB |
+| `-c wrangler.request.staging.toml`（修正前） | 単一 `index.js` / 1658.87 KiB |
+
+`pnpm start` と起動スモークテストが起動するのは前者の形なので、**検証した形と出荷する形が違う**状態だった。
+
+### Decision
+
+**`wrangler.request.{staging,production}.toml.tpl` に `no_bundle = true` と同じ `[[rules]]` を書く。** 理由をコメントで残す。
+
+TOML の落とし穴を1つ踏んだので記録する: `no_bundle` はトップレベルのキーなので、**`[[durable_objects.bindings]]` より後ろに書くとその表の中のフィールドとして解釈される**（wrangler は `Unexpected fields found in durable_objects.bindings[1] field: "no_bundle"` と警告して黙って無視する）。`main` の直後に置いている。
+
+修正後の実測: `-c wrangler.request.staging.toml --dry-run` が **77 modules / 1682.23 KiB** となり、redirect 経路と一致した。警告ゼロ。
+
+### Consequences
+
+- 良い点: 2経路の成果物が同形になった。`pnpm start` / スモークで起動した形がそのまま出荷される。
+- 良い点: `rules` があるので `dist/server/assets/*.js` と `dist/server/rsc/index.js` が ES module として同梱される。動的 import は全て静的文字列リテラルなので、これで解決できる。
+- トレードオフ: **フレームワークが生成する設定を `.tpl` が手で複製している。** vite プラグインが将来 `no_bundle` を外したり `rules` を変えたりすると乖離する。`.tpl` のコメントに出所（`dist/server/wrangler.json`）を書いてあるので、ビルド設定を触るときはそこを見比べること。
+- state 側には入れない。`vite.config.state.ts` は単一ファイルを出すだけでフレームワーク生成の設定が存在せず、再バンドルしても形が変わらない。
+
+---
+
+## ADR-063: ローカルの `APP_URL` は `pnpm dev` のポート（3000）に合わせる
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+レビュー W-005 — `apps/web/wrangler.toml` / `wrangler.state.toml` の `APP_URL` は `http://localhost:8787`（wrangler dev の既定）だが、#37 で **state Worker が `APP_URL` を実際に使うようになった**（`createBindingMailSender(env.MAIL_SENDER, env.APP_URL, …)` がパスワードリセットのリンクを組み立てる）。request 側も `presentation/head.ts` が canonical / og URL をここから作る。README が案内する `pnpm dev` は vite の 3000 番で立つので、リンクが届かないポートを指す。
+
+### Decision
+
+**両ファイルの `APP_URL` を `http://localhost:3000` にする。** 正は `pnpm dev` — README の Quick Start が案内する唯一の開発経路であり、state Worker も `pnpm dev` の auxiliary worker として同じ vite サーバ上で動く。`pnpm start` / `pnpm dev:state`（wrangler の 8787）を使う場合の食い違いは、両 toml のコメントと README「Quick Start」に明記する。
+
+### Consequences
+
+- 良い点: 既定の開発経路でリセットリンクと canonical URL が実際に踏める。
+- トレードオフ: `pnpm start` / `pnpm dev:state` 経由では逆に食い違う。どちらかは必ずずれる（wrangler と vite でポートが違うため）ので、頻度の高いほうを正にした。
+- `apps/web/__tests__/boot.smoke.test.ts` の `APP_URL: "http://localhost:8787"` は miniflare へ渡すダミーのバインディングで、設定ファイルとは独立。追随不要。
+
+---
+
+## ADR-064: `pnpm dev:state` は state Worker のビルドを内包する
+
+**日付:** 2026-08-03
+**ステータス:** 採用
+
+### Context
+
+レビュー W-004 — `wrangler.state.toml` の `main` はビルド成果物（`dist/state/index.js`。AC-19 の設計どおり、vite プラグインの管轄外なので正しい）。しかし `dev:state` は `wrangler dev -c wrangler.state.toml` そのままなので、クリーンな clone では `The entry-point file at "dist/state/index.js" was not found.` で落ちる。README / CLAUDE.md のコマンド一覧にも前提が書かれていなかった。
+
+### Decision
+
+**`@repo/web` の `dev:state` を `vite build --config vite.config.state.ts && wrangler dev -c wrangler.state.toml` にする。** 但し書きを読ませるのではなく、スクリプトを自己完結させる。あわせて README / CLAUDE.md の説明にも「先に `dist/state` をビルドする」と書く。
+
+### Consequences
+
+- 良い点: クリーンな clone で `pnpm dev:state` が単体で動く。`pnpm start` と併用する典型経路でも、state 側だけ古い成果物で動く事故が減る。
+- トレードオフ: 起動のたびに state Worker を再ビルドする（数百 ms〜数秒）。`vite.config.state.ts` の `outDir` は `dist/state` で `dist/server` を消さないので、request 側の成果物には影響しない。
+- `pnpm dev`（vite の auxiliary worker 経路）はソースエントリを `config: { main: … }` で上書きするので、この変更の影響を受けない。
+
+---
+
+## ADR-070: `User` はクレデンシャル集合を書く遷移を持たない（射影に倒す）
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase B-002 / W-001 / W-002 への対応）
+
+### Context
+
+`User.credentials` は `find()` が `credential_locators` から組み立てる**読み取り射影**である一方、集約は `addCredential` / `removeCredential` を公開していた。`UserSettingsRepository.save` が書くのは `trash_retention_days` / `version` / `updated_at` だけなので、`spec/usecases/identity.md` が指示する手順（`User.addCredential(...)` → `save`）をそのまま実装すると **`version` だけ進んで集合は1ビットも変わらない**。しかも `find()` が返す `credentials` はロケータ由来なので、テストで確認しても「正しく見える」— 実際に効いたのは `CredentialLocatorStore` 側の別の呼び出しである、という壊れ方をする。#12 が `linkSsoCredential` / `unlinkSsoCredential` をこのメソッドの上に建てるので、線を引くのは今である。
+
+関連して2つの非対称も同じ根から出ていた。(a) `initialize` が `credentials` を引数に取りながら唯一の呼び出し（signup phase 2）は常に `[]` を渡す、(b) `spec` は `removeCredential` に `kind: "sso"` 限定を要求しているのに実装は `credentialId` だけで filter し、**テストが逆の挙動（`kind: "email"` の解除成功）を固定していた**。
+
+### Decision
+
+**射影に倒す。**
+
+1. `User` から `addCredential` / `removeCredential` を落とす。集合の増減は `CredentialLocatorStore.record` / `deleteByCredentialId` だけが行う。
+2. `User.initialize(params: { id: string }, now)` — **クレデンシャル集合を引数から外す**。phase 2 の時点でロケータ行が無いのは設計上正しく、空集合が唯一の真な値なので、渡せてしまうこと自体が誤りの余地だった。
+3. 「最後のログイン手段か」は `User.loginCredentialCount` を述語として残す。`kind: "sso"` 限定と合わせて、検査の所在は解除ユースケース（#12）である。
+4. `spec/domains/identity.md`（振る舞い・不変条件・ユースケース概要）/ `spec/usecases/identity.md`（linkSso 手順5-1・unlinkSso 手順2-2/2-3・エラー表）/ `spec/inventory/{domain,usecase}.md` / `spec/testcases/identity/unlinkSsoCredential.md` を実装に合わせる。**規則は1つも変えていない** — 変えたのは「どのモジュールが検査を持つか」だけである。
+5. `ports/userSettingsRepository.ts` の JSDoc に「`credentials` は書かれない」を明記する（#12 の実装者が読むのはポートと spec であってアダプターではない）。
+
+不変条件「`credentials` は1件以上・うち1件以上が `usableForLogin`」は**アカウントの不変条件であって、`User` 値の毎瞬の不変条件ではない**と spec 側に書き分けた。強制は入口（予約 → 確定 → `record`）と出口（解除ユースケース）にあり、signup phase 2〜4 の途中で 0 件を通るのは正しい状態である。
+
+### Consequences
+
+- 良い点: 「呼べるが効かない」API が消える。集合の権威が `CredentialLocatorStore` 1つになり、`spec/domains/identity.md`「`User.credentials` はこのストアの射影である」と実装が一致する。逆挙動を固定していたテストも一緒に消えた。
+- トレードオフ: 「最後のログイン手段」の検査が集約のメソッド境界から離れ、ユースケースが呼び忘れうる位置へ移る。緩和は3つ — 述語 `loginCredentialCount` を残したこと、spec の手順とエラー表と inventory の3箇所に検査の所在を書いたこと、`entity.test.ts` に述語のテストを残したこと。
+- 代替案 (b)「`save` が `credential_locators` の `usable_for_login` / `label` を書き戻す」は採らない。`spec/domains/identity.md`「判定の権威は認証情報側」と衝突し、権威が二重になる。
+- **#12 への引き継ぎ:** `unlinkSsoCredential` は (i) `kind: "sso"` (ii) `User.loginCredentialCount` で最後のログイン手段でないこと、の2検査を自分で持つ。`linkSsoCredential` は `User` 側の `save` を発行しない。
+
+---
+
+## ADR-071: DO facade の引数・戻り値の型は `application/di/facades.ts` が持つ
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase B-001 への対応）
+
+### Context
+
+`application/di/facades.ts` が `adapters/cloudflare/{identityDirectory,userData}/facade` から7つの型を `import type` していた。7型は `UserDataFacade` / `IdentityDirectoryFacade` のシグネチャに現れ、`RequestContainer` に載り、`signupSaga` / `loginWithPassword` / `getCurrentUser` / `requestPasswordReset` の型に到達する。つまり**ユースケースがアダプター層の所有する型で書かれていた**。本 PR は同じ形の逆流を ADR-014（`RpcEnvelope`）と ADR-027（`DirectoryLocator`）で2度潰しており、3度目の取りこぼしである。AC-25 (ii) の `grep` が 0 件で通っていたのは `grep -v '/di/'` に救われていたためで、その除外の根拠（「合成ルートだけが具象アダプターを組み立てる正当な場所だから」）は、何も組み立てない契約定義モジュールには当たらない。
+
+`CurrentUserPayload` に至っては `application/identity/view.ts` の `CurrentUserView` と構造が完全に同一の二重定義だった。
+
+### Decision
+
+**契約はインターフェースと同じモジュールが持つ。** `InitializeAccountArgs` / `VerifyLoginArgs` / `RecordCredentialLocatorArgs` / `LookupCredentialArgs` / `LookupCredentialResult` / `ReserveCredentialFacadeArgs` を `application/di/facades.ts` へ移し、`CurrentUserPayload` は廃して `CurrentUserView` に一本化する。アダプター側の facade と DO クラスは**そこから import する**（adapters → application は正方向）。
+
+`lib/rpcPayloads.ts` は採らない。`InitializeAccountArgs` は `LocatorRef` を、facade は `CurrentUserView` を名指しており、どちらも層に属する型なので `lib/`（層の外にあることで全層から依存されてよい場所）に置くと lib → application の依存が生まれる。**ヘキサゴナルの向きで言えば、この2つのインターフェースは DO という外部リソースへの driven port である**から、内側で定義して外側が実装するのがそもそもの形である。
+
+AC-25 (ii) の `grep` は形を変えない（`di/` 除外を「value import に限る」へ狭めることもできない — 両合成ルートは `*FacadeDeps` と `DirectoryLocator` を `import type` で名指しており、それが正当な組み立ての一部である）。代わりに **`packages/core/src/application/di/__tests__/noAdapterBackflow.test.ts`** を置き、「`adapters/` を import してよいのは `di/serverCloudflare.ts` と `di/stateCloudflare.ts` の2ファイルだけ」を機械検査にした。除外がディレクトリではなくファイル名になるので、次に契約モジュールが増えても穴を通れない。
+
+### Consequences
+
+- 良い点: `application → adapters` の import が合成ルート2ファイルに閉じ、それがテストで固定された。`CurrentUserPayload` / `CurrentUserView` の二重定義が消え、`getCurrentUser` の宣言型と実体が一致した。
+- トレードオフ: `di/facades.ts` が契約と型定義の両方を持って長くなる。分けるなら `application/rpc/` あたりだが、インターフェースと引数型が離れる不利のほうが大きいと判断した。
+- 波及: `apps/web/app/durable-objects/{userData,identityDirectory}.ts` の型参照を `facade.X` から新しい import へ切り替えた（値の参照は `facade.*` のまま）。
+
+---
+
+## ADR-072: 「ログイン手段として成立するか」の述語をドメインに1本化する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase W-003 / W-007 への対応）
+
+### Context
+
+`spec/domains/identity.md`「判定は『クレデンシャルの有無』ではなく『パスワードの検証材料の有無』で行う」という1つの規則が、アダプター層に3回、微妙に違う形で書かれていた — `lookupCredential` の `usable`（status + changeState + nextAttemptAllowedAt）、`requestPasswordReset` の `eligible`（それに `passwordVerifier !== null` と reset throttle）、`sendMail` の `password_verifier === null` のみ。#12 / #18 が条件を1つ足すときに3箇所が揃って直る保証が無い。
+
+同じ場所で `LookupCredentialResult` が非ユニオンだったため、「`passwordVerifier` はあるが `credentialId` は null」という起こりえない組み合わせが型上表現でき、`loginWithPassword` が `credentialId: found.credentialId ?? ""` で塗り潰していた。空文字は `verifyLogin` の中で `CredentialId.create("")` に到達し、**全ての失敗を `ValidationError("INVALID_CREDENTIALS")` に揃える**という同ユースケースの中心的な契約をこの1経路だけが破る。`found.passwordVerifier as PasswordHash` も無検証のブランドキャストだった。
+
+### Decision
+
+1. **`packages/core/src/domain/identity/credentialMappingRules.ts`** に純関数を置く — `isSettled` / `holdsPasswordVerifier`（型述語）/ `isUsableForLogin(mapping, now)` / `isResetRequestAllowed(mapping, now, windowMs)`。3箇所がこれを呼ぶ。**スロットル窓は引数**にして、実値を #18 / #38 に委ねた境界を崩さない。リセット可否をログインの backoff と**別建て**にしたのは意図的で、失敗ログインで他人を回復経路から締め出せてはならないため（その非対称を JSDoc とテストに書いた）。
+2. `LookupCredentialResult` を3アームの判別可能ユニオンにする — `password`（検証材料を持つメール行）/ `identity`（SSO 行など、`userId` は引けるがパスワードログインではない）/ `none`（4つの一様応答すべて）。`?? ""` が消え、`loginWithPassword` は `found.outcome !== "password"` で弾く。
+3. `as PasswordHash` を `PasswordHash.create` へ置き換える。**壊れた保存値は「そのロケータは何も答えない」として扱う**（`continue`）— 未登録アドレスと同じ経路に落ちるので一様性が保たれる。区別できる失敗を返すと、そのアドレスが存在することを未認証の呼び出し元に教えてしまう。
+
+### Consequences
+
+- 良い点: 規則の所在が1つになり、#12 / #18 が条件を足す先が明確になった。ユニオンで不正状態が型から消え、`loginWithPassword` の一様性を破る唯一の経路がふさがった。
+- トレードオフ: `sendMail` は行の狭い射影しか読まないので、`holdsPasswordVerifier` を構造型（`{ passwordVerifier: string | null }`）にして呼んでいる。`CredentialMapping` 全体を組み立てさせるよりは軽いが、規則の適用が「名前で呼ぶ」だけになる箇所が1つある。
+- テスト: `credentialMappingRules.test.ts` を新設（4述語 × 境界）。`ssoResolution.integration.test.ts` はユニオンのアームを検査する形へ直した。
+
+---
+
+## ADR-073: 「起こりえない状態」を非空タプル型で消す（`Keyring` / signup の credential 列）
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase W-004 への対応）
+
+### Context
+
+`signupSaga` が2箇所で素の `Error` を投げていた — `"A signup must present at least one credential"` と `activeLocator` の `"The routing keyring produced no active locator"`。素の `Error` は `kind` を持たないので presentation の `unknown` バリアントに落ちて 500 になる。どちらも実行時チェックが不要な形にできる。
+
+### Decision
+
+型で消す。
+
+1. `Keyring.entries` を `readonly [KeyringEntry, ...KeyringEntry[]]`（非空タプル）にする。唯一の構築点 `requireKeyring` が「active はちょうど1つ」を検査済みなので、**型が既に成り立っている事実を言うだけ**であり、新しいキャストは増えない。
+2. `DirectoryLocatorResolver.forCanonical` の戻り値を `Promise<readonly [DirectoryLocator, ...DirectoryLocator[]]>` にする。実装は `const [active, ...previous] = keyring.entries` から組むのでキャスト無しでタプルが通る。`RequestContainer.directoryLocator` も同じ形へ。
+3. `runSignupSaga` の `credentials` を `readonly [SignupCredentialInput, ...SignupCredentialInput[]]` にする。解決結果もタプルで組み、**`sort` を in-place で呼ぶ**（`Array.prototype.sort(): this` なのでタプル型が保たれる）。`[...resolved].sort()` だと `T[]` に潰れて `ordered[0]` が `T | undefined` に戻るので、ここだけは非破壊にしない。
+4. `activeLocator` は全関数になり、2つの `throw` がどちらも消える。
+
+### Consequences
+
+- 良い点: `if (!x) throw` が2つ消え、到達不能な 500 の経路がなくなった。「active 世代が必ず先頭にある」という keyring の契約が型に載った。
+- トレードオフ: `forCanonical` を模すテストダブルがタプル型を要求されるようになる（`requestPasswordReset.test.ts` の `LOCATORS` を1件修正）。将来 keyring を空にできる構成を入れるなら `requireKeyring` の検査ごと見直す必要があるが、それは今の設計では起こらない。
+- W-004 が同時に挙げていた `requestPasswordReset.ts:35-36` の `if (locator === undefined) return;` は、Wave 1 の adapter-infra W-009 対応（全 locator への無条件ファンアウト）で既に消えていた。
+
+---
+
+## ADR-074: `Email` の domain 部にラベル構文検査を置き、ASCII / 非 ASCII の非対称をなくす
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase W-006 への対応）
+
+### Context
+
+Wave 1 の security W-008 対応で `toAsciiDomain` が `port` / `pathname` / `search` / `hash` を拒否するようになったが、**その関数を通るのは非 ASCII ドメインだけ**である。`EMAIL_PATTERN = /^[^\s@]+@[^\s@]+$/` は空白と `@` しか弾かないので、ASCII 経路では `a@example.com/evil` がそのまま canonical になる — 一意性キーであり HMAC 入力であり、リセットメールの宛先でもある値が、届かないアドレスのまま通る。
+
+### Decision
+
+punycode 変換の**後**に `assertDomainSyntax` を掛け、両経路を1つのゲートへ通す。各ラベルが LDH（`[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`）で、63 文字以下、空ラベル無し、全体 253 文字以下。`xn--` ラベルは LDH なので変換後に掛けるのが正しい順序である（変換前だと国際化ドメインを全部落とす）。
+
+`toAsciiDomain` の port/path/query/hash 拒否は残す。`URL` が `a@例え.com:8080` の `:8080` を `hostname` から切り落とすため、ラベル検査だけでは捕まらない形が非 ASCII 経路にある。
+
+ラベル数の下限（「ドットを1つ以上」）は**置かない**。レビューの提案にも無く、`user@localhost` を落とす副作用が spec の射程を超えるため。
+
+### Consequences
+
+- 良い点: 「構造チェックを通ったが配送不能」なアドレスが登録できなくなった。ASCII と非 ASCII の canonical 化が同じ検査を通る。
+- トレードオフ: アンダースコアを含むドメイン（`a@exa_mple.com`）を拒否する。RFC 1035 の LDH には無い文字であり、公開 MX を持つドメインでは実務上使われない。
+- テスト: ASCII 経路の 10 ケース（port / path / query / fragment / underscore / 前後ハイフン / 空ラベル / 末尾ドット / 64 文字ラベル）と、通り続けるべき 4 ケースを `valueObject.test.ts` に追加。
+
+---
+
+## ADR-075: ロケータ参照の形はドメインが1つ定義し、application は別名にする
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー domain-usecase W-005 への対応）
+
+### Context
+
+ドメインポート `CredentialMappingStore.reserve` の引数に `locators?: readonly unknown[]` があった。実際に渡るのは `application/execution/jobs.ts` の `LocatorRef`（`credentialId` / `kind` / `hmac` / `generation` / `bucketIndex`）だが、ドメインは application を import できないので `unknown` に潰れていた。`unknown` のまま `reserve` → アダプター → `JSON.stringify` と流れるので、形の誤りはどこでも検出されない。しかもその5フィールドは、同じ PR がドメインに置いた `CredentialLocator` の部分集合そのものである。
+
+### Decision
+
+**形をドメイン側に置き、外側は別名にする。** `domain/identity/ports/credentialLocatorStore.ts` に `CredentialLocatorRef`（5フィールド、**プリミティブのみ**）を置き、`CredentialLocator` をその拡張（`credentialId` を `CredentialId` に絞り、`credentialVersion` / `usableForLogin` / `label` を足す）として定義する。`application/execution/jobs.ts` の `LocatorRef` は `CredentialLocatorRef` の別名にし、`ReserveCredentialArgs.locators` は `readonly CredentialLocatorRef[]` になる。
+
+`CredentialLocatorRef.credentialId` を**ブランドにしない**のは意図的である。この形は値としても旅をする — `operations.target_locators` に入り、コーディネーター予約行に載り、RPC 境界を越えて JSON になる。構造化クローンはブランドを消すので、読み戻した値にブランドを付け直す正直な方法が無い（`application/execution/jobs.ts` 冒頭の「no branded types」はこの理由である）。`CredentialLocator` 側だけが `CredentialId.create` を通した行なのでブランドを持つ。
+
+### Consequences
+
+- 良い点: ドメインポートから `unknown[]` が消え、同じ概念の二重定義も消えた。`reserve` に誤った形を渡すとコンパイルが落ちる。
+- トレードオフ: `CredentialLocator` が交差型になり、`credentialId` の型が `string & CredentialId` として表示されうる（値としては `CredentialId` と同一）。継承関係を型で示す価値のほうが大きいと判断した。
+
+---
+
+## ADR-080: signup saga の部分失敗は「補償の観測可能な帰結」で検証する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test B-002 への対応）
+
+### Context
+
+AC-2 は「signup saga の部分失敗・再試行が冪等である」を求めているが、統合テストは happy path しか通していなかった。`resume-signup` のハンドラテストは状態機械だけを見ており、saga 本体（`runSignupSaga`）を一度も走らせていない。
+
+難所は「同じ `operationId` で再投入する」経路をテストからどう作るかである。`operationId` は saga が phase 0 で採番するので、外から同じ値で再実行することはできない — それは仕様であって不足ではない（saga 冒頭の JSDoc「re-send across requests is not a concept this saga has」）。
+
+### Decision
+
+3つの形に分けて検証する。
+
+1. **phase 1b の敗北と補償** — 2クレデンシャル（email + sso）の saga を `runSignupSaga` で直接叩く。先行 saga が同じ SSO identity を取っているので phase 1b が `ConflictError` になり、`cancelAll` がコーディネーター（email）の予約行を巻き戻す。**判定は行数だけでなく「そのアドレスが再び登録できること」**まで見る。`cancelAll` を消すと後続の `registerWithPassword` が `EMAIL_ALREADY_REGISTERED` で落ちる（実測）。
+2. **phase 2 の失敗と再試行の収束** — `userDataStubFactory` をラップして `initializeAccount` だけを落とす。補償は走らない（正しい）ので予約は `reserved` のまま残り、新しい試行は新しい operation を採番するので `EMAIL_ALREADY_REGISTERED` に収束し、停止した saga の `candidate_user_id` を書き換えない。これが旧テストの "collapses a concurrent registration race" の等価物でもある。
+3. **応答が失われた phase 2 の再送** — ラッパが「本物を呼んでから投げる」形にして、saga が使った `InitializeAccountArgs` を捕まえる。その引数で `initializeAccount` を再送すると成功し、`account` / `operations` / `user_settings` が各1行のままであること、digest を変えると `OPERATION_PAYLOAD_MISMATCH`、`operationId` を変えると `OPERATION_NOT_RECOGNISED` になることを見る。facade の4分岐がそのまま検査対象になる。
+
+RPC スタブのラッパは**スプレッドせず明示的に委譲する**。Workers の RPC スタブはプロキシで own enumerable property を持たないので、`{ ...stub }` は空オブジェクトになり全メソッドが `undefined` になる。
+
+### Consequences
+
+- 良い点: 341 行・5フェーズ・補償付きのオーケストレーションが、happy path 以外で初めて実行される。変異試験4本（`cancelAll` 削除 / `reserve` の重複検出削除 / facade の分岐collapse / `initializeAccount` の外し）がすべて赤になる。
+- トレードオフ: (1) は `runSignupSaga` を直接呼ぶので、`registerWithPassword` を経由しない。#37 に SSO を書く経路が無い以上（plan.md のスコープ外）、2クレデンシャルの saga を作る手段は他に無い。
+
+---
+
+## ADR-081: `purge-trash` のチャンク予算を引数にして中断経路をテスト可能にする
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-010 への対応）
+
+### Context
+
+AC-10 の「再計算フェーズが空になった起床でだけ削除フェーズへ進む」を担保するのは `if (!recalculated) return { kind: "yield" }` の1行だが、そこへ到達するには出荷時の予算（`chunkRowLimit` 1000 × `maxChunks` 20）を超える 20,000 行のゴミ箱が要る。フィクスチャで作れる量ではない。
+
+### Decision
+
+ハンドラを `createPurgeTrash(budget = CHUNK_BUDGETS["purge-trash"])` のファクトリにし、`export const purgeTrash = createPurgeTrash()` を残す。レジストリと本番経路は無変更で、テストだけが `{ chunkRowLimit: 1, maxChunks: 2 }` を注入する。`migrate-bulk` が `BULK_STEP` でやっている形の踏襲である。
+
+**`maxChunks: 1` は使わない。** 再計算フェーズが常に唯一のチャンクを食い潰すので削除フェーズへ永久に進まず、予算そのものが縮退する。2以上で初めて「再計算が終わってから削除する」順序が観測できる。
+
+**clamp 分岐（`worked === 0 && earliest <= now`）はデータでは到達できない。** `listItemsToPurge` の述語（`status='trashed' AND purge_after <= now`）と `findEarliestPurgeAfter` の述語（`min(purge_after) WHERE status='trashed'`）が同一なので、「due な行があるのに何も削除しなかった」は構成上成立しない（縮小予算でも同じ。実測）。したがって clamp は「2つのクエリが乖離したときにだけ火が点く」防御であり、テストが固定すべきなのは**その warn が出ないこと**である。ハーネスの `lines` を全ケースで `toEqual([])` に使い、死に変数を「不変条件の直接の言明」へ変えた。
+
+### Consequences
+
+- 良い点: `yield` に3ケースで到達し、うち1つ（「何も due でない状態で再計算が未了」）は `yield` ガードを外すと赤になる — 予算切れが `rearm` に化けて残作業が忘れられる退行を検出する。
+- トレードオフ: プロダクションコードに1つエクスポートが増えた。既定引数なので呼び出し側の変更はゼロ。
+- 記録: clamp が到達不能であることは仕様どおりであり、削除は提案しない（乖離が起きたときの唯一の警報である）。
+
+---
+
+## ADR-082: テスト間クリーンアップは「固定名テスト1本」で観測し、断定を実測へ合わせる
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-006 への対応）
+
+### Context
+
+`setup.ts` の JSDoc は「`reset()` と `evictAllDurableObjects()` は射程が違い、どちらか一方では状態が残る」、`docs/test.md` は「順序独立性は完全に `afterEach` に乗っている」と断定していた。実測では**どちらを消しても統合スイートは全緑**である。実際に順序独立性を支えているのは各ファイルのモジュールスコープ `seq` による DO 名のユニーク化だった。
+
+### Decision
+
+**固定 DO 名を使うテストを1本足して `reset()` を実際に荷重させる**（`__tests__/cleanup.integration.test.ts`）。同じ名前・同じ本体の `it` を2本置き、どちらも「到着時に `jobs` が空であること」と「同じ時刻へアラームが張られること」を主張する。2本を**同一にする**のは順序独立にするためで、`--sequence.shuffle.tests` でも成立する。`reset()` を消すと2本目が赤になる（実測）。
+
+**`evictAllDurableObjects()` は現行版では冗長である**ことを実測で確定させた。`reset()` の後、DO はアラームが消えた状態で戻り、次の RPC で再武装する — インスタンスが生き残っていれば `AlarmCache` が一致して `setAlarm` を抑止するはずなので、`reset()` 自身がインスタンスを捨てている。呼び出しは将来版への保険として残すが、**JSDoc と `docs/test.md` の断定は実測どおりに書き換える**。冗長な呼び出しを荷重があると信じることこそ、本物のクリーンアップ漏れを誤診させる原因だからである。
+
+### Consequences
+
+- 良い点: クリーンアップが壊れたら赤になるテストが初めて存在する。`docs/test.md` が「まず名前のユニーク化、次に `afterEach`」という実態を書くようになった。
+- トレードオフ: 固定名のテストを1本増やした。並列実行しても vitest は同一ファイル内の `it` を直列に走らせるので競合しない。
+
+---
+
+## ADR-083: `evictAllDurableObjects` を観測するテストは書かない
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-006 の残余）
+
+### Context
+
+ADR-082 の測定で、`evictAllDurableObjects()` が観測可能な効果を持たないことが確定した。唯一のインメモリ状態は DO クラスの `protected alarmCache` であり、`reset()` が既にインスタンスごと捨てている。
+
+### Decision
+
+`alarmCache` をテストから覗くための public メソッド／`as unknown as` の型破りは**足さない**。ADR-015 が「プロダクションの DO クラスにテスト専用の public メソッドを生やさない」ために `evictAllDurableObjects()` を選んだのだから、その呼び出しを検証するためにまさにそのメソッドを生やすのは本末転倒である。呼び出しは保険として残し、事実は JSDoc に書く。
+
+### Consequences
+
+- 良い点: プロダクションクラスのテスト用開口部が増えない。
+- トレードオフ: `evictAllDurableObjects()` が将来必要になったときに壊れても気づけない。ただし壊れた場合に赤くなるのは `cleanup.integration.test.ts` の2本目（`reset()` が同時に効かなくなる形での退行）なので、完全な盲点ではない。
+
+---
+
+## ADR-084: OCC の「行が無い」と「版が古い」は同一視を仕様として固定する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-009 への対応）
+
+### Context
+
+AC-6 は「DO 側の OCC が『行が存在しない』と『版が古い』を取り違えず」と書くが、`conditionalUpdate` は0行を無条件に `ConflictError("OPTIMISTIC_LOCK_FAILURE")` へ倒す。テストは誤帰属（他の文の結果を流用しない）側だけを固定していた。
+
+### Decision
+
+**両者を区別しない**のが実装の意図であり、それを**テストで固定する**。どちらも呼び出し側の `Versioned<T>` がストレージと食い違っていることを意味し、解消手段（読み直して先頭からやり直す）も同じで、区別を publish しても読む者がいない。区別するには追加の `SELECT` が要り、それは1文で完結するという `RETURNING 1` の設計の利点を削る。
+
+AC-6 が禁じているのは**誤帰属**であって区別の欠如ではない、と読む。テストは2つの結果文字列が「呼び出し側が名付けた subject 以外は同一」であることを assert し、`sql/occ.ts` の JSDoc がその理由を持つ。
+
+### Consequences
+
+- 良い点: 後から `NotFoundError` のアームを足すと赤になる。契約が明文化された。
+- トレードオフ: 「消えた行を更新した」ことを呼び出し側が知る手段は無いまま。必要になったら仕様変更として扱う。
+
+---
+
+## ADR-085: 起動スモークは成果物の鮮度を mtime で検査する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-014 への対応）
+
+### Context
+
+`boot.smoke.test.ts` の `beforeAll` は `existsSync` しか見ないので、「前回のビルド結果が残っている」状態にも緑を返す。#40 の再発をこのスイートで捕まえたい以上、ソースを直した直後の開発者が古いバンドルに対して緑を受け取るのは危険な緑である。
+
+### Decision
+
+レビューの提案 (a)（`test:smoke` を `pnpm build:cf && vitest …` にする）は**採らない**。CI の `build` ジョブが既に `pnpm build:cf` → `pnpm test:smoke` の順で走っており、スクリプト側に押し込むと CI がビルドを2回する。代わりに提案 (b) をテストファイル内で実装する — `apps/web/app` と `packages/core/src` の最新 mtime より `dist/{server,state}/index.js` が新しいことを `beforeAll` で assert する。
+
+除外は2つで、どちらも根拠がある。`__tests__/` 配下は成果物に入らない（このスモークテスト自身を編集しただけで赤くなるのを防ぐ）。`*.gen.ts` はビルド**中**に書き換えられ、2段ビルドの2段目が1段目の出力より後になる。
+
+### Consequences
+
+- 良い点: 古い `dist/` に対して赤になることを実測で確認（`expected 1785715257069 to be greater than 1785716948461`）。ビルド直後は緑。CI のビルド回数は変わらない。
+- トレードオフ: ソースを touch しただけでも赤になる。メッセージが `pnpm build:cf` を指示するので誤診しにくい。
+
+---
+
+## ADR-086: DO クラスの RPC エントリ表は反射とゲート実行の2枚で固定する
+
+**日付:** 2026-08-03
+**ステータス:** 採用（PR #49 レビュー test W-013 への対応）
+
+### Context
+
+`vitest.config.integration.ts` の `include` に `apps/web/app/durable-objects/**` が入っているのに、そこに `*.integration.test.ts` は1本も無かった（.adr/001 の「空の設定を将来の受け皿として温存しない」と逆向き）。同時に AC-16 (i)「ゲートが全 RPC エントリの先頭にあり、例外は2本のみ」は grep 頼りで、`readSchemaVersion` が fail-closed 中でも答えることを確かめるテストも無かった。
+
+### Decision
+
+行を削るのではなく、**そこに DO クラスの統合テストを実際に置く**（`durable-objects/__tests__/rpcEntries.integration.test.ts`）。2枚で固定する。
+
+1. **反射** — `Object.getOwnPropertyNames(Class.prototype)` から内部メソッド8本を引いた集合が「本ファイルが叩くゲート付きエントリ」＋「免除エントリ」と一致すること。新しいエントリを足して分類を決めないと赤になる。
+2. **実行** — `_meta.schema_version` を99にした DO に対し、ゲート付きエントリ**全部**を実際に呼び、戻りエンベロープが例外なく `Schema version is newer than this deployment` で `ok: false` になること。1エントリずつではなく1つのオブジェクトとして比較するので、緩んだエントリが差分に名前入りで出る。免除2本は同じ DO で `ok: true` を返す。
+
+### Consequences
+
+- 良い点: AC-16 (i) が grep から機械検査になった。`readSchemaVersion` / `listBucketUserIds` が fail-closed 中に答えることが初めて検証された。変異試験2本（1エントリを `entry()` の外へ出す / 新メソッドを足す）がそれぞれ別のテストを赤にする。
+- トレードオフ: `apps/web` 側に `cloudflare:test` の型宣言（`__tests__/env.d.ts`）が要る。`packages/core` 側の同名ファイルと重複するが、両パッケージが独立に typecheck する以上どちらにも要る（core 側の JSDoc が既にその理由を書いている）。
+- 内部メソッド名の一覧をテストが持つので、`private` メソッドの改名がこのテストを赤にする。分類を強制する仕組みの代償として受け入れる。

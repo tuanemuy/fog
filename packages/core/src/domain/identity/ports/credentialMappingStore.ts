@@ -1,4 +1,5 @@
 import type { CredentialId } from "../valueObject";
+import type { CredentialLocatorRef } from "./credentialLocatorStore";
 import type { CredentialMappingKind } from "./credentialMappingRepository";
 
 /**
@@ -37,7 +38,7 @@ export type ReserveCredentialArgs = Readonly<{
    */
   passwordVerifier?: string;
   /** Every locator of the operation. Written on the coordinator row only. */
-  locators?: readonly unknown[];
+  locators?: readonly CredentialLocatorRef[];
   /** Written on non-coordinator rows, pointing back at the coordinator. */
   coordinatorLocator?: string;
   /**
@@ -81,12 +82,26 @@ export interface CredentialMappingStore {
    */
   reserve(args: ReserveCredentialArgs): void;
 
-  /** Promotes a reservation to the live mapping. Keyed on `operationId`. */
+  /**
+   * Promotes a reservation to the live mapping.
+   *
+   * Bound by `operationId`, a constant-time `callerToken` comparison **and**
+   * the reservation's own `candidateUserId` — the same three-way binding
+   * `cancel` uses, and for the same reason: `operationId` may appear in
+   * unauthenticated logs, so a write conditioned on knowing it alone would let
+   * a logged value promote somebody's reservation onto an attacker's `userId`.
+   *
+   * Not "absent is success": a reservation that is gone or that names a
+   * different operation is a saga that cannot complete, and it raises
+   * `ConflictError`. Re-running the phase against a row this same operation has
+   * already activated *is* success, so retries stay idempotent.
+   */
   activate(
     kind: CredentialMappingKind,
     hmac: string,
     operationId: string,
     userId: string,
+    callerToken: string,
   ): void;
 
   /**
@@ -121,7 +136,8 @@ export interface CredentialMappingStore {
    * `changeState` / `changeOrigin`, and in the same transaction resets
    * `failedAttempts` to 0 and moves `nextAttemptAllowedAt` into the past — the
    * escape hatch out of throttling. Passes **only** while `changeState` is
-   * `'advanced'`.
+   * `'advanced'`; a predicate that matches nothing raises `ConflictError`
+   * rather than reporting a promotion that did not happen.
    */
   promote(credentialId: CredentialId, operationId: string): void;
 

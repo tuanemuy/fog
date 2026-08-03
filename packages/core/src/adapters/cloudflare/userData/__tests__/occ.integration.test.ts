@@ -62,6 +62,43 @@ describe("DO-side OCC", () => {
     expect(error?.message).toContain("memo m1");
   });
 
+  it("answers a row that does not exist the same way as a stale version", async () => {
+    const outcome = await fresh(({ sql }) => {
+      sql.exec(MEMO_INSERT, "present", "first", 0);
+      const attempt = (id: string, expected: number) => {
+        try {
+          saveMemo(sql, id, "next", expected);
+          return "matched";
+        } catch (caught) {
+          return caught instanceof ConflictError
+            ? `${caught.code}:${caught.message}`
+            : `unexpected:${String(caught)}`;
+        }
+      };
+      return {
+        missing: attempt("absent", 0),
+        stale: attempt("present", 9),
+      };
+    });
+    // AC-6 asks that the two are not *confused*, which they are not: nothing
+    // here infers an outcome from another statement. It does not ask that they
+    // be told apart, and they deliberately are not — see `sql/occ.ts` for why a
+    // second read to publish the distinction buys no caller anything. Pinning
+    // the equality is what stops a later change from adding a `NotFoundError`
+    // arm without noticing that it changes a documented contract.
+    expect(outcome.missing).toBe(
+      "OPTIMISTIC_LOCK_FAILURE:Optimistic lock failure while saving memo absent",
+    );
+    expect(outcome.stale).toBe(
+      "OPTIMISTIC_LOCK_FAILURE:Optimistic lock failure while saving memo present",
+    );
+    // Identical but for the subject the caller named — the outcome carries no
+    // trace of which of the two conditions produced it.
+    expect(outcome.missing.replace("absent", "X")).toBe(
+      outcome.stale.replace("present", "X"),
+    );
+  });
+
   it("does not read another statement's success as its own", async () => {
     // The shape #26 was about: two guarded writes in one transaction, one of
     // which matches. A judgement taken from the transaction rather than from

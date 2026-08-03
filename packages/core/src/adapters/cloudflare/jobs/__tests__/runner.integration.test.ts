@@ -2,11 +2,14 @@ import type { DurableObjectState, SqlStorage } from "@cloudflare/workers-types";
 import { ConflictError } from "@repo/core/application/errors";
 import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
 import type { Logger } from "@repo/core/application/ports/logger";
-import { DEFAULT_MAX_ATTEMPTS } from "@repo/core/lib/jobBudgets";
+import { backoffMs, DEFAULT_MAX_ATTEMPTS } from "@repo/core/lib/jobBudgets";
 import type { JobKind } from "@repo/core/lib/jobKind";
 import { describe, expect, it } from "vitest";
 import { inUserData } from "../../__tests__/doHarness";
-import { assertNoForbiddenValue } from "../../__tests__/forbiddenValues";
+import {
+  assertNoForbiddenValue,
+  FORBIDDEN_VALUES,
+} from "../../__tests__/forbiddenValues";
 import { runMigrationGate } from "../../schema/gate";
 import { USER_DATA_CODE_VERSION, USER_DATA_STEPS } from "../../schema/userData";
 import type {
@@ -80,6 +83,9 @@ function rows(sql: SqlStorage): JobRow[] {
 }
 
 const done: JobHandler<UserDataJobContext> = async () => ({ kind: "done" });
+
+/** The routing hmac from the shared list — a value no log line may contain. */
+const FORBIDDEN_HMAC = FORBIDDEN_VALUES[3] as string;
 
 describe("job runner", () => {
   it("runs a due job and marks it done", async () => {
@@ -155,12 +161,27 @@ describe("job runner", () => {
       const failing: JobHandler<UserDataJobContext> = async () => {
         throw new ConflictError("OPTIMISTIC_LOCK_FAILURE", "conflict");
       };
-      const attempts: (number | null)[] = [];
+      // Each round is a wake-up an hour apart, which is past every backoff the
+      // schedule can produce — so the row is due every time and the only thing
+      // that ends the sequence is the attempt limit.
+      const rounds: {
+        now: number;
+        attempt: number | null;
+        nextRunAt: number | null;
+        status: string | null;
+      }[] = [];
       for (let i = 0; i < DEFAULT_MAX_ATTEMPTS + 1; i += 1) {
-        await run({ "purge-trash": failing }, 1000 + i * 1_000_000);
-        attempts.push(rows(sql)[0]?.attempt ?? null);
+        const now = 1000 + i * 1_000_000;
+        await run({ "purge-trash": failing }, now);
+        const row = rows(sql)[0];
+        rounds.push({
+          now,
+          attempt: row?.attempt ?? null,
+          nextRunAt: row?.next_run_at ?? null,
+          status: row?.status ?? null,
+        });
       }
-      return { attempts, row: rows(sql)[0] };
+      return { rounds, row: rows(sql)[0] };
     });
     // The conflict is not swallowed: it ends up in `terminal_reason` as the
     // failure's identity, with no message attached.
@@ -170,6 +191,37 @@ describe("job runner", () => {
     );
     expect(result.row?.next_run_at).toBeNull();
     expect(result.row?.completed_at).not.toBeNull();
+
+    // `attempt` counts up one per failure and stops at the limit, where the
+    // row goes terminal rather than being rescheduled a ninth time.
+    expect(result.rounds.map((round) => round.attempt)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 7, 7,
+    ]);
+    expect(result.rounds.map((round) => round.status)).toEqual([
+      "pending",
+      "pending",
+      "pending",
+      "pending",
+      "pending",
+      "pending",
+      "pending",
+      "poison",
+      "poison",
+    ]);
+    // The delay before the next wake-up is `backoffMs(attempt)` — computed
+    // from *this* row's attempt count, not from a constant. Asserting the
+    // schedule rather than "it grew" is what makes passing the wrong argument
+    // (which would pin every round at `backoffMs(1)`) visible.
+    const scheduled = result.rounds
+      .filter((round) => round.nextRunAt !== null)
+      .map((round) => (round.nextRunAt ?? 0) - round.now);
+    expect(scheduled).toEqual(
+      [1, 2, 3, 4, 5, 6, 7].map((attempt) => backoffMs(attempt)),
+    );
+    // …and the schedule the constants produce is strictly increasing here, so
+    // the equality above is not satisfiable by a fixed delay.
+    expect(scheduled).toEqual([...scheduled].sort((a, b) => a - b));
+    expect(new Set(scheduled).size).toBe(scheduled.length);
   });
 
   it("poisons an unregistered kind instead of looping on it", async () => {
@@ -274,10 +326,15 @@ describe("job runner", () => {
   });
 
   it("keeps PII and reusable secrets out of terminal_reason and the log", async () => {
+    // The `operation_key` a `send-mail` row carries embeds the canonical
+    // address's full-length HMAC, so the key itself is one of the values that
+    // may not be logged — which is why the failing job below is enqueued under
+    // exactly that shape rather than under a neutral one.
+    const operationKey = `send-mail:email:${FORBIDDEN_HMAC}:118`;
     const result = await harness(async ({ sql, run, lines }) => {
       enqueueJob(sql, 0, {
         kind: "purge-trash",
-        operationKey: "k",
+        operationKey,
         payload: {},
         nextRunAt: 1000,
       });
@@ -294,9 +351,15 @@ describe("job runner", () => {
     });
     assertNoForbiddenValue([result.reason]);
     expect(result.reason).toBe("ConflictError:UNIQUE_VIOLATION");
-    // The logger is a different matter: the raw cause is deliberately kept
-    // server-side for triage, so only `terminal_reason` is asserted clean.
+    // The log obeys the same rule as `terminal_reason`, and used to not: it
+    // carried the whole `operation_key` and the raw exception. Both are
+    // projected now — a correlation digest and the failure's identity.
+    //
+    // Positive control, not decoration: `assertNoForbiddenValue` over an empty
+    // array passes, so the claim below is only worth anything once the runner
+    // is known to have written something.
     expect(result.lines.length).toBeGreaterThan(0);
+    assertNoForbiddenValue(result.lines, [operationKey]);
   });
 
   it("prunes terminal rows at the end of a wake-up", async () => {

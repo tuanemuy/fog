@@ -60,7 +60,7 @@ Each Worker has its own wrangler config, and the two secret sets do not overlap 
 
 To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — but budget for revisiting the port contracts too, since the domain's repository ports are synchronous.
 
-Operational guidance: [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
+Operational guidance lives in the "Development commands" and "Deployment" sections below. [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) still describes the retired D1 + Queues runtime and is being rewritten in [#38](https://github.com/tuanemuy/fog/issues/38) — read it for background only.
 
 ## Requirements
 
@@ -89,14 +89,16 @@ pnpm build
 
 `pnpm start` (`wrangler dev` against the build output) and `pnpm preview` (`vite preview`) both serve that build; each runs the request Worker alone, so run `pnpm dev:state` alongside them for flows that reach a Durable Object.
 
-See [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) for deployment and secrets.
+Both wrangler configs set `APP_URL` to `http://localhost:3000` — `pnpm dev`'s port, and the base for canonical URLs and for the password-reset link the state Worker mails. `pnpm start` / `pnpm dev:state` serve on wrangler's own `8787`, so edit `apps/web/wrangler.toml` and `apps/web/wrangler.state.toml` together if you develop through those.
+
+Deployment is in "Deployment" below; which secret belongs to which Worker is in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example).
 
 ## Development commands
 
 ```bash
 pnpm dev                         # alias of pnpm dev:cf
 pnpm dev:cf                      # vite dev (request Worker + state Worker on workerd)
-pnpm dev:state                   # state Worker on its own (wrangler dev -c wrangler.state.toml)
+pnpm dev:state                   # state Worker on its own (builds dist/state, then wrangler dev -c wrangler.state.toml)
 
 pnpm build                       # alias of pnpm build:cf
 pnpm build:cf                    # two stages: dist/server (+ dist/client), then dist/state

@@ -8,11 +8,13 @@ import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
 import type { Logger } from "@repo/core/application/ports/logger";
 import type { MailSender } from "@repo/core/domain/identity/ports/mailSender";
 import type { Email } from "@repo/core/domain/identity/valueObject";
+import { RESET_REQUEST_WINDOW_MS } from "@repo/core/lib/jobBudgets";
 import { describe, expect, it } from "vitest";
 import { inIdentityDirectory } from "../../__tests__/doHarness";
 import { assertNoForbiddenValue } from "../../__tests__/forbiddenValues";
 import { encryptCanonical } from "../../identityDirectory/canonicalCipher";
 import * as facade from "../../identityDirectory/facade";
+import { mintResetTokenMaterial } from "../../identityDirectory/resetTokenCrypto";
 import { createIdentityDirectoryUnitOfWorkProvider } from "../../identityDirectory/unitOfWork";
 import { runMigrationGate } from "../../schema/gate";
 import {
@@ -35,6 +37,9 @@ import type { JobRow } from "../table";
  */
 
 const NOW = 1_800_000_000_000;
+const WINDOW_OF_NOW = Math.floor(NOW / RESET_REQUEST_WINDOW_MS);
+/** The first instant of the window after `NOW`. */
+const NEXT_WINDOW = (WINDOW_OF_NOW + 1) * RESET_REQUEST_WINDOW_MS;
 const BUCKET = "dir:g1:b0007";
 
 const MAIL_KEYRING: Keyring = requireKeyring(
@@ -92,7 +97,7 @@ type Io = {
   ctx: DurableObjectState;
   sent: Sent[];
   lines: string[];
-  request: (kind: "email" | "sso", hmac: string, now?: number) => void;
+  request: (kind: "email" | "sso", hmac: string, now?: number) => Promise<void>;
   drain: (now?: number) => Promise<void>;
 };
 
@@ -109,18 +114,21 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
     );
     const { sender, sent } = recordingMailSender();
     const { logger, lines } = recordingLogger();
-    const uow = createIdentityDirectoryUnitOfWorkProvider(
-      ctx,
-      { now: () => new Date(NOW) },
-      1,
-    );
+    const uow = createIdentityDirectoryUnitOfWorkProvider(ctx, {
+      now: () => new Date(NOW),
+    });
     return fn({
       sql,
       ctx,
       sent,
       lines,
-      request: (kind, hmac, now = NOW) =>
-        facade.requestPasswordReset({ uow }, kind, hmac, now),
+      // Mirrors the RPC entry: the token is derived outside the transaction and
+      // arrives as a value, so the suite exercises the same composition the DO
+      // class does rather than a shortcut only the test can take.
+      request: async (kind, hmac, now = NOW) => {
+        const material = await mintResetTokenMaterial(RESET_KEYRING);
+        facade.requestPasswordReset({ uow }, kind, hmac, now, material);
+      },
       drain: (now = NOW) =>
         runDueJobs(
           {
@@ -186,6 +194,15 @@ function jobs(sql: SqlStorage): JobRow[] {
     .toArray();
 }
 
+function tokenHashes(sql: SqlStorage): string[] {
+  return sql
+    .exec<{ token_hash: string }>(
+      "SELECT token_hash FROM password_reset_tokens ORDER BY token_hash",
+    )
+    .toArray()
+    .map((row) => row.token_hash);
+}
+
 function tokenCount(sql: SqlStorage): number {
   return (
     sql
@@ -204,7 +221,7 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      request("email", "aa".repeat(32));
+      await request("email", "aa".repeat(32));
       const beforeRun = jobs(sql);
       await drain();
       return { beforeRun, after: jobs(sql), sent };
@@ -217,9 +234,11 @@ describe("send-mail", () => {
     // `{routingGeneration}.{bucketIndex}.{hmac}` — routable back to this bucket
     // without the routing secret, which is not distributed to the state Worker.
     expect(result.sent[0]?.resetToken).toMatch(/^1\.7\.[0-9a-f]{64}$/);
-    // Derived from the `operationKey`, so a redelivery presents the same key.
+    // Derived from the `operationKey`, so a redelivery presents the same key —
+    // and the request window is part of it, so the *next* window's request is
+    // not deduplicated against this one on the provider's side.
     expect(result.sent[0]?.idempotencyKey).toBe(
-      `send-mail:email:${"aa".repeat(32)}`,
+      `send-mail:email:${"aa".repeat(32)}:${WINDOW_OF_NOW}`,
     );
   });
 
@@ -232,7 +251,7 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      request("email", "bb".repeat(32));
+      await request("email", "bb".repeat(32));
       const payload = jobs(sql)[0]?.payload ?? "";
       await drain();
       return { payload, token: sent[0]?.resetToken ?? "" };
@@ -256,7 +275,7 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      request("email", "11".repeat(32));
+      await request("email", "11".repeat(32));
       const rows = jobs(sql);
       await drain();
       return { rows, tokens: tokenCount(sql), sent: sent.length };
@@ -264,7 +283,7 @@ describe("send-mail", () => {
 
     const unregistered = await harness(
       async ({ sql, request, drain, sent }) => {
-        request("email", "22".repeat(32));
+        await request("email", "22".repeat(32));
         const rows = jobs(sql);
         await drain();
         return { rows, tokens: tokenCount(sql), sent: sent.length };
@@ -282,7 +301,7 @@ describe("send-mail", () => {
         canonical: "sso-user@example.com",
         passwordVerifier: null,
       });
-      request("email", "33".repeat(32));
+      await request("email", "33".repeat(32));
       const rows = jobs(sql);
       await drain();
       return { rows, tokens: tokenCount(sql), sent: sent.length };
@@ -300,7 +319,7 @@ describe("send-mail", () => {
         "UPDATE credential_mappings SET last_reset_requested_at = ?",
         NOW,
       );
-      request("email", "44".repeat(32));
+      await request("email", "44".repeat(32));
       const rows = jobs(sql);
       await drain();
       return { rows, tokens: tokenCount(sql), sent: sent.length };
@@ -346,18 +365,89 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      for (let i = 0; i < 5; i += 1) request("email", "55".repeat(32));
+      for (let i = 0; i < 5; i += 1) await request("email", "55".repeat(32));
       const before = jobs(sql);
       await drain();
       // `send-mail` is not a re-arming kind, so the surviving `done` row is
       // what refuses the repeat — reviving it would make wake-ups scale with
       // request count.
-      for (let i = 0; i < 5; i += 1) request("email", "55".repeat(32));
+      for (let i = 0; i < 5; i += 1) await request("email", "55".repeat(32));
       return { before, after: jobs(sql) };
     });
     expect(result.before).toHaveLength(1);
     expect(result.after).toHaveLength(1);
     expect(result.after[0]?.status).toBe("done");
+  });
+
+  it("delivers again in the next window, and never issues a token it will not send", async () => {
+    const result = await harness(async ({ sql, request, drain, sent }) => {
+      await insertMapping(sql, {
+        kind: "email",
+        hmac: "99".repeat(32),
+        credentialId: "cred-1",
+        canonical: "user@example.com",
+        passwordVerifier: "verifier",
+      });
+      await request("email", "99".repeat(32));
+      await drain();
+      const first = {
+        tokens: tokenHashes(sql),
+        sent: sent.map((entry) => entry.resetToken),
+      };
+
+      // A legitimate second request, once the window has turned. This is the
+      // path that used to fail: the throttle opened, a fresh token replaced the
+      // live one, and the enqueue then collided with the finished row — so the
+      // user's working link was destroyed and no replacement was ever sent.
+      await request("email", "99".repeat(32), NEXT_WINDOW);
+      await drain(NEXT_WINDOW);
+      return {
+        first,
+        second: {
+          tokens: tokenHashes(sql),
+          sent: sent.map((entry) => entry.resetToken),
+        },
+        rows: jobs(sql),
+      };
+    });
+
+    expect(result.first.sent).toHaveLength(1);
+    expect(result.first.tokens).toHaveLength(1);
+    // A new window is a new row, so the send actually happens.
+    expect(result.rows).toHaveLength(2);
+    expect(result.second.sent).toHaveLength(2);
+    // The replacement token is what the second mail carries: issuing and
+    // delivering share one window, so a token is never minted for a mail that
+    // will not go out — nor a mail sent for a token that no longer exists.
+    expect(result.second.tokens).toHaveLength(1);
+    expect(result.second.tokens).not.toEqual(result.first.tokens);
+    expect(result.second.sent[1]).not.toBe(result.second.sent[0]);
+  });
+
+  it("withholds a token when the same window is asked twice", async () => {
+    const result = await harness(async ({ sql, request, drain, sent }) => {
+      await insertMapping(sql, {
+        kind: "email",
+        hmac: "ab".repeat(32),
+        credentialId: "cred-1",
+        canonical: "user@example.com",
+        passwordVerifier: "verifier",
+      });
+      await request("email", "ab".repeat(32));
+      await drain();
+      const issued = tokenHashes(sql);
+      // Half a window later: refused, and — the point of the assertion — the
+      // live link the first mail carried is still the one on file.
+      await request(
+        "email",
+        "ab".repeat(32),
+        NOW + RESET_REQUEST_WINDOW_MS / 2,
+      );
+      await drain(NOW + RESET_REQUEST_WINDOW_MS / 2);
+      return { issued, still: tokenHashes(sql), sent: sent.length };
+    });
+    expect(result.sent).toBe(1);
+    expect(result.still).toEqual(result.issued);
   });
 
   it("is idempotent when the same row is redelivered", async () => {
@@ -369,7 +459,7 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      request("email", "66".repeat(32));
+      await request("email", "66".repeat(32));
       await drain();
       // Stands in for a DO reset between the send and the row settling.
       sql.exec("UPDATE jobs SET status='pending', next_run_at=?", NOW);
@@ -391,7 +481,7 @@ describe("send-mail", () => {
         canonical: "user@example.com",
         passwordVerifier: "verifier",
       });
-      request("email", "77".repeat(32));
+      await request("email", "77".repeat(32));
       sql.exec("UPDATE password_reset_tokens SET expires_at = ?", NOW - 1);
       await drain();
       return { sent: sent.length, status: jobs(sql)[0]?.status };
@@ -409,7 +499,7 @@ describe("send-mail", () => {
         canonical: null,
         passwordVerifier: "verifier",
       });
-      request("email", "88".repeat(32));
+      await request("email", "88".repeat(32));
       await drain();
       return lines;
     });

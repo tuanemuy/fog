@@ -1,4 +1,7 @@
-import type { DirectoryRoutingKeyring } from "@repo/core/application/di/secrets";
+import type {
+  DirectoryRoutingKeyring,
+  KeyringEntry,
+} from "@repo/core/application/di/secrets";
 import type { DirectoryLocator } from "@repo/core/lib/directoryLocator";
 
 /**
@@ -26,8 +29,14 @@ export interface DirectoryLocatorResolver {
    * keyring still carries it. Reads *and* uniqueness registration consult every
    * generation, because during a rotation a credential legitimately has rows in
    * two buckets.
+   *
+   * **Non-empty**, and callers rely on it: `locators[0]` is the active
+   * generation and every write goes there. The guarantee comes from `Keyring`,
+   * whose only construction site rejects a keyring with no active generation.
    */
-  forCanonical(canonical: string): Promise<readonly DirectoryLocator[]>;
+  forCanonical(
+    canonical: string,
+  ): Promise<readonly [DirectoryLocator, ...DirectoryLocator[]]>;
 }
 
 export function createDirectoryLocator(
@@ -51,31 +60,42 @@ export function createDirectoryLocator(
     return key;
   }
 
+  async function locatorFor(
+    entry: KeyringEntry,
+    canonical: string,
+  ): Promise<DirectoryLocator> {
+    const signature = new Uint8Array(
+      await crypto.subtle.sign(
+        "HMAC",
+        await keyFor(entry.generation, entry.key),
+        encoder.encode(canonical),
+      ),
+    );
+    const hmac = [...signature]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const bucketIndex =
+      (((signature[0] ?? 0) << 8) | (signature[1] ?? 0)) % entry.bucketCount;
+    return {
+      generation: entry.generation,
+      bucketIndex,
+      hmac,
+      doName: `dir:g${entry.generation}:b${bucketIndex}`,
+    };
+  }
+
   return {
     async forCanonical(
       canonical: string,
-    ): Promise<readonly DirectoryLocator[]> {
-      const locators: DirectoryLocator[] = [];
-      for (const entry of keyring.entries) {
-        const signature = new Uint8Array(
-          await crypto.subtle.sign(
-            "HMAC",
-            await keyFor(entry.generation, entry.key),
-            encoder.encode(canonical),
-          ),
-        );
-        const hmac = [...signature]
-          .map((byte) => byte.toString(16).padStart(2, "0"))
-          .join("");
-        const bucketIndex =
-          (((signature[0] ?? 0) << 8) | (signature[1] ?? 0)) %
-          entry.bucketCount;
-        locators.push({
-          generation: entry.generation,
-          bucketIndex,
-          hmac,
-          doName: `dir:g${entry.generation}:b${bucketIndex}`,
-        });
+    ): Promise<readonly [DirectoryLocator, ...DirectoryLocator[]]> {
+      // Destructured rather than looped over from index 0, so the non-empty
+      // tuple survives into the result without a cast.
+      const [active, ...previous] = keyring.entries;
+      const locators: [DirectoryLocator, ...DirectoryLocator[]] = [
+        await locatorFor(active, canonical),
+      ];
+      for (const entry of previous) {
+        locators.push(await locatorFor(entry, canonical));
       }
       return locators;
     },

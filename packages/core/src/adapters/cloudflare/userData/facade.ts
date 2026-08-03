@@ -1,14 +1,19 @@
+import type {
+  InitializeAccountArgs,
+  RecordCredentialLocatorArgs,
+  VerifyLoginArgs,
+} from "@repo/core/application/di/facades";
 import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
 } from "@repo/core/application/errors";
-import type { LocatorRef } from "@repo/core/application/execution/jobs";
 import type {
   UnitOfWorkProvider,
   UserDataUnitOfWorkContext,
 } from "@repo/core/application/execution/unitOfWork";
+import type { CurrentUserView } from "@repo/core/application/identity/view";
 import { User } from "@repo/core/domain/identity/entity";
 import type { AccountState } from "@repo/core/domain/identity/ports/accountStore";
 import {
@@ -48,49 +53,19 @@ import { CHUNK_BUDGETS } from "@repo/core/lib/jobBudgets";
  *    and *that reconstruction is* the second of the two validation points.
  * 2. **No raw SQL.** Everything goes through the unit of work, which is what
  *    makes the set of in-transaction writes countable.
+ *
+ * ## Where the argument and result shapes live
+ *
+ * Not here. `application/di/facades.ts` declares them alongside the
+ * `UserDataFacade` interface these functions realise, because they travel on
+ * that interface into `RequestContainer` and from there into the usecases —
+ * and a usecase written in a type this module owns is a reversed dependency
+ * (ADR-071). `CurrentUserView` is likewise the application's outbound DTO,
+ * which this entry projects onto rather than restating.
  */
 
 export type UserDataFacadeDeps = Readonly<{
   uow: UnitOfWorkProvider<UserDataUnitOfWorkContext>;
-}>;
-
-export type CurrentUserPayload = Readonly<{
-  userId: string;
-  credentials: readonly {
-    credentialId: string;
-    kind: "email" | "sso";
-    label: string;
-    usableForLogin: boolean;
-  }[];
-  trashRetentionDays: number;
-}>;
-
-export type InitializeAccountArgs = Readonly<{
-  userId: string;
-  operationId: string;
-  payloadDigest: string;
-  callerToken: string;
-  targetLocators: readonly LocatorRef[];
-}>;
-
-export type VerifyLoginArgs = Readonly<{
-  userId: string;
-  credentialId: string;
-  credentialVersion: number;
-}>;
-
-export type RecordCredentialLocatorArgs = Readonly<{
-  operationId: string;
-  payloadDigest: string;
-  callerToken: string;
-  credentialId: string;
-  kind: "email" | "sso";
-  hmac: string;
-  generation: number;
-  bucketIndex: number;
-  credentialVersion: number;
-  usableForLogin: boolean;
-  label: string;
 }>;
 
 /**
@@ -122,7 +97,7 @@ export function getCurrentUser(
   deps: UserDataFacadeDeps,
   userId: string,
   epoch: number,
-): CurrentUserPayload {
+): CurrentUserView {
   const id = UserId.create(userId);
   return deps.uow.run((ctx) => {
     requireActiveSession(ctx.accountStore.find(), epoch);
@@ -130,7 +105,7 @@ export function getCurrentUser(
     if (found === null) {
       throw new NotFoundError("USER_NOT_FOUND", `User not found: ${id}`);
     }
-    return toCurrentUserPayload(found.entity);
+    return toCurrentUserView(found.entity);
   });
 }
 
@@ -140,7 +115,7 @@ export function changeTrashRetentionDays(
   epoch: number,
   days: number,
   now: number,
-): CurrentUserPayload {
+): CurrentUserView {
   UserId.create(userId);
   const retentionDays = TrashRetentionDays.create(days);
 
@@ -157,7 +132,7 @@ export function changeTrashRetentionDays(
     );
     // Identity, not equality: re-posting the current value must not burn an OCC
     // round trip against a concurrent writer.
-    if (next === found.entity) return toCurrentUserPayload(found.entity);
+    if (next === found.entity) return toCurrentUserView(found.entity);
 
     ctx.userSettingsRepository.save(next, found.expectedVersion);
     // Recomputing every trashed item's `purge_after` belongs to the *same*
@@ -177,7 +152,7 @@ export function changeTrashRetentionDays(
       payload: {},
       nextRunAt: now,
     });
-    return toCurrentUserPayload(next);
+    return toCurrentUserView(next);
   });
 }
 
@@ -232,9 +207,7 @@ export function initializeAccount(
       targetLocators: args.targetLocators,
     });
     ctx.accountStore.initialize(args.callerToken, new Date(now));
-    ctx.userSettingsRepository.insert(
-      User.initialize({ id, credentials: [] }, new Date(now)),
-    );
+    ctx.userSettingsRepository.insert(User.initialize({ id }, new Date(now)));
   });
 }
 
@@ -353,7 +326,7 @@ export function recordCredentialLocator(
   });
 }
 
-function toCurrentUserPayload(user: User): CurrentUserPayload {
+function toCurrentUserView(user: User): CurrentUserView {
   return {
     userId: user.id,
     credentials: user.credentials.map((credential) => ({

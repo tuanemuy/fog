@@ -92,6 +92,7 @@ identity の `User` のユーザー単位設定。**単一行のテーブルで�
 | `updated_at` | INTEGER | NOT NULL |
 
 - `trash_retention_days` の変更は、**変更したのと同一トランザクションでゴミ箱内の全項目の `purge_after` を再計算する**（後述の `memos` / `topics` / `documents`）
+- **この再計算の置き場は暫定である。** #37 の実装では UoW コンテキストのメソッド `recalcTrashPurgeAfter(retentionDays, limit)` として持っている（`.thread/37/adr.md` ADR-033）。**集約テーブルを一括更新するのに集約リポジトリを経由しない**という点で本来の形ではなく、#2〜#6 が `memos` / `topics` / `documents` のリポジトリを作るまでの仮置きである。移設先は各ドメインの `recalculatePurgeAfter` にあたる操作で、**移設のときは UoW コンテキストから `recalcTrashPurgeAfter` を外す** — 残したまま足すと同じ列に書き込み口が2つでき、「非集約ストアへの書き込み口の全数」（後述の `jobs` / `operations` の規則と同じ数え方）が壊れる
 - **件数が大きい場合はチャンク分割へ落ちる**（`purge-trash` の再計算フェーズ。後述の `jobs`）。**そのときの作業述語は自己消尽する形で書く** — `WHERE status = 'trashed' AND purge_after <> <新しい trash_retention_days で算出した値>`（＝まだ再計算していない行）とし、更新した行がその場で述語から外れるようにする。**述語が単調に縮むことが、`purge-trash` が永続カーソルを持たずに済む唯一の根拠である**（後述の `migration_progress`）。素朴に `WHERE status = 'trashed'` で回すと述語が縮まず、中断のたびに先頭へ戻って完了しない。**自己消尽しない UPDATE を `purge-trash` に足してはならない** — 足す必要が生じたら、そのジョブは永続カーソルを持つ側へ移す
 
 ### credential_locators
@@ -624,7 +625,17 @@ DO ごとのメタ情報。単一行。
 
 ### password_reset_tokens
 
-`PasswordResetTokenPort`（issue / verifyAndConsume）のアダプター実装が使う。**生トークンは保存せず、`token_id` から導出したハッシュを保存する**（DB 漏えい時にトークンが使えないようにする）。
+`PasswordResetTokenPort`（issue / verifyAndConsume）のアダプター実装が使う。**生トークンは保存せず、メール本文が運ぶ秘密の SHA-256 だけを保存する**（DB 漏えい時にトークンが使えないようにする）。
+
+導出鎖は3段で、実装はこの1本に閉じている（`packages/core/src/adapters/cloudflare/identityDirectory/resetTokenCrypto.ts`。`.thread/37/adr.md` ADR-042）:
+
+```
+token_id  --HMAC(IDENTITY_RESET_TOKEN_KEY[token_key_generation])-->  secret
+secret    --SHA-256--------------------------------------------->  token_hash（行に載るのはこれだけ）
+secret    --ルーティング座標を前置---------------------------->  メールのリンク
+```
+
+**`token_id` から導出したハッシュを保存するのではない。** 行に載る `token_hash` の原像は `secret` であって `token_id` ではないので、**`token_id` を提示しても照合は成立しない**（行と同じ列に並んでいる値が鍵になってしまうため、この区別が保存形式の要点である）。DB ダンプからリンクを再現するには鍵が要り、鍵は state Worker のシークレットで DB には無い。ハッシュから戻すには SHA-256 の原像が要る。
 
 | カラム | 型 | 制約 |
 |---|---|---|
@@ -646,7 +657,7 @@ DO ごとのメタ情報。単一行。
 | `prt_credential_idx` | (`credential_id`) | クレデンシャル単位の一括無効化・削除 |
 | `prt_expires_idx` | (`expires_at`) | `sweep-reset-tokens` の期限切れ行の掃除 |
 
-- `verifyAndConsume` は `token_hash` 一致・`used_at IS NULL`・`expires_at > now` を満たす行を条件付き UPDATE（`used_at = now`）で消費し、0 行更新なら null を返す（並行消費のレースも 1 回に収束）
+- `verifyAndConsume` は `token_hash` 一致・`used_at IS NULL`・`expires_at > now` を満たす行を条件付き UPDATE（`used_at = now`）で消費し、0 行更新なら null を返す（並行消費のレースも 1 回に収束）。**照合する `token_hash` は「リンクから取り出した `secret` の SHA-256」であり、リンクそのものでも `token_id` でもない。** WebCrypto は非同期でポートは同期なので、この算出は DO の RPC エントリ側（トランザクションを開く前）で済ませ、ポートには文字列で渡す
 - OCC の `version` は持たない（集約ではなくアダプター内部のストア）
 - **書き込み口は UoW コンテキストの `resetTokenStore` だけである**（ドメイン側のポート名は `PasswordResetTokenPort` で、同じものを指す）。発行・消費・一括削除・期限切れ掃除の4つが書き込み箇所であり、これが全数である
 - **削除の射程は経路ごとに違う。** クレデンシャル変更の開始時は「未使用行を全削除し、残る全行の `change_auth_token` を `NULL` にする」の2段、SSO 連携解除と退会はその `credential_id` の行を `used_at` の有無を問わず全削除である
@@ -693,6 +704,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 - **スニペットは正規化前の原文から組み立てる。** SQL の `snippet()` / `highlight()` には依存しない — workerd で使えるかが未確認であり、索引は正規化後のテキストを持つのに対し利用者に見せるスニペットは原文でなければならないためである。原文は本体テーブルから引き、grapheme 単位でマッチ位置を割り出す
 - **順位付けは `bm25` で行い、タイトルを本文より重く見る重み付けを行う。裏付けは実測**（公式ドキュメントに記載は無い）。**重みとページサイズの実値は本ファイルに固定しない** — 実装側が持ち、#37 が実環境で再検証して結果を spec へ反映する
 - トークナイザや正規化規則を変えたときの全件再構築は migration の `reindex` ジョブが担う（次節）
+- **ただし `reindex` の射程はトークナイザの変更に限る。** 入力は `search_entries.title` / `.body` で、これらは書かれた当時の規則で正規化済みのテキストである。したがって再投入は**古い正規化を再現するだけ**であり、正規化規則の変更は `reindex` では反映されない。反映するには原文（`memos.body` / `documents.title` / `documents.body`）から projection をやり直す必要があり、それらのリポジトリを持つ **#2〜#6** の担当である（`packages/core/src/adapters/cloudflare/jobs/handlers/reindex.ts`）
 
 ### #37 の再確認結果（2026-08-03 実測）
 

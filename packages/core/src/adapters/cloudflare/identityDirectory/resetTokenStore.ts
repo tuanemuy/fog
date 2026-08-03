@@ -2,6 +2,7 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type {
   ConsumedResetToken,
   PasswordResetTokenPort,
+  ResetTokenIssueMaterial,
 } from "@repo/core/domain/identity/ports/passwordResetTokenPort";
 import type { CredentialId } from "@repo/core/domain/identity/valueObject";
 import { one, run, type Sql } from "../sql/exec";
@@ -9,54 +10,43 @@ import { one, run, type Sql } from "../sql/exec";
 /** Hours, not days: a reset link is a bearer credential. */
 const RESET_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
-const TOKEN_BYTES = 16;
+const CHANGE_AUTH_TOKEN_BYTES = 16;
 
 function randomHex(byteLength: number): string {
-  // Called per issue / per consume, always inside a handler — never at module
-  // scope, where workerd refuses to produce randomness at all.
+  // Called per consume, always inside a handler — never at module scope, where
+  // workerd refuses to produce randomness at all.
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
- * A stored token's lookup key.
- *
- * FNV-1a rather than SHA-256 because the port is synchronous and WebCrypto's
- * digest is not. That is acceptable here only because the input is 128 bits of
- * cryptographic randomness with no structure to guess: the hash is a lookup
- * key, and pre-image resistance is supplied by the token's own entropy rather
- * than by the function. Do not reuse this for anything derived from user input.
- */
-function tokenHash(token: string): string {
-  let hash = 0x811c9dc5;
-  let secondary = 0x01000193;
-  for (let i = 0; i < token.length; i += 1) {
-    hash ^= token.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-    secondary ^= token.charCodeAt(token.length - 1 - i);
-    secondary = Math.imul(secondary, 0x85ebca6b) >>> 0;
-  }
-  return `${hash.toString(16).padStart(8, "0")}${secondary.toString(16).padStart(8, "0")}`;
-}
-
-/**
  * `password_reset_tokens`.
  *
- * The raw token never reaches the table — only a hash of it — so a dump of the
- * database yields no usable link.
+ * **This module derives nothing.** `token_id`, `token_hash` and the key
+ * generation all arrive as arguments, because the derivation is WebCrypto and a
+ * `run()` callback is type-rejected from being asynchronous — so it happens one
+ * level out, in the Durable Object's RPC entry point
+ * (`identityDirectory/resetTokenCrypto.ts`, ADR-042). The same reason
+ * `reserveCredential` takes a sealed canonical rather than a plaintext one.
+ *
+ * What the row therefore holds is `token_id` — an identifier, never accepted as
+ * proof — and `SHA-256` of the secret half of the mailed link. Producing that
+ * secret from the row needs the reset-token keyring, which is not in the
+ * database; producing it from the hash needs a SHA-256 pre-image. Submitting
+ * `token_id` matches nothing.
  *
  * Issuing deletes every unused token for the same credential **in the same
  * transaction**. Without that, an older link keeps working after the user has
  * asked for a new one, which is the whole reason the port says issuing is per
  * credential rather than per request.
  */
-export function createResetTokenStore(
-  sql: Sql,
-  tokenKeyGeneration: number,
-): PasswordResetTokenPort {
+export function createResetTokenStore(sql: Sql): PasswordResetTokenPort {
   return {
-    issue(credentialId: CredentialId, now: Date): string {
-      const tokenId = randomHex(TOKEN_BYTES);
+    issue(
+      credentialId: CredentialId,
+      material: ResetTokenIssueMaterial,
+      now: Date,
+    ): void {
       const timestamp = now.getTime();
 
       run(
@@ -71,22 +61,21 @@ export function createResetTokenStore(
            change_auth_token, consumed_by_operation_id, token_key_generation,
            created_at
          ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
-        tokenId,
-        tokenHash(tokenId),
+        material.tokenId,
+        material.tokenHash,
         credentialId,
         timestamp + RESET_TOKEN_TTL_MS,
-        tokenKeyGeneration,
+        material.tokenKeyGeneration,
         timestamp,
       );
-      return tokenId;
     },
 
     verifyAndConsume(
-      token: string,
+      tokenHash: string,
       now: Date,
       operationId: string,
     ): ConsumedResetToken | null {
-      const changeAuthToken = randomHex(TOKEN_BYTES);
+      const changeAuthToken = randomHex(CHANGE_AUTH_TOKEN_BYTES);
       // One conditional UPDATE, so two concurrent consumptions converge on one
       // winner; zero matched rows means invalid / expired / already used, which
       // are all the same answer to the caller.
@@ -99,7 +88,7 @@ export function createResetTokenStore(
         now.getTime(),
         changeAuthToken,
         operationId,
-        tokenHash(token),
+        tokenHash,
         now.getTime(),
       );
       if (consumed === null) return null;

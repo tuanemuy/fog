@@ -42,7 +42,7 @@
 3. `container.passwordHasher.hash(plainPassword)` で `PasswordHash` を得る（UoW 外で実行）
 4. **認証情報側**でメールの予約を取る（`CredentialMappingRepository.findByEmail(email)` で重複を検証し、`reserveCredential` で予約行を書く）。既に使われていれば `ConflictError("EMAIL_ALREADY_REGISTERED")`
 5. 予約に勝った場合だけ、**ユーザー単位設定側**の `unitOfWorkProvider.run` 内で初期化する:
-   1. `User.registerWithPassword({ id, credential }, now)` で `User` を得る（`credential` は採番済みの `credentialId` と `kind: "email"`、`usableForLogin: true` の要約）
+   1. `User.initialize({ id }, now)` で `User` を得る。**クレデンシャル集合は渡さない** — `credentials` は `CredentialLocatorStore` の射影で、その行は手順7 で書かれるので、この時点では空が正しい（domains/identity.md。`.thread/37/adr.md` ADR-070）
    2. `UserSettingsRepository.insert(user)` で永続化する
 6. 認証情報側の予約を確定させ、パスワードの検証材料を記録する（`activateReservation`）
 7. **ユーザー単位設定側**で保有クレデンシャルの逆引きを記録する（`CredentialLocatorStore.record`。`usableForLogin` / `label` は認証情報側が判定した値を写す）。**この記録が済むまでログインは通らない** — ログインの到達性検査がこのストアを読むためである
@@ -93,7 +93,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 2. **認証情報側**で `CredentialMappingRepository.findBySsoIdentity(provider, providerSubject)` により既存アカウントを検索する。存在すればその `userId` と `isNewUser: false` を返す（ログイン。書き込みなし）
 3. 不在なら **SSO 主体とメールの両方**に予約を取る（`CredentialMappingRepository.findByEmail(email)` でメール重複も検証し、`reserveCredential` を2本走らせる）。**メールの一意性は SSO 登録にも掛かる**。どちらかが既に使われていれば `ConflictError("EMAIL_ALREADY_REGISTERED")` / `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（自動リンクしない。UI はパスワードログインへの導線を示す）
 4. 両方の予約に勝った場合だけ、**ユーザー単位設定側**の `unitOfWorkProvider.run` 内で初期化する:
-   1. `User.registerWithSso({ id, credentials }, now)` で `User` を得る（`credentials` は `kind: "sso"`（`usableForLogin: true`）と `kind: "email"`（**`usableForLogin: false`**。一意性の予約としてだけ置かれ、パスワードの検証材料を持たない）の2件の要約）
+   1. `User.initialize({ id }, now)` で `User` を得る（登録経路によらず同じファクトリで、クレデンシャル集合は渡さない。ADR-070）
    2. `UserSettingsRepository.insert(user)`
 5. 認証情報側の予約を確定させる（`activateReservation`）
 6. **ユーザー単位設定側**で2件の逆引きを記録する（`CredentialLocatorStore.record`。`usableForLogin` は認証情報側の判定をそのまま写すので、メール側は偽になる）
@@ -534,8 +534,7 @@ IdP との認証フロー（リダイレクト・アサーション検証）は 
 3. **認証情報側**で SSO 主体の予約を取る（`reserveCredential`）。既に使われていれば `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（**自分のアカウントで連携済みの場合も同じ**。連携は重複を拒否する）
 4. 認証情報側の予約を確定させる（`activateReservation`）
 5. **ユーザー単位設定側**の `unitOfWorkProvider.run` 内で、同じトランザクションで次を行う:
-   1. `User.addCredential(user, credential, now)` → `UserSettingsRepository.save(user, expectedVersion)`（`credential` は採番済みの `credentialId` と `kind: "sso"`、`usableForLogin: true`、`label` は provider 名）
-   2. `CredentialLocatorStore.record(locator)` で逆引きを記録する。**この記録が済むまでその SSO ではログインできない** — ログインの到達性検査がこのストアを読むためである
+   1. `CredentialLocatorStore.record(locator)` で逆引きを記録する（`credentialId` は採番済み、`kind: "sso"`、`usableForLogin: true`、`label` は provider 名）。**この記録が済むまでその SSO ではログインできない** — ログインの到達性検査がこのストアを読むためである。**`User` 側に `save` は要らない**：`User.credentials` はこのストアの射影であり、集合を書き換える遷移をエンティティは持たない（domains/identity.md。`.thread/37/adr.md` ADR-070）
    3. `updateOperation` で手続きの記録を完了にする
 6. `credentialId` を返す
 
@@ -579,9 +578,8 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
 1. `now` を解決し、`UserId.create(input.userId)` / `CredentialId.create(input.credentialId)` で値オブジェクトを構築する
 2. **ユーザー単位設定側**の `unitOfWorkProvider.run` 内で:
    1. `UserSettingsRepository.find()` で `User` を取得する。不在なら `NotFoundError("USER_NOT_FOUND")`
-   2. **2つの検査をこの順に通す。どちらもドメイン側の権威であり、UI の出し分けには委ねない** — (i) 対象 `credentialId` の要素が存在し `kind: "sso"` であること（`kind: "email"` は `BusinessRuleError`）、(ii) 解除後も `usableForLogin` が真の要素が残ること（残らなければ `BusinessRuleError(LastCredentialRemoval)`）。**(ii) が数えるのは要素数ではなく `usableForLogin` が真である要素の `credentialId` の異なり数である**（SSO 専用アカウントのメール要素を数に入れない。domains/identity.md）
-   3. `User.removeCredential(user, credentialId, now)` → `UserSettingsRepository.save(user, expectedVersion)`
-   4. `CredentialLocatorStore.deleteByCredentialId(credentialId)` で逆引きを消す。**消す前に、その `credentialId` の写像材料を全世代分、`recordOperation` が書く手続きの記録へ退避する**（消した後は認証情報側の行へ辿り着けなくなる。1世代分だけ控えると回収されない世代が残る）
+   2. **2つの検査をこの順に通す。どちらもサーバー側の権威であり、UI の出し分けには委ねない** — (i) 対象 `credentialId` の要素が存在し `kind: "sso"` であること（`kind: "email"` は `BusinessRuleError`）、(ii) 解除後も `usableForLogin` が真の要素が残ること（残らなければ `BusinessRuleError(LastCredentialRemoval)`）。**(ii) の材料は `User.loginCredentialCount` であり、数えるのは要素数ではなく `usableForLogin` が真である要素の `credentialId` の異なり数である**（SSO 専用アカウントのメール要素を数に入れない。domains/identity.md）。**検査はこのユースケースが持つ** — 集合を書く遷移がエンティティに無いので、`removeCredential` のようなメソッドの入口には置けない（ADR-070）
+   3. `CredentialLocatorStore.deleteByCredentialId(credentialId)` で逆引きを消す。**消す前に、その `credentialId` の写像材料を全世代分、`recordOperation` が書く手続きの記録へ退避する**（消した後は認証情報側の行へ辿り着けなくなる。1世代分だけ控えると回収されない世代が残る）。**`User` 側に `save` は要らない**（射影なので、この削除がそのまま集合の変化である）
    5. `AccountStore.advanceSessionEpoch()` でセッションの世代を進める
    6. **同じトランザクションで `enqueueJob` により `sweep-orphan-mapping` を投入する** — 手順3 が落ちたときに認証情報側へ残る写像を回収する**唯一の投入点**であり、これが無いと孤児の写像が残り続けて同じ SSO 主体を二度と連携できなくなる
 3. **認証情報側**で控えた写像材料をもとに `deleteMapping` を発行し、写像行とそのクレデンシャル宛のリセットトークン行を消す（「無ければ成功」の冪等操作）
@@ -593,7 +591,7 @@ SSO 連携を解除する（pages P-03 リセット完了画面 / P-13 設定画
 | 条件 | エラー |
 |---|---|
 | 対象クレデンシャルが不在 | `NotFoundError("CREDENTIAL_NOT_FOUND")` |
-| 対象が `kind: "email"` | `BusinessRuleError`（`User.removeCredential` が `kind: "sso"` しか受けない） |
+| 対象が `kind: "email"` | `BusinessRuleError`（解除は `kind: "sso"` のみ。検査は手順2-2 が持つ） |
 | 最後のログイン手段の解除 | `BusinessRuleError(LastCredentialRemoval)` |
 | ユーザー不在 | `NotFoundError("USER_NOT_FOUND")` |
 | OCC 不一致 | `ConflictError("OPTIMISTIC_LOCK_FAILURE")` |

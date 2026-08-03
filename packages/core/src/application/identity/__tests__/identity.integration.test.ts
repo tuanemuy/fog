@@ -1,14 +1,33 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import type { DurableObjectState, SqlStorage } from "@cloudflare/workers-types";
+import type {
+  DurableObjectState,
+  SqlStorage,
+  SqlStorageValue,
+} from "@cloudflare/workers-types";
 import { IDENTITY_DIRECTORY_JOB_HANDLERS } from "@repo/core/adapters/cloudflare/jobs/registry";
 import { runDueJobs } from "@repo/core/adapters/cloudflare/jobs/runner";
-import type { Email } from "@repo/core/domain/identity/valueObject";
+import {
+  createPbkdf2PasswordHasher,
+  MIN_PBKDF2_ITERATIONS,
+} from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
+import type {
+  Email,
+  SsoProvider,
+} from "@repo/core/domain/identity/valueObject";
+import { ssoCanonical } from "@repo/core/domain/identity/valueObject";
+import type { RpcEnvelope } from "@repo/core/lib/rpcEnvelope";
 import { describe, expect, it } from "vitest";
-import { setupTestContainer } from "../../__tests__/helpers";
+import {
+  createTestContainer,
+  setupTestContainer,
+} from "../../__tests__/helpers";
+import type { InitializeAccountArgs, UserDataFacade } from "../../di/facades";
 import { requireKeyring, type StateSecrets } from "../../di/secrets";
+import type { RequestContainer } from "../../di/types";
 import {
   isConflictError,
   isForbiddenError,
+  isNotFoundError,
   isUnauthorizedError,
   isValidationError,
 } from "../../errors";
@@ -16,6 +35,7 @@ import { getCurrentUser } from "../getCurrentUser";
 import { loginWithPassword } from "../loginWithPassword";
 import { registerWithPassword } from "../registerWithPassword";
 import { requestPasswordReset } from "../requestPasswordReset";
+import { runSignupSaga } from "../signupSaga";
 
 /**
  * The identity usecases against the two real Durable Object namespaces.
@@ -65,6 +85,29 @@ async function inDirectoryOf<T>(
   return runInDurableObject(ns.get(ns.idFromName(locator.doName)), (_i, ctx) =>
     fn(ctx.storage.sql as SqlStorage, ctx as DurableObjectState),
   ) as Promise<T>;
+}
+
+/**
+ * The mapping rows an address's own active locator addresses.
+ *
+ * Filtered on the hmac rather than reading the whole table: two addresses in
+ * one test can legitimately share a bucket (there are 256 of them), so an
+ * unfiltered `SELECT` makes the assertion depend on which pair the run drew.
+ */
+async function mappingRowsFor<T extends Record<string, SqlStorageValue>>(
+  email: string,
+  columns: string,
+): Promise<T[]> {
+  const locator = (await container().directoryLocator.forCanonical(email))[0];
+  if (locator === undefined) throw new Error("no locator");
+  return inDirectoryOf(email, (sql) =>
+    sql
+      .exec<T>(
+        `SELECT ${columns} FROM credential_mappings WHERE kind = 'email' AND hmac = ?`,
+        locator.hmac,
+      )
+      .toArray(),
+  );
 }
 
 /** The state Worker's keyrings, as `vitest.config.integration.ts` binds them. */
@@ -143,6 +186,100 @@ describe("registerWithPassword", () => {
     // The label is fixed to the empty string by contract: putting the address
     // there would copy PII into the User Data DO.
     expect(view.credentials[0]?.label).toBe("");
+    // The settings row `initialize` wrote carries the domain default, and the
+    // projection carries it out again — the only two places it can be lost.
+    expect(view.trashRetentionDays).toBe(30);
+  });
+
+  it("keeps the password plaintext out of the stored verifier", async () => {
+    const email = address();
+    const password = "correct horse battery staple";
+    await registerWithPassword({
+      container: container(),
+      input: { email, password },
+    });
+    const verifier =
+      (
+        await mappingRowsFor<{ password_verifier: string | null }>(
+          email,
+          "password_verifier",
+        )
+      )[0]?.password_verifier ?? null;
+    // The row is the one place a hash is read off, and `FakePasswordHasher`
+    // deliberately does not embed the plaintext — so this assertion is the
+    // property that justifies substituting the fake at all. A fake that
+    // prefixed the password would make it hold by accident, which is why the
+    // real hasher is exercised over the same route below.
+    expect(verifier).not.toBeNull();
+    expect(verifier).not.toContain(password);
+    for (const word of password.split(" ")) {
+      expect(verifier).not.toContain(word);
+    }
+  });
+
+  it("round-trips a password through the real PBKDF2 hasher", async () => {
+    // The one test that pays for a genuine key derivation. `FakePasswordHasher`
+    // is justified by the WebCrypto adapter being unit-tested separately *and*
+    // by one end-to-end round trip through real storage; without this, nothing
+    // proves the shipped hasher's encoding survives the mapping row's column.
+    const real = createTestContainer({
+      passwordHasher: createPbkdf2PasswordHasher({
+        iterations: MIN_PBKDF2_ITERATIONS,
+      }),
+    });
+    const email = address();
+    const password = "an 8+ character password";
+    const registered = await registerWithPassword({
+      container: real,
+      input: { email, password },
+    });
+    const verifier =
+      (
+        await mappingRowsFor<{ password_verifier: string | null }>(
+          email,
+          "password_verifier",
+        )
+      )[0]?.password_verifier ?? null;
+    expect(verifier).toMatch(
+      new RegExp(`^pbkdf2-sha256\\$${MIN_PBKDF2_ITERATIONS}\\$`),
+    );
+    expect(verifier).not.toContain(password);
+
+    const signedIn = await loginWithPassword({
+      container: real,
+      input: { email, password },
+    });
+    expect(signedIn.userId).toBe(registered.userId);
+    const wrong = await caught(() =>
+      loginWithPassword({
+        container: real,
+        input: { email, password: "an 8+ character passworC" },
+      }),
+    );
+    expect(isValidationError(wrong)).toBe(true);
+  });
+
+  it("detects a duplicate that only matches after normalisation", async () => {
+    const email = address();
+    await registerWithPassword({
+      container: container(),
+      input: { email, password: "correct horse battery staple" },
+    });
+    // The unit tests pin `Email.create`'s canonicalisation, but not that the
+    // routing chain consumes the canonical: derive the HMAC from the raw input
+    // instead and the two spellings land in different buckets, while every
+    // value-object test stays green.
+    const error = await caught(() =>
+      registerWithPassword({
+        container: container(),
+        input: {
+          email: `  ${email.toUpperCase()}  `,
+          password: "correct horse battery staple",
+        },
+      }),
+    );
+    expect(isConflictError(error)).toBe(true);
+    expect((error as { code: string }).code).toBe("EMAIL_ALREADY_REGISTERED");
   });
 
   it("finishes the saga: the operation reaches phase done in one transaction", async () => {
@@ -244,31 +381,54 @@ describe("loginWithPassword", () => {
     expect(signedIn.sessionEpoch).toBe(registered.sessionEpoch);
   });
 
-  it("answers an unknown address exactly like a wrong password", async () => {
+  it("answers all four rejections in exactly the same shape", async () => {
     const email = address();
     await registerWithPassword({
       container: container(),
       input: { email, password },
     });
-    const wrongPassword = await caught(() =>
-      loginWithPassword({
-        container: container(),
-        input: { email, password: "not the password" },
-      }),
-    );
-    const unknownAddress = await caught(() =>
-      loginWithPassword({
-        container: container(),
-        input: { email: address(), password },
-      }),
-    );
-    // Same class and same message: which of the two happened must not be
-    // recoverable from the answer.
-    expect(isValidationError(wrongPassword)).toBe(true);
-    expect(isValidationError(unknownAddress)).toBe(true);
-    expect((wrongPassword as Error).message).toBe(
-      (unknownAddress as Error).message,
-    );
+
+    const shapeOf = async (input: {
+      email: string;
+      password: string;
+    }): Promise<string> => {
+      const error = await caught(() =>
+        loginWithPassword({ container: container(), input }),
+      );
+      return JSON.stringify({
+        validation: isValidationError(error),
+        name: (error as Error).name,
+        code: (error as { code?: string }).code ?? null,
+        message: (error as Error).message,
+      });
+    };
+
+    // Two of these never reach the Directory at all: a malformed address and a
+    // seven-character password fail value-object construction, and the usecase
+    // folds both onto `INVALID_CREDENTIALS` rather than letting
+    // `BusinessRuleError(InvalidEmail)` / `PasswordTooWeak` out. Comparing all
+    // four against one expected value is what makes the check an enumeration
+    // oracle test rather than four independent assertions that could drift.
+    const expected = await shapeOf({ email, password: "not the password" });
+    expect(JSON.parse(expected).code).toBe("INVALID_CREDENTIALS");
+    expect(await shapeOf({ email: address(), password })).toBe(expected);
+    expect(await shapeOf({ email: "not-an-address", password })).toBe(expected);
+    expect(await shapeOf({ email, password: "7 chars" })).toBe(expected);
+  });
+
+  it("matches on the normalised address", async () => {
+    const email = address();
+    const registered = await registerWithPassword({
+      container: container(),
+      input: { email, password },
+    });
+    // Same property as the duplicate-registration case, from the read side:
+    // canonicalisation has to happen before the HMAC, in login as in signup.
+    const signedIn = await loginWithPassword({
+      container: container(),
+      input: { email: `  ${email.toUpperCase()}  `, password },
+    });
+    expect(signedIn.userId).toBe(registered.userId);
   });
 
   it("reports both outcomes back to the bucket", async () => {
@@ -393,6 +553,319 @@ describe("the session epoch guard", () => {
       }),
     );
     expect(isForbiddenError(error)).toBe(true);
+  });
+
+  it("reports a live session whose settings row is gone as USER_NOT_FOUND", async () => {
+    const registered = await registerWithPassword({
+      container: container(),
+      input: { email: address(), password: "correct horse battery staple" },
+    });
+    // The account row is untouched, so the epoch and status guards both pass:
+    // this is the one branch that separates "not your session" from "the
+    // aggregate this session names is missing", and it answers with a
+    // different error class on purpose.
+    await inUserDataOf(registered.userId, (sql) => {
+      sql.exec("DELETE FROM user_settings");
+    });
+    const error = await caught(() =>
+      getCurrentUser({
+        container: container(),
+        input: { userId: registered.userId, epoch: registered.sessionEpoch },
+      }),
+    );
+    expect(isNotFoundError(error)).toBe(true);
+    expect((error as { code: string }).code).toBe("USER_NOT_FOUND");
+  });
+});
+
+describe("changeTrashRetentionDays", () => {
+  const password = "correct horse battery staple";
+  const DAY = 24 * 60 * 60 * 1000;
+
+  async function registeredUser(): Promise<{
+    userId: string;
+    epoch: number;
+    facade: UserDataFacade;
+  }> {
+    const registered = await registerWithPassword({
+      container: container(),
+      input: { email: address(), password },
+    });
+    return {
+      userId: registered.userId,
+      epoch: registered.sessionEpoch,
+      facade: container().userDataStubFactory(registered.userId),
+    };
+  }
+
+  function addTrashedMemo(userId: string, trashedAt: number): Promise<void> {
+    return inUserDataOf(userId, (sql) => {
+      sql.exec(
+        `INSERT INTO memos (id, body, latest_revision_number, posted_at, status,
+                            trashed_at, purge_after, version, updated_at)
+         VALUES ('m1', 'body', 1, 0, 'trashed', ?, ?, 1, 0)`,
+        trashedAt,
+        trashedAt + 30 * DAY,
+      );
+    });
+  }
+
+  it("recomputes every trashed item and queues the sweep in one transaction", async () => {
+    const { userId, epoch, facade } = await registeredUser();
+    const trashedAt = Date.now() - 3 * DAY;
+    await addTrashedMemo(userId, trashedAt);
+
+    const answered = await facade.changeTrashRetentionDays(userId, epoch, 7);
+    expect(answered.ok).toBe(true);
+    expect(answered.ok && answered.value.trashRetentionDays).toBe(7);
+
+    // Read back at the moment the RPC returned. The recomputation is not a
+    // job's tail here — the row is already on the new window — and the
+    // `purge-trash` row is already queued, both because the facade does them
+    // inside the same `uow.run` as the settings save.
+    const after = await inUserDataOf(userId, (sql) => ({
+      purgeAfter:
+        sql
+          .exec<{ purge_after: number | null }>(
+            "SELECT purge_after FROM memos WHERE id = 'm1'",
+          )
+          .toArray()[0]?.purge_after ?? null,
+      jobs: sql
+        .exec<{ operation_key: string; kind: string }>(
+          "SELECT operation_key, kind FROM jobs",
+        )
+        .toArray(),
+      settings: sql
+        .exec<{ trash_retention_days: number; version: number }>(
+          "SELECT trash_retention_days, version FROM user_settings",
+        )
+        .toArray()[0],
+    }));
+    expect(after.purgeAfter).toBe(trashedAt + 7 * DAY);
+    expect(after.jobs).toEqual([
+      { operation_key: "purge-trash", kind: "purge-trash" },
+    ]);
+    expect(after.settings?.trash_retention_days).toBe(7);
+    expect(after.settings?.version).toBe(1);
+  });
+
+  it("burns no OCC round trip when the value has not moved", async () => {
+    const { userId, epoch, facade } = await registeredUser();
+    const before = await inUserDataOf(
+      userId,
+      (sql) =>
+        sql
+          .exec<{ version: number }>("SELECT version FROM user_settings")
+          .toArray()[0]?.version ?? -1,
+    );
+    const answered = await facade.changeTrashRetentionDays(userId, epoch, 30);
+    expect(answered.ok).toBe(true);
+
+    const after = await inUserDataOf(userId, (sql) => ({
+      version:
+        sql
+          .exec<{ version: number }>("SELECT version FROM user_settings")
+          .toArray()[0]?.version ?? -1,
+      jobs: sql.exec("SELECT operation_key FROM jobs").toArray().length,
+    }));
+    // Identity, not equality: re-posting the current value must not bump the
+    // version, or a settings screen that re-submits its form starts losing
+    // races against concurrent writers for no reason.
+    expect(after.version).toBe(before);
+    // …and the early return happens before the enqueue, so no wake-up is bought
+    // for a change that did not happen.
+    expect(after.jobs).toBe(0);
+  });
+
+  it("refuses a stale session before touching anything", async () => {
+    const { userId, epoch, facade } = await registeredUser();
+    const answered = await facade.changeTrashRetentionDays(
+      userId,
+      epoch + 1,
+      7,
+    );
+    expect(answered.ok).toBe(false);
+    const after = await inUserDataOf(
+      userId,
+      (sql) =>
+        sql
+          .exec<{ trash_retention_days: number }>(
+            "SELECT trash_retention_days FROM user_settings",
+          )
+          .toArray()[0]?.trash_retention_days ?? -1,
+    );
+    expect(after).toBe(30);
+  });
+});
+
+describe("the signup saga under partial failure", () => {
+  const password = "correct horse battery staple";
+
+  /**
+   * A container whose User Data stub fails phase 2 in one named way.
+   *
+   * The delegation is written out rather than spread: the real value is a
+   * Workers RPC stub, a proxy with no own enumerable properties, so
+   * `{ ...stub }` produces an empty object and every other entry would be
+   * `undefined` at the moment the saga reached it.
+   */
+  function withInitializeAccount(
+    base: RequestContainer,
+    replacement: (
+      real: UserDataFacade,
+      args: InitializeAccountArgs,
+    ) => Promise<RpcEnvelope<null>>,
+  ): RequestContainer {
+    return {
+      ...base,
+      userDataStubFactory: (userId: string) => {
+        const real = base.userDataStubFactory(userId);
+        const wrapped: UserDataFacade = {
+          getCurrentUser: (id, epoch) => real.getCurrentUser(id, epoch),
+          changeTrashRetentionDays: (id, epoch, days) =>
+            real.changeTrashRetentionDays(id, epoch, days),
+          initializeAccount: (args) => replacement(real, args),
+          verifyLogin: (args) => real.verifyLogin(args),
+          recordCredentialLocator: (args) => real.recordCredentialLocator(args),
+          readSchemaVersion: () => real.readSchemaVersion(),
+        };
+        return wrapped;
+      },
+    };
+  }
+
+  it("rolls the coordinator's reservation back when a later bucket refuses", async () => {
+    const subject = `subject-${seq}-4711`;
+    const first = address();
+    const second = address();
+    const ssoCredential = {
+      kind: "sso" as const,
+      canonical: ssoCanonical("google" as SsoProvider, subject),
+      label: "google",
+    };
+    await runSignupSaga(container(), [
+      { kind: "email", canonical: first, label: "", passwordVerifier: "v1" },
+      ssoCredential,
+    ]);
+
+    // `second` is free; the SSO identity is not. Ordering is `email < sso`, so
+    // the email bucket is the coordinator and is reserved first — phase 1b then
+    // loses, and the compensation has to unwind phase 1a.
+    const error = await caught(() =>
+      runSignupSaga(container(), [
+        { kind: "email", canonical: second, label: "", passwordVerifier: "v2" },
+        ssoCredential,
+      ]),
+    );
+    expect(isConflictError(error)).toBe(true);
+    expect((error as { code: string }).code).toBe(
+      "SSO_IDENTITY_ALREADY_REGISTERED",
+    );
+
+    const rows = await mappingRowsFor(second, "credential_id");
+    expect(rows).toHaveLength(0);
+    // The observable consequence, not just the row count: the address the lost
+    // saga touched is registrable again.
+    const recovered = await registerWithPassword({
+      container: container(),
+      input: { email: second, password },
+    });
+    expect(recovered.userId).not.toBe("");
+  });
+
+  it("leaves the reservation standing when phase 2 fails, and converges the retry", async () => {
+    const email = address();
+    const base = container();
+    const broken = withInitializeAccount(base, () =>
+      Promise.reject(new Error("Network connection lost.")),
+    );
+    const failed = await caught(() =>
+      registerWithPassword({ container: broken, input: { email, password } }),
+    );
+    expect(failed).not.toBeNull();
+
+    const reserved = (
+      await mappingRowsFor<{
+        status: string;
+        candidate_user_id: string | null;
+      }>(email, "status, candidate_user_id")
+    )[0];
+    // No compensation runs for a phase-2 failure: the reservation is what a
+    // `resume-signup` drives forward, and the TTL sweep is what reclaims it.
+    expect(reserved?.status).toBe("reserved");
+
+    // A fresh attempt mints a whole new operation, so it cannot adopt the
+    // reservation — it collapses onto the same answer a genuine duplicate gets,
+    // and leaves the stalled saga's candidate untouched.
+    const retried = await caught(() =>
+      registerWithPassword({
+        container: container(),
+        input: { email, password },
+      }),
+    );
+    expect(isConflictError(retried)).toBe(true);
+    expect((retried as { code: string }).code).toBe("EMAIL_ALREADY_REGISTERED");
+    const still = (
+      await mappingRowsFor<{ candidate_user_id: string | null }>(
+        email,
+        "candidate_user_id",
+      )
+    )[0];
+    expect(reserved?.candidate_user_id).not.toBeNull();
+    expect(still?.candidate_user_id).toBe(reserved?.candidate_user_id);
+  });
+
+  it("replays phase 2 idempotently, and refuses a replay with another payload", async () => {
+    const email = address();
+    const base = container();
+    const seen: InitializeAccountArgs[] = [];
+    // Calls through and *then* throws: the shape of a response lost on the way
+    // back, which is the case the four-branch predicate in `initializeAccount`
+    // exists for.
+    const lossy = withInitializeAccount(base, async (real, args) => {
+      seen.push(args);
+      await real.initializeAccount(args);
+      throw new Error("Network connection lost.");
+    });
+    await caught(() =>
+      registerWithPassword({ container: lossy, input: { email, password } }),
+    );
+    const args = seen[0];
+    if (args === undefined) throw new Error("phase 2 never ran");
+
+    const stub = base.userDataStubFactory(args.userId);
+    const replay = await stub.initializeAccount(args);
+    expect(replay.ok).toBe(true);
+    const counts = await inUserDataOf(args.userId, (sql) => ({
+      accounts: sql.exec("SELECT status FROM account").toArray().length,
+      operations: sql.exec("SELECT operation_id FROM operations").toArray()
+        .length,
+      settings: sql
+        .exec("SELECT trash_retention_days FROM user_settings")
+        .toArray().length,
+    }));
+    expect(counts).toEqual({ accounts: 1, operations: 1, settings: 1 });
+
+    const mismatched = await stub.initializeAccount({
+      ...args,
+      payloadDigest: `${args.payloadDigest}0`,
+    });
+    expect(mismatched.ok).toBe(false);
+    expect(mismatched.ok === false && mismatched.error.code).toBe(
+      "OPERATION_PAYLOAD_MISMATCH",
+    );
+
+    // A different operation aimed at the same Durable Object is refused
+    // outright — that is the branch that keeps a stranger from writing into
+    // somebody else's DO once its `userId` has leaked.
+    const stranger = await stub.initializeAccount({
+      ...args,
+      operationId: `${args.operationId}-other`,
+    });
+    expect(stranger.ok).toBe(false);
+    expect(stranger.ok === false && stranger.error.code).toBe(
+      "OPERATION_NOT_RECOGNISED",
+    );
   });
 });
 

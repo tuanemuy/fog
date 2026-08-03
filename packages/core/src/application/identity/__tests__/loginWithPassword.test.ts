@@ -40,9 +40,7 @@ const absentBucket = {
     v: 1 as const,
     ok: true as const,
     value: {
-      userId: null,
-      credentialId: null,
-      passwordVerifier: null,
+      outcome: "none" as const,
       credentialVersion: 0,
       usedLocator: {
         kind: "email" as const,

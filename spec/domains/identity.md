@@ -41,7 +41,7 @@ fog のアカウント。**認証方式の判別可能ユニオンは持たな�
 | 名前 | 型 | 制約 |
 |---|---|---|
 | id | `UserId` | required |
-| credentials | `readonly CredentialRef[]` | required。保有クレデンシャルの要約（下記）。1件以上 |
+| credentials | `readonly CredentialRef[]` | required。保有クレデンシャルの要約（下記）。**`CredentialLocatorStore` の読み取り射影であり、本エンティティの遷移では書かれない**。登録完了後は1件以上 |
 | trashRetentionDays | `TrashRetentionDays` | required。既定 `TrashRetentionDays.default()`（30日） |
 | version | `number` | required。OCC 用。生成時 0 |
 | createdAt | `Date` | required |
@@ -81,27 +81,18 @@ export type User = Readonly<{
 
 ```ts
 export const User = {
-  /** パスワード登録での初期化。最初のクレデンシャルは kind: "email" の1件 */
-  registerWithPassword: (
-    params: { id: string; credential: CredentialRef },
-    now: Date,
-  ): User;
-
-  /** SSO 初回ログインでの自動作成。最初のクレデンシャルは kind: "sso" と kind: "email" の2件 */
-  registerWithSso: (
-    params: { id: string; credentials: readonly CredentialRef[] },
-    now: Date,
-  ): User;
-
-  /** クレデンシャルの追加（SSO 連携）。同じ credentialId の要素があれば置き換える */
-  addCredential: (user: User, credential: CredentialRef, now: Date): User;
+  /**
+   * 初回永続化。**クレデンシャル集合を引数に取らない** — この時点では
+   * credential_locators の行がまだ無く（signup の phase 4 で書かれる）、
+   * credentials はその射影なので、空集合が唯一の正しい値である
+   */
+  initialize: (params: { id: string }, now: Date): User;
 
   /**
-   * クレデンシャルの解除。kind: "sso" のみ受け付ける。
-   * 解除後に usableForLogin が true の要素が1件も残らない場合は
-   * BusinessRuleError(LastCredentialRemoval)。
+   * ログイン手段の数。usableForLogin が真である要素の credentialId の
+   * 異なり数であり、要素数ではない。**最後のログイン手段か**を判定する述語
    */
-  removeCredential: (user: User, credentialId: CredentialId, now: Date): User;
+  loginCredentialCount: (user: User): number;
 
   /** ゴミ箱保持日数の変更 */
   changeTrashRetentionDays: (
@@ -113,6 +104,8 @@ export const User = {
 ```
 
 - 各ファクトリの処理内容: `params` の生文字列から値オブジェクト（`UserId.create` 等）を構築し、`version: 0`（変更系は `version + 1`）、`createdAt` / `updatedAt` を設定して次状態を返す。`now` と `id` は引数で受け、ドメイン内で `new Date()` / ID生成は行わない
+- **クレデンシャル集合を書き換える遷移は本エンティティに存在しない**（`.thread/37/adr.md` ADR-070）。`credentials` は `CredentialLocatorStore` の射影であり、`UserSettingsRepository.save` が書くのは `trash_retention_days` と OCC の `version` だけである。集合の増減は `CredentialLocatorStore.record` / `deleteByCredentialId` が担う。**`addCredential` / `removeCredential` を置かないのはそのためである** — 置くと `version` だけ進んで集合が1ビットも変わらない呼び出しが書けてしまい、しかも `find()` が返す `credentials` はロケータ由来なので、テストでは「正しく見える」
+- **その代わりに検査の材料を持つ。** 「最後のログイン手段か」は `loginCredentialCount` を述語として使い、`kind` の検査は解除ユースケース側で行う（後述の不変条件と `unlinkSsoCredential`）
 - **パスワードの変更・リセットは本エンティティの遷移ではない。** 検証材料を持つのは認証情報側なので、変更はそちらを書き換える手続き（usecases/identity.md）として表現される。ユーザー単位設定側の `User` は変わらない
 - **SSO 初回登録でもメールのクレデンシャルが1件置かれる。** メールアドレスの一意性を認証方式をまたいで効かせるためであり、この要素は**ログイン手段ではない**（パスワードの検証材料を持たないため。`usableForLogin: false`）
 
@@ -121,15 +114,17 @@ export const User = {
 - メールアドレスは全ユーザー間で一意（S-AC-01 異常系）。一意性の権威は認証情報側の credential 行であり、登録は予約を取ってから進む。重複は `ConflictError("EMAIL_ALREADY_REGISTERED")`
 - メール一意性は**認証方式をまたいで**適用する。SSO 初回サインイン時に IdP から得たメールが既存アカウントのものと一致する場合、既存アカウントへの自動リンクは行わず `EMAIL_ALREADY_REGISTERED` とする（UI はパスワードログインへの導線を示す）。逆も同様である
 - `(provider, providerSubject)` の組も全ユーザー間で一意。重複は `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`
-- **`credentials` は常に1件以上で、そのうち少なくとも1件は `usableForLogin: true` である。** 最後のログイン手段を解除する操作は `BusinessRuleError` で拒否する。数えるのは要素数ではなく**`usableForLogin` が真である要素の `credentialId` の異なり数**である（同じクレデンシャルが複数の表現を持ちうるため、要素数で数えるとログイン手段が0のアカウントを作れてしまう。`usableForLogin` を見ないと SSO 専用アカウントのメール要素まで数に入る）
-- **`kind: "email"` の解除経路は存在しない**（`removeCredential` が `kind: "sso"` のみを受ける）。メールクレデンシャルを失うとアドレス表示・パスワードリセット・パスワード変更のすべてが成立しなくなり、追加し直す経路も無いため
+- **登録が完了したアカウントの `credentials` は常に1件以上で、そのうち少なくとも1件は `usableForLogin: true` である。** 最後のログイン手段を解除する操作は `BusinessRuleError` で拒否する。数えるのは要素数ではなく**`usableForLogin` が真である要素の `credentialId` の異なり数**である（同じクレデンシャルが複数の表現を持ちうるため、要素数で数えるとログイン手段が0のアカウントを作れてしまう。`usableForLogin` を見ないと SSO 専用アカウントのメール要素まで数に入る）
+  - **強制の位置はエンティティではない。** `credentials` は `CredentialLocatorStore` の射影で、集合を書く遷移が `User` に無いためである。入口は登録（予約 → 確定 → `record`）、出口は解除ユースケースで、後者が `User.loginCredentialCount` を述語として使う
+  - **したがって signup の phase 2〜4 の途中では 0 件が正しい状態である。** phase 2 の時点でロケータ行はまだ無く、phase 4 が書く。`User.initialize` がクレデンシャル集合を引数に取らないのはこのためである
+- **`kind: "email"` の解除経路は存在しない。** メールクレデンシャルを失うとアドレス表示・パスワードリセット・パスワード変更のすべてが成立しなくなり、追加し直す経路も無いため。**この検査は解除ユースケース（`unlinkSsoCredential`）が持つ** — 解除は `CredentialLocatorStore.deleteByCredentialId` で行われ、`kind` を見る位置はその呼び出しの手前にある
 - **SSO 専用アカウントにパスワードを設定する経路は無い。** メールの要素は一意性の予約としてのみ置かれており、ログイン手段へ昇格する遷移を本設計は持たない
 - `trashRetentionDays` は常に有効値（1以上の整数）。`TrashRetentionDays` の生成時バリデーションで保証
 
 #### ライフサイクル
 
 - 生成: パスワード登録（S-AC-01）または SSO 初回ログイン（S-AC-02）で生成される
-- 状態遷移: クレデンシャル集合は SSO 連携の追加・解除で増減する。パスワードの有無は集合の内容で決まり、アカウントの型を分けない
+- 状態遷移: クレデンシャル集合は SSO 連携の追加・解除で増減する（書くのは `CredentialLocatorStore` であり、`User` の遷移ではない）。パスワードの有無は集合の内容で決まり、アカウントの型を分けない
 - 削除: アカウント削除は現段階のスコープ外（要件・シナリオに存在しない）
 
 ### AiClientConnection
@@ -592,16 +587,32 @@ export interface PasswordHasher {
 
 ```ts
 export interface PasswordResetTokenPort {
-  /** リセットトークンを発行する。有効期限の起点として now を受ける */
-  issue(credentialId: CredentialId, now: Date): string;
+  /**
+   * トークン行を書く。**このポートは何も導出しない** — WebCrypto は非同期で
+   * ポートは同期なので、`{ tokenId, tokenHash, tokenKeyGeneration }` は DO の
+   * RPC エントリがトランザクションを開く前に算出して値で渡す
+   */
+  issue(
+    credentialId: CredentialId,
+    material: ResetTokenIssueMaterial,
+    now: Date,
+  ): void;
 
   /**
-   * トークンを検証し、有効なら消費（使い捨て）して対象ユーザーを返す。
+   * トークンを検証し、有効なら消費（使い捨て）して対象を返す。
+   * 引数はリンクから取り出した秘密の SHA-256 であって、リンクでも token_id でもない。
    * 無効・期限切れ・使用済みは null
    */
-  verifyAndConsume(token: string, now: Date): UserId | null;
+  verifyAndConsume(
+    tokenHash: string,
+    now: Date,
+    operationId: string,
+  ): ConsumedResetToken | null;
 }
 ```
+
+- **生トークンを返さない。** リンクは送信ジョブが行から再導出する（`database/index.md#password_reset_tokens` の導出鎖。`.thread/37/adr.md` ADR-042）。発行・配送・検証の3者が同じ1本の導出鎖を読む形にしないと、送れたリンクが引けない／引ける値が送られていない、という食い違いが起きる
+- `verifyAndConsume` が返す `ConsumedResetToken` は `{ userId, credentialId, credentialVersion, changeAuthToken }` である（`changeAuthToken` は消費時に採番する束縛材料。`database/index.md` の同名列）
 
 - **発行は対象クレデンシャル単位である。** 同じクレデンシャルに新しいトークンを発行すると、そのクレデンシャル宛の未使用トークンはすべて置き換わる（古いリンクは以後効かない）
 - **クレデンシャルの解除・パスワードの変更でも、そのクレデンシャル宛の未使用トークンは同じトランザクションで無効化する**（解除したのにリセットリンクが生きている状態を作らない）
@@ -638,8 +649,8 @@ export interface MailSender {
 - ★ denyAiClientAuthorization — OAuth 認可の拒否。接続は作らず、拒否をアダプターへ伝える（S-AC-05 異常系）
 - ★ listAiClientConnections — 接続済み AI クライアントの一覧（S-AC-06）
 - ★ revokeAllAiClientConnections — active な接続をすべて失効させる（リセット完了画面の必須導線。pages P-03）。`revokeAiClientConnection` を一覧の全件へ適用する形だが、部分失敗の扱い（記録して続行し、全体を中断しない）を持つので独立したユースケースとして定義する
-- ★ linkSsoCredential — SSO 連携の追加（pages P-13。S-AC-02 エッジケース）。`User.addCredential` の遷移と、認証情報側の予約獲得・確定、`CredentialLocatorStore` への逆引き記録からなる手続きである。追加できるのは `kind: "sso"` の要素だけで、**`unlinkSsoCredential` が解除する対象を作る唯一の経路**である。`sessionEpoch` は進めない
-- ★ unlinkSsoCredential — SSO 連携の解除（pages P-03 / P-13）。`User.removeCredential` の遷移と、`CredentialLocatorStore` / 認証情報側の写像の除去からなる手続きである。対象が `kind: "sso"` であることと、最後のログイン手段でないことをドメイン側で検査する
+- ★ linkSsoCredential — SSO 連携の追加（pages P-13。S-AC-02 エッジケース）。認証情報側の予約獲得・確定と、`CredentialLocatorStore.record` への逆引き記録からなる手続きである（**`User` 側に集合を書き換える遷移は無い**。ADR-070）。追加できるのは `kind: "sso"` の要素だけで、**`unlinkSsoCredential` が解除する対象を作る唯一の経路**である。`sessionEpoch` は進めない
+- ★ unlinkSsoCredential — SSO 連携の解除（pages P-03 / P-13）。`CredentialLocatorStore.deleteByCredentialId` と認証情報側の写像の除去からなる手続きである（**`User` 側に集合を書き換える遷移は無い**。ADR-070）。対象が `kind: "sso"` であることと、最後のログイン手段でないこと（`User.loginCredentialCount` を述語として使う）をユースケース側で検査する。どちらの検査も UI の出し分けには委ねない
 - ★ revokeAiClientConnection — 接続の失効（S-AC-06）。対象 `connectionId` は設定画面からの外部入力だが、引くのは自分の Durable Object の中だけなので `AiClientConnectionRepository.findById(connectionId)` で足りる。不在は NotFound（到達可能性による構造的保証。ユースケース側の `connection.userId` 照合は不要）。取得結果が active なら `AiClientConnection.revoke` → `save`
 - ★ changeTrashRetentionDays — ゴミ箱保持期限の変更（S-ST-01）
 - ★ getCurrentUser — 現在のユーザー情報の読み取り（設定画面 P-13 とリセット完了画面 P-03 の表示用）。email・**保有クレデンシャルの一覧**（要素は `credentialId` / `kind` / `label` / `usableForLogin`。パスワード変更 UI の表示判定にも使う: `usableForLogin` が真の `kind: "email"` の要素が無ければ非表示 S-AC-07）・trashRetentionDays を返す。人間 UI 専用の読み取りユースケース

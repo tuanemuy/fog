@@ -22,6 +22,14 @@ import { createRequestContainer } from "../serverCloudflare";
 // Logger installed, and asserts that nothing observable carries any of them.
 // The forbidden-value list is shared with the job-runner and mail-sender
 // suites so the two halves cannot drift apart.
+//
+// **The values asserted on are the ones this run derived**, not the fixed
+// strings in that list. A hard-coded hmac or locator is never the one a given
+// run produces, so a check against the list alone passes while the real value
+// leaks — which is exactly how the job runner logged a full-length hmac for as
+// long as it did. The two haystacks are also kept apart: what the namespace was
+// asked to address is recorded separately from what was logged, so the
+// assertion no longer has to exclude the value it most needs to look for.
 
 const SESSION_SECRET = requireSessionSecret("0123456789abcdef0123456789abcdef");
 const AI_CLIENT_TOKEN_SECRET = requireAiClientTokenSecret(
@@ -98,12 +106,28 @@ describe("routing material never reaches observable output", () => {
     expect(locator?.doName).toMatch(/^dir:g\d+:b\d+$/);
   });
 
-  it("keeps the canonical out of a failing stub call, log and error alike", async () => {
-    const recorded: string[] = [];
-    const container = build(recorded);
+  it("keeps the shared list's placeholder locator in the shape a real one takes", () => {
+    // The list carried `dir:g1:b0042` for a while, and a zero-padded index is
+    // something the derivation never emits — so every assertion that consulted
+    // it for a locator leak was structurally unable to fire.
+    const placeholders = FORBIDDEN_VALUES.filter((value) =>
+      value.startsWith("dir:"),
+    );
+    expect(placeholders.length).toBeGreaterThan(0);
+    for (const placeholder of placeholders) {
+      expect(placeholder).toMatch(/^dir:g\d+:b(0|[1-9]\d*)$/);
+      expect(Number(placeholder.split(":b")[1])).toBeLessThan(256);
+    }
+  });
+
+  it("keeps the canonical, its hmac and its locator out of a failing stub call, log and error alike", async () => {
+    const addressed: string[] = [];
+    const container = build(addressed);
     const [locator] = await container.directoryLocator.forCanonical(CANONICAL);
     if (locator === undefined) throw new Error("no locator");
-    const logger = recordingLogger(recorded);
+
+    const logged: string[] = [];
+    const logger = recordingLogger(logged);
 
     const stub = container.directoryStubFactory(locator);
     let message = "";
@@ -117,13 +141,15 @@ describe("routing material never reaches observable output", () => {
     }
 
     expect(message).not.toBe("");
-    // `recorded` holds the locator the factory was handed — deliberately, so
-    // the assertion below is not run against an empty haystack.
-    expect(recorded.join("\n")).toContain(locator.doName);
-    assertNoForbiddenValue([
-      message,
-      ...recorded.filter((entry) => entry !== locator.doName),
-    ]);
+    // Positive control: the run really did address the bucket, so the negative
+    // assertions below are not being made against material that was never in
+    // scope. `addressed` is the namespace's argument, not observable output.
+    expect(addressed).toContain(locator.doName);
+    // The real derived values, alongside the fixed list.
+    assertNoForbiddenValue(
+      [message, ...logged],
+      [CANONICAL, locator.hmac, locator.doName],
+    );
   });
 
   it("translates a platform failure into a fixed message", () => {

@@ -1,7 +1,12 @@
 import type { Keyring } from "@repo/core/application/di/secrets";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import { holdsPasswordVerifier } from "@repo/core/domain/identity/credentialMappingRules";
 import type { Email } from "@repo/core/domain/identity/valueObject";
 import { decryptCanonical } from "../../identityDirectory/canonicalCipher";
+import {
+  deriveResetSecret,
+  formatResetToken,
+} from "../../identityDirectory/resetTokenCrypto";
 import { readSelfLocator } from "../../schema/gate";
 import { one, type Sql } from "../../sql/exec";
 import type { IdentityDirectoryJobContext, JobHandler } from "../registry";
@@ -15,7 +20,8 @@ import type { JobRow } from "../table";
  * ## The payload carries the request, never the answer
  *
  * All the row holds is the `(kind, hmac)` the caller asked about — the same
- * pair already in its `operation_key`. Everything else is resolved from this
+ * pair its `operation_key` already carries, alongside the request window
+ * (ADR-043). Everything else is resolved from this
  * bucket's tables at send time. Two things force that shape. A job row is
  * readable by anyone who can read the table and survives in the
  * point-in-time-recovery log for thirty days after pruning, so a token on it
@@ -24,10 +30,13 @@ import type { JobRow } from "../table";
  * burst against an unregistered one did not — a timing-free enumeration oracle
  * (`.thread/37/adr.md` ADR-029).
  *
- * The link itself is `{random} = HMAC(IDENTITY_RESET_TOKEN_KEY[generation],
- * tokenId)`, derived moments before the send. Neither a database dump nor the
- * key alone reproduces it: the dump lacks the key, and the key lacks 128 bits
- * of `tokenId`.
+ * The link's secret half is `HMAC(IDENTITY_RESET_TOKEN_KEY[generation],
+ * tokenId)`, derived moments before the send from
+ * `identityDirectory/resetTokenCrypto.ts` — the same module the issuing entry
+ * point hashed the row's `token_hash` with, which is what makes issue, delivery
+ * and consumption compose (ADR-042). Neither a database dump nor the key alone
+ * reproduces it: the dump lacks the key, and the key lacks 128 bits of
+ * `tokenId`.
  *
  * ## Every request writes a row; only some rows have a recipient
  *
@@ -112,29 +121,10 @@ async function deriveResetToken(
   tokenId: string,
   routing: { generation: number; bucket: number },
 ): Promise<string> {
-  const entry = keyring.entries.find(
-    (candidate) => candidate.generation === generation,
+  return formatResetToken(
+    routing,
+    await deriveResetSecret(keyring, generation, tokenId),
   );
-  if (entry === undefined) {
-    throw new SystemError(
-      SystemErrorCode.CryptoError,
-      `No reset token key for generation ${generation}`,
-    );
-  }
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(entry.key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(tokenId)),
-  );
-  const random = [...signature]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-  return `${routing.generation}.${routing.bucket}.${random}`;
 }
 
 export const sendMail: JobHandler<IdentityDirectoryJobContext> = async (
@@ -159,8 +149,13 @@ export const sendMail: JobHandler<IdentityDirectoryJobContext> = async (
   // No mapping, or one holding no verification material. The second is an
   // SSO-only account's address reservation: it *does* have a stored original,
   // so "is there an address" would answer yes and send a link that promotes a
-  // reservation into a way in. The test is the verifier, not the address.
-  if (mapping === null || mapping.password_verifier === null) {
+  // reservation into a way in. The test is the verifier, not the address — and
+  // it is the domain's, so that the lookup entry, the reset request and this
+  // send cannot drift apart (ADR-072).
+  if (
+    mapping === null ||
+    !holdsPasswordVerifier({ passwordVerifier: mapping.password_verifier })
+  ) {
     return { kind: "done" };
   }
 

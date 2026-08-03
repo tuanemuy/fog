@@ -1,18 +1,39 @@
 import type { CredentialId } from "../valueObject";
 
-export type CredentialLocator = Readonly<{
-  credentialId: CredentialId;
+/**
+ * Where one credential of one account lives — the addressing half of a
+ * locator, with no mirrored state on it.
+ *
+ * **Primitives only, deliberately.** This shape also travels as a value: it is
+ * what `operations.target_locators` stores and what a coordinator reservation
+ * row carries, so it crosses the RPC boundary and lands in JSON, where a brand
+ * would be erased and could not be restored honestly on the way back. The
+ * application layer names it `LocatorRef`, which is an alias of this type —
+ * one concept, one definition.
+ */
+export type CredentialLocatorRef = Readonly<{
+  credentialId: string;
   kind: "email" | "sso";
   /** Full-length (64 hex) HMAC of the canonical value. */
   hmac: string;
   /** Routing-key generation this locator was derived under. */
   generation: number;
   bucketIndex: number;
-  credentialVersion: number;
-  usableForLogin: boolean;
-  /** Non-PII display name: the provider for `sso`, empty for `email`. */
-  label: string;
 }>;
+
+/**
+ * A stored locator row: the addressing half plus what this side mirrors of the
+ * Identity Directory's verdict. `credentialId` narrows to the branded value
+ * because a row is rehydrated through `CredentialId.create`.
+ */
+export type CredentialLocator = CredentialLocatorRef &
+  Readonly<{
+    credentialId: CredentialId;
+    credentialVersion: number;
+    usableForLogin: boolean;
+    /** Non-PII display name: the provider for `sso`, empty for `email`. */
+    label: string;
+  }>;
 
 /**
  * Reverse lookup of the credentials an account holds.

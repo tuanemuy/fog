@@ -50,6 +50,34 @@ function fire(stub: ReturnType<typeof bucket>): Promise<void> {
   ) as Promise<void>;
 }
 
+/**
+ * Fires `alarm()` with `deleteAlarm` counted.
+ *
+ * `getAlarm()` cannot answer the question — see the note at the top — but the
+ * call itself can be observed, and "did the DO delete its alarm" is the half of
+ * the fail-closed contract that no other suite reaches through the real entry
+ * point.
+ */
+function fireCountingDeletes(stub: ReturnType<typeof bucket>): Promise<number> {
+  return runInDurableObject(stub, async (instance, ctx) => {
+    const storage = ctx.storage as unknown as {
+      deleteAlarm: () => Promise<void>;
+    };
+    const real = storage.deleteAlarm.bind(storage);
+    let deletes = 0;
+    storage.deleteAlarm = () => {
+      deletes += 1;
+      return real();
+    };
+    try {
+      await (instance as unknown as Bucket).alarm();
+      return deletes;
+    } finally {
+      storage.deleteAlarm = real;
+    }
+  }) as Promise<number>;
+}
+
 describe("the Durable Object's alarm entry point", () => {
   it("runs the work an RPC queued, and settles the row", async () => {
     const stub = bucket();
@@ -133,5 +161,58 @@ describe("the Durable Object's alarm entry point", () => {
     // Untouched, and still runnable — the DO re-arms at a fixed interval rather
     // than deleting its alarm and going dormant with work outstanding.
     expect(rows[0]?.status).toBe("pending");
+  });
+
+  it("does not delete its alarm when the schema is fail-closed", async () => {
+    const stub = bucket();
+    await (stub as unknown as Bucket).requestPasswordReset(
+      "email",
+      "56".repeat(32),
+    );
+    // Positive control first: a wake-up that finds nothing runnable *does*
+    // delete the alarm, which is what makes the zero below evidence rather than
+    // a spy that was never wired to anything.
+    expect(await fireCountingDeletes(stub)).toBe(1);
+
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const sql = ctx.storage.sql as SqlStorage;
+      sql.exec("UPDATE _meta SET schema_version = 99");
+      sql.exec(
+        "UPDATE jobs SET status = 'pending', next_run_at = 0, completed_at = NULL",
+      );
+    });
+
+    // A fail-closed DO has work it cannot run. Deleting the alarm there would
+    // make it dormant for good: nothing else re-arms a Durable Object nobody is
+    // calling, so the queued job would never run even after a deployment caught
+    // the schema up.
+    expect(await fireCountingDeletes(stub)).toBe(0);
+    expect((await jobsIn(stub))[0]?.status).toBe("pending");
+  });
+
+  it("never throws out of alarm() when storage itself fails", async () => {
+    const stub = bucket();
+    await (stub as unknown as Bucket).requestPasswordReset(
+      "email",
+      "34".repeat(32),
+    );
+    // The failure the design actually predicts is a DO at its 10 GB ceiling,
+    // where writes fail while reads and deletes still succeed — so `claimJob`
+    // throws with no per-job guard around it and `purge-trash`, the only
+    // automatic way to free space, can never be claimed again. Removing the
+    // table reproduces the same shape: a throw from inside the runner but
+    // outside its per-job catch. The gate does not put it back, because the
+    // schema version is already current.
+    await runInDurableObject(stub, (_instance, ctx) => {
+      (ctx.storage.sql as SqlStorage).exec("DROP TABLE jobs");
+    });
+
+    let thrown: unknown;
+    try {
+      await fire(stub);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeUndefined();
   });
 });

@@ -3,6 +3,8 @@ import { BusinessRuleError } from "@repo/core/domain/error";
 import { IdentityErrorCode } from "./errorCode";
 
 const EMAIL_MAX_LENGTH = 320;
+const DOMAIN_MAX_LENGTH = 253;
+const DOMAIN_LABEL_MAX_LENGTH = 63;
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 128;
 const CLIENT_NAME_MAX_LENGTH = 100;
@@ -93,20 +95,70 @@ function invalidEmail(message: string): BusinessRuleError<IdentityErrorCode> {
  * and Node without a dependency. A domain the URL parser refuses is not a
  * domain mail can be delivered to either, so the failure is reported as an
  * invalid address rather than as a system fault.
+ *
+ * **Anything the parser did not treat as pure host is rejected, not dropped.**
+ * The structural check admits `:`, `/` and `?`, so without this
+ * `a@例え.com:8080`, `a@例え.com/x` and `a@例え.com?q` would all silently
+ * canonicalise to `a@xn--r8jz45g.com` — three inputs collapsing onto one
+ * address, at the position that is simultaneously the uniqueness authority and
+ * the recipient of a reset mail. Truncating at a boundary is not validating at
+ * one.
  */
 function toAsciiDomain(domain: string): string {
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(`http://${domain}`).hostname;
+    url = new URL(`http://${domain}`);
   } catch {
     throw invalidEmail("Invalid email address");
   }
+  const host = url.hostname;
   // Bracketed IPv6 literals come back wrapped; they are not domains that
   // punycode applies to, and the structural check has already passed.
   if (host.length === 0 || hasNonAscii(host)) {
     throw invalidEmail("Invalid email address");
   }
+  if (
+    url.port !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw invalidEmail("Invalid email address");
+  }
   return host;
+}
+
+/** LDH: letters, digits, hyphen, and no hyphen at either end. */
+const DOMAIN_LABEL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
+/**
+ * The domain part's grammar, checked on the **ASCII** form so that both routes
+ * through `create` pass through exactly one syntax gate.
+ *
+ * This is what the structural pattern cannot do. `/^[^\s@]+@[^\s@]+$/` admits
+ * `:`, `/`, `?` and `#`, so without this `a@example.com/evil` becomes a
+ * canonical address — the value that is simultaneously the uniqueness key, the
+ * HMAC input and the recipient of a reset mail — and mail to it is never
+ * delivered. The non-ASCII route reached `URL` and rejected the same shapes
+ * there; the ASCII route reached nothing at all, and that asymmetry was the
+ * hole.
+ *
+ * Applied after punycode, never before: `xn--` labels are LDH, and checking
+ * the pre-conversion form would reject every internationalised domain.
+ */
+function assertDomainSyntax(domain: string): void {
+  if (domain.length > DOMAIN_MAX_LENGTH) {
+    throw invalidEmail("Invalid email address");
+  }
+  for (const label of domain.split(".")) {
+    if (
+      label.length === 0 ||
+      label.length > DOMAIN_LABEL_MAX_LENGTH ||
+      !DOMAIN_LABEL_PATTERN.test(label)
+    ) {
+      throw invalidEmail("Invalid email address");
+    }
+  }
 }
 
 export const Email = {
@@ -118,7 +170,7 @@ export const Email = {
    *
    * trim → structural check → split on the **last** `@` → reject a non-ASCII
    * local part → lowercase the local part → NFKC + lowercase + punycode the
-   * domain → rejoin → re-check the length.
+   * domain → check the domain's label grammar → rejoin → re-check the length.
    *
    * **NFKC is applied to the domain only.** It folds compatibility-equivalent
    * characters, but an SMTP local part is opaque at the octet level:
@@ -158,6 +210,7 @@ export const Email = {
     const asciiDomain = hasNonAscii(normalizedDomain)
       ? toAsciiDomain(normalizedDomain)
       : normalizedDomain;
+    assertDomainSyntax(asciiDomain);
 
     const canonical = `${local.toLowerCase()}@${asciiDomain}`;
     // Punycode lengthens; an input that fit before the conversion can exceed

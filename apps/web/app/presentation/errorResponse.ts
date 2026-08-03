@@ -85,17 +85,49 @@ export function serializeError(error: unknown): SerializedError {
   };
 }
 
-// Strips server-internal detail before a `SerializedError` crosses the
-// transport boundary. `system` and `unknown` can carry messages / codes that
-// hint at internal layering (driver names, table names, network targets);
-// exposing them to clients adds reconnaissance value with no UX upside.
-// Apply at the response boundary only — server-side logs must use the raw
-// form so operators retain the original code / message for triage.
+const REDACTED_MESSAGE = "Request failed";
+
+/**
+ * Strips server-internal detail before a `SerializedError` crosses the
+ * transport boundary.
+ *
+ * Three treatments, and the `switch` is exhaustive so a new `kind` cannot be
+ * added without choosing one:
+ *
+ * - `system` / `unknown` lose both `code` and `message`. They carry driver
+ *   names, table names and network targets — reconnaissance value with no UX
+ *   upside.
+ * - `notFound` / `conflict` / `unauthorized` / `forbidden` keep `code` and
+ *   lose `message`. `code` is their whole contract (`errorDisplay` renders
+ *   these four from it and never reads their message), while the message is
+ *   free-form server prose that has already been observed to embed
+ *   server-minted keys — `JOB_PAYLOAD_MISMATCH` interpolates a job's
+ *   `operationKey`, which for `send-mail` is derived from an HMAC.
+ * - `business` / `validation` pass through. Their message is written for the
+ *   end user and `errorDisplay` falls back to it whenever no code-specific
+ *   wording exists, so redacting it would blank the auth forms.
+ *
+ * Apply at the response boundary only — server-side logs must use the raw
+ * form so operators retain the original code / message for triage.
+ */
 export function redactForClient(serialized: SerializedError): SerializedError {
-  if (serialized.kind === "system" || serialized.kind === "unknown") {
-    return { ...serialized, code: null, message: SYSTEM_ERROR_PUBLIC_MESSAGE };
+  switch (serialized.kind) {
+    case "system":
+    case "unknown":
+      return {
+        ...serialized,
+        code: null,
+        message: SYSTEM_ERROR_PUBLIC_MESSAGE,
+      };
+    case "notFound":
+    case "conflict":
+    case "unauthorized":
+    case "forbidden":
+      return { ...serialized, message: REDACTED_MESSAGE };
+    case "business":
+    case "validation":
+      return serialized;
   }
-  return serialized;
 }
 
 // `system` / `unknown` are mapped to an explicit 500 rather than relying on

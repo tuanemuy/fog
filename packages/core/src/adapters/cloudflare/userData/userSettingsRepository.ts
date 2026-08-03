@@ -4,7 +4,7 @@ import type {
   Versioned,
 } from "@repo/core/domain/common/transactionalRepository";
 import { isRehydrationError } from "@repo/core/domain/error";
-import type { CredentialRef, User } from "@repo/core/domain/identity/entity";
+import type { User } from "@repo/core/domain/identity/entity";
 import { User as UserEntity } from "@repo/core/domain/identity/entity";
 import type { UserSettingsRepository } from "@repo/core/domain/identity/ports/userSettingsRepository";
 import { all, one, run, type Sql } from "../sql/exec";
@@ -114,10 +114,18 @@ export function createUserSettingsRepository(
  * A credential with rows in two routing-key generations must appear once:
  * `User.credentials` is a set of credentials, not of locator rows, and the
  * "last way in" check counts distinct `credentialId`s.
+ *
+ * Returns the loose row shape rather than `CredentialRef`. These are untrusted
+ * persistence values and nothing here has checked them; `User.reconstruct` is
+ * the one place that does, and a declared type claiming otherwise would only
+ * mislead the next reader.
  */
-function dedupeByCredentialId(
-  rows: readonly LocatorProjectionRow[],
-): CredentialRef[] {
+function dedupeByCredentialId(rows: readonly LocatorProjectionRow[]): readonly {
+  credentialId: string;
+  kind: string;
+  label: string;
+  usableForLogin: boolean;
+}[] {
   const seen = new Map<string, LocatorProjectionRow>();
   for (const row of rows) {
     const existing = seen.get(row.credential_id);
@@ -135,7 +143,7 @@ function dedupeByCredentialId(
     kind: row.kind,
     label: row.label,
     usableForLogin: row.usable_for_login === 1,
-  })) as CredentialRef[];
+  }));
 }
 
 /**

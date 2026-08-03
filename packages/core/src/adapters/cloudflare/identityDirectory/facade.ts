@@ -1,10 +1,22 @@
 import type {
+  LookupCredentialArgs,
+  LookupCredentialResult,
+  ReserveCredentialFacadeArgs,
+} from "@repo/core/application/di/facades";
+import type {
   IdentityDirectoryUnitOfWorkContext,
   UnitOfWorkProvider,
 } from "@repo/core/application/execution/unitOfWork";
+import {
+  holdsPasswordVerifier,
+  isResetRequestAllowed,
+  isUsableForLogin,
+} from "@repo/core/domain/identity/credentialMappingRules";
 import type { CredentialMappingKind } from "@repo/core/domain/identity/ports/credentialMappingRepository";
 import type { SealedCanonical } from "@repo/core/domain/identity/ports/credentialMappingStore";
+import type { ResetTokenIssueMaterial } from "@repo/core/domain/identity/ports/passwordResetTokenPort";
 import { CredentialId } from "@repo/core/domain/identity/valueObject";
+import { RESET_REQUEST_WINDOW_MS } from "@repo/core/lib/jobBudgets";
 
 /**
  * The Identity Directory bucket's RPC facade.
@@ -34,63 +46,15 @@ import { CredentialId } from "@repo/core/domain/identity/valueObject";
  *
  * Every entry takes primitives and rebuilds value objects inside, and none of
  * them touches raw SQL — the same two rules as the User Data facade.
+ *
+ * The argument and result shapes live in `application/di/facades.ts` for the
+ * reason spelled out there and in the User Data facade: they ride the
+ * `IdentityDirectoryFacade` interface into the usecases, so declaring them
+ * here would write a usecase in an adapter-owned type (ADR-071).
  */
 
 export type IdentityDirectoryFacadeDeps = Readonly<{
   uow: UnitOfWorkProvider<IdentityDirectoryUnitOfWorkContext>;
-}>;
-
-export type LookupCredentialArgs = Readonly<{
-  kind: CredentialMappingKind;
-  hmac: string;
-  generation: number;
-  bucketIndex: number;
-}>;
-
-export type LookupCredentialResult = Readonly<{
-  userId: string | null;
-  credentialId: string | null;
-  /** `null` for an SSO row, and for every uniform-answer case. */
-  passwordVerifier: string | null;
-  credentialVersion: number;
-  usedLocator: Readonly<{
-    kind: CredentialMappingKind;
-    hmac: string;
-    generation: number;
-    bucketIndex: number;
-  }>;
-}>;
-
-export type ReserveCredentialFacadeArgs = Readonly<{
-  kind: CredentialMappingKind;
-  hmac: string;
-  generation: number;
-  credentialId: string;
-  /**
-   * The canonical credential in the clear — the **only** entry that takes one.
-   *
-   * The bucket has to store a reversible copy of the address, and neither side
-   * can produce it alone: the request Worker holds the plaintext but no
-   * encryption key, and the state Worker holds the key but derives no canonical
-   * (`DIRECTORY_ROUTING_SECRET` is not distributed to it, ADR-016). So the
-   * plaintext travels one hop inward and is sealed by the entry point before the
-   * transaction opens.
-   *
-   * This is not the thing AC-3 forbids. That rule bars a raw address from a
-   * Durable Object *name*, and from logs, errors and URLs; the value here is an
-   * RPC argument inside the trust boundary, one per signup rather than in bulk
-   * (`.thread/34/design.md` §5.2.3). **It must never be written as-is, logged or
-   * echoed in an error** — the ciphertext is what reaches the row.
-   */
-  canonical: string;
-  candidateUserId: string;
-  operationId: string;
-  callerToken: string;
-  reservedUntil: number;
-  isCoordinator: boolean;
-  passwordVerifier?: string;
-  locators?: readonly unknown[];
-  coordinatorLocator?: string;
 }>;
 
 /**
@@ -110,7 +74,11 @@ export type ReserveCredentialFacadeArgs = Readonly<{
  *
  * `kind: 'sso'` rows are accepted here — that is what makes "resolve a `userId`
  * from an SSO provider and subject" work. They hold no `passwordVerifier`, so
- * there is no work to level; what comes back is the identity fields.
+ * there is no work to level; what comes back is the `'identity'` arm.
+ *
+ * The three conditions are `domain/identity/credentialMappingRules.ts`'s, not
+ * this module's: the same rule decides the reset request below and the send
+ * job's recipient, and three copies of it is three places to amend (ADR-072).
  */
 export function lookupCredential(
   deps: IdentityDirectoryFacadeDeps,
@@ -128,29 +96,29 @@ export function lookupCredential(
       args.kind,
       args.hmac,
     );
-    const usable =
-      mapping !== null &&
-      mapping.status === "active" &&
-      mapping.changeState === null &&
-      (mapping.nextAttemptAllowedAt === null ||
-        mapping.nextAttemptAllowedAt <= now);
-
-    if (!usable || mapping === null) {
-      return {
-        userId: null,
-        credentialId: null,
-        passwordVerifier: null,
-        credentialVersion: 0,
-        usedLocator,
-      };
+    // A row with no `userId` is a reservation that never activated, which
+    // `isUsableForLogin` has already excluded; the check is what carries that
+    // into the type.
+    if (
+      mapping === null ||
+      !isUsableForLogin(mapping, now) ||
+      mapping.userId === null
+    ) {
+      return { outcome: "none", credentialVersion: 0, usedLocator };
     }
-    return {
+    const identity = {
       userId: mapping.userId,
       credentialId: mapping.credentialId,
-      passwordVerifier: mapping.passwordVerifier,
       credentialVersion: mapping.credentialVersion,
       usedLocator,
     };
+    return holdsPasswordVerifier(mapping)
+      ? {
+          outcome: "password",
+          ...identity,
+          passwordVerifier: mapping.passwordVerifier,
+        }
+      : { outcome: "identity", ...identity };
   });
 }
 
@@ -246,16 +214,31 @@ export function reserveCredential(
   });
 }
 
-/** Class (3-a), signup phase 3. */
+/**
+ * Class (3-a), signup phase 3.
+ *
+ * Takes the `callerToken` as well as the `operationId`, and the asymmetry that
+ * used to exist here was the bug: `operationId` is a value the design permits
+ * in unauthenticated logs, so binding a write to knowledge of it alone would
+ * turn a logged value into a capability — the reason `recordCredentialLocator`
+ * and `cancelReservation` are `callerToken`-bound is exactly the same one.
+ */
 export function activateReservation(
   deps: IdentityDirectoryFacadeDeps,
   kind: CredentialMappingKind,
   hmac: string,
   operationId: string,
   userId: string,
+  callerToken: string,
 ): void {
   deps.uow.run((ctx) => {
-    ctx.credentialMappingStore.activate(kind, hmac, operationId, userId);
+    ctx.credentialMappingStore.activate(
+      kind,
+      hmac,
+      operationId,
+      userId,
+      callerToken,
+    );
   });
 }
 
@@ -296,13 +279,32 @@ export function checkPreviousGeneration(
  * The decision is "does it hold verification material", not "does a credential
  * exist": an SSO-only account has an email mapping, and it must be treated
  * exactly like an unregistered address.
+ *
+ * ## The window, and why the token and the mail share one
+ *
+ * `operationKey` carries `floor(now / RESET_REQUEST_WINDOW_MS)` and the issue
+ * throttle uses the same span. That equality is the fix for a real failure:
+ * with a one-minute throttle and a `done` row that refused re-enqueues for a
+ * day, the second request of an hour issued a fresh token — deleting the live
+ * one the user was holding — and then collided with the finished row, so no
+ * mail went out and the working link was gone. Sharing the number makes it
+ * impossible: eligibility requires `last + window <= now`, which puts `now`
+ * past the window of every earlier request, so an eligible request always lands
+ * on an `operationKey` no row exists for yet.
+ *
+ * `material` is minted by the entry point **unconditionally** and discarded
+ * here when the request is not eligible — two WebCrypto operations are a
+ * measurable amount of work, so making them conditional would answer "is this
+ * address registered?" through a timing channel.
  */
 export function requestPasswordReset(
   deps: IdentityDirectoryFacadeDeps,
   kind: CredentialMappingKind,
   hmac: string,
   now: number,
+  material: ResetTokenIssueMaterial,
 ): void {
+  const window = Math.floor(now / RESET_REQUEST_WINDOW_MS);
   deps.uow.run((ctx) => {
     const mapping = ctx.credentialMappingRepository.findByLocatorKey(
       kind,
@@ -310,14 +312,10 @@ export function requestPasswordReset(
     );
     const eligible =
       mapping !== null &&
-      mapping.status === "active" &&
-      mapping.changeState === null &&
-      mapping.passwordVerifier !== null &&
-      (mapping.lastResetRequestedAt === null ||
-        mapping.lastResetRequestedAt + RESET_THROTTLE_MS <= now);
+      isResetRequestAllowed(mapping, now, RESET_REQUEST_WINDOW_MS);
 
     if (eligible && mapping !== null) {
-      ctx.resetTokenStore.issue(mapping.credentialId, new Date(now));
+      ctx.resetTokenStore.issue(mapping.credentialId, material, new Date(now));
     }
     if (mapping !== null) {
       ctx.credentialMappingStore.recordResetRequested(kind, hmac, now);
@@ -334,16 +332,17 @@ export function requestPasswordReset(
     // close. The send resolves everything it needs from this bucket's own rows.
     ctx.enqueueJob({
       kind: "send-mail",
-      operationKey: `send-mail:${kind}:${hmac}`,
+      operationKey: `send-mail:${kind}:${hmac}:${window}`,
       payload: { kind, hmac },
       nextRunAt: now,
-      providerIdempotencyKey: `send-mail:${kind}:${hmac}`,
+      // Windowed too, and necessarily: derived from the `operationKey`, it is
+      // stable across every redelivery of one row — but a *new* window has to
+      // present a new key, or the provider would dedupe a legitimate second
+      // request against the first one's send.
+      providerIdempotencyKey: `send-mail:${kind}:${hmac}:${window}`,
     });
   });
 }
 
 /** How long a coordinator waits before a stalled signup is driven forward. */
 const RESUME_SIGNUP_DELAY_MS = 30_000;
-
-/** Reset-request throttle window. The operational value is #38's. */
-const RESET_THROTTLE_MS = 60_000;

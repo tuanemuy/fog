@@ -62,8 +62,19 @@ const REDACTED_KINDS = [
   "unknown",
 ] as const satisfies ReadonlyArray<SerializedErrorKind>;
 
+// Kinds the UI renders from `code` alone: the code survives, the free-form
+// server message does not.
+const MESSAGE_ONLY_REDACTED_KINDS = [
+  "notFound",
+  "conflict",
+  "unauthorized",
+  "forbidden",
+] as const satisfies ReadonlyArray<SerializedErrorKind>;
+
 const PASSED_THROUGH_KINDS = KINDS.filter(
-  (kind) => !REDACTED_KINDS.some((redacted) => redacted === kind),
+  (kind) =>
+    !REDACTED_KINDS.some((redacted) => redacted === kind) &&
+    !MESSAGE_ONLY_REDACTED_KINDS.some((redacted) => redacted === kind),
 );
 
 describe("serializeError", () => {
@@ -90,6 +101,34 @@ describe("redactForClient", () => {
       retryable: false,
       fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
     });
+  });
+
+  it.each(MESSAGE_ONLY_REDACTED_KINDS)(
+    "keeps the code of %s but drops its server message",
+    (kind) => {
+      const redacted = redactForClient(SAMPLES[kind]);
+
+      expect(redacted.code).toBe(SAMPLES[kind].code);
+      expect(redacted.message).toBe("Request failed");
+    },
+  );
+
+  // The leak this closes: a job-table conflict interpolates the job's
+  // `operationKey` into its message, and for `send-mail` that key is derived
+  // from an HMAC. `conflict` used to pass through untouched.
+  it("drops a server-minted key carried in a conflict message", () => {
+    const operationKey = "send-mail:9f2c1d0e8a7b6c5d4e3f2a1b0c9d8e7f";
+    const redacted = redactForClient(
+      serializeError(
+        new ConflictError(
+          "JOB_PAYLOAD_MISMATCH",
+          `Job ${operationKey} exists with a different payload`,
+        ),
+      ),
+    );
+
+    expect(JSON.stringify(redacted)).not.toContain(operationKey);
+    expect(redacted.code).toBe("JOB_PAYLOAD_MISMATCH");
   });
 
   it("replaces a system payload with a fixed public message", () => {

@@ -28,11 +28,10 @@ import { createRotationCheckpointStore } from "./rotationCheckpointStore";
 export function createIdentityDirectoryUnitOfWorkProvider(
   ctx: DurableObjectState,
   clock: Clock,
-  tokenKeyGeneration: number,
 ): UnitOfWorkProvider<IdentityDirectoryUnitOfWorkContext> {
   const sql = ctx.storage.sql as Sql;
   const now = () => clock.now().getTime();
-  const context = createIdentityDirectoryContext(sql, now, tokenKeyGeneration);
+  const context = createIdentityDirectoryContext(sql, now);
 
   return {
     run<T>(
@@ -49,12 +48,11 @@ export function createIdentityDirectoryUnitOfWorkProvider(
 export function createIdentityDirectoryContext(
   sql: Sql,
   now: () => number,
-  tokenKeyGeneration: number,
 ): IdentityDirectoryUnitOfWorkContext {
   return {
     credentialMappingRepository: createCredentialMappingRepository(sql),
     credentialMappingStore: createCredentialMappingStore(sql, now),
-    resetTokenStore: createResetTokenStore(sql, tokenKeyGeneration),
+    resetTokenStore: createResetTokenStore(sql),
     rotationCheckpointStore: createRotationCheckpointStore(sql),
     enqueueJob(args: EnqueueJobArgs): void {
       enqueueJob(sql, now(), args);

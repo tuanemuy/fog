@@ -1,6 +1,5 @@
 import { Version } from "@repo/core/domain/common/version";
-import { BusinessRuleError, RehydrationError } from "@repo/core/domain/error";
-import { IdentityErrorCode } from "./errorCode";
+import { RehydrationError } from "@repo/core/domain/error";
 import { CredentialId, TrashRetentionDays, UserId } from "./valueObject";
 
 /**
@@ -35,6 +34,16 @@ export type CredentialRef = Readonly<{
  */
 export type User = Readonly<{
   id: UserId;
+  /**
+   * **A read projection of `CredentialLocatorStore`, never a written field.**
+   * `UserSettingsRepository.save` writes `user_settings` alone, so there is no
+   * aggregate transition that could change this set; the transitions are
+   * `CredentialLocatorStore.record` / `deleteByCredentialId`, driven from the
+   * Identity Directory's verdict. That is why no `addCredential` /
+   * `removeCredential` exists here — a method that bumped `version` and left
+   * the set untouched would make the spec's own procedure a silent no-op
+   * (`.thread/37/adr.md` ADR-070).
+   */
   credentials: readonly CredentialRef[];
   trashRetentionDays: TrashRetentionDays;
   version: Version;
@@ -50,6 +59,11 @@ export type User = Readonly<{
  * (the same credential can be represented more than once during a key
  * rotation), and ignoring `usableForLogin` would count an SSO-only account's
  * email entry, which exists purely to reserve the address.
+ *
+ * This is the **predicate form** of the "at least one way in" invariant. Since
+ * the credential set is a projection, the invariant cannot be enforced by a
+ * transition on this aggregate: an unlink checks it here and then removes the
+ * locator rows (#12).
  */
 function loginCredentialCount(user: User): number {
   const ids = new Set<string>();
@@ -59,61 +73,13 @@ function loginCredentialCount(user: User): number {
   return ids.size;
 }
 
-function initialize(
-  params: { id: string; credentials: readonly CredentialRef[] },
-  now: Date,
-): User {
+function initialize(params: { id: string }, now: Date): User {
   return {
     id: UserId.create(params.id),
-    credentials: params.credentials,
+    credentials: [],
     trashRetentionDays: TrashRetentionDays.default(),
     version: Version.initial(),
     createdAt: now,
-    updatedAt: now,
-  };
-}
-
-/** Adds a credential, replacing any entry with the same `credentialId`. */
-function addCredential(user: User, credential: CredentialRef, now: Date): User {
-  const kept = user.credentials.filter(
-    (existing) => existing.credentialId !== credential.credentialId,
-  );
-  return {
-    ...user,
-    credentials: [...kept, credential],
-    version: Version.next(user.version),
-    updatedAt: now,
-  };
-}
-
-/**
- * Removes a credential.
- *
- * Refuses when it is the last way in. The check runs on the *resulting* set
- * rather than on the current one, so removing a credential that was never
- * usable for login (an SSO-only account's email entry) stays allowed.
- */
-function removeCredential(
-  user: User,
-  credentialId: CredentialId,
-  now: Date,
-): User {
-  const credentials = user.credentials.filter(
-    (existing) => existing.credentialId !== credentialId,
-  );
-  if (credentials.length === user.credentials.length) {
-    return user;
-  }
-  if (loginCredentialCount({ ...user, credentials }) === 0) {
-    throw new BusinessRuleError(
-      IdentityErrorCode.LastLoginCredential,
-      "Cannot remove the last credential that can be used to sign in",
-    );
-  }
-  return {
-    ...user,
-    credentials,
-    version: Version.next(user.version),
     updatedAt: now,
   };
 }
@@ -174,17 +140,19 @@ function reconstructCredential(input: {
 
 export const User = {
   /**
-   * First persistence of an account. The credential set is supplied by the
-   * caller because which credentials exist is decided on the Identity
-   * Directory side — password signup contributes one `kind: "email"` entry,
-   * SSO signup contributes an `sso` entry plus the email entry that reserves
-   * the address.
+   * First persistence of an account. **Takes no credential set**, and the
+   * absence is the point: this runs at signup phase 2, when the reservations
+   * exist on the Identity Directory side but no `credential_locators` row does
+   * yet — phase 4 writes those. Since `credentials` is that table's projection,
+   * an empty set here is not a violated invariant but the only truthful value,
+   * and a parameter would let a caller assert a set the row does not hold.
+   *
+   * "At least one credential, at least one of them usable for login" therefore
+   * holds over the *account*, from the moment phase 4 completes, and is
+   * enforced where the set is written: reservations on the way in, and
+   * {@link loginCredentialCount} as the unlink predicate on the way out.
    */
   initialize,
-
-  addCredential,
-
-  removeCredential,
 
   changeTrashRetentionDays,
 

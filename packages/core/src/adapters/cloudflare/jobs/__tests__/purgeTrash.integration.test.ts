@@ -6,7 +6,7 @@ import { inUserData } from "../../__tests__/doHarness";
 import { runMigrationGate } from "../../schema/gate";
 import { USER_DATA_CODE_VERSION, USER_DATA_STEPS } from "../../schema/userData";
 import { upsertSearchEntry } from "../../search/projection";
-import { purgeTrash } from "../handlers/purgeTrash";
+import { createPurgeTrash, purgeTrash } from "../handlers/purgeTrash";
 import type { UserDataJobContext } from "../registry";
 import { enqueueJob, type JobRow } from "../table";
 
@@ -39,8 +39,19 @@ let seq = 0;
 type Io = {
   sql: SqlStorage;
   ctx: DurableObjectState;
+  /**
+   * Everything the handler logged. The handler logs on exactly one path — the
+   * clamp, which fires only when the drive signal and the work predicate have
+   * drifted apart — so an empty array *is* the invariant, and every case below
+   * asserts it.
+   */
   lines: string[];
   run: (now?: number) => Promise<{ kind: string; nextRunAt?: number }>;
+  /** The same handler at a shrunken chunk budget. */
+  runBounded: (
+    budget: { chunkRowLimit: number; maxChunks: number },
+    now?: number,
+  ) => Promise<{ kind: string; nextRunAt?: number }>;
 };
 
 function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
@@ -49,19 +60,21 @@ function harness<T>(fn: (io: Io) => Promise<T> | T): Promise<T> {
   return inUserData(name, ({ ctx, sql }) => {
     runMigrationGate(ctx, USER_DATA_STEPS, USER_DATA_CODE_VERSION, name);
     const { logger, lines } = recordingLogger();
-    const run = async (now = NOW) => {
-      const context: UserDataJobContext = {
-        ctx,
-        sql,
-        now,
-        ownerToken: "owner-1",
-        logger,
-        idGenerator,
-      };
-      const row = { operation_key: "purge-trash", payload: "{}" } as JobRow;
-      return purgeTrash(context, row);
-    };
-    return fn({ sql, ctx, lines, run });
+    const context = (now: number): UserDataJobContext => ({
+      ctx,
+      sql,
+      now,
+      ownerToken: "owner-1",
+      logger,
+      idGenerator,
+    });
+    const row = { operation_key: "purge-trash", payload: "{}" } as JobRow;
+    const run = (now = NOW) => purgeTrash(context(now), row);
+    const runBounded = (
+      budget: { chunkRowLimit: number; maxChunks: number },
+      now = NOW,
+    ) => createPurgeTrash(budget)(context(now), row);
+    return fn({ sql, ctx, lines, run, runBounded });
   }) as Promise<T>;
 }
 
@@ -220,19 +233,107 @@ describe("purge-trash", () => {
   });
 
   it("leaves the drive signal strictly in the future after a run", async () => {
-    const outcome = await harness(async ({ sql, run }) => {
+    const result = await harness(async ({ sql, run, lines }) => {
       setRetention(sql, 7);
       addMemo(sql, "due", NOW - 9 * DAY, purgeAt(NOW - 9 * DAY, 7));
       addMemo(sql, "not-due", NOW - 2 * DAY, purgeAt(NOW - 2 * DAY, 7));
       addTopic(sql, "t-due", NOW - 8 * DAY, purgeAt(NOW - 8 * DAY, 7));
-      return run();
+      return { outcome: await run(), lines };
     });
     // This is the invariant the clamp inside the handler exists to defend: the
     // drive signal is the minimum over the *same* predicate the deletion uses,
     // so a completed wake-up can never leave it in the past. If it ever does,
     // the two queries have drifted apart and the DO would wake forever.
-    expect(outcome.kind).toBe("rearm");
-    expect(outcome.nextRunAt ?? 0).toBeGreaterThan(NOW);
+    expect(result.outcome.kind).toBe("rearm");
+    expect(result.outcome.nextRunAt ?? 0).toBeGreaterThan(NOW);
+    // The clamp is the handler's only log line, so an empty log is the direct
+    // statement that it did not fire — which is the same invariant read off the
+    // other side. No fixture can reach the clamp while the two queries agree,
+    // and that is exactly why the observation worth making is this one.
+    expect(result.lines).toEqual([]);
+  });
+
+  it("does not enter the deletion phase while recomputation is unfinished", async () => {
+    const result = await harness(async ({ sql, runBounded, lines }) => {
+      setRetention(sql, 7);
+      // Both rows carry a *stale* `purge_after` that is already past, while the
+      // value the current window implies is in the future. A wake-up that ran
+      // the deletion phase against the un-recomputed rows would destroy items
+      // the user's retention setting says to keep.
+      addMemo(sql, "m1", NOW - 2 * DAY, NOW - DAY);
+      addMemo(sql, "m2", NOW - 3 * DAY, NOW - 2 * DAY);
+      addMemo(sql, "m3", NOW - 4 * DAY, NOW - 3 * DAY);
+      // One row per chunk, two chunks per claim, three rows to recompute: the
+      // phase cannot finish in this wake-up, which is the state `yield` is for.
+      const outcome = await runBounded({ chunkRowLimit: 1, maxChunks: 2 });
+      return {
+        outcome,
+        memos: ids(sql, "memos"),
+        purgeAfter: [
+          purgeAfterOf(sql, "memos", "m1"),
+          purgeAfterOf(sql, "memos", "m2"),
+          purgeAfterOf(sql, "memos", "m3"),
+        ],
+        lines,
+      };
+    });
+    expect(result.outcome).toEqual({ kind: "yield" });
+    // Nothing deleted, although all three were due under the value they still
+    // carried when the wake-up started.
+    expect(result.memos).toEqual(["m1", "m2", "m3"]);
+    // …and exactly two of the three were recomputed, so the pass really did run
+    // out of budget rather than skipping the phase.
+    const recomputed = result.purgeAfter.filter(
+      (value) => (value ?? 0) > NOW,
+    ).length;
+    expect(recomputed).toBe(2);
+    expect(result.lines).toEqual([]);
+  });
+
+  it("reports unfinished recomputation as a yield even when nothing is due", async () => {
+    const result = await harness(async ({ sql, runBounded, lines }) => {
+      setRetention(sql, 7);
+      // Stale values that are *not* due, so the "is anything left to purge"
+      // check at the end of the handler answers no. Only the explicit
+      // `if (!recalculated) return yield` can report the outstanding work here;
+      // without it the handler re-arms on a drive signal computed from rows it
+      // has not finished recomputing, and the tail is silently forgotten until
+      // some unrelated wake-up.
+      for (const id of ["m1", "m2", "m3"]) {
+        addMemo(sql, id, NOW - DAY, NOW + 100 * DAY);
+      }
+      const outcome = await runBounded({ chunkRowLimit: 1, maxChunks: 2 });
+      return { outcome, memos: ids(sql, "memos"), lines };
+    });
+    expect(result.outcome).toEqual({ kind: "yield" });
+    expect(result.memos).toEqual(["m1", "m2", "m3"]);
+    expect(result.lines).toEqual([]);
+  });
+
+  it("resumes the recomputation on the next wake-up, then purges", async () => {
+    const result = await harness(async ({ sql, runBounded, lines }) => {
+      setRetention(sql, 7);
+      // Stale and, once recomputed, genuinely expired: the deletion phase is
+      // reached only after the recomputation phase comes back empty.
+      addMemo(sql, "old-1", NOW - 9 * DAY, NOW - 30 * DAY);
+      addMemo(sql, "old-2", NOW - 10 * DAY, NOW - 30 * DAY);
+      const budget = { chunkRowLimit: 1, maxChunks: 2 };
+      const outcomes: string[] = [];
+      const survivors: number[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        const outcome = await runBounded(budget);
+        outcomes.push(outcome.kind);
+        survivors.push(ids(sql, "memos").length);
+      }
+      return { outcomes, survivors, lines };
+    });
+    // Wake-up 1 spends both chunks recomputing and yields with nothing deleted;
+    // wake-up 2 finds the recomputation predicate empty and only then starts
+    // deleting. Nothing is destroyed before the phase that recomputes it has
+    // come back empty, which is the ordering AC-10 asks for.
+    expect(result.outcomes).toEqual(["yield", "yield", "done"]);
+    expect(result.survivors).toEqual([2, 1, 0]);
+    expect(result.lines).toEqual([]);
   });
 
   it("drops a restored item out of the drive signal", async () => {

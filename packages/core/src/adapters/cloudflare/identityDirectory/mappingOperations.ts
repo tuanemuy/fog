@@ -5,17 +5,30 @@ import type {
   ReserveCredentialArgs,
 } from "@repo/core/domain/identity/ports/credentialMappingStore";
 import type { CredentialId } from "@repo/core/domain/identity/valueObject";
-import { one, run, type Sql } from "../sql/exec";
+import { all, one, run, type Sql } from "../sql/exec";
 import { matchOpaque } from "./opaqueBinding";
 
 /**
- * The seven writes against `credential_mappings`.
+ * The eight writes against `credential_mappings`.
  *
  * Every one is a CAS conditioned on `operationId`, `payloadDigest`, `status` or
  * `changeState`. **None uses `conditionalUpdate`**: that helper is the OCC
  * guard, and this table has no `version` column — those CAS predicates already
  * serialise writes to a row, and adding a generic OCC on top would make two
  * things authoritative at once.
+ *
+ * ## Which ones read the match back, and why the others do not
+ *
+ * `activate` and `promote` count the matched rows and raise `ConflictError` on
+ * zero. They advance a saga, so a predicate that matched nothing means the saga
+ * cannot complete — reporting success would let signup run to the end with a
+ * reservation still `reserved`, producing an account that can never log in and
+ * gives no reason why.
+ *
+ * `cancel`, `delete` and `reportResult` deliberately treat an absent row as
+ * success. The first two are recovery, which is retried and whose goal a row
+ * somebody else already removed has met; the third must answer identically for
+ * a locator naming no row, or it becomes an enumeration oracle.
  *
  * A facade never imports this module. It reaches these operations only through
  * the context `identityDirectory/unitOfWork.ts` assembles, which is what keeps
@@ -102,19 +115,49 @@ export function createCredentialMappingStore(
       hmac: string,
       operationId: string,
       userId: string,
+      callerToken: string,
     ): void {
-      run(
+      const row = one<{
+        status: string;
+        user_id: string | null;
+        candidate_user_id: string | null;
+        operation_id: string | null;
+        caller_token: string | null;
+      }>(
+        sql,
+        `SELECT status, user_id, candidate_user_id, operation_id, caller_token
+           FROM credential_mappings WHERE kind = ? AND hmac = ?`,
+        kind,
+        hmac,
+      );
+      // Read-then-CAS rather than one statement, because `caller_token` has to
+      // be compared in constant time and SQL cannot — the same shape `cancel`
+      // and `delete` use. The whole method runs inside one `transactionSync`,
+      // so nothing can interleave between the read and the update.
+      if (row === null) throw notActivatable();
+      if (row.operation_id !== operationId) throw notActivatable();
+      if (!matchOpaque(row.caller_token, callerToken)) throw notActivatable();
+      // Already promoted by this same operation: the phase is re-run by the
+      // coordinator's alarm, so this has to be success rather than a conflict.
+      if (row.status === "active" && row.user_id === userId) return;
+      if (row.candidate_user_id !== userId) throw notActivatable();
+
+      const updated = all(
         sql,
         `UPDATE credential_mappings
             SET status = 'active', user_id = ?, candidate_user_id = NULL,
                 updated_at = ?
-          WHERE kind = ? AND hmac = ? AND operation_id = ?`,
+          WHERE kind = ? AND hmac = ? AND operation_id = ?
+            AND candidate_user_id = ?
+        RETURNING 1`,
         userId,
         now(),
         kind,
         hmac,
         operationId,
+        userId,
       );
+      if (updated.length === 0) throw notActivatable();
     },
 
     cancel(
@@ -174,7 +217,7 @@ export function createCredentialMappingStore(
       // `change_state = 'advanced'` only. Promoting while still `'pending'`
       // would make the new material authoritative before the User Data side
       // has moved, leaving the two permanently out of step.
-      run(
+      const updated = all(
         sql,
         `UPDATE credential_mappings
             SET password_verifier = pending_verifier, pending_verifier = NULL,
@@ -182,11 +225,18 @@ export function createCredentialMappingStore(
                 credential_version = credential_version + 1,
                 failed_attempts = 0, next_attempt_allowed_at = NULL,
                 updated_at = ?
-          WHERE credential_id = ? AND operation_id = ? AND change_state = 'advanced'`,
+          WHERE credential_id = ? AND operation_id = ? AND change_state = 'advanced'
+        RETURNING 1`,
         now(),
         credentialId,
         operationId,
       );
+      if (updated.length === 0) {
+        throw new ConflictError(
+          "CREDENTIAL_CHANGE_NOT_ADVANCED",
+          "No credential change is ready to be promoted",
+        );
+      }
     },
 
     delete(credentialId: CredentialId, callerToken: string): void {
@@ -272,6 +322,20 @@ export function createCredentialMappingStore(
  * #18; what #37 owns is the column and the update point.
  */
 const FAILED_ATTEMPT_BACKOFF_MS = 30_000;
+
+/**
+ * One answer for every way the promotion can fail to match.
+ *
+ * Not split by cause on purpose: the caller is a saga phase that can only
+ * abort, and a message distinguishing "no such reservation" from "wrong caller
+ * token" would report on a bucket's contents to whoever could reach the entry.
+ */
+function notActivatable(): ConflictError {
+  return new ConflictError(
+    "RESERVATION_NOT_ACTIVATABLE",
+    "No matching reservation could be activated",
+  );
+}
 
 function alreadyRegistered(
   kind: CredentialMappingKind,

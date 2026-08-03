@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { SqlStorage } from "@cloudflare/workers-types";
+import type { LookupCredentialResult } from "@repo/core/application/di/facades";
 import { requireDirectoryRoutingKeyring } from "@repo/core/application/di/secrets";
 import {
   type SsoProvider,
@@ -79,7 +80,7 @@ function inBucket<T>(
 function lookupIn<T extends "email" | "sso">(
   locator: DirectoryLocator,
   kind: T,
-): Promise<facade.LookupCredentialResult> {
+): Promise<LookupCredentialResult> {
   const name = `${locator.doName}#${seq}`;
   const ns = env.IDENTITY_DIRECTORY;
   return runInDurableObject(ns.get(ns.idFromName(name)), (_instance, ctx) => {
@@ -90,11 +91,9 @@ function lookupIn<T extends "email" | "sso">(
       IDENTITY_DIRECTORY_CODE_VERSION,
       locator.doName,
     );
-    const uow = createIdentityDirectoryUnitOfWorkProvider(
-      state,
-      { now: () => new Date(NOW) },
-      1,
-    );
+    const uow = createIdentityDirectoryUnitOfWorkProvider(state, {
+      now: () => new Date(NOW),
+    });
     return facade.lookupCredential(
       { uow },
       {
@@ -105,7 +104,7 @@ function lookupIn<T extends "email" | "sso">(
       },
       NOW,
     );
-  }) as Promise<facade.LookupCredentialResult>;
+  }) as Promise<LookupCredentialResult>;
 }
 
 function insertMapping(
@@ -142,6 +141,11 @@ async function locatorFor(canonical: string): Promise<DirectoryLocator> {
   return activeLocator(await locatorResolver.forCanonical(canonical));
 }
 
+/** The resolved `userId`, or `null` for the levelled answer. */
+function userIdOf(result: LookupCredentialResult): string | null {
+  return result.outcome === "none" ? null : result.userId;
+}
+
 describe("resolving a userId from an SSO identity", () => {
   it("finds the mapping the canonical routes to", async () => {
     seq += 1;
@@ -156,12 +160,12 @@ describe("resolving a userId from an SSO identity", () => {
       });
     });
     const found = await lookupIn(locator, "sso");
-    expect(found.userId).toBe("user-sso");
-    expect(found.credentialId).toBe("cred-sso");
+    // An SSO row holds no verification material, so there is no work to level.
+    // The arm says so; there is no nullable `passwordVerifier` to inspect.
+    expect(found.outcome).toBe("identity");
+    expect(userIdOf(found)).toBe("user-sso");
+    expect(found.outcome !== "none" && found.credentialId).toBe("cred-sso");
     expect(found.credentialVersion).toBe(3);
-    // An SSO row holds no verification material, so there is no work to level
-    // and nothing to return in its place.
-    expect(found.passwordVerifier).toBeNull();
   });
 
   it("keeps the same subject on two providers apart", async () => {
@@ -182,25 +186,46 @@ describe("resolving a userId from an SSO identity", () => {
         userId: "user-google",
       });
     });
-    expect((await lookupIn(google, "sso")).userId).toBe("user-google");
+    expect(userIdOf(await lookupIn(google, "sso"))).toBe("user-google");
     // Registering with one provider must not register the identity with the
     // other: the canonical, and therefore the hmac and usually the bucket, are
     // different values.
-    expect((await lookupIn(github, "sso")).userId).toBeNull();
+    expect(userIdOf(await lookupIn(github, "sso"))).toBeNull();
   });
 
-  it("folds the provider's case but not the subject's", async () => {
+  it("resolves a differently-cased provider onto the row a lower-cased one wrote", async () => {
     seq += 1;
-    const lower = ssoCanonical("google" as SsoProvider, "sso-subject-4711");
-    const upper = ssoCanonical("GOOGLE" as SsoProvider, "sso-subject-4711");
-    expect(upper).toBe(lower);
-    // The subject is an opaque value the provider owns; normalising it would
-    // put this system's idea of identity out of step with the IdP's.
-    const differentSubject = ssoCanonical(
-      "google" as SsoProvider,
-      "SSO-SUBJECT-4711",
+    // What only the composed path can show: `valueObject.test.ts` already pins
+    // that `ssoCanonical` folds the provider's case and leaves the subject's
+    // alone, but not that the folded value is what reaches the bucket. A
+    // lookup that hashed the provider as typed would miss this row while every
+    // value-object test stayed green.
+    const written = await locatorFor(
+      ssoCanonical("google" as SsoProvider, "sso-subject-4711"),
     );
-    expect(differentSubject).not.toBe(lower);
+    await inBucket(written, ({ sql }) => {
+      insertMapping(sql, {
+        kind: "sso",
+        hmac: written.hmac,
+        credentialId: "cred-sso",
+        userId: "user-sso",
+      });
+    });
+
+    const asTyped = await locatorFor(
+      ssoCanonical("GOOGLE" as SsoProvider, "sso-subject-4711"),
+    );
+    expect(asTyped.doName).toBe(written.doName);
+    expect(userIdOf(await lookupIn(asTyped, "sso"))).toBe("user-sso");
+
+    // The subject is an opaque value the provider owns; normalising it would
+    // put this system's idea of identity out of step with the IdP's — so a
+    // re-cased subject is a *different* identity and resolves to nothing.
+    const recasedSubject = await locatorFor(
+      ssoCanonical("google" as SsoProvider, "SSO-SUBJECT-4711"),
+    );
+    expect(recasedSubject.hmac).not.toBe(written.hmac);
+    expect(userIdOf(await lookupIn(recasedSubject, "sso"))).toBeNull();
   });
 
   it("lets an email row and an SSO row share a bucket without crossing", async () => {
@@ -228,9 +253,12 @@ describe("resolving a userId from an SSO identity", () => {
     });
     const asSso = await lookupIn(sso, "sso");
     const asEmail = await lookupIn(sso, "email");
-    expect(asSso.userId).toBe("user-sso");
-    expect(asSso.passwordVerifier).toBeNull();
-    expect(asEmail.userId).toBe("user-email");
-    expect(asEmail.passwordVerifier).toBe("verifier");
+    expect(asSso.outcome).toBe("identity");
+    expect(userIdOf(asSso)).toBe("user-sso");
+    expect(asEmail.outcome).toBe("password");
+    expect(userIdOf(asEmail)).toBe("user-email");
+    expect(asEmail.outcome === "password" && asEmail.passwordVerifier).toBe(
+      "verifier",
+    );
   });
 });

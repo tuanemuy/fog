@@ -51,15 +51,22 @@ type ResolvedCredential = Readonly<{
   canonical: string;
   label: string;
   passwordVerifier?: string;
-  locators: readonly DirectoryLocator[];
+  /** Non-empty; `[0]` is the active generation. */
+  locators: readonly [DirectoryLocator, ...DirectoryLocator[]];
 }>;
 
 /** Reservation TTL. Long enough to outlive a stalled saga's first retries. */
 const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * @param credentials A **non-empty** tuple. "A signup with no credentials"
+ *   used to be guarded by a runtime `throw` of a bare `Error`, which carries no
+ *   `kind` and would therefore have surfaced as a 500; the tuple type makes the
+ *   caller unable to reach that state at all (ADR-073).
+ */
 export async function runSignupSaga(
   container: UsecaseContainer,
-  credentials: readonly SignupCredentialInput[],
+  credentials: readonly [SignupCredentialInput, ...SignupCredentialInput[]],
 ): Promise<SignupResult> {
   const now = container.clock.now();
 
@@ -68,33 +75,21 @@ export async function runSignupSaga(
   const userId = container.idGenerator.next();
   const callerToken = container.idGenerator.next();
 
-  const resolved: ResolvedCredential[] = [];
-  for (const credential of credentials) {
-    resolved.push({
-      credentialId: container.idGenerator.next(),
-      kind: credential.kind,
-      canonical: credential.canonical,
-      label: credential.label,
-      // Absent, not `undefined`: "holds no verifier" is what makes an address
-      // reservation fail the `usableForLogin` test.
-      ...(credential.passwordVerifier === undefined
-        ? {}
-        : { passwordVerifier: credential.passwordVerifier }),
-      locators: await container.directoryLocator.forCanonical(
-        credential.canonical,
-      ),
-    });
+  const [firstInput, ...restInput] = credentials;
+  const ordered: [ResolvedCredential, ...ResolvedCredential[]] = [
+    await resolveCredential(container, firstInput),
+  ];
+  for (const credential of restInput) {
+    ordered.push(await resolveCredential(container, credential));
   }
 
   // Sorted on `(kind, full-length hmac)` with `'email' < 'sso'`. The rule is
   // deterministic, so every actor computes the same coordinator without any
   // negotiation — and two concurrent signups can never take the same pair of
-  // buckets in opposite orders.
-  const ordered = [...resolved].sort(compareCredentials);
+  // buckets in opposite orders. Sorted in place, so the tuple type — and with
+  // it "there is a coordinator" — survives.
+  ordered.sort(compareCredentials);
   const coordinator = ordered[0];
-  if (coordinator === undefined) {
-    throw new Error("A signup must present at least one credential");
-  }
   const coordinatorLocator = activeLocator(coordinator);
   const targetLocators = ordered.flatMap((credential) =>
     credential.locators.map((locator) => toLocatorRef(credential, locator)),
@@ -155,14 +150,16 @@ export async function runSignupSaga(
   for (const credential of ordered) {
     const locator = activeLocator(credential);
     unwrap(
-      await container
-        .directoryStubFactory(locator)
-        .activateReservation(
-          credential.kind,
-          locator.hmac,
-          operationId,
-          userId,
-        ),
+      await container.directoryStubFactory(locator).activateReservation(
+        credential.kind,
+        locator.hmac,
+        operationId,
+        userId,
+        // The reservation is promoted by whoever holds the token that wrote
+        // it, not by whoever knows the `operationId` — that value is allowed
+        // to appear in unauthenticated logs.
+        callerToken,
+      ),
     );
   }
 
@@ -204,6 +201,26 @@ export async function runSignupSaga(
     }),
   );
   return { userId, sessionEpoch: account.sessionEpoch };
+}
+
+async function resolveCredential(
+  container: UsecaseContainer,
+  credential: SignupCredentialInput,
+): Promise<ResolvedCredential> {
+  return {
+    credentialId: container.idGenerator.next(),
+    kind: credential.kind,
+    canonical: credential.canonical,
+    label: credential.label,
+    // Absent, not `undefined`: "holds no verifier" is what makes an address
+    // reservation fail the `usableForLogin` test.
+    ...(credential.passwordVerifier === undefined
+      ? {}
+      : { passwordVerifier: credential.passwordVerifier }),
+    locators: await container.directoryLocator.forCanonical(
+      credential.canonical,
+    ),
+  };
 }
 
 async function assertPreviousGenerationFree(
@@ -286,12 +303,15 @@ async function cancelAll(
   }
 }
 
+/**
+ * The active generation's locator, which is where every write goes.
+ *
+ * Total, not partial: `forCanonical` returns a non-empty tuple because
+ * `Keyring` is one, so there is no "the keyring produced no active locator"
+ * case left to throw on.
+ */
 function activeLocator(credential: ResolvedCredential): DirectoryLocator {
-  const locator = credential.locators[0];
-  if (locator === undefined) {
-    throw new Error("The routing keyring produced no active locator");
-  }
-  return locator;
+  return credential.locators[0];
 }
 
 function toLocatorRef(
