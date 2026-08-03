@@ -472,7 +472,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `kind` | 所有 DO クラス | 投入点 | 類型 | 用途 |
 |---|---|---|---|---|
 | `purge-trash` | User Data | ソフトデリートの4ユースケース（`softDeleteMemo` / AI の `delete` / `trashDocument` / `trashTopic`）と `changeTrashRetentionDays`。`purge_after` を書くのと同じトランザクションで `TrashQueryPort.findEarliestPurgeAfter()` を読んで張る（domains/trash.md「保持期限」） | 期限処理 | 保持期限の到達処理（`purge_after` の再計算フェーズが先、削除フェーズが後。**再計算フェーズの自己消尽する作業述語は `user_settings` の項が持つ**） |
-| `reindex` | User Data | migration ゲート（トークナイザ・正規化規則の変更を含む `schema_version` の前進時）。アダプター側で、usecase からは投入しない | チェックポイント分割を要する一括処理 | FTS5 の全件再構築（トークナイザ・正規化規則の変更時） |
+| `reindex` | User Data | migration ゲート（トークナイザの変更を伴う `schema_version` の前進時）。アダプター側で、usecase からは投入しない | チェックポイント分割を要する一括処理 | FTS5 の全件再構築。**射程はトークナイザの変更に限る** — 入力が正規化済みの `search_entries` なので正規化規則の変更は反映されず、それには原文からの projection やり直し（#2〜#6）が要る（「検索」節を参照） |
 | `migrate-bulk` | User Data | migration ゲート（データ書き換えを伴う段を切り出すとき）。アダプター側で、usecase からは投入しない | チェックポイント分割を要する一括処理 | データ書き換えを伴う migration |
 | `finalize-withdrawal` | User Data | **2つあり、これが全数である** — (1) 退会の開始（`account.status` を `deleting` にするのと同じトランザクション）、(2) 新規登録 saga の終端規則によるアカウントの放棄（**その手順は #45 が定める**が、投入点が2つであること自体は本表が持つ） | cross-DO saga の前進 | 退会の後続手順の前進 |
 | `sweep-orphan-mapping` | User Data | `unlinkSsoCredential` の逆引き削除（`credential_locators` の行を消すのと同じトランザクション）。**これが唯一の投入点である** — 落とすと写像の削除が落ちたときに `active` な孤児 mapping が恒久的に残る | cross-DO saga の前進 | SSO 連携解除後に残った孤児 mapping の削除再試行 |
