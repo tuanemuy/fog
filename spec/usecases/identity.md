@@ -42,7 +42,7 @@
 3. `container.passwordHasher.hash(plainPassword)` で `PasswordHash` を得る（UoW 外で実行）
 4. **認証情報側**でメールの予約を取る（`CredentialMappingRepository.findByEmail(email)` で重複を検証し、`reserveCredential` で予約行を書く）。既に使われていれば `ConflictError("EMAIL_ALREADY_REGISTERED")`
 5. 予約に勝った場合だけ、**ユーザー単位設定側**の `unitOfWorkProvider.run` 内で初期化する:
-   1. `User.initialize({ id }, now)` で `User` を得る。**クレデンシャル集合は渡さない** — `credentials` は `CredentialLocatorStore` の射影で、その行は手順7 で書かれるので、この時点では空が正しい（domains/identity.md。`.thread/37/adr.md` ADR-070）
+   1. `User.initialize({ id }, now)` で `User` を得る。**クレデンシャル集合は渡さない** — `credentials` は `CredentialLocatorStore` の射影で、その行は手順7 で書かれるので、この時点では空が正しい（domains/identity.md。`.adr/022-credential-authority-and-projection.md`）
    2. `UserSettingsRepository.insert(user)` で永続化する
 6. 認証情報側の予約を確定させ、パスワードの検証材料を記録する（`activateReservation`）
 7. **ユーザー単位設定側**で保有クレデンシャルの逆引きを記録する（`CredentialLocatorStore.record`。`usableForLogin` / `label` は認証情報側が判定した値を写す）。**この記録が済むまでログインは通らない** — ログインの到達性検査がこのストアを読むためである
@@ -534,7 +534,7 @@ IdP との認証フロー（リダイレクト・アサーション検証）は 
 3. **認証情報側**で SSO 主体の予約を取る（`reserveCredential`）。既に使われていれば `ConflictError("SSO_IDENTITY_ALREADY_REGISTERED")`（**自分のアカウントで連携済みの場合も同じ**。連携は重複を拒否する）
 4. 認証情報側の予約を確定させる（`activateReservation`）
 5. **ユーザー単位設定側**の `unitOfWorkProvider.run` 内で、同じトランザクションで次を行う:
-   1. `CredentialLocatorStore.record(locator)` で逆引きを記録する（`credentialId` は採番済み、`kind: "sso"`、`usableForLogin: true`、`label` は provider 名）。**この記録が済むまでその SSO ではログインできない** — ログインの到達性検査がこのストアを読むためである。**`User` 側に `save` は要らない**：`User.credentials` はこのストアの射影であり、集合を書き換える遷移をエンティティは持たない（domains/identity.md。`.thread/37/adr.md` ADR-070）
+   1. `CredentialLocatorStore.record(locator)` で逆引きを記録する（`credentialId` は採番済み、`kind: "sso"`、`usableForLogin: true`、`label` は provider 名）。**この記録が済むまでその SSO ではログインできない** — ログインの到達性検査がこのストアを読むためである。**`User` 側に `save` は要らない**：`User.credentials` はこのストアの射影であり、集合を書き換える遷移をエンティティは持たない（domains/identity.md。`.adr/022-credential-authority-and-projection.md`）
    3. `updateOperation` で手続きの記録を完了にする
 6. `credentialId` を返す
 

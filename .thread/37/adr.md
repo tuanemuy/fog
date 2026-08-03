@@ -59,6 +59,8 @@ Proposed
 
 ## ADR-003: UoW コンテキストを DO クラスごとに2型へ分ける
 
+> → `.adr/014` に昇格。
+
 ### Status
 
 Proposed
@@ -109,6 +111,8 @@ export interface UnitOfWorkProvider<TContext> {
 
 ## ADR-004: チューニング定数を `packages/core/src/lib/` の leaf モジュールに置く
 
+> → `.adr/024` に昇格。
+
 ### Status
 
 Proposed
@@ -133,6 +137,8 @@ Proposed
 ---
 
 ## ADR-005: 起動スモークテストを Workers プール統合スイートとは別レイヤーとして置く
+
+> → `.adr/024` に昇格。
 
 ### Status
 
@@ -160,6 +166,8 @@ Proposed
 ---
 
 ## ADR-006: wrangler 設定を request / state の2系統へ分け、DO は `exports` で宣言する
+
+> → `.adr/025` に昇格。
 
 ### Status
 
@@ -238,6 +246,8 @@ Issue 本文が「検索 usecase と検索ページの実装は #10 の担当。
 
 ## ADR-009: `drizzle-orm` / `drizzle-kit` を依存から外し、DO では素の `SqlStorage` を使う
 
+> → `.adr/013` に昇格。
+
 ### Status
 
 Proposed
@@ -285,6 +295,8 @@ Proposed（第11.2節「既存 D1 データのカットオーバー方針」の�
 
 ## ADR-011: DO namespace を Pulumi で provision しない
 
+> → `.adr/025` に昇格。
+
 ### Status
 
 Proposed
@@ -310,6 +322,8 @@ Proposed
 ---
 
 ## ADR-012: `credential_mappings` の書き込みは `CredentialMappingStore` として UoW コンテキストに載せる
+
+> → `.adr/014` に昇格。
 
 ### Status
 
@@ -371,6 +385,8 @@ Proposed
 ---
 
 ## ADR-014: RPC 値エンベロープの型は `packages/core/src/lib/rpcEnvelope.ts` に置く
+
+> → `.adr/015` に昇格。
 
 ### Status
 
@@ -434,6 +450,8 @@ Proposed（`ARCH-S-010`（1周目）の結論「`isolatedStorage` の既定に�
 ---
 
 ## ADR-016: canonical 化と HMAC 導出は request Worker、Directory DO は `(kind, hmac)` で引く
+
+> → `.adr/016` に昇格。
 
 ### Status
 
@@ -500,6 +518,8 @@ state Worker（`apps/web/app/worker/cloudflare/state.ts`）の成果物 `dist/st
 ---
 
 ## ADR-018: 層間逆流の機械検証は「import 文だけを見る」形に確定し、合成ルートとテストハーネスを除外する
+
+> → `.adr/015` に昇格。
 
 ### Status
 
@@ -641,6 +661,8 @@ steps.md ステップ12 は「単独で typecheck-clean」を分割の唯一の�
 
 ## ADR-023: `jobs.payload_digest` は非暗号学的ハッシュで足りる
 
+> → `.adr/017` に昇格（非暗号学的ハッシュを使ってよい範囲の線引きとして一部）。
+
 ### Status
 
 Proposed
@@ -690,6 +712,8 @@ Proposed
 
 ## ADR-025: `AccountStore` に `initialize` と `matchCallerToken` を足す
 
+> → `.adr/014` に昇格。
+
 ### Status
 
 Proposed
@@ -719,6 +743,8 @@ Proposed
 
 ## ADR-026: `CredentialMappingStore` に8本目 `recordResetRequested` を置く
 
+> → `.adr/014` に昇格。
+
 ### Status
 
 Proposed
@@ -745,6 +771,8 @@ Proposed
 ---
 
 ## ADR-027: `DirectoryLocator` の型を `packages/core/src/lib/` へ置く
+
+> → `.adr/015` に昇格。
 
 ### Status
 
@@ -773,6 +801,8 @@ Proposed
 ---
 
 ## ADR-028: AC-4 の `idFromName` grep はテストハーネスを除外する形へ確定させる
+
+> → `.adr/015` に昇格。
 
 ### Status
 
@@ -808,6 +838,8 @@ AC-4 は「`grep -rn "idFromName\|getByName" packages/core/src apps/web/app` の
 
 ## ADR-029: `send-mail` の `payload` に `tokenId` を載せず、依頼の `(kind, hmac)` だけを載せる
 
+> → `.adr/018` に昇格。
+
 **日付:** 2026-08-03（ステップ21）
 **ステータス:** 採用
 
@@ -839,6 +871,8 @@ steps.md ステップ21 は「`payload` に載せるのは `tokenId` だけ」�
 ---
 
 ## ADR-030: `sendMail` は `encrypted_canonical` を復号して宛先を得る。書き込み側は #37 に存在しない
+
+> → `.adr/017` に昇格。
 
 **日付:** 2026-08-03（ステップ21）
 **ステータス:** 採用。**下記「未解決」は ADR-036 で解消済み**（`reserve-credential` が平文 canonical を受け取り、DO が RPC エントリで封をしてから予約行を書く形）
@@ -897,6 +931,8 @@ steps.md ステップ21 は `resumeSignup` に「コーディネーター予約�
 ---
 
 ## ADR-032: ハンドラが「前進不能」を返せるよう `JobOutcome` に `terminal` を足す
+
+> → `.adr/021` に昇格。
 
 **日付:** 2026-08-03（ステップ21 / 22）
 **ステータス:** 採用
@@ -969,6 +1005,8 @@ steps.md ステップ24 の断片は、request Worker を Miniflare のトップ
 
 ## ADR-035: `guardStub` は RPC メソッドを取り出して `apply` してはならない
 
+> → `.adr/023` に昇格。
+
 **日付:** 2026-08-03（ステップ21）
 **ステータス:** 採用（既存実装の不具合の是正）
 
@@ -993,6 +1031,8 @@ JS RPC の stub のメソッドは通常の関数ではなくパイプライン�
 ---
 
 ## ADR-036: `reserve-credential` が平文 canonical を受け取り、DO が RPC エントリで封をしてから予約行を書く
+
+> → `.adr/017` に昇格。
 
 **日付:** 2026-08-03（ADR-030 の引き継ぎ）
 **ステータス:** 採用
@@ -1243,6 +1283,8 @@ steps.md ステップ32 の項目9 は `npx wrangler deploy -c wrangler.toml --d
 
 ## ADR-042: リセットトークンは「発行・配送・検証」を1つの導出鎖に閉じ、行にはメール本文の秘密の SHA-256 だけを残す
 
+> → `.adr/017` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー adapter-infra B-003 / security B-001 / security W-001 への対応）
 
@@ -1287,6 +1329,8 @@ secret   --routing 座標を前置---------------------> メール本文のリ�
 
 ## ADR-043: `send-mail` の `operation_key` に時間窓を入れ、トークン発行スロットルと同じ数値を共有する
 
+> → `.adr/019` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー adapter-infra B-001 / security W-002 への対応）
 
@@ -1319,6 +1363,8 @@ secret   --routing 座標を前置---------------------> メール本文のリ�
 
 ## ADR-044: `alarm()` は4段すべてを1つの catch で包み、失敗はすべて fail-closed と同じ終端に寄せる
 
+> → `.adr/021` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー adapter-infra B-002 への対応）
 
@@ -1345,6 +1391,8 @@ CLAUDE.md「非同期実行契約」(5) は無条件に「Never throw out of `al
 
 ## ADR-045: ジョブランナーのログは `operation_key` ではなく相関 ID を出す
 
+> → `.adr/018` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー security B-002 への対応）
 
@@ -1370,6 +1418,8 @@ CLAUDE.md「非同期実行契約」(5) は無条件に「Never throw out of `al
 
 ## ADR-046: 非露出テストは「固定の禁止語」ではなく「その実行が導出した実値」を検査する
 
+> → `.adr/018` に昇格（検証手段の原則として一部）。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー security W-005 への対応）
 
@@ -1392,6 +1442,8 @@ AC-3 の検証手段である `routingNonExposure.test.ts` は3点で空振り�
 ---
 
 ## ADR-047: `activate` / `promote` は一致行数を読み戻し、`activate` は `callerToken` と `candidateUserId` にも束縛する
+
+> → `.adr/020` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー adapter-infra W-001 / security W-006 への対応）
@@ -1439,6 +1491,8 @@ AC-3 の検証手段である `routingNonExposure.test.ts` は3点で空振り�
 
 ## ADR-060: `/settings` は自前の `errorComponent` を持ち、ログアウト導線をストリーミング断片の外へ出す
 
+> → `.adr/027` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用
 
@@ -1472,6 +1526,8 @@ AC-3 の検証手段である `routingNonExposure.test.ts` は3点で空振り�
 ---
 
 ## ADR-061: `redactForClient` は kind ごとに3分類し、`code` だけを通す群を作る
+
+> → `.adr/026` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用
@@ -1584,6 +1640,8 @@ TOML の落とし穴を1つ踏んだので記録する: `no_bundle` はトップ
 
 ## ADR-070: `User` はクレデンシャル集合を書く遷移を持たない（射影に倒す）
 
+> → `.adr/022` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー domain-usecase B-002 / W-001 / W-002 への対応）
 
@@ -1616,6 +1674,8 @@ TOML の落とし穴を1つ踏んだので記録する: `no_bundle` はトップ
 
 ## ADR-071: DO facade の引数・戻り値の型は `application/di/facades.ts` が持つ
 
+> → `.adr/015` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー domain-usecase B-001 への対応）
 
@@ -1642,6 +1702,8 @@ AC-25 (ii) の `grep` は形を変えない（`di/` 除外を「value import に
 ---
 
 ## ADR-072: 「ログイン手段として成立するか」の述語をドメインに1本化する
+
+> → `.adr/022` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー domain-usecase W-003 / W-007 への対応）
@@ -1836,6 +1898,8 @@ ADR-082 の測定で、`evictAllDurableObjects()` が観測可能な効果を持
 
 ## ADR-084: OCC の「行が無い」と「版が古い」は同一視を仕様として固定する
 
+> → `.adr/020` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 レビュー test W-009 への対応）
 
@@ -1903,6 +1967,8 @@ AC-6 が禁じているのは**誤帰属**であって区別の欠如ではな�
 ---
 
 ## ADR-100: ワイヤから message を落とす kind は必ずサーバログに残す
+
+> → `.adr/026` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2回目レビュー presentation-config W-001 への対応）
@@ -1991,6 +2057,8 @@ ADR-060 で `/settings` に自前の `errorComponent` を置いた結果、エ�
 
 ## ADR-090: `sweep-reset-tokens` の投入点はリセット依頼のトランザクションであり、適格性に関わらず無条件に投入する
 
+> → `.adr/018` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2周目レビュー adapter-infra B-001 / security W-002 への対応）
 
@@ -2029,6 +2097,8 @@ ctx.enqueueJob({
 
 ## ADR-091: リセット依頼の適格判定を sliding から「窓番号の比較」へ変える
 
+> → `.adr/019` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2周目レビュー security W-001 / adapter-infra W-001 への対応）
 
@@ -2063,6 +2133,8 @@ Math.floor(mapping.lastResetRequestedAt / windowMs) < Math.floor(now / windowMs)
 
 ## ADR-092: `providerIdempotencyKey` は `operationKey` の SHA-256 とし、生の `operation_key` へのフォールバックを落とす
 
+> → `.adr/018` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2周目レビュー security W-004 への対応）
 
@@ -2088,6 +2160,8 @@ Math.floor(mapping.lastResetRequestedAt / windowMs) < Math.floor(now / windowMs)
 
 ## ADR-093: `beginChange` も一致行数を読み戻し、0行は一様な `ConflictError` にする
 
+> → `.adr/020` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2周目レビュー adapter-infra W-002 への対応）
 
@@ -2109,6 +2183,8 @@ ADR-047 は `activate` / `promote` に `RETURNING 1` を入れ、`cancel` / `del
 ---
 
 ## ADR-094: `parseResetToken` はルーティング座標をキーリングで範囲検査する
+
+> → `.adr/016` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 2周目レビュー security W-003 への対応）
@@ -2257,6 +2333,8 @@ await persist(ctx, cache, at);
 
 ## ADR-121: 写像行は `last_reset_requested_at` を `created_at` で作る（NULL で作らない）
 
+> → `.adr/019` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（PR #49 3周目レビュー adapter-infra W-002 への対応）
 
@@ -2307,6 +2385,8 @@ AC-12 (iii)（RPC 経路が `setAlarm` を発行する）は、共有実装（`r
 
 ## ADR-130: stub ガードは `instanceof Promise` ではなく `then` の有無で保留中の結果を見分ける
 
+> → `.adr/023` に昇格。
+
 **日付:** 2026-08-03
 **ステータス:** 採用（ブラウザ検証 TC-E03 で検出した本 PR 由来の不具合の是正）
 
@@ -2353,6 +2433,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 ---
 
 ## ADR-131: `guardStub` の観測点は「作り物の thenable」と「本物の stub」の2本立てにする
+
+> → `.adr/023` に昇格。
 
 **日付:** 2026-08-03
 **ステータス:** 採用（ADR-130 の検証手段）

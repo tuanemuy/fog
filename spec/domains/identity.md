@@ -104,7 +104,7 @@ export const User = {
 ```
 
 - 各ファクトリの処理内容: `params` の生文字列から値オブジェクト（`UserId.create` 等）を構築し、`version: 0`（変更系は `version + 1`）、`createdAt` / `updatedAt` を設定して次状態を返す。`now` と `id` は引数で受け、ドメイン内で `new Date()` / ID生成は行わない
-- **クレデンシャル集合を書き換える遷移は本エンティティに存在しない**（`.thread/37/adr.md` ADR-070）。`credentials` は `CredentialLocatorStore` の射影であり、`UserSettingsRepository.save` が書くのは `trash_retention_days` と OCC の `version` だけである。集合の増減は `CredentialLocatorStore.record` / `deleteByCredentialId` が担う。**`addCredential` / `removeCredential` を置かないのはそのためである** — 置くと `version` だけ進んで集合が1ビットも変わらない呼び出しが書けてしまい、しかも `find()` が返す `credentials` はロケータ由来なので、テストでは「正しく見える」
+- **クレデンシャル集合を書き換える遷移は本エンティティに存在しない**（`.adr/022-credential-authority-and-projection.md`）。`credentials` は `CredentialLocatorStore` の射影であり、`UserSettingsRepository.save` が書くのは `trash_retention_days` と OCC の `version` だけである。集合の増減は `CredentialLocatorStore.record` / `deleteByCredentialId` が担う。**`addCredential` / `removeCredential` を置かないのはそのためである** — 置くと `version` だけ進んで集合が1ビットも変わらない呼び出しが書けてしまい、しかも `find()` が返す `credentials` はロケータ由来なので、テストでは「正しく見える」
 - **その代わりに検査の材料を持つ。** 「最後のログイン手段か」は `loginCredentialCount` を述語として使い、`kind` の検査は解除ユースケース側で行う（後述の不変条件と `unlinkSsoCredential`）
 - **パスワードの変更・リセットは本エンティティの遷移ではない。** 検証材料を持つのは認証情報側なので、変更はそちらを書き換える手続き（usecases/identity.md）として表現される。ユーザー単位設定側の `User` は変わらない
 - **SSO 初回登録でもメールのクレデンシャルが1件置かれる。** メールアドレスの一意性を認証方式をまたいで効かせるためであり、この要素は**ログイン手段ではない**（パスワードの検証材料を持たないため。`usableForLogin: false`）
@@ -625,7 +625,7 @@ export interface PasswordResetTokenPort {
 }
 ```
 
-- **生トークンを返さない。** リンクは送信ジョブが行から再導出する（`database/index.md#password_reset_tokens` の導出鎖。`.thread/37/adr.md` ADR-042）。発行・配送・検証の3者が同じ1本の導出鎖を読む形にしないと、送れたリンクが引けない／引ける値が送られていない、という食い違いが起きる
+- **生トークンを返さない。** リンクは送信ジョブが行から再導出する（`database/index.md#password_reset_tokens` の導出鎖。`.adr/017-async-crypto-at-rpc-entry.md`）。発行・配送・検証の3者が同じ1本の導出鎖を読む形にしないと、送れたリンクが引けない／引ける値が送られていない、という食い違いが起きる
 - `verifyAndConsume` が返す `ConsumedResetToken` は `{ userId, credentialId, credentialVersion, changeAuthToken }` である（`changeAuthToken` は消費時に採番する束縛材料。`database/index.md` の同名列）
 
 - **発行は対象クレデンシャル単位である。** 同じクレデンシャルに新しいトークンを発行すると、そのクレデンシャル宛の未使用トークンはすべて置き換わる（古いリンクは以後効かない）

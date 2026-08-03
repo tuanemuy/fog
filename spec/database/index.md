@@ -92,7 +92,7 @@ identity の `User` のユーザー単位設定。**単一行のテーブルで�
 | `updated_at` | INTEGER | NOT NULL |
 
 - `trash_retention_days` の変更は、**変更したのと同一トランザクションでゴミ箱内の全項目の `purge_after` を再計算する**（後述の `memos` / `topics` / `documents`）
-- **この再計算の置き場は暫定である。** #37 の実装では UoW コンテキストのメソッド `recalcTrashPurgeAfter(retentionDays, limit)` として持っている（`.thread/37/adr.md` ADR-033）。**集約テーブルを一括更新するのに集約リポジトリを経由しない**という点で本来の形ではなく、#2〜#6 が `memos` / `topics` / `documents` のリポジトリを作るまでの仮置きである。移設先は各ドメインの `recalculatePurgeAfter` にあたる操作で、**移設のときは UoW コンテキストから `recalcTrashPurgeAfter` を外す** — 残したまま足すと同じ列に書き込み口が2つでき、「非集約ストアへの書き込み口の全数」（後述の `jobs` / `operations` の規則と同じ数え方）が壊れる
+- **この再計算の置き場は暫定である。** #37 の実装では UoW コンテキストのメソッド `recalcTrashPurgeAfter(retentionDays, limit)` として持っている。**集約テーブルを一括更新するのに集約リポジトリを経由しない**という点で本来の形ではなく、#2〜#6 が `memos` / `topics` / `documents` のリポジトリを作るまでの仮置きである。移設先は各ドメインの `recalculatePurgeAfter` にあたる操作で、**移設のときは UoW コンテキストから `recalcTrashPurgeAfter` を外す** — 残したまま足すと同じ列に書き込み口が2つでき、「非集約ストアへの書き込み口の全数」（後述の `jobs` / `operations` の規則と同じ数え方）が壊れる
 - **件数が大きい場合はチャンク分割へ落ちる**（`purge-trash` の再計算フェーズ。後述の `jobs`）。**そのときの作業述語は自己消尽する形で書く** — `WHERE status = 'trashed' AND purge_after <> <新しい trash_retention_days で算出した値>`（＝まだ再計算していない行）とし、更新した行がその場で述語から外れるようにする。**述語が単調に縮むことが、`purge-trash` が永続カーソルを持たずに済む唯一の根拠である**（後述の `migration_progress`）。素朴に `WHERE status = 'trashed'` で回すと述語が縮まず、中断のたびに先頭へ戻って完了しない。**自己消尽しない UPDATE を `purge-trash` に足してはならない** — 足す必要が生じたら、そのジョブは永続カーソルを持つ側へ移す
 
 ### credential_locators
@@ -439,7 +439,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `status` | TEXT | NOT NULL, CHECK (`status IN ('pending','running','done','poison')`) |
 | `lease_until` | INTEGER | nullable。claim の有効期限 |
 | `owner_token` | TEXT | nullable。claim した実行主体の識別子。完了は CAS でこれを照合する |
-| `provider_idempotency_key` | TEXT | nullable。外部 I/O のプロバイダへ渡す冪等キー。`operation_key` から決定的に導く。**`operation_key` そのものを渡さない** — `send-mail` のキーは canonical アドレスの全長 HMAC（写像行の主キー）を含むので、`SHA-256(operation_key)` を渡して原文を信頼境界の内側に留める。列が NULL の `send-mail` 行は生キーへフォールバックせず `poison`（`.thread/37/adr.md` ADR-092） |
+| `provider_idempotency_key` | TEXT | nullable。外部 I/O のプロバイダへ渡す冪等キー。`operation_key` から決定的に導く。**`operation_key` そのものを渡さない** — `send-mail` のキーは canonical アドレスの全長 HMAC（写像行の主キー）を含むので、`SHA-256(operation_key)` を渡して原文を信頼境界の内側に留める。列が NULL の `send-mail` 行は生キーへフォールバックせず `poison`（`.adr/018-uniform-unauthenticated-paths.md`） |
 | `terminal_reason` | TEXT | nullable。終端の理由 |
 | `completed_at` | INTEGER | nullable。**`done` / `poison` へ落ちた時刻**。`pending` / `running` では `NULL`。`next_run_at` では代用できない（あちらはバックオフで未来へ先送りされる列である） |
 
@@ -627,7 +627,7 @@ DO ごとのメタ情報。単一行。
 
 `PasswordResetTokenPort`（issue / verifyAndConsume）のアダプター実装が使う。**生トークンは保存せず、メール本文が運ぶ秘密の SHA-256 だけを保存する**（DB 漏えい時にトークンが使えないようにする）。
 
-導出鎖は3段で、実装はこの1本に閉じている（`packages/core/src/adapters/cloudflare/identityDirectory/resetTokenCrypto.ts`。`.thread/37/adr.md` ADR-042）:
+導出鎖は3段で、実装はこの1本に閉じている（`packages/core/src/adapters/cloudflare/identityDirectory/resetTokenCrypto.ts`。`.adr/017-async-crypto-at-rpc-entry.md`）:
 
 ```
 token_id  --HMAC(IDENTITY_RESET_TOKEN_KEY[token_key_generation])-->  secret
@@ -788,7 +788,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 ## 本ファイルで定義しないテーブル
 
 - **OAuth 2.1 の `jti` 一回性テーブル。** 認可コードは署名済みの自己完結値なので永続化せず、User Data DO に置くのは交換済みコードの `jti` を短期間だけ記録する表だけである。**その定義は #13「AIクライアント接続（OAuth認可・一覧・失効）」の範囲であり、本ファイルでは名前を確定させない。** OCC の `version` は持たない（一回性の記録なので集約ではない）
-- **検索の不透明カーソルが指す期限付きスナップショットの物理形。** ドメイン側で決まっているのは契約（同じカーソルからは同じ集合が読める / 期限切れのカーソルは拒否される / カーソルは不透明である。domains/search.md）だけで、**物理形は #10 が決める** — 期限付きの表・DO ストレージの一時キー・安定順位による再実行のいずれでも契約を満たせるうえ、寿命と粒度はストレージ上限に依存する判断だからである。**当初は #37 に割り当てていたが、#37 は `SearchIndexPort` を実装せず（tokenizer 検証用の最小の読み `adapters/cloudflare/search/probe.ts` だけを置く）、物理形はページングの実装と不可分なので、検索ユースケースを持つ #10 へ委譲した**（`.thread/37/adr.md` ADR-008）
+- **検索の不透明カーソルが指す期限付きスナップショットの物理形。** ドメイン側で決まっているのは契約（同じカーソルからは同じ集合が読める / 期限切れのカーソルは拒否される / カーソルは不透明である。domains/search.md）だけで、**物理形は #10 が決める** — 期限付きの表・DO ストレージの一時キー・安定順位による再実行のいずれでも契約を満たせるうえ、寿命と粒度はストレージ上限に依存する判断だからである。**当初は #37 に割り当てていたが、#37 は `SearchIndexPort` を実装せず（tokenizer 検証用の最小の読み `adapters/cloudflare/search/probe.ts` だけを置く）、物理形はページングの実装と不可分なので、検索ユースケースを持つ #10 へ委譲した**
 
 ## リレーション図
 
