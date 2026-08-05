@@ -390,9 +390,9 @@
   | 収束規則 (3) の「残る7種」 | 7 | **6** | `grep -rn '残る7種' spec \| wc -l` = **3**（改訂前実測。`spec/database/index.md` L457 は同一行内に2回）。L457 は**根拠の例示（`send-mail` の同窓連打）も差し替える** |
   | 「ユースケースから投入する8種」 | 8 | **7** | `spec/database/index.md:468` |
   | `jobs.kind` の類型数 | 4 | **3類型 + local job の3サブ類型** | `grep -rn '4類型\|類型は4つ' spec \| wc -l` = **1**（改訂前実測） |
-  | テストケース件数 | 838 | **838 + 新規** | `grep -c '^\| TC-' spec/inventory/test.md` と `spec/index.md` L15 / L26 |
+  | テストケース件数 | 838 | **838 + 新規** | `grep -c '^\| TC-' spec/inventory/test.md` と `spec/index.md` の**2箇所**（改訂後は L15 / L27。**行番号は改訂でずれる** — 本 PR が成果物一覧へ `async/index.md` のバレットを1行挿入したので、改訂前の L26 は別の行を指す。取り直すなら `grep -n '876' spec/index.md`） |
   | テストケースの slug 数 | 54 | **55** | `ls spec/testcases/*/*.md \| wc -l` = **54**（改訂前実測）。**slug 数 = テストケースファイル数**が不変条件 |
-  | マニュアルテスト件数 | 204 | **204 + 新規** | `grep -n '204' spec/manual-tests/index.md` は **L22 / L41 の2件**（L9 は日付行なので拾えない）。`spec/index.md` L16 / L27 |
+  | マニュアルテスト件数 | 204 | **204 + 新規** | `grep -n '204' spec/manual-tests/index.md` は **L22 / L41 の2件**（L9 は日付行なので拾えない）。`spec/index.md` の**2箇所**（改訂後は L16 / L28。**行番号は改訂でずれる**ので、取り直すなら `grep -n '207' spec/index.md`） |
   | マニュアルテストのカテゴリ数 | 7 | **7（不変）** | `spec/index.md:16`。**`grep -rn '7カテゴリ' spec` は2件返すが、L21 はシナリオの数で対象外** |
   | `#37` の参照件数 | 19 | **0** | 確認項目15 |
   | 無限定の断言 | 6 | **0** | 確認項目12 |

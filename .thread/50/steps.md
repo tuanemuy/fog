@@ -1,6 +1,6 @@
 # 実装手順 — Issue #50
 
-本 Issue の成果物はドキュメントのみだが、**書く内容はレイヤーの内側から決める。** ドメイン（イベント契約と登録口）→ ユースケース（同期 UoW の中での登録）→ アダプター / 永続化（`outbox_events` schema・Alarm 多重化・relay・Queue・consumer・DLQ）→ 規約（`CLAUDE.md`）の順である。設計判断そのものは `adr.md`（AD-1〜AD-54）にあり、ここでは繰り返さず参照する。**AD-23 以降は実装中に確定した判断であり、本書の各ステップはそれ以前の版である。齟齬があるときは `adr.md` と納品物が正。** **この免責は AD 番号を持たない訂正（レビューの各周で `adr.md` / `plan.md` / 納品物へインラインで入った「訂正（レビュー N 周目・X-00n）」の類）にも同じく及ぶ** — 番号の有無で射程を切らない。
+本 Issue の成果物はドキュメントのみだが、**書く内容はレイヤーの内側から決める。** ドメイン（イベント契約と登録口）→ ユースケース（同期 UoW の中での登録）→ アダプター / 永続化（`outbox_events` schema・Alarm 多重化・relay・Queue・consumer・DLQ）→ 規約（`CLAUDE.md`）の順である。設計判断そのものは `adr.md`（AD-1〜AD-59）にあり、ここでは繰り返さず参照する。**AD-23 以降は実装中に確定した判断であり、本書の各ステップはそれ以前の版である。齟齬があるときは `adr.md` と納品物が正。** **この免責は AD 番号を持たない訂正（レビューの各周で `adr.md` / `plan.md` / 納品物へインラインで入った「訂正（レビュー N 周目・X-00n）」の類）にも同じく及ぶ** — 番号の有無で射程を切らない。
 
 ## 設計
 
@@ -397,7 +397,7 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
 - **変更内容:**
   - 成果物一覧に **`spec/async/index.md`** を追加。進捗表の Phase 3 の行（**L15**）にも反映。
   - **L25**「User Data DO **16** テーブル / Identity Directory DO **5** テーブル」を **17 / 7** へ（User Data は `outbox_events` の1つ、Identity Directory は `outbox_events` と `reset_request_windows` の2つが増える。`adr.md` AD-2 / AD-16）。
-  - テストケース件数を実体に合わせる — **L15 と L26 の「54ユースケース・838ケース」**（2箇所）。**`spec/testcases/async/` はユースケースに属さないので、「54ユースケース + async 1ファイル」の形で数え方に出す**（`adr.md` AD-15）。**L24 の「6ドメイン・54ユースケース」は `spec/usecases/` の数え上げなので変更しない。**
+  - テストケース件数を実体に合わせる — **「54ユースケース・838ケース」の2箇所**（改訂前は L15 / L26。**成果物一覧へ `async/index.md` のバレットを1行挿入するので、挿入後は L15 / L27 になる。行番号ではなく件数の文字列で対象を特定する**）。**`spec/testcases/async/` はユースケースに属さないので、「54ユースケース + async 1ファイル」の形で数え方に出す**（`adr.md` AD-15）。**L24 の「6ドメイン・54ユースケース」は `spec/usecases/` の数え上げなので変更しない。**
   - マニュアルテスト件数（204）を実体に合わせる — **L16 と L27** の2箇所。**L16 の「7カテゴリ」は変更しない**（追加先は既存カテゴリー `account.md`。`adr.md` AD-20）。**変えていないことを機械検査7（非変更検査）の対象に入れる** — 新規カテゴリーを作った場合にだけ動く数なので、動いていたら AD-20 から外れたことの検出になる。
   - `.adr/` の表に **`.adr/013`** の行を追加。`.adr/004` の行の注記を部分 supersede が起きた形へ更新。
   - **L42**（`spec/adr/005` の行）の注記をステップ2 の内容に揃える。
@@ -470,7 +470,7 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
 | 収束規則 (3) の「残る7種」 | 7 | **6** | `spec/database/index.md` L457（同一行内に2回）/ L486、`spec/inventory/adapter.md:23`（`grep -rn '残る7種' spec` の全数 = 2行3箇所 + adapter 1件）。**L457 は数だけでなく根拠の例示（`send-mail` の同窓連打）も差し替える** |
 | 「ユースケースから投入する8種」 | 8 | **7** | `spec/database/index.md:468`（残る4種は不変） |
 | `jobs.kind` の類型数 | 4 | **3類型 + local job の3サブ類型** | `spec/database/index.md:485`（`grep -rn '4類型\|類型は4つ' spec` の全数 = 1件） |
-| テストケース件数 | 838（`grep -c '^\| TC-' spec/inventory/test.md`） | **838 + 新規ケース数** | `spec/index.md` L15 / L26、`spec/inventory/test.md` の実カウント |
+| テストケース件数 | 838（`grep -c '^\| TC-' spec/inventory/test.md`） | **838 + 新規ケース数** | `spec/index.md` の2箇所（改訂前 L15 / L26 → 改訂後 L15 / L27。**行番号は成果物一覧への1行挿入でずれるので件数の文字列で取り直す**）、`spec/inventory/test.md` の実カウント |
 | テストケースの slug 数 | **54** | **55**（`outboxDelivery` を追加） | `grep -o '^\| TC-[A-Za-z_0-9]*-[0-9]\{3\}' spec/inventory/test.md \| sed 's/^\| TC-//; s/-[0-9]\{3\}$//' \| sort -u \| wc -l` = **54**、`ls spec/testcases/*/*.md \| wc -l` = **54**（両者の集合は完全一致する。**slug 数 = テストケースファイル数**が不変条件）。**この 54 と `spec/index.md` の「54ユースケース」は現時点で偶然一致している別の数である** — 後者は `spec/usecases/` の数え上げ。改訂後は 55 と 54 に分かれ、区別が値の上でも見えるようになる |
 | マニュアルテスト件数 | 204 | **204 + 新規ケース数** | `spec/index.md` L16 / L27、`spec/manual-tests/index.md` L13–22（件数表と L22 の合計）/ L41（実行記録テンプレート）。**`grep -n '204' spec/manual-tests/index.md` が返すのは L22 / L41 の2件**で、L9（spec バージョン行）は日付なので拾えない |
 | `#37` の参照件数 | 19 | **0** | `spec/database/index.md` 10 / `CLAUDE.md` 5 / `spec/domains/identity.md` 1 / `spec/inventory/adapter.md` 1 / `spec/testcases/export/exportAllData.md` 1 / `spec/manual-tests/search.md` 1 |

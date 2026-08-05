@@ -144,7 +144,7 @@
 - **`sweep-reset-tokens` の投入の一様性**: 窓行を作る4ケースのどれでも `sweep-reset-tokens` が同じ形で投入される（宛先の登録有無で投入の有無が分岐しない）。**未登録アドレスだけを投げ続けた bucket でも窓行が掃除される**ことを、投入の有無として測る（`adr.md` AD-16）。
 - **送信材料 RPC の呼び出しガード**: `published` に落ちた行に対する呼び出しが**通る**（`status` を照合しないことの検証。ここが通らないと正常系が1件も送られない）。`quarantined` の行、存在しない `event.id`、`owner_token` が一致しない呼び出しの3つは `nothing-to-send` になる。**prune で行が消えた後の DLQ 再駆動も `nothing-to-send` になる**ので、保持期間の下側制約（`Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間`）が満たされていることを運用値の前提として書く。
 
-`spec/manual-tests/` へは、Outbox backlog の観測・quarantine 一覧・DLQ の確認・再駆動の実行手順を、**既存カテゴリー `account.md` に**追加する（新規カテゴリーを作らないので「7カテゴリ」は動かない。`adr.md` AD-20。**手段の実体は #38 が定める**という既存の書き方に揃える。`spec/manual-tests/trash.md:18–22` が先例）。**backlog の観測手順には fail-closed 由来の滞留の判別材料を1行入れる** — 「backlog が増えている DO の `schema_version` を診断エントリ（`read-schema-version`）で確かめる。コード側の期待より大きければ fail-closed による滞留であり、配送の失敗ではない（デプロイを進めれば流れる）」。書かないと運用者が滞留を障害と誤診する。
+`spec/manual-tests/` へは、Outbox backlog の観測・quarantine 一覧・DLQ の確認・再駆動の実行手順を、**既存カテゴリー `account.md` に**追加する（新規カテゴリーを作らないので「7カテゴリ」は動かない。`adr.md` AD-20。**手段の実体は #38 が定める**という既存の書き方に揃える。`spec/manual-tests/trash.md:18–22` が先例）。**backlog の観測手順には fail-closed 由来の滞留の判別材料を1行入れる** — 「`schema_version` を診断エントリ（`read-schema-version`）で確かめる。コード側の期待より大きければ fail-closed による滞留であり、配送の失敗ではない（デプロイを進めれば流れる）」。書かないと運用者が滞留を障害と誤診する。**訂正（レビュー6周目・impl W-003）: 徴候を「backlog が増えている」と書かない。** backlog の観測手段は DO へ入る RPC なので migration ゲートの対象であり（ゲートの外は診断エントリだけ）、fail-closed の DO では**観測そのものが `SystemError` になる**。運用者が実際に見るのは「backlog が読めない」であって「backlog が増えている」ではない。**判定条件そのもの（判別材料が手順に入っていること）は動かない。**
 
 ## 未解決事項
 
