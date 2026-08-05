@@ -877,7 +877,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-019 | consumer 失敗の DLQ 落とし | spec/testcases/async/outboxDelivery.md#L27 | メッセージが DLQ へ落ち、発行元 DO は published のまま ack を書き戻されなければ PASS |
 | TC-outboxDelivery-020 | fail-closed の DO は relay しない | spec/testcases/async/outboxDelivery.md#L28 | 行が滞留するが失われず、Alarm が張ったまま残り、コードが揃った次の起床で流れれば PASS |
 | TC-outboxDelivery-021 | fail-closed × DLQ の逆向き | spec/testcases/async/outboxDelivery.md#L29 | 送信材料 RPC がゲートで SystemError を返し、retry を焼き切って DLQ へ落ち、再駆動で復旧できれば PASS |
-| TC-outboxDelivery-022 | PII と秘密の非露出 | spec/testcases/async/outboxDelivery.md#L30 | payload / Queue / DLQ / ログ / terminal_reason のいずれにも載らず、宛先と生トークンが RPC 応答と provider 呼び出しにしか存在しなければ PASS |
+| TC-outboxDelivery-022 | PII と秘密の非露出 | spec/testcases/async/outboxDelivery.md#L30 | payload / Queue / DLQ / ログ / terminal_reason のいずれにも載らず（owner_token は衛生規則が定める明示的な例外であり、代わりにログ非出力と DLQ 非転送の2条が掛かる）、宛先と生トークンが RPC 応答と provider 呼び出しにしか存在しなければ PASS |
 | TC-outboxDelivery-023 | status を照合しない正常系 | spec/testcases/async/outboxDelivery.md#L31 | 送る側（検証材料を持つクレデンシャル宛・トークンが未使用で期限内）の published の行に対して send が返り、二重送信の抑止が providerIdempotencyKey 側にあれば PASS |
 | TC-outboxDelivery-024 | イベント行は収束しない | spec/testcases/async/outboxDelivery.md#L32 | 同じ内容のイベントを2回発行すると2行になり、dedupe_key も部分 UNIQUE 索引も無ければ PASS |
 | TC-outboxDelivery-025 | relay パスと jobs パスの独立上限 | spec/testcases/async/outboxDelivery.md#L33 | 1回の起床で両方のパスを必ず1回通り、片方の上限到達が他方を飢えさせなければ PASS |
