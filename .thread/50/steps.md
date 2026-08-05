@@ -1,6 +1,6 @@
 # 実装手順 — Issue #50
 
-本 Issue の成果物はドキュメントのみだが、**書く内容はレイヤーの内側から決める。** ドメイン（イベント契約と登録口）→ ユースケース（同期 UoW の中での登録）→ アダプター / 永続化（`outbox_events` schema・Alarm 多重化・relay・Queue・consumer・DLQ）→ 規約（`CLAUDE.md`）の順である。設計判断そのものは `adr.md`（AD-1〜AD-40）にあり、ここでは繰り返さず参照する。**AD-23 以降は実装中に確定した判断であり、本書の各ステップはそれ以前の版である。齟齬があるときは `adr.md` と納品物が正。**
+本 Issue の成果物はドキュメントのみだが、**書く内容はレイヤーの内側から決める。** ドメイン（イベント契約と登録口）→ ユースケース（同期 UoW の中での登録）→ アダプター / 永続化（`outbox_events` schema・Alarm 多重化・relay・Queue・consumer・DLQ）→ 規約（`CLAUDE.md`）の順である。設計判断そのものは `adr.md`（AD-1〜AD-43）にあり、ここでは繰り返さず参照する。**AD-23 以降は実装中に確定した判断であり、本書の各ステップはそれ以前の版である。齟齬があるときは `adr.md` と納品物が正。**
 
 ## 設計
 
@@ -35,7 +35,7 @@
 - `trash` — 書き込みポートを持たない原則を維持。期限処理は local job。
 - `export` — エンティティを持たず、同期生成（`spec/domains/export.md:289`）。
 
-**ポートは1本も増えない。** relay の `queue.send()` はアダプター内部で、ドメインポートにしない。したがって `spec/domains/index.md:34` / `spec/domains/identity.md:369` の「同期契約の例外は `PasswordHasher` と `MailSender` の2つ」という列挙は**動かない**（`adr.md` AD-5）。
+**新しく増えるドメインポートは `PasswordResetThrottlePort` の1本だけで、同期契約なので `Promise` 例外の列挙は開かない**（`adr.md` AD-19。契約はステップ7、台帳はステップ12 で足す）。**relay の `queue.send()` はアダプター内部でありドメインポートにしない**（`adr.md` AD-5）ので、この点でも列挙は動かない。したがって `spec/domains/index.md:34` / `spec/domains/identity.md:369` の「同期契約の例外は `PasswordHasher` と `MailSender` の2つ」という列挙は**動かない** — **理由は「ポートが増えないから」ではなく「増えたポートが同期契約だから」である**（例外の列挙は非同期ポートの数え上げであって、ポート総数の数え上げではない）。
 
 ### ユースケース / アプリケーションロジック
 
@@ -103,7 +103,7 @@
 
 - OCC の `version` は持たない（非集約ストア）。
 - `user_id` 列は持たない（構造的テナント分離）。**ただし配送メッセージは宛先 DO の routing key を運ぶ** — DO の識別子が DO の外へ出る唯一の点なので、それが `.adr/002` の「正規化値を鍵付きハッシュした内部キー」であることを明記する。
-- 保持期間は `published` と `quarantined` で別に持つ。`quarantined` は運用者の検査のために残す（`spec/database/index.md` の pruner の既存方針と同じ態度）。**`published` の保持期間には下側の制約が掛かる — `Queue の最大 retry 期間 + DLQ の保持期間 ≤ published の保持期間`。** 送信材料 RPC のガードが行の存在を要求する（`adr.md` AD-6 の (a)）ので、prune が行を消した後の DLQ 再駆動は必ず `nothing-to-send` になる。**上側の制約（`DLQ 保持期間 < リセットトークン TTL`）だけを書くと、値の決定者（#38）が両立しない2値を選べてしまい、再駆動が恒久的に空振りする形が運用上ほぼ検出できない。**
+- **保持期間を持つのは `published` だけである。`quarantined` は運用者が再駆動するか明示削除するまで恒久保持し、prune は触らない**（`adr.md` AD-38。**2つ目の保持期間は存在しない** — 「別に持つ」と読むと `quarantined` 用の prune 述語を実装する導線になる）。**`published` の保持期間には下側の制約が掛かる — `Queue の最大 retry 期間 + DLQ の保持期間 ≤ published の保持期間`。** 送信材料 RPC のガードが行の存在を要求する（`adr.md` AD-6 の (a)）ので、prune が行を消した後の DLQ 再駆動は必ず `nothing-to-send` になる。**上側の制約（`DLQ 保持期間 < リセットトークン TTL`）だけを書くと、値の決定者（#38）が両立しない2値を選べてしまい、再駆動が恒久的に空振りする形が運用上ほぼ検出できない。**
 - **終端時に `NULL` にする列は `lease_until` / `next_run_at` の2つだけである。** `jobs` は `owner_token` も `NULL` にするが、`outbox_events` は**残す**（上表）。**これは AD-2 が言う「分離する規約」の1つとして、共通化する規約（Alarm scheduler / backoff / lease / prune）と並べて明示的に列挙する**（AC-15）。落とすとガード (c) が `published` の行に対して必ず失敗し、正常系の配送が全滅する。
 
 #### `jobs` 側の変更
@@ -118,14 +118,18 @@
 
 ```
 setAlarm( min(
-    min(jobs.next_run_at)          WHERE status IN ('pending','running'),
-    min(outbox_events.next_run_at) WHERE status IN ('pending','publishing')
+    min(jobs.next_run_at)          WHERE status = 'pending',      -- jobs_runnable_idx
+    min(jobs.lease_until)          WHERE status = 'running',      -- jobs_lease_idx
+    min(outbox_events.next_run_at) WHERE status = 'pending',      -- outbox_runnable_idx
+    min(outbox_events.lease_until) WHERE status = 'publishing'    -- outbox_lease_idx
 ) )
-※ lease 中の行（running / publishing）は max(next_run_at, lease_until) で算入する
-両方が空のときだけ deleteAlarm()
+両表の実行可能集合（jobs: pending / running、outbox_events: pending / publishing）が
+両方とも空のときだけ deleteAlarm()
 ```
 
-lease の算入規則を明示するのは、**claim の CAS が `lease_until` の満了を要求する**（`spec/database/index.md:459` の第2選言）ため、過去の `next_run_at` を持つ leased 行だけが残った状態で `next_run_at` をそのまま採ると「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転になるからである。**`jobs` 側に既にある曖昧さなので、両表へ同じ形で確定させる**（`adr.md` AD-4）。
+lease の算入規則（**lease 中の行は `max(next_run_at, lease_until)` で算入する**）を置くのは、**claim の CAS が `lease_until` の満了を要求する**（`spec/database/index.md:459` の第2選言）ため、過去の `next_run_at` を持つ leased 行だけが残った状態で `next_run_at` をそのまま採ると「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転になるからである。**`jobs` 側に既にある曖昧さなので、両表へ同じ形で確定させる**（`adr.md` AD-4）。
+
+**式を4本の min の合成として書くのは、索引で解ける形にするためである。** 4本はいずれも宣言済みの索引の先頭列等値 + 次の列の最小で引ける（上の注記が対応を示す）。**`min(max(next_run_at, lease_until))` を1本の SQL として発行すると、式を key にした索引が無いので実行可能集合の全走査になり、そのコストが backlog の件数に比例して毎起床かかる。** 4本と `max` 形が同じ値になる根拠は、**leased 行では `next_run_at ≤ lease_until` が常に成り立つ**こと（claim の時点で `next_run_at` は過去、`lease_until` は未来なので `max` は必ず `lease_until` を採る）である。この不変条件は relay 相3 の失敗分岐が `pending` へ戻すこと（`adr.md` AD-42）に支えられている。
 
 `alarm()` の中の順序（`spec/database/index.md:703` の既存3段を4段へ拡張）:
 
@@ -138,7 +142,7 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
 
 1. `transactionSync`: 実行可能な行を上限件数まで claim（`publishing` + `lease_until` + `owner_token` を CAS）
 2. トランザクション外: Queue へ publish
-3. `transactionSync`: `published` へ落とす／失敗なら `attempt` を進め backoff で先送り／上限超過は `quarantined` + `terminal_reason`
+3. `transactionSync`: `published` へ落とす／失敗なら **`status='pending'` へ戻し、`lease_until` / `owner_token` を解放して `attempt` と `next_run_at` を書く**（`adr.md` AD-42。`publishing` のまま先送りすると「leased 行では `next_run_at ≤ lease_until`」が破れ、4本 min の根拠が崩れる）／上限超過は `quarantined` + `terminal_reason`
 
 **at-least-once の根拠**: 相 2 と 3 のあいだで DO がリセットすると、lease 満了後に同じ行が再 claim され再 publish される。**`alarm()` から throw しない**規則は relay パスにも掛かる。**fail-closed で止まっている DO は relay もしない**（ゲートで戻る）ため outbox 行が滞留するが、**失われた配送ではない。**
 
@@ -175,11 +179,12 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
   - 影響: `jobs` から外部 I/O が消えること / **非集約ストアが9つになること**（`outbox_events` + `reset_request_windows`）/ 全数表が `spec/async/index.md` へ移ること（**`.adr/010` について宣言する失効範囲は2項** — 「正本の表」の所在の変更と、「外部プロバイダへ渡す冪等キーの導出は生成 ID では成立しない」という項の帰属変更。後者は AD-8 で `jobs` の関心事でなくなり、新しい導出元が生成 ID である `event.id` なので論法が反転する）/ **`CLAUDE.md` から `kind` の全数列挙が消え、`spec/database/index.md:485` の「両方の表を同時に直す」義務が1本になること**（AD-14）/ **consumer が秘密を扱う実行主体になり、メール provider の秘密の帰属が state Worker から request Worker へ移ること**（AD-6 / AD-13。`.dev.vars.example` の追記は #51）/ **AD-6 の RPC 往復によって判定規則2の根拠が細ること**（consumer が担うのは provider 呼び出し1回だけ。全数表の `send-mail` 行の差し戻し条件と対にする）/ **`.thread/34/design.md` の失効宣言は5節で、これが全数であること**（plan.md「含まれないもの」の同じ列挙と一致していなければならない） — 第7.3節（廃止範囲。`.adr/004` L40 が名指し）/ **第7.4節（`jobs.kind` 12種の全数表。`.adr/004` L24 が名指しするので、宣言を落とすと `.adr/004` から辿って生きた表に見える）** / **第7.6節（外部 I/O を永続ジョブに残す境界。**部分失効**。境界の規則「トランザクションの中で外部 I/O をしない」とメール送信の所有者が Identity Directory bucket であること・生トークンをジョブ行に載せないことは**有効**。失効するのは行の書き方と収束の手段の3点 — 「登録の有無によらず**ダミージョブ行を書く**」「**スロットル中でもジョブ行は必ず書く**」「同じ canonical への連打は **`operationKey` でジョブ行1本に収束する**」。置き換えるのは AD-6 / AD-7 / AD-16 である。`.adr/004` から名指しされていないので「ADR から辿れる範囲」では漏れるが、**宣言を落とすと #51 の実装者が作業ログを読んで旧機構をそのまま実装する導線が残る** — 第1.4節と同じ実害基準で入れる）** / 第7.7節（契約の正文。`.adr/004` L24 が名指し）/ **第1.4節（機械検査の期待値「`jobs` は12列」「`kind` は各クラス6種・合計12種」「4類型が12種を1回ずつ覆う」。宣言を落とすと後で検査を回した人が全部赤を見る）**（`adr.md` AD-12）/ at-least-once と重複配送を受け入れること / PITR の巻き戻しが再配送になること / **スロットル窓ストアの新設で Identity Directory DO のテーブルが2つ増えること**（`adr.md` AD-16）。
 - **理由:** 過去 ADR を改変せず履歴を残すという Issue の要求を満たしつつ、以降のすべてのステップの根拠を1箇所に置く。
 
-### 2. `.adr/004` と `spec/adr/005` のステータス節に注記を足す
+### 2. `.adr/004` / `.adr/005` / `spec/adr/005` のステータス節に注記を足す
 
-- **対象ファイル:** `.adr/004-do-local-commit-and-alarm-jobs.md`（L3–7 のステータス節）/ `spec/adr/005-search-index-via-outbox.md`（L3–5 のステータス節）
+- **対象ファイル:** `.adr/004-do-local-commit-and-alarm-jobs.md`（L3–7 のステータス節）/ `.adr/005-search-projection-inside-write-transaction.md`（L3–5 のステータス節）/ `spec/adr/005-search-index-via-outbox.md`（L3–5 のステータス節）
 - **変更内容:**
   - `.adr/004`: 「決定の第3項（ドメインイベント transport の廃止）と影響の対応する項、および**第2項（L24）のうち『外部 I/O を伴う処理は必ずこちらに載る』という十分条件**は `.adr/013` が supersede する。**永続ジョブと Alarm という機構そのものと、第1項（ローカル同期コミット）は有効である。** 第2項が名指しする `.thread/34/design.md` 第7.4節（載る処理の全数）も失効し、全数は `spec/async/index.md` が持つ」を2〜3行で追記。**「第2項は有効」とだけ書かないこと** — AD-1 の Consequences が自ら失効を認めている十分条件が第2項に入っているので、AD-12 が防ごうとしている破れが今回訂正した当の論点で起きる。**コンテキスト・決定・検討した代替案・影響の各節は1文字も変えない。**
+  - `.adr/005`（**レビュー2周目で対象に加えた。adr W-002**）: 「**本 ADR は有効である。** `.adr/013` はドメインイベント配送を復活させたが検索インデックスの更新方式には触れていない。コンテキストの『その機構は `.adr/004` で消えた』は当時の記録である」を追記。**`.adr/004` / `spec/adr/005` と同じ扱いで、本文（コンテキスト・決定・代替案・影響）は1文字も変えない。** `.adr/013` からは名指しで「維持する」と書いてあるが、`.adr/005` を単体で開いた読み手に逆方向の導線が無いので塞ぐ。**差分ファイルは1本増える**（`.thread/50/testing.md` の差分範囲検査は `.adr/` を prefix で許すので、検査側の変更は不要）。
   - `spec/adr/005`: 「検索インデックスの更新方式が superseded であることは変わらない。**本 ADR を検索 indexer consumer の復活根拠に使わない。** Outbox 機構そのものの廃止（`.adr/004`）は `.adr/013` が訂正した」を追記。
 - **理由:** `adr.md` AD-12。どの ADR から読み始めても失効した決定に到達しないようにする。`spec/adr/005` が既に同じ形を採っている先例に揃える。
 
@@ -320,7 +325,7 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
 - **対象ファイル:** `spec/scenario/search.md` / `spec/scenario/account.md` / `spec/idea.md`
 - **変更内容:**
   - `scenario/search.md` **L18（「反映待ちは無い」）は変更しない。** 変更していないことを PR で明示する（AC-21）。
-  - `scenario/account.md`: パスワードリセットのシナリオ **S-AC-07（L76 の見出し。手順は L78–L83、異常系は L87–L89）** に、**メールの到達が非同期で、同じメールが複数届きうる**ことを利用者視点で1行。書き足す位置は **L79（「届いたメールのリンクから新しいパスワードを設定する」）の直後**が最も自然で、異常系側は **L88（リセットリンクの期限切れ）** の隣に置く。**アンカーは実ファイルで再測定済みであり、ずれていない**（`grep -n` で L76 / L78 / L79 / L87 / L88 / L89 を確認。レビュー2周目の「1行ずれている」という指摘は誤りだった）。
+  - `scenario/account.md`: パスワードリセットのシナリオ **S-AC-07（L76 の見出し。手順は L78–L83、異常系は L87–L89）** に、**メールの到達が非同期で、同じメールが複数届きうる**ことを利用者視点で1行。書き足す位置は **L79（「届いたメールのリンクから新しいパスワードを設定する」）の直後**が最も自然で、異常系側は **L88（リセットリンクの期限切れ）** の隣に置く。**アンカーは実ファイルで再測定済みであり、ずれていない**（`grep -n` で L76 / L78 / L79 / L87 / L88 / L89 を確認）。
   - `spec/idea.md` **L48**: 「Unit of Work（DO ローカルの同期トランザクション）+ Alarm ジョブ、ポート & アダプター構成」を「+ DO ローカル Outbox（Alarm relay → Queue → consumer）」を含む形へ。**直す理由を1行添える** — `spec/index.md` は idea.md を「インプット」に置いているが、**L44–48 は「技術的前提（テンプレート由来）」であって記録ではなく現に効いている Phase 0 決定事項**である。plan.md が「直さない」としている `spec/*/review/**` / `.thread/34/design.md` は日付つきの追記型レビュー記録であり、性質が違う。**「記録は直さない / 生きている決定は直す」という1本の基準で仕分けている**ことを PR の説明に書く。
 - **理由:** 要件・シナリオ層で「検索は即時、外部配送は結果整合」が読めるようにする。
 
@@ -376,7 +381,9 @@ relay の1パスは3相で、**Queue への送信だけがトランザクショ�
   - **手段の実体は #38 が定める**という既存の書き方に揃える（`spec/manual-tests/trash.md:18–22` が先例で、Alarm の強制発火について同じ形を採っている）。
   - **backlog の観測手順に fail-closed 由来の滞留の判別材料を1行入れる。** 「backlog が増えている DO の `schema_version` を診断エントリ（`read-schema-version`）で確かめる。コード側の期待より大きければ fail-closed による滞留であり、**配送の失敗ではない**（行は残り、デプロイが揃った次の起床で流れる）」。`spec/database/index.md` L725–727 側に「fail-closed の DO は relay もしない」を書いても、**実際に backlog を見るのは運用者でありその導線はこのファイルと #38 の手順**なので、判別材料をここに置かないと滞留を障害と誤診する。
   - `account.md`（L22 / L42 / L167–177 / L459–460）: リセットメールの受信手順に**配送遅延の待ち時間**と「**同じメールが複数届きうる**」の注記を追加。
-  - `search.md`（L19）/ `ai.md`（L22）/ `document.md`（**L25 のみ。確認対象**）: 「インデックス更新のための追加のワーカー・常駐プロセスは存在せず、反映待ちも無い」を**検索については維持**しつつ、「外部への配送には別途 relay と consumer がある」ことを1行で限定する。**`document.md:131` は対象から外す** — 実体は TC-07 の前提行「TC-06 で `日々の作業メモ` が完了済みであること…（検索インデックスは同一トランザクションで維持されるため、反映のための待ち時間は無い）」で、**「反映待ち」系の全数（7箇所）にも入っていない**（`grep -n '反映待ち' spec/manual-tests/document.md` は0件）。対象欄に残すと実装者が「ここも直すのか」で一度止まる。**「反映待ち」の記述は全部で7箇所ある**（`spec/scenario/search.md:18` / `spec/domains/search.md:174` / `spec/usecases/search.md:74` / `spec/manual-tests/search.md:19` と `:154` / `spec/testcases/search/search.md:35` / `spec/inventory/test.md:707`）。**限定の1行を足すのは `spec/manual-tests/search.md:19` の1箇所だけ**にし、残り6箇所は変更しない（AC-21 の非変更検査の対象は上流3件）。
+  - `search.md`（L19）/ `ai.md`（L22）/ `document.md`（**L25 のみ。確認対象**）: 「インデックス更新のための追加のワーカー・常駐プロセスは存在せず、反映待ちも無い」を**検索については維持**しつつ、「外部への配送には別途 relay と consumer がある」ことを1行で限定する。**`document.md:131` は対象から外す** — 実体は TC-07 の前提行「TC-06 で `日々の作業メモ` が完了済みであること…（検索インデックスは同一トランザクションで維持されるため、反映のための待ち時間は無い）」で、**「反映待ち」系の全数（7箇所）にも入っていない**（`grep -n '反映待ち' spec/manual-tests/document.md` は0件）。対象欄に残すと実装者が「ここも直すのか」で一度止まる。**ここは2つの別の集合を扱うので、混ぜない。**
+    - **集合A（「反映待ち」の実在箇所。全数7）**: `spec/scenario/search.md:18` / `spec/domains/search.md:174` / `spec/usecases/search.md:74` / `spec/manual-tests/search.md:19` と `:154` / `spec/testcases/search/search.md:35` / `spec/inventory/test.md:707`。**この7箇所は1つも書き換えない**（AC-21 の非変更検査の対象は上流3件）。
+    - **集合B（限定の1行を足す先。全数2）**: `spec/manual-tests/search.md:19` と `spec/manual-tests/ai.md:22` の2箇所。**`ai.md:22` は集合Aに入らない**（`grep -n '反映待ち' spec/manual-tests/ai.md` は0件）。`search.md:19` は両方に属するが、足すのは**限定の1行を後置するだけ**で、既存の「反映待ちも無い」という文そのものは変えない。`document.md` は上記のとおり対象外。
   - `search.md` **L359 の #37 参照**（検索カーソルの物理形と寿命）を **#51** へ付け替える。
   - `index.md`: **L9 の spec バージョン行**、**L13–22 の件数表と合計（L22 の `**204**`）**、**L41 の実行記録テンプレートの `/204件`** を更新。**件数表で動くのは「アカウントと認証」の行（現在 43 / 正常系14 / 異常系25 / 境界値4）と合計行の2行だけであり、行は増えない**（AD-20）。**`grep -n '204' spec/manual-tests/index.md` が返すのは L22 / L41 の2件であり、L9 は数ではなく日付を持つ行である**（更新点は3箇所だが grep で拾えるのは2箇所、という区別を残す）。
 - **理由:** 受け入れ条件が「マニュアルテストに Outbox backlog / quarantine / DLQ / 再駆動の確認を追加する」を明示している（AC-28）。

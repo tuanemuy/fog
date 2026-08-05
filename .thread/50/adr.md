@@ -1,6 +1,6 @@
 # ADR — Issue #50: User Data DO + DO ローカル Outbox へ移行し、ドメインイベント配送を維持する
 
-本 Issue の成果物はドキュメントのみだが、書くべきドキュメントの内容そのものが設計判断の集合である。以下はその判断の記録であり、AD-1〜AD-40 のうちプロジェクト全体に効くものが `.adr/013` へ昇格する。**設計判断の記録先は本ファイルだけである** — plan.md / steps.md は結論を参照するだけで、判断の根拠を重複させない。
+本 Issue の成果物はドキュメントのみだが、書くべきドキュメントの内容そのものが設計判断の集合である。以下はその判断の記録であり、AD-1〜AD-43 のうちプロジェクト全体に効くものが `.adr/013` へ昇格する。**設計判断の記録先は本ファイルだけである** — plan.md / steps.md は結論を参照するだけで、判断の根拠を重複させない。
 
 ---
 
@@ -118,6 +118,7 @@ Proposed
 **2つの表を1本の Alarm で多重化する。relay を `jobs` の1種別（例 `relay-outbox`）にはしない。**
 
 - **起床時刻の決め方**: `setAlarm(min(J, O))`。`J = min(jobs.next_run_at) WHERE status IN ('pending','running')`、`O = min(outbox_events.next_run_at) WHERE status IN ('pending','publishing')`。**両方が空のときだけ `deleteAlarm()` する**（`spec/database/index.md` L487 の規則を2表へ拡張）。
+  - **訂正（ステップ5 の実装中に確定した）: 納品物の形は4本の min の合成である。** `min(jobs.next_run_at) WHERE status='pending'` / `min(jobs.lease_until) WHERE status='running'` / `min(outbox_events.next_run_at) WHERE status='pending'` / `min(outbox_events.lease_until) WHERE status='publishing'` の4本を合成し、**正本は `spec/database/index.md`「Alarm の多重化」である**（`.adr/013` 4. も同じ形へ揃えた）。上の2本立ての式は次項の lease 算入規則と**字面で両立しない** — `status IN ('pending','running')` の範囲で `next_run_at` を採るのか `max(next_run_at, lease_until)` を採るのかが決まらない。4本へ分けてよい根拠は、**leased 行では `next_run_at ≤ lease_until` が常に成り立つ**ので `max` が必ず `lease_until` を採ることであり、分ける理由は**索引で解ける形にすること**である（`min(max(next_run_at, lease_until))` を1本の SQL にすると式を key にした索引が無く、実行可能集合の全走査が毎起床かかる）。**`deleteAlarm()` の条件は変わらない** — 判定に使うのは実行可能集合（`jobs`: `pending` / `running`、`outbox_events`: `pending` / `publishing`）の空判定であって、min の本数ではない。
 - **lease 中の行（`running` / `publishing`）は `max(next_run_at, lease_until)` で算入する。** claim の CAS は第2選言で `lease_until` 満了を要求する（`spec/database/index.md` L459）ので、過去の `next_run_at` を持つ leased 行だけが残った状態で `next_run_at` をそのまま採ると、「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転になる。**これは `jobs` 側に既に存在する曖昧さであり、本 Issue が作ったものではない** — Alarm 多重化の規則を書き下ろすこの機会に両表へ同じ形で確定させ、#51 が実装時に自前で決めずに済むようにする。
 - **`alarm()` の中の順序**: (1) 再武装 + 永続化確認 → (2) migration ゲート → (3-a) **outbox relay パス** → (3-b) **jobs パス** → (4) 両表から再計算して張り直す。
 - **公平性は「毎回の起床で両方のパスを必ず1回通す」で担保し、上限は各パスが独立に持つ。** 片方が上限を使い切っても他方は必ず走る。上限を共有すると、片方の滞留がもう片方を飢えさせる。
@@ -127,6 +128,7 @@ Proposed
   1. `transactionSync`: 実行可能な行を件数上限まで claim（`status='publishing'`、`lease_until` / `owner_token` を CAS で書く）
   2. トランザクション外: Queue へ publish
   3. `transactionSync`: `published` へ落とす／失敗なら `attempt` を進め backoff で `next_run_at` を先送り／上限超過は `quarantined`
+  - **訂正（AD-42）: 相3 の失敗分岐（上限未到達）で書く列を確定させた。** 同じトランザクションで `status='pending'` へ戻し、`lease_until` / `owner_token` を解放したうえで `attempt` と `next_run_at` を書く。上の書き方は `status` / `lease_until` / `owner_token` の扱いを書いておらず、素直に読むと行が `publishing` のまま残って**4本の min の根拠になっている不変条件（leased 行では `next_run_at ≤ lease_until`）が破れる。** 理由は AD-42 を読むこと。
 
 ### 検討した代替案
 
@@ -1094,6 +1096,8 @@ AD-15 は「`spec/inventory/test.md` は見出しを持たない単一の表な�
 
 **`TC-requestPasswordReset-014`〜`-018` は `-013` の直後（slug の行群の末尾）へ置き、`TC-outboxDelivery-*` は表全体の末尾へ置く。あわせて L7 の欠番規約を「同じ slug の行群の末尾に append し、新しい slug は表全体の末尾に append する」へ言い換える。**
 
+**訂正: 最終的に append したのは `-014`〜`-021` の8件である**（見出しと本節が挙げる `-014`〜`-018` の5件は決定時点の見込みであり、ステップ15・16 の実装中に3件増えた）。**決定（同一 slug の行群の末尾へ置く／新しい slug は表全体の末尾へ置く）は8件すべてに掛かる。** 射程が5件に限られたと読まないこと — `-019`〜`-021` も `-018` の直後、`requestPasswordReset` の行群の末尾に連続して置かれている。
+
 - **AD-15 の決定と矛盾しない。** AD-15 が禁じたのは「新しい表を設けること」であって、行の位置ではない。`TC-outboxDelivery-*` が表の末尾に来ることは変わらない。
 - **位置の権威は `#L{n}` なので、行の並びは正しさに影響しない。** 影響するのは読み手が同じ slug の全ケースを1箇所で読めるかどうかだけであり、それは連続していたほうがよい。
 - **L7 の言い換えは AD-15 の「規約の言い換えであって新設ではない」と同じ性質である** — 実体（slug ごとの連続した行群）は既に成立しており、規約文だけが「各ユースケースの表」と、存在しない複数表を前提に書かれていた。
@@ -1392,3 +1396,107 @@ AD-6 は event payload に載せるものを `tokenId` / メール種別 / **発
 - 良い点: **payload の禁止項目の規則が単純になる** — 「PII と再利用可能な秘密を載せない」だけで済み、「ただし鍵付きハッシュ済みの routing key は例外」という但し書きが要らなくなる。但し書きは Queue メッセージ側の衛生規則へ移り、そこで `owner_token` の例外と並ぶ。
 - トレードオフ: 「payload の routing key」と「Queue メッセージの routing key」が別物であることを、両方を書くすべての箇所で明示し続ける義務が残る。**片方だけを読んで「routing key は載らない」と読まれると、relay が宛先を選べない実装になる。**
 - 波及: AD-6 の Decision の該当項に訂正の注記を置く。**AD-6 の他の決定（送信材料 RPC・応答2分岐・呼び出しガード3条件・運用値の制約2本）は本 AD の射程外であり、有効なままである。**
+
+---
+
+## AD-41: `{ entity, eventDrafts }` は「イベントを発行するファクトリ / 遷移」の契約であり、無条件の宣言にしない
+
+### Status
+
+Proposed（**レビュー2周目のトリアージで確定した。論点7 への決定。AD-5 の契約の射程を狭める**）
+
+### Context
+
+AD-5 はイベント登録口を `enqueueEvent` の1つに固定し、ドメイン側は identity-less な draft を返す形を復元した。その復元の一部として `WithEventDrafts<TEntity, TEvent>`（ファクトリ / 遷移が `{ entity, eventDrafts }` を返す形）が納品物へ入ったが、**無条件の宣言として書かれている** — `spec/domains/index.md` の共通契約、`spec/domains/identity.md` の契約表、`spec/inventory/domain.md`（`DOM-identity-048`）の3箇所である。しかも台帳側は「イベントを発行しない遷移では `eventDrafts` が空になる」と書き、限定解釈の余地を自ら塞いでいる。
+
+ところが**本 PR で変更していない既存規約と正面から衝突する。** `spec/domains/memo.md` / `spec/domains/knowledge.md` は「状態遷移は次状態のエンティティだけを返す」と書き、`spec/domains/identity.md` のファクトリ / 遷移はすべて `): User;` である。**実インスタンスはリポジトリ全体で0件**で、唯一のイベント `identity.passwordResetRequested` は draft ファクトリ経由で出る。
+
+### Decision
+
+**契約を条件つきへ狭める。「イベントを発行するファクトリ / 遷移は `{ entity, eventDrafts }` を返す。現状そのような遷移は存在しないので、既存の『状態遷移は次状態のエンティティだけを返す』は動かない」とする。** `DOM-identity-048` の「イベントを発行しない遷移では `eventDrafts` が空になる」は削り、「**この形は将来イベントを発行する遷移が現れたときの契約であり、現在インスタンスは0件**」へ置き換える。
+
+- **AC-16（登録口を1つに固定）は `enqueueEvent` 側で既に満たされている。** `{ entity, eventDrafts }` を無条件で義務づける必要は契約上どこにも無く、義務づけると「イベントを1つも持たないドメインのファクトリまで戻り値の形を変える」導線になる。
+- **記述点は3ファイルで閉じる** — `spec/domains/index.md` / `spec/domains/identity.md` / `spec/inventory/domain.md`。**`spec/domains/memo.md` / `knowledge.md` / `trash.md` は触らない。**
+- 将来形としての価値は残る。「イベントを発行する遷移が現れたときの形」を先に決めてあるので、そのときに設計をやり直さずに済む。
+
+### 検討した代替案
+
+**無条件のまま残し、既存規約側に例外を書く**（`memo.md` / `knowledge.md` に「イベントを発行する遷移は例外」を足す）— 契約文が強い形のまま保たれる。採らなかった理由は、**実インスタンス0件の形のために、イベントを1つも持たない4ドメインの規約文を書き換える**ことになり波及が最大であること。#51 が全ファクトリのシグネチャを機械的に変える導線がむしろ強まる。
+
+**`{ entity, eventDrafts }` の行そのものを共通契約から落とし、draft ファクトリ1本に一本化する** — 記述量は最小になる。採らなかった理由は、将来 User Data DO にイベントが増えたとき（`spec/async/index.md` が明示的に想定している）に「遷移とイベントを1つの戻り値で表す」形の設計をゼロからやり直すことになり、`.adr/013` 5.（`EventId` を UoW 側へ寄せた分離）の文脈も失うこと。
+
+### Consequences
+
+- 良い点: 既存規約との衝突が完全に消える。**本 PR で触っていないファイル（`memo.md` / `knowledge.md`）が正しいままでいられる。**
+- 良い点: 「インスタンスは0件」と書くことで、後任が実例を探して見つからない時間が消える。
+- トレードオフ: 契約が「将来こう書く」形として弱くなる。イベントを発行する遷移を最初に書く人が、限定の意味を読み違えて別の形を持ち込む余地は残る。
+
+---
+
+## AD-42: relay 相3 の失敗分岐（上限未到達）は `pending` へ戻し、`lease_until` / `owner_token` を解放する
+
+### Status
+
+Proposed（**レビュー2周目のトリアージで確定した。論点8 への決定。AD-4 の相3 を確定させる**）
+
+### Context
+
+AD-4 は relay の相3 を「`published` へ落とす／失敗なら `attempt` を進め backoff で `next_run_at` を先送り／上限超過は `quarantined`」と書き、**上限に達していない失敗のときに `status` / `lease_until` / `owner_token` をどうするかを書いていない。** 納品物（`spec/database/index.md`）も同じ形で、終端（`published` / `quarantined`）の列の扱いだけが確定していた。
+
+素直に読むと、行は `publishing` のまま `attempt` と `next_run_at` だけが進む。すると **「leased 行では `next_run_at ≤ lease_until` が常に成り立つ」という不変条件が破れる。** この不変条件は、Alarm の張り直しを4本の min へ分解してよい根拠そのもの（AD-4 の訂正）なので、破れると分解の正当化が崩れる。
+
+### Decision
+
+**上限に達していない失敗は、同じトランザクションで `status='pending'` へ戻し、`lease_until` / `owner_token` を解放したうえで `attempt` と `next_run_at` を書く。** あわせて**実行可能集合の定義側に、claim の選択述語が `next_run_at <= now` を含むことを明記する**（現状は本文中の括弧書きにしかなく、定義は `status` だけで書かれている）。
+
+- **既存のチャンク上限の規則と同じ形である** — local job がチャンク反復の上限に達したとき、進捗をコミットするのと同じトランザクションで `pending` へ戻し `lease_until` / `owner_token` を解放する。新しい概念を持ち込まない。
+- **`jobs` にも同じ形で掛かる**（共通化する規約の側）。`outbox_events` 側だけを直すと、共通化しているはずの backoff 規約が2表で割れる。
+- **`owner_token` の解放は at-least-once の観点でも安全側である。** その回に Queue へ出た（かもしれない）メッセージの持参人証が即座に失効し、再 claim で新しい値が振られる。
+- **終端行で `owner_token` を残す規則（AD-6 の 2.）とは別の分岐である。** 残すのは `published` / `quarantined` の行だけで、`pending` へ戻る行は照合材料として残す理由が無い。
+
+### 検討した代替案
+
+**`publishing` のまま保ち、`next_run_at` を `lease_until` の内側へ丸める** — 不変条件は保たれ、lease の満了だけが再 claim の契機になるので状態機械が単純になる。採らなかった理由は、**backoff の効き幅が lease の長さに縛られる**こと。lease より長い backoff が書けず、上限回数まで持たせるには lease を延ばすしかない。延ばすと DO reset からの回収も同じだけ遅くなる。
+
+**spec には書かず #51 の実装裁量に委ねる** — 記述が増えない。採らなかった理由は、本 Issue の成果物が設計の確定であり、**4本の min という納品物が明示的に選んだ形の正当化が「実装がどちらを選ぶか」に依存したまま残る**こと。委ねる先の判断が納品物の他の記述を左右してしまう。
+
+### Consequences
+
+- 良い点: 不変条件（leased 行では `next_run_at ≤ lease_until`）と4本 min の分解が無傷で保たれる。
+- 良い点: `jobs` と `outbox_events` で失敗時の状態遷移が同一になり、ランナー実装の共有（AD-2 の「共通化する規約」）が実際に成立する。
+- トレードオフ: 記述の範囲が1表ぶん広がる（`jobs` 側も同時に確定させる）。
+- トレードオフ: #51 の裁量として残るのは backoff の係数と上限回数だけになる。どちらももともと #38 / #51 の運用値なので、新しい制約ではない。
+
+---
+
+## AD-43: 3点同時確定 / rollback のテストケースは DO クラスごとに分割し、契約文（3点）は動かさない
+
+### Status
+
+Proposed（**レビュー2周目のトリアージで確定した。論点9 への決定。AC-12 の契約には触れない**）
+
+### Context
+
+AC-12 は「業務データ更新・FTS5 projection・`outbox_events` の追加が**同じ `transactionSync`** で確定する」を契約として3箇所（`spec/database/index.md` / `spec/usecases/*` の共通事項 / `CLAUDE.md`）へ落とすことを求めており、納品物はそのとおりになっている。**契約は正しい。**
+
+一方でテスト側は今日そのままでは実行できない。FTS5（`search_entries` / `search_fts`）は **User Data DO にしか無く**、定義された唯一のイベント型 `identity.passwordResetRequested` は **Identity Directory DO 所属**で、AD-3 が User Data DO のイベント型を初期0件と明示している。したがって「FTS5 projection を更新し、かつ `enqueueEvent` する」ユースケースは存在せず、実現できるのは (a) User Data DO の「業務データ + FTS5」、(b) Identity Directory DO の「業務データ（窓行・トークン行）+ イベント行」の**2種のペアまで**である。テスト専用の `event.type` をでっち上げる回避は、「consumer 欄が空のイベントは存在しない」という全数表の不変条件に反する。
+
+### Decision
+
+**`TC-outboxDelivery-001` / `-002` を「その DO クラスに存在する要素の全部が同じ `transactionSync` で確定する / 巻き戻る」と書き直し、測る対象を DO クラスごとに明示する**（User Data: 業務行 + FTS5 / Identity Directory: 窓行・トークン行 + イベント行）。**表の直前の解説に「3点が同時に成立するのは User Data DO のイベント型が1つでも定義された時点であり、そのとき本ケースを3点版へ拡張する」を1行足す。** 台帳 `spec/inventory/test.md` の該当2行も同時に直す。
+
+- **契約文（AC-12 の3箇所）は1文字も動かさない。** 食い違っているのは契約ではなくテストの実行可能性だけであり、直す先はテスト側である。
+- **今日そのまま実行できる形になる。** 原子性という最重要契約が、今日1件もテストされない状態を作らない。
+- **将来の拡張条件が spec の中に残る。** User Data DO にイベント型が増えた人が、拡張すべきケースを探さずに済む。
+
+### 検討した代替案
+
+**条件つきケースとして残す**（「User Data DO にイベント型が定義されたときに実行する」を前提条件にし、それまでは対象外）— 記述の変更が最小。採らなかった理由は、**中心的な検証点（原子性）が今日1件も実行されないケースになる**こと。マニュアルテストの「手段が用意できない環境は対象外」と同じ扱いに見えるが、あちらは環境の都合であり、こちらは spec が自ら0件と決めた帰結なので性質が違う。
+
+**契約側を「その DO クラスに存在する要素の全部」へ緩める** — テストと契約が字面で一致する。採らなかった理由は、**AC-12 が名指しで固定した3箇所を書き換えることになり、決定済みの受け入れ基準に触れる**こと。将来 User Data DO にイベントが増えたときに契約を戻す作業も発生する。
+
+### Consequences
+
+- 良い点: 契約（3点）とテスト（今日はペアまで）の食い違いが、テスト側の1行の明示で閉じる。`spec/async/index.md` の不変条件にも触れない。
+- 良い点: 「なぜ今日は2点なのか」が spec に残るので、レビューのたびに同じ疑問が再発しない。
+- トレードオフ: ケースの前提欄が DO クラスごとに2行へ割れ、`TC-001` / `-002` の記述量が増える。

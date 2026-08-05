@@ -609,7 +609,8 @@ export interface PasswordResetTokenPort {
 }
 ```
 
-- **`issue` は生トークンと `tokenId` の両方を返す。** 生トークンはアダプターの中に留まり（メールの URL 組み立ては送信材料 RPC の側で行う）、ユースケースが payload へ載せるのは `tokenId` だけである。**`tokenId` を返さない形にすると、ユースケースが payload の必須項目を手に入れる経路が無くなる**
+- **`issue` は生トークンと `tokenId` の両方を返す。** 生トークンは**アダプターの外へ出るが、ユースケースはこれを読まない・保持しない・どこへも渡さない**（現状の読み手は0件であり、送信時は送信材料 RPC が `tokenId` から導出し直す。メールの URL 組み立ても RPC の側で行う）。返し続けるのは、payload の必須項目である `tokenId` を同じ戻り値で得るためである — **`tokenId` を返さない形にすると、ユースケースが payload の必須項目を手に入れる経路が無くなる**
+- **したがって `token` は「戻り値に居るが読み手が0件の値」である。** ログ・DTO・イベント payload・Queue メッセージのいずれにも載せない。**この禁止は signature が守ってくれないので、実装レビューの確認項目として残す**（`spec/async/index.md`「payload と `terminal_reason` の衛生規則」）
 - **`mintDecoyTokenId` は「送らない側」（未登録 / SSO 専用）の payload に置くデコイを採る唯一の口である。** 行を1つも書かず、`verifyAndConsume` で解決できる値も返さない
 - **4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）で `tokenId` の生成器が同一であることが契約である。** `issue` が返す `tokenId` と `mintDecoyTokenId` が返す値は、同じ CSPRNG・同じ長さ・同じ符号化で採る。**生成器が割れると、送らない側の payload だけが別の形になり、payload そのものが列挙オラクルになる**（`.adr/013`）
 - **`IdGenerator` を使わない。** ユースケースが使える唯一の採番口である `container.idGenerator.next()` は UUIDv7 等の**時刻由来**の値で、`token_id` の生成規則（連番・rowid・時刻由来を使わない。`spec/database/index.md`）と正面から食い違う。デコイ側だけがそれを使うと上記の割れがそのまま起きるので、**両方をこのポートに閉じる**
@@ -638,6 +639,7 @@ export interface PasswordResetThrottlePort {
 - **メソッドは1つだけであり、これが全数である。** 判定と計上を2メソッドに分けない — 分けると「4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）が一様に落ちる」が2つの呼び出しの組み合わせの性質になり、呼び出し順序を誤ると一様性が静かに壊れる。1メソッドなら**単一の呼び出しの性質**として書ける
 - **戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の両方を決める唯一の分岐である。** 発行判断と窓判定は同じ1つの分岐であって、2つの独立した条件ではない（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）
 - **`windowKey` は呼び出し側が導出して渡す** — 対象 canonical の全長 HMAC と依頼の窓から決定的に導く（`jobs.operation_key` と同じ導出）。**クライアントからは受け取らない。** ポートは導出鍵を知らない
+- **窓の長さは引数に現れないが、2層が同じ値を読む。** 呼び出し側は `windowKey` の導出のために、アダプターは窓行の `expires_at`（窓の終端 + 猶予）の算出のために、それぞれ窓の長さを知る必要がある。**正本は単一の設定値であり、`spec/database/index.md` の `reset_request_windows` の節が持つ**（実値の確定は #38）。**2箇所に別々の定数を置かない** — アダプター側が短いと、まだ有効な窓の行が `sweep-reset-tokens` に消され、`claimWindow` が同じ窓で2度目の `true` を返す（同節が写像鍵の世代跨ぎに限って明示的に許容している破れが、設定ミスで恒常化する）
 - **登録の有無に関係なく行を作る。** 行の有無が観測可能な差にならないことが、このポートを置いた理由そのものである
 - **同期契約である**（`transactionSync` の中で呼ぶ）。domains/index.md の `Promise` 例外2件は動かない
 - エラーケース:
@@ -679,7 +681,7 @@ export interface MailSender {
 | `EventId` | 不透明な非空文字列 | 形式（UUIDv7 等）は `IdGenerator` の責務。ドメインは形式を知らない |
 | イベント draft | `{ type, payload, occurredAt, aggregateId }` | **`EventId` を持たない。** ドメインが identity-less な draft を返し、アプリケーション層（UoW 実装）が採番して付ける |
 | イベント | draft + `{ id: EventId }` | UoW が `outbox_events` へ書く形 |
-| ファクトリ / 遷移の戻り値 | `{ entity, eventDrafts }` | 状態遷移とイベントの発生を1つの戻り値で表す |
+| ファクトリ / 遷移の戻り値 | `{ entity, eventDrafts }` | **イベントを発行する**ファクトリ / 遷移だけがこの形を採り、状態遷移とイベントの発生を1つの戻り値で表す。**本 spec に該当する遷移は無い** — `registerWithPassword` / `addCredential` / `removeCredential` 等はすべて `): User;` のままであり、memo.md / knowledge.md の「状態遷移は次状態のエンティティだけを返す」も動かない。将来イベントを発行する遷移が現れたときの契約である |
 
 - **ドメインは `IdGenerator` にも時計にも触らない。** `occurredAt` は引数として受けた `now` を使う
 - **登録口は UoW コンテキストの `enqueueEvent(drafts)` 1つだけ**であり、ドメインポートではない（domains/index.md）。ユースケースが draft を渡し、`outbox_events` への INSERT は業務データの書き込みと同じ `transactionSync` の中で起きる
@@ -692,7 +694,7 @@ export interface MailSender {
 | `type` | `identity.passwordResetRequested` |
 | 発行点 | `requestPasswordReset` のトランザクション。**その窓での最初の依頼のときだけ、4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）とも必ずちょうど1行**。既に発行済みの窓なら4ケースとも1行も書かない（usecases/identity.md） |
 | `aggregateId` | **スロットル窓のキー**（`PasswordResetThrottlePort.claimWindow` に渡した `windowKey`）。4ケースのどれでも同じ導出で決まる唯一の識別子であり、鍵付きハッシュ済みなので原本を含まない。**`credentialId` は使えない** — 未登録の宛先には存在せず、有無が観測可能な差になる |
-| payload | `tokenId` / メール種別の**2つだけ**。**宛先 DO の routing key は payload に入れない** — routing key は relay が publish 時に Queue メッセージへ押す項目であって、ドメインの payload ではない（`EventId` と同じ扱い。導出鍵を持つのはアダプター（DO クラス）だけであり、relay は自分の DO の routing key を自明に知っている。async/index.md「Queue メッセージ」） |
+| payload | `tokenId` / メール種別の**2つだけ**。**宛先 DO の routing key は payload に入れない** — routing key は relay が publish 時に Queue メッセージへ押す項目であって、ドメインの payload ではない（`EventId` と同じ扱い。relay は自分の DO の routing key を自明に知っている）。**Queue メッセージが運ぶ routing key は、発行元 DO 自身の locator である**（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する（正本は async/index.md「Queue メッセージ」） |
 | consumer | mail consumer（1つ。request Worker の `queue()` ハンドラ） |
 
 - **`tokenId` を nullable にしない。** 未登録 / SSO 専用ではトークンが発行されないが、**宛先の有無から独立に生成した不透明値**（トークンと同じ形・同じ長さ）を置く。`NULL` か否かが観測できると payload そのものが列挙オラクルになる。**行の形が4ケースで一字も違わないことが、経路一致の実体である**

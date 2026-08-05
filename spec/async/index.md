@@ -41,7 +41,7 @@
 | `resume-signup` | `resume-signup` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | 新規登録 saga の予約行を書くのと同じトランザクション。**コーディネーター bucket だけが自分に投入する**（非コーディネーター bucket には投入しない） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.operation_id`（コーディネーター bucket の予約行）。**`operations` は保持先にしない — User Data DO にしか無い**（database/index.md） |
 | `resume-credential-change` | `resume-credential-change` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | クレデンシャル変更 saga の開始（`change_state` を `pending` にするのと同じトランザクション） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.change_state` |
 | `sweep-reservations` | `sweep-reservations` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | 予約行を書く3箇所（新規登録 saga の予約2つと SSO 連携の予約）。**予約を書いた bucket が自分に投入する** | — | 無 | なし（作業述語は `cm_reservation_idx` から引く） | `jobs.operation_key`（定数キー） |
-| `sweep-reset-tokens` | `sweep-reset-tokens` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | **リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）。宛先の登録有無で投入を分けない** — 窓行は4ケースすべてで作られるので、投入も4ケースすべてで起きる | — | 無 | なし（作業述語は `prt_expires_idx` / `rrw_expires_idx` から引く） | `jobs.operation_key`（定数キー） |
+| `sweep-reset-tokens` | `sweep-reset-tokens` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | **リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）。宛先の登録有無で投入を分けない** — 窓行は4ケースすべてで作られるので、投入も4ケースすべてで起きる。**投入時の `next_run_at` は窓行の `expires_at` から導き、送る側でもリセットトークンの `expires_at` を材料にしない。** 掃除ジョブは完了時の再武装で両方の索引を読み直すので、投入時刻を宛先の登録有無に依存させる必要が無い（依存させると「同じ起床を張る」が4ケースで割れる） | — | 無 | なし（作業述語は `prt_expires_idx` / `rrw_expires_idx` から引く） | `jobs.operation_key`（定数キー） |
 | `rotate-encryption` | `rotate-encryption` | local job（チェックポイント分割を要する一括処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | operator 専用 maintenance 経路からの起動（database/index.md）。**本 spec で確定している投入点はこれだけである** — 移送側からの再投入を足すかは #44 が決める | — | 無 | 退役させる世代。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（進捗は `rotation_checkpoints`） |
 | **User Data DO のイベント型: 0件** | — | Outbox event | User Data | — | **定義されたイベント型が1つも無い。** 表と機構（`outbox_events` + Alarm relay）は両クラスに置くが、置くのは表と機構であってイベント型ではない（`.adr/013`） | — | — | — | — |
 
@@ -56,6 +56,7 @@
 - **consumer 欄が空のイベントは存在しない。** consumer も明示的な監査要件も無いイベント型を定義しない。
 - **同じ処理が Outbox と `jobs` の両方へ登録されない。** 二重登録は判定規則が「最初に当たった類型にちょうど1回」と言っていることの違反である。
 - **local job はすべて DO ローカルで完結する。** `jobs` の行はネットワークに出ない。これは `.adr/013` が新設した不変条件であり、物理側では「`jobs` に外部 I/O を伴う `kind` は存在しない」として現れる。
+  - **これは現時点の全数表の帰結であって、判定規則から導かれる恒久的な性質ではない。** 判定規則は「外部 I/O であることは単独では Outbox の条件にならない」と言っているので、**「外部 I/O を伴うが完了責任はその DO 自身が持つ」処理は規則3 で local job になりうる** — 規則と不変条件は導出関係にない。実際、末尾の P-001 が差し戻しの経路として明示している。**この不変条件は、そういう `kind` が現に1つも無いという事実の宣言として読む**（下の「分類の差し戻し条件」で撤回されうる）。
 
 ## payload と `terminal_reason` の衛生規則
 
@@ -64,7 +65,7 @@
 - **`owner_token` は再利用可能な秘密である。** `(event.id, owner_token)` の対を握れば送信材料 RPC が `send` を返すので、対そのものが「宛先と生トークンを引ける持参人証」になる。それでも Queue メッセージと DLQ に載るのは、**呼び出しガードを成立させるために必要な明示的な例外**だからであり、上の禁止則が緩むわけではない。例外の代償として、次の2条が掛かる。
   - **Queue メッセージをログへ出さない** — 個々の項目だけでなくメッセージ全体を出さない。**ログに載せてよいのは `event.id` と `type` までである。**
   - **DLQ のメッセージを外部の監視基盤・ログ集約先へ転送しない。** 転送する設計を足すなら、`.adr/013` の判断へ戻る。
-- **Queue メッセージは宛先 DO の routing key を運ぶ。** Identity Directory 宛では `.adr/002` により既に鍵付きハッシュ済みの内部キーなので、禁止項目（`userId`）と衝突しない。**ただし User Data DO のイベントを足すと、その routing key は `userId` そのものになりうる。** 初期のイベント型は0件なので今は潜在的だが、規則として残す — **User Data DO のイベントを足すときは、routing key の扱い（`userId` を Queue に載せるか、別の不透明キーへ写すか）を同時に決める。**
+- **Queue メッセージは宛先 DO の routing key を運ぶ。** Queue メッセージが運ぶ routing key は、**発行元 DO 自身の locator** である（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する。この粒度なので禁止項目（`userId`）とも衝突しない。**ただし User Data DO のイベントを足すと、その routing key は `userId` そのものになりうる。** 初期のイベント型は0件なので今は潜在的だが、規則として残す — **User Data DO のイベントを足すときは、routing key の扱い（`userId` を Queue に載せるか、別の不透明キーへ写すか）を同時に決める。**
 
 ## 配送の性質
 
@@ -125,7 +126,8 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 
 ### Queue メッセージ
 
-- 載せるのは `event.id` / `type` / `payload` / **宛先 DO の routing key**（送信材料 RPC の宛先を選ぶための鍵付きハッシュ済み内部キー。**relay が publish 時に押す項目であり、行にもドメイン payload にも無い**）/ 呼び出しガードが照合する `owner_token` の**5項目**である。
+- 載せるのは `event.id` / `type` / `payload` / **宛先 DO の routing key**（送信材料 RPC の宛先を選ぶための鍵。**relay が publish 時に押す項目であり、行にもドメイン payload にも無い**）/ 呼び出しガードが照合する `owner_token` の**5項目**である。
+- **routing key の粒度は次のとおりであり、これが正本である。** Queue メッセージが運ぶ routing key は、**発行元 DO 自身の locator** である（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する。
 - **PII と再利用可能な秘密は載せない**（`owner_token` は上の衛生規則が定める明示的な例外である）。
 - **メッセージの各項目は `outbox_events` の行の値をそのまま使い、Queue 側で組み立て直さない。運ぶのは上に列挙した5項目だけで、行の他の列は載せない** — メッセージは行の写しではない。**特に `aggregate_id`（窓キー）は載せない。** 同一アドレス・同一窓に対して安定した仮名なので、載せると DLQ 上で複数のメッセージを同一の宛先へ相関させる材料になる。
 
@@ -179,3 +181,4 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 - 実装（#51）で RPC 往復のコストが想定を超えた場合、**判定規則3（完了責任が Identity Directory bucket 自身にある）を根拠に local job へ差し戻すことが規則上は可能である。**
 - そのときは Outbox に載るイベントが0件になるので、`outbox_events` を置くこと自体の是非まで戻ることになる。
 - 差し戻すなら、上の「分類の変更には実行責任の所有者に基づく理由が要る」に従って理由を書き、本表と `.adr/013` の両方を同時に直す。
+- **あわせて不変条件「local job はすべて DO ローカルで完結する」も同時に撤回する。** 差し戻した先の `kind` はメール送信（外部 I/O）を行うので、撤回せずに差し戻すと規則と不変条件が両立しなくなる。**撤回は3点セット**（本表の行 / 不変条件 / `.adr/013`）であり、どれか1つを落とさない。

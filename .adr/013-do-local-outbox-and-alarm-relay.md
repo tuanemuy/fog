@@ -70,12 +70,14 @@ Issue #50 が要求するのは、判定軸を実行責任の所有者へ移し�
 
 **relay を `jobs.kind` の1種別にはしない。**
 
-- 起床時刻は `setAlarm(min(J, O))`。`J = min(jobs.next_run_at) WHERE status IN ('pending','running')`、`O = min(outbox_events.next_run_at) WHERE status IN ('pending','publishing')`。**両方が空のときだけ `deleteAlarm()` する。**
+- 起床時刻は `setAlarm(min(J, O))`。`J = min(jobs.next_run_at) WHERE status = 'pending'`、`O = min(outbox_events.next_run_at) WHERE status = 'pending'`。**lease 中の行はこの2本に入れない**（次のバレットが別に算入する）。**両表の実行可能集合（`jobs` の `pending` / `running` と `outbox_events` の `pending` / `publishing`）が両方とも空のときだけ `deleteAlarm()` する。**
 - **lease 中の行（`running` / `publishing`）は `max(next_run_at, lease_until)` で算入する。** claim の CAS が `lease_until` の満了を要求するので、過去の `next_run_at` を持つ leased 行だけが残った状態で `next_run_at` をそのまま採ると「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転になる。**これは `jobs` 側に既にあった曖昧さであり、両表へ同じ形で確定させる。**
+  - **実装形は4本の min の合成である**（各表の `next_run_at WHERE pending` と `lease_until WHERE running` / `publishing`）。**正本は `spec/database/index.md`「Alarm の多重化」であり、上の2本と本項はその分解前の意味を述べている。** 4本へ分けてよい根拠は、leased 行では `next_run_at ≤ lease_until` が常に成り立つので `max` が必ず `lease_until` を採ることにある。分けるのは索引で解ける形にするためで、**`min(max(next_run_at, lease_until))` を1本の SQL として発行すると式を key にした索引が無く、実行可能集合の全走査が毎起床かかる。**
 - `alarm()` の中の順序は **(1) 再武装 + 永続化の確認 → (2) migration ゲート → (3-a) outbox relay パス → (3-b) jobs パス → (4) 両表から再計算して張り直す**。
 - **公平性は「毎回の起床で両方のパスを必ず1回通す」で担保し、件数上限は各パスが独立に持つ。** 上限を共有すると片方の滞留がもう片方を飢えさせる。
 - relay は `queue.send()` を await するので、**同期関数である migration ゲートの中には置けない。** したがって必ず (3-a) に来る。
-- relay の1パスは3相で、**Queue への送信だけがトランザクションの外にある。** (1) `transactionSync` で実行可能な行を上限件数まで claim（`publishing` + `lease_until` + `owner_token` を CAS）、(2) トランザクション外で Queue へ publish、(3) `transactionSync` で `published` へ落とす／失敗なら `attempt` を進め backoff で先送り／上限超過は `quarantined` + `terminal_reason`。
+- relay の1パスは3相で、**Queue への送信だけがトランザクションの外にある。** (1) `transactionSync` で実行可能な行を上限件数まで claim（`publishing` + `lease_until` + `owner_token` を CAS）、(2) トランザクション外で Queue へ publish、(3) `transactionSync` で `published` へ落とす／失敗なら `pending` へ戻す（下のバレット）／上限超過は `quarantined` + `terminal_reason`。
+- **上限に達していない失敗は、同じトランザクションで `status='pending'` へ戻し、`lease_until` / `owner_token` を解放したうえで `attempt` と `next_run_at` を書く。** `publishing` のまま `next_run_at` だけを先送りすると、**leased 行では `next_run_at ≤ lease_until` が常に成り立つ**という不変条件が破れ、上の4本の min へ分解してよい根拠がそのまま崩れる。`publishing` を保ったまま `next_run_at` を `lease_until` の内側へ丸める案は不変条件こそ守るが、**backoff の効き幅が lease の長さに縛られる**（lease より長い backoff が書けず、上限回数まで持たせるには lease を延ばすしかなくなって DO reset からの回収も遅くなる）。**`owner_token` の解放は、その回に Queue へ出たかもしれないメッセージの持参人証を即座に失効させるので、at-least-once の観点でも安全側である。** チャンク上限に達した local job を `pending` へ戻して lease を解放する既存の形と同じであり、新しい概念を持ち込まない。**`jobs` と `outbox_events` の両方へ同じ形で掛かる**（共通化する規約の側。列と実行可能集合の述語の正本は `spec/database/index.md`）。**終端行で `owner_token` を残す規則（下の 6.）とは別の分岐である** — 残すのは `published` / `quarantined` だけで、`pending` へ戻った行は次の claim で新しい値を得る。
 - **at-least-once の根拠は相 2 と 3 のあいだにある。** そこで DO がリセットすると、lease 満了後に同じ行が再 claim され再 publish される。
 - **fail-closed で止まっている DO は relay もしない**（ゲートで戻るので (3-a) に到達しない）。outbox 行は滞留するが、**失われた配送ではない** — 行は残り、コードが揃った次の起床で流れる。
 
@@ -103,7 +105,7 @@ Issue #50 が要求するのは、判定軸を実行責任の所有者へ移し�
   - **`status` は照合条件に入れない。** consumer が RPC を打つのは relay の相 3（`published` への落とし込み）の**後**なので、`status = 'publishing'` を条件にすると正常系の配送が全滅する。**二重送信の抑止は `status` ではなく `providerIdempotencyKey` が担い、役割を混ぜない。**
   - 同一性の判定は `owner_token` が単独で負う。再 claim で `owner_token` が書き換わるので、古い Queue メッセージを持った consumer の呼び出しは 3. で弾かれて `nothing-to-send` に落ちる。
 - **`outbox_events` は終端（`published` / `quarantined`）へ落とすときも `owner_token` を `NULL` にしない。** `jobs` は `NULL` にするが、こちらは照合材料として残す。**落とすとガード 3. が `published` の行に対して必ず失敗し、正常系の配送が全滅する。**
-- **運用値の制約は2本で、これが全数である**（値の確定は #38）。`DLQ の保持期間 < リセットトークンの TTL` と `Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間`。**どちらも機能要件である** — 前者は「DLQ に滞在しているあいだの再駆動が、**まだ有効なリンクを届けられる**」ことを、後者は「再駆動の時点で行がまだ存在し、ガード 1. を通れる」ことを保証する。**前者を持参人証への防壁として読まない**（防壁は下の「影響」が別に持つ）。**片方だけを書くと、値の決定者が両立しない2値を選べてしまう** — 後者を落とすと、prune が行を消した後の DLQ 再駆動が恒久的に空振りし、その形は運用上ほとんど検出できない。
+- **配送の運用値の制約は2本で、これが全数である**（値の確定は #38。**スロットル窓の運用値は 8. の側にあり、正本は `spec/database/index.md` の `reset_request_windows` の節である** — 「2本で全数」は配送についての宣言であって、窓の運用値まで無いという意味ではない）。`DLQ の保持期間 < リセットトークンの TTL` と `Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間`。**どちらも機能要件である** — 前者は「DLQ に滞在しているあいだの再駆動が、**まだ有効なリンクを届けられる**」ことを、後者は「再駆動の時点で行がまだ存在し、ガード 1. を通れる」ことを保証する。**前者を持参人証への防壁として読まない**（防壁は下の「影響」が別に持つ）。**片方だけを書くと、値の決定者が両立しない2値を選べてしまう** — 後者を落とすと、prune が行を消した後の DLQ 再駆動が恒久的に空振りし、その形は運用上ほとんど検出できない。
 
 ### 7. 連打の抑止は行の収束ではなく DO transaction 内のスロットル判定で行う
 
