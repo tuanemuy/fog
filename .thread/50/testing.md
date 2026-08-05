@@ -240,7 +240,7 @@
   - **保証範囲が「載らない・永続化されない」**であり、「DO の境界を出ない」とは書かれていない（宛先と生トークンは送信材料 RPC の応答として境界を越え、配送の瞬間だけ consumer のメモリに載る）（AC-20）
   - **呼び出しガードが3条件** — (a) その `event.id` の行が存在し (b) `quarantined` でなく (c) 呼び出しの `owner_token` が行の値と一致する。**`status` は照合条件に入れない**ことと、その理由（`published` へ落とした後に consumer が到達するので `status='publishing'` を条件にすると正常系が全滅する／二重送信の抑止は `providerIdempotencyKey` が担う）が書かれている（AC-20）
   - 応答は **`send` / `nothing-to-send` の2分岐で全数**であり、`nothing-to-send` は**理由を1つも載せない空**である（AC-24）
-  - **`outbox_events` は終端時に `owner_token` を `NULL` にしない**こと、運用値の制約2本（`DLQ 保持期間 < リセットトークン TTL` / `Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間`）が書かれている（AC-20）
+  - **`outbox_events` は終端時に `owner_token` を `NULL` にしない**こと、運用値の制約2本（`Queue 最大 retry + DLQ 保持期間 < リセットトークン TTL` / `Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間`）が書かれている（AC-20）。**2本は左辺が同じ `Queue 最大 retry + DLQ 保持期間` で、上限として置く相手だけが違う（リセットトークンの TTL と `published` 行の保持期間）。2本という数は動かない**（`plan.md` AC-20 の訂正注記と対）
   - 配送が **at-least-once・順序保証なし**で、consumer が `event.id` を基準に冪等化されること、**冪等性キーの保持先が consumer ごとに全数表で宣言される**ことが定義されている。mail consumer の `providerIdempotencyKey` は **DO 側で導出され送信材料 RPC の応答で渡される**（`outbox_events` の列ではない）（AC-24）
 - **確認ポイント:** 「二重送信対策として `status` を照合する」に戻る記述が1箇所も無いか。応答の3分岐（`superseded` / `no-recipient`）が取り残されていないか（確認項目13 で機械検査する）
 
