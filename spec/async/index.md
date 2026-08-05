@@ -41,7 +41,7 @@
 | `resume-signup` | `resume-signup` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | 新規登録 saga の予約行を書くのと同じトランザクション。**コーディネーター bucket だけが自分に投入する**（非コーディネーター bucket には投入しない） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.operation_id`（コーディネーター bucket の予約行）。**`operations` は保持先にしない — User Data DO にしか無い**（database/index.md） |
 | `resume-credential-change` | `resume-credential-change` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | クレデンシャル変更 saga の開始（`change_state` を `pending` にするのと同じトランザクション） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.change_state` |
 | `sweep-reservations` | `sweep-reservations` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | 予約行を書く3箇所（新規登録 saga の予約2つと SSO 連携の予約）。**予約を書いた bucket が自分に投入する** | — | 無 | なし（作業述語は `cm_reservation_idx` から引く） | `jobs.operation_key`（定数キー） |
-| `sweep-reset-tokens` | `sweep-reset-tokens` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | **リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）。宛先の登録有無で投入を分けない** — 窓行は4ケースすべてで作られるので、投入も4ケースすべてで起きる。**投入時の `next_run_at` は窓行の `expires_at` から導き、送る側でもリセットトークンの `expires_at` を材料にしない。** 掃除ジョブは完了時の再武装で両方の索引を読み直すので、投入時刻を宛先の登録有無に依存させる必要が無い（依存させると「同じ起床を張る」が4ケースで割れる） | — | 無 | なし（作業述語は `prt_expires_idx` / `rrw_expires_idx` から引く） | `jobs.operation_key`（定数キー） |
+| `sweep-reset-tokens` | `sweep-reset-tokens` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | **リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）。宛先の登録有無で投入を分けない** — 窓行は4ケースすべてで作られるので、投入も4ケースすべてで起きる。投入時の **`next_run_at` は窓の終端（= その窓の開始 + 窓の長さ）から導き、送る側でもリセットトークンの `expires_at` を材料にしない。** 窓行の `expires_at` は窓の終端に**猶予**を足した値だが、**猶予は窓行を書くアダプター側の掃除条件にだけ効くので、投入時刻の材料にしない** — 投入側にも置くと「2層が同じ設定値を読む」対象が窓の長さに加えてもう1つ増え、ズレたときに静かに壊れる面が広がる。窓の終端に起きた掃除は窓行についてはまだ空振りしうるが、**完了時の再武装が2表の索引（`prt_expires_idx` / `rrw_expires_idx`）から `min(expires_at)` を読み直して正しい時刻を張り直すので収束する。** 投入時刻を宛先の登録有無に依存させないことは変わらない（依存させると「同じ起床を張る」が4ケースで割れる）。 | — | 無 | なし（作業述語は `prt_expires_idx` / `rrw_expires_idx` から引く） | `jobs.operation_key`（定数キー） |
 | `rotate-encryption` | `rotate-encryption` | local job（チェックポイント分割を要する一括処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | operator 専用 maintenance 経路からの起動（database/index.md）。**本 spec で確定している投入点はこれだけである** — 移送側からの再投入を足すかは #44 が決める | — | 無 | 退役させる世代。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（進捗は `rotation_checkpoints`） |
 | **User Data DO のイベント型: 0件** | — | Outbox event | User Data | — | **定義されたイベント型が1つも無い。** 表と機構（`outbox_events` + Alarm relay）は両クラスに置くが、置くのは表と機構であってイベント型ではない（`.adr/013`） | — | — | — | — |
 
@@ -61,7 +61,8 @@
 ## payload と `terminal_reason` の衛生規則
 
 - **`outbox_events.payload` / `jobs.payload` / Queue のメッセージ / DLQ のメッセージ / ログ / `terminal_reason` のいずれにも、PII と再利用可能な秘密を載せない。** `terminal_reason` は運用者が読む場所であり、`payload` は PITR の保持期間ぶん残る。
-- **保証範囲は「載らない・永続化されない」であって「DO の境界を出ない」ではない。** 宛先メールアドレスと生トークンは**送信材料 RPC の応答として境界を越え、配送の瞬間だけ consumer のメモリに載る。** どこにも永続化されないことと、復号鍵・HMAC 導出鍵が DO の中から出ないことが保証の実体である。「境界を出ない」と読むと、consumer 側のログ方針や秘密管理を緩める根拠に使われる。
+- **保証範囲は「載らない・永続化されない」であって「DO の境界を出ない」ではない。** 宛先メールアドレスと生トークンは**送信材料 RPC の応答として境界を越え、配送の瞬間だけ consumer のメモリに載る。** どこにも永続化されないことと、**鍵が DO の中から出ないこと**（射程は次のバレット）が保証の実体である。「境界を出ない」と読むと、consumer 側のログ方針や秘密管理を緩める根拠に使われる。
+- **DO の中から出ないのは、宛先の復号鍵とリセットトークンの導出鍵である。** canonical を全長 HMAC へ写す**写像鍵は bucket 選択のために request Worker 側（stub 選択アダプター）にあり、DO の中には無い**（正本は `spec/database/index.md`「窓キーの導出」）。これは本 PR 以前からの帰属であり、本 PR はそれを窓キー導出の前提として明示しただけである。**無限定に「HMAC 導出鍵は DO の中から出ない」と書かない** — 書くと (i) 窓キーの導出を DO 側へ寄せる案（`claimWindow` に canonical を渡す形。論点11 B）への導線になり、(ii) 写像鍵が request Worker の秘密であることが `.dev.vars.example` の帰属表（#51）から落ちる。
 - **`owner_token` は再利用可能な秘密である。** `(event.id, owner_token)` の対を握れば送信材料 RPC が `send` を返すので、対そのものが「宛先と生トークンを引ける持参人証」になる。それでも Queue メッセージと DLQ に載るのは、**呼び出しガードを成立させるために必要な明示的な例外**だからであり、上の禁止則が緩むわけではない。例外の代償として、次の2条が掛かる。
   - **Queue メッセージをログへ出さない** — 個々の項目だけでなくメッセージ全体を出さない。**ログに載せてよいのは `event.id` と `type` までである。**
   - **DLQ のメッセージを外部の監視基盤・ログ集約先へ転送しない。** 転送する設計を足すなら、`.adr/013` の判断へ戻る。
@@ -95,7 +96,7 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 
 ### 呼び出しガード
 
-生トークンは `tokenId` から導かれ、`tokenId` は Queue メッセージと DLQ を通って DO の外へ出る。この RPC が無条件だと「`tokenId` を知る者 = リセットリンクを引ける者」になるので、**応答が `send` になるのは次の3条件がすべて成り立つときだけである。**
+生トークンは行の `payload` が持つ `tokenId` から導かれる。**`event.id` は Queue メッセージと DLQ を通って DO の外へ出るので、この RPC が無条件だと「`event.id` を知る者 = リセットリンクを引ける者」になる。** したがって**応答が `send` になるのは次の3条件がすべて成り立つときだけである。**
 
 1. その `event.id` の行が `outbox_events` に**存在する**
 2. 行が `quarantined` **でない**
@@ -103,6 +104,9 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 
 1つでも満たさない呼び出しは `nothing-to-send` を返す（**理由は返さない**）。`event.id` と `owner_token` の対は Queue メッセージが運ぶ。
 
+**RPC が受け取るのは `event.id` と `owner_token` の2つだけであり、これが全数である。`tokenId` は行の payload から DO が読むので引数に取らない。**
+
+- **行の `owner_token` が `NULL` の呼び出しは、引数の値にかかわらず常に不一致として扱う**（`password_reset_tokens.change_auth_token` と同じ規則）。`owner_token` が `NULL` になるのは正常系で頻出する2状態 — `enqueueEvent` の INSERT 直後から最初の claim までと、上限未到達の失敗で `pending` へ戻された後から次の claim まで — であり、**そこを `NULL` 同士の一致として通す実装は「`event.id` を知る者が送信材料を引ける」ことを意味する。** 引数側の `owner_token` も、**欠落・空文字・規定長（128 bit）未満は照合の前に不一致として扱う。**
 - **`status` は照合条件に入れない。** 配送は at-least-once であり、consumer が Queue からメッセージを受け取って RPC を打つのは relay が `published` へ落とした**後**である。`status = 'publishing'` を条件にすると**正常系の配送が全滅する。二重送信の抑止は `status` ではなく `providerIdempotencyKey` が担い、役割を混ぜない。**
 - **同一性の判定は `owner_token` が単独で負う。** 再 claim が起きれば `owner_token` は書き換わるので、古い Queue メッセージを持った consumer の呼び出しは 3. で弾かれて `nothing-to-send` に落ちる。
 - **`outbox_events` は終端へ落とすときも `owner_token` を `NULL` にしない**（`jobs` と分離する規約。database/index.md）。落とすと 3. が `published` の行に対して必ず失敗する。
@@ -113,12 +117,16 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 - **暗号論的乱数から生成し、時刻・連番・DO 識別子から導かない。** 導出可能な値は 3. を推測で通せることを意味する。
 - **長さの下限は 128 bit。**
 
+**持参人証の露出窓の上限。** **露出窓は `published` 行の保持期間で上から押さえられているわけではない。** prune はジョブランナーの起動末尾でしか走らないので、**終端行しか残っていない DO は定義上 `deleteAlarm()` 済みで起床せず、保持期間を過ぎた `published` 行が次の投入まで残る。** ただし**実効的な上限はリセットトークンの TTL である** — 行が残っていても、TTL を過ぎたトークンについては送信材料 RPC が `nothing-to-send` を返すので宛先も生トークンも引けない。**「行の存在」は `published` の保持期間では有界でなく、「引ける材料」は TTL で有界である。**
+
 ### 運用値の制約
 
 **2本あり、これが全数である**（実値の確定は #38）。
 
-1. **`DLQ の保持期間 < リセットトークンの TTL`.** これは**機能要件**である — 満たしていれば、DLQ からの再駆動が **TTL の内側に収まり、有効なリンクを届けられる。** 逆向きの値を選ぶと、再駆動が成功しても利用者の手元には既に失効したリンクしか届かない。**この制約は `(event.id, owner_token)` の持参人証に対する防壁ではない**（防壁は上の衛生規則の禁止則 — ログ非出力と DLQ 非転送 — と、DLQ そのものへの到達制御である。到達制御の実体は #38）。
+1. **`Queue の最大 retry 期間 + DLQ の保持期間 < リセットトークンの TTL`.** これは**機能要件**である — 満たしていれば、DLQ 滞在の末期に再駆動しても**リセットトークンがまだ TTL の内側にあり、有効なリンクを届けられる。** **`DLQ の保持期間 < TTL` とだけ書くとこの帰結が導けない** — 再駆動の時点でトークンが経過しているのは DLQ の滞在時間だけではなく、その前に Queue が retry を焼き切るまでの時間も含むからである。**この制約は `(event.id, owner_token)` の持参人証に対する防壁ではない**（防壁は衛生規則の禁止則2条と、DLQ そのものへの到達制御。到達制御の実体は #38）。
 2. **`Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間`.** 呼び出しガードの 1.（行の存在）を要求する以上、prune が行を消した後の DLQ 再駆動は必ず `nothing-to-send` になる。
+
+**2本は左辺が同じ `Queue の最大 retry 期間 + DLQ の保持期間` で、上限として置く相手だけが違う**（リセットトークンの TTL と `published` 行の保持期間）。相手は独立に決まる運用値なので片方から他方は導けない。**「配送の運用値の制約は2本で全数」は動かない。**
 
 **片方だけを書くと、値の決定者が両立しない2値を選べてしまう。** 2. を落とすと再駆動が恒久的に空振りし、その形は運用上ほとんど検出できない。
 
@@ -130,6 +138,7 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 
 - 載せるのは `event.id` / `type` / `payload` / **宛先 DO の routing key**（送信材料 RPC の宛先を選ぶための鍵。**relay が publish 時に押す項目であり、行にもドメイン payload にも無い**）/ 呼び出しガードが照合する `owner_token` の**5項目**である。
 - **routing key の粒度は次のとおりであり、これが正本である。** Queue メッセージが運ぶ routing key は、**発行元 DO 自身の locator** である（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する。
+- **`payload` は現時点で読み手を持たない** — consumer は業務判断を持たず、`tokenId` は行の payload から DO 自身が読む（送信材料 RPC は `event.id` と `owner_token` しか取らない）。載せるのは将来の consumer と DLQ 上での型別の切り分けのためであり、衛生規則（PII と再利用可能な秘密を載せない）が同じく掛かる。
 - **PII と再利用可能な秘密は載せない**（`owner_token` は上の衛生規則が定める明示的な例外である）。
 - **メッセージの各項目は `outbox_events` の行の値をそのまま使い、Queue 側で組み立て直さない。運ぶのは上に列挙した5項目だけで、行の他の列は載せない** — メッセージは行の写しではない。**特に `aggregate_id`（窓キー）は載せない。** 同一アドレス・同一窓に対して安定した仮名なので、載せると DLQ 上で複数のメッセージを同一の宛先へ相関させる材料になる。
 

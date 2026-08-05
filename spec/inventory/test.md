@@ -206,7 +206,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-requestPasswordReset-001 | 依頼の正常系（送る側） | spec/testcases/identity/requestPasswordReset.md#L9 | 同じ transactionSync で窓行が1行・イベント行がちょうど1行書かれ、トークンが発行され sweep-reset-tokens が投入され、配送後に sendPasswordResetMail(to, resetToken, providerIdempotencyKey) が呼ばれて void 正常終了なら PASS |
 | TC-requestPasswordReset-002 | 未登録メールの送らない側 | spec/testcases/identity/requestPasswordReset.md#L10 | 窓行・イベント行・ジョブの投入・起床・応答が登録済みの場合と一致し、tokenId に不透明値が入って行の形が一字も違わず、送信材料 RPC が nothing-to-send を返せば PASS |
 | TC-requestPasswordReset-003 | SSO 専用アカウントの送らない側 | spec/testcases/identity/requestPasswordReset.md#L11 | 判定が passwordVerifier の有無で行われ、窓行・イベント行・投入・起床・応答が他ケースと一致すれば PASS |
-| TC-requestPasswordReset-004 | 4ケースの応答と処理経路の同一性 | spec/testcases/identity/requestPasswordReset.md#L12 | 同じ窓の状態に対して4ケースが一様（最初の依頼なら必ずちょうど1行、発行済みの窓なら1行も書かない）で、応答も区別不能で、差が無いことの主張が測定対象4つに限定され（総書き込み行数と実測処理時間では測らない）、残差が依頼トランザクションの内側の追加書き込みであること・応答が担保するのは応答の内容の区別不能性までであること・実効的な緩和が窓あたり1サンプルであること・verify と同じ等時化を採らない理由が書かれていれば PASS |
+| TC-requestPasswordReset-004 | 4ケースの応答と処理経路の同一性 | spec/testcases/identity/requestPasswordReset.md#L12 | 同じ窓の状態に対して4ケースが一様（最初の依頼なら必ずちょうど1行、発行済みの窓なら1行も書かない）で、応答も区別不能で、差が無いことの主張が測定対象4つに限定され（総書き込み行数と実測処理時間では測らない）、残差の出所が1つではないこと（(1) トークンの発行、(2) findByEmail のヒット / ミスと宛先の復号。いずれも実測処理時間の側の差であり、依頼トランザクションの内側の処理である）・応答が担保するのは応答の内容の区別不能性までであること・実効的な緩和が窓あたり1サンプルであること・verify と同じ等時化を採らない理由が書かれていれば PASS |
 | TC-requestPasswordReset-005 | メール形式不正 | spec/testcases/identity/requestPasswordReset.md#L13 | BusinessRuleError(InvalidEmail) なら PASS |
 | TC-requestPasswordReset-006 | 正規化後一致での送る側 | spec/testcases/identity/requestPasswordReset.md#L14 | 大文字混在メールでも正規化後の一致で送る側になり、windowKey が canonical 由来なので同じ窓に落ちれば PASS |
 | TC-requestPasswordReset-007 | トークン発行障害 | spec/testcases/identity/requestPasswordReset.md#L15 | SystemError なら PASS |
@@ -861,7 +861,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-001 | DO クラスに存在する要素の全部が同じ transactionSync で確定する | spec/testcases/async/outboxDelivery.md#L9 | User Data DO では業務行 + FTS5 projection、Identity Directory DO では業務行（窓行・トークン行）+ イベント行が、それぞれ同じ transactionSync の中で一度に確定すれば PASS（DO クラスごとに実行する。3点が揃う DO クラスは今日存在せず、User Data DO のイベント型が定義された時点で3点版へ拡張する） |
 | TC-outboxDelivery-002 | rollback で DO クラスの要素が全部巻き戻る | spec/testcases/async/outboxDelivery.md#L10 | 業務データの失敗で、User Data DO では FTS5 projection が、Identity Directory DO ではイベント行が巻き戻り、イベント行だけが残らなければ PASS（DO クラスごとに実行する） |
 | TC-outboxDelivery-003 | FTS5 projection は配送を待たない | spec/testcases/async/outboxDelivery.md#L11 | relay や Queue の状態と独立に、作成・更新の直後の検索でヒットすれば PASS |
-| TC-outboxDelivery-004 | relay の相1（claim） | spec/testcases/async/outboxDelivery.md#L12 | 実行可能な行が next_run_at の昇順で上限件数まで publishing になり lease_until / owner_token が CAS で書かれ、打ち切りで残るのが常により後の next_run_at の行なら PASS |
+| TC-outboxDelivery-004 | relay の相1（claim） | spec/testcases/async/outboxDelivery.md#L12 | lease 未満了の publishing 行が1件も無い前提のもとで、実行可能な行が next_run_at の昇順で上限件数まで publishing になり lease_until / owner_token が CAS で書かれ、打ち切りで残るのが常により後の next_run_at を持つ実行可能かつ claim 可能な行なら PASS（射程は claim に成功した行の集合について。lease 未満了で CAS に弾かれた行はより早い next_run_at を持ったまま残りうるので前提で排除する。TC-outboxDelivery-007） |
 | TC-outboxDelivery-005 | relay の相2〜相3（publish と終端） | spec/testcases/async/outboxDelivery.md#L13 | Queue 送信だけがトランザクション外で行われ、published へ落ちても owner_token が NULL にならなければ PASS |
 | TC-outboxDelivery-006 | Alarm の多重化 | spec/testcases/async/outboxDelivery.md#L14 | 2表の最早時刻の min が張られ、両方の実行可能集合が空のときだけ deleteAlarm されれば PASS |
 | TC-outboxDelivery-007 | lease 中の行の算入 | spec/testcases/async/outboxDelivery.md#L15 | leased 行が max(next_run_at, lease_until) で算入され、空振り起床を繰り返さなければ PASS |
@@ -875,7 +875,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-015 | quarantine の一覧 | spec/testcases/async/outboxDelivery.md#L23 | list-quarantined-events で隔離行が一覧でき、jobs.kind にも event.type にも入らなければ PASS |
 | TC-outboxDelivery-016 | quarantine の再駆動 | spec/testcases/async/outboxDelivery.md#L24 | 隔離行だけが残り deleteAlarm() 済みの DO で、requeue-quarantined-event が status='pending' / next_run_at=現在時刻 / attempt=0 / completed_at=NULL を書き、terminal_reason を残し owner_token を採番し直し、そのあと4本の min の合成で setAlarm が張り直されて次の起床で relay の対象になれば PASS |
 | TC-outboxDelivery-017 | published の prune と quarantined の保持 | spec/testcases/async/outboxDelivery.md#L25 | 保持期間を過ぎた published だけが上限件数まで削除され、quarantined が残れば PASS |
-| TC-outboxDelivery-018 | prune 後の DLQ 再駆動 | spec/testcases/async/outboxDelivery.md#L26 | 呼び出しガード (a) を満たさず nothing-to-send になり、運用値の制約2本で恒久的な空振りが防がれていれば PASS |
+| TC-outboxDelivery-018 | prune 後の DLQ 再駆動 | spec/testcases/async/outboxDelivery.md#L26 | 呼び出しガード (a) を満たさず nothing-to-send になり、運用値の制約2本（左辺はどちらも Queue の最大 retry 期間 + DLQ の保持期間で、上限の相手だけが published 行の保持期間とリセットトークンの TTL に分かれる）で恒久的な空振りが防がれていれば PASS |
 | TC-outboxDelivery-019 | consumer 失敗の DLQ 落とし | spec/testcases/async/outboxDelivery.md#L27 | メッセージが DLQ へ落ち、発行元 DO は published のまま ack を書き戻されなければ PASS |
 | TC-outboxDelivery-020 | fail-closed の DO は relay しない | spec/testcases/async/outboxDelivery.md#L28 | 行が滞留するが失われず、Alarm が張ったまま残り、コードが揃った次の起床で流れれば PASS |
 | TC-outboxDelivery-021 | fail-closed × DLQ の逆向き | spec/testcases/async/outboxDelivery.md#L29 | 送信材料 RPC がゲートで SystemError を返し、retry を焼き切って DLQ へ落ち、再駆動で復旧できれば PASS |
@@ -884,3 +884,4 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-024 | イベント行は収束しない | spec/testcases/async/outboxDelivery.md#L32 | 同じ内容のイベントを2回発行すると2行になり、dedupe_key も部分 UNIQUE 索引も無ければ PASS |
 | TC-outboxDelivery-025 | relay パスと jobs パスの独立上限 | spec/testcases/async/outboxDelivery.md#L33 | 1回の起床で両方のパスを必ず1回通り、片方の上限到達が他方を飢えさせなければ PASS |
 | TC-outboxDelivery-026 | 同じ起床で claim した行の owner_token の相異 | spec/testcases/async/outboxDelivery.md#L34 | 同じ起床で claim された2行以上の owner_token が互いに異なり（重複0件）、長さが 128 bit 以上で、起床をまたいでも同じ値が現れなければ PASS。生成源（暗号論的乱数由来・時刻や連番や DO 識別子から導かない）は実行時に判定できないので PASS 条件に含めず、実装レビューの確認項目とする |
+| TC-outboxDelivery-027 | owner_token が NULL の行への送信材料 RPC | spec/testcases/async/outboxDelivery.md#L35 | INSERT 直後または上限未到達の失敗で pending へ戻った直後の owner_token が NULL の行に対して、owner_token を伴わない（null の）RPC を打つと nothing-to-send が返れば PASS。行側が NULL の照合は引数の値にかかわらず不一致であり（password_reset_tokens.change_auth_token と同じ規則）、null === null を一致として通す実装は落ちる。引数側の欠落・空文字・規定長（128 bit）未満も照合前に不一致とする |

@@ -670,8 +670,10 @@ export interface MailSender {
 - **引数が1つ増えても、非同期ポートの例外は `PasswordHasher` / `MailSender` の2件のまま動かない**（domains/index.md「ポートの同期契約」）。例外の判定基準は「実装できる API が非同期しか無いか」であって引数の数ではない
 - **呼ぶのは Alarm ジョブではなく、request Worker の `queue()` ハンドラ（mail consumer）である**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。consumer は `identity.passwordResetRequested` のメッセージを受けて発行元 Identity Directory bucket へ**送信材料 RPC** を打ち、応答が `send` のときだけ本ポートを呼ぶ（`nothing-to-send` なら no-op して ack する）。**宛先の復号と生トークンの導出は DO の中に閉じたまま**であり、`to` / `resetToken` は RPC の応答としてのみ consumer に渡り、どこにも永続化されない（async/index.md「送信材料 RPC」）
 - **`send` が持つのは宛先・生リセットトークン・`providerIdempotencyKey` の3つである。URL の組み立てとメール本文のレンダリングは本ポートのアダプター（request Worker）の責務**であり、DO はテンプレートも base URL も持たない。**DO の中に閉じるのは復号と HMAC 導出であって、レンダリングではない**（`CLAUDE.md` の「CPU-bound work は request Worker」）。上の signature に本文を受け取る引数が無いのはこの帰結である
+- **リセット URL の base URL は Worker の設定値（環境変数）だけから取り、リクエスト由来のホスト情報（`Host` / `X-Forwarded-Host` / `Origin` など）からは導かない。** consumer は `queue()` ハンドラで動くので受信リクエストがそもそも存在しないが、規則として書く — 導くと攻撃者が制御するホストへ生トークンを載せたリンクをメールさせられる（リセットリンクのポイズニング）。**リセット画面からの Referer 送出の抑止と、リダイレクト時にトークンを引き継がないことは presentation 側の要件であり、#51 が担う。**
 - エラーケース:
   - 送信基盤の失敗 → `SystemError`。ただしリセット依頼ユースケースは「登録されていれば送信された」旨のみ返すため（S-AC-07 異常系）、宛先実在性に起因する失敗をユーザー応答に反映してはならない。**依頼の応答は配送の成否を待たない** — 配送は結果整合であり、送信の失敗は Queue の retry → DLQ で扱う
+  - **エラーの翻訳時に、宛先・組み立て済み URL・生トークン・provider の応答本文を `SystemError` のメッセージにも詳細にも載せない。ログに載せてよいのは provider 側のステータスと `providerIdempotencyKey` の有無までである**（async/index.md の配送機構3コンポーネントに掛かる許可リストと同じ射程）。**生トークン入りの URL と宛先を実際に保持するのは本アダプターだけである。**
 
 ## ドメインイベント
 

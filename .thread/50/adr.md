@@ -1,6 +1,6 @@
 # ADR — Issue #50: User Data DO + DO ローカル Outbox へ移行し、ドメインイベント配送を維持する
 
-本 Issue の成果物はドキュメントのみだが、書くべきドキュメントの内容そのものが設計判断の集合である。以下はその判断の記録であり、AD-1〜AD-47 のうちプロジェクト全体に効くものが `.adr/013` へ昇格する。**設計判断の記録先は本ファイルだけである** — plan.md / steps.md は結論を参照するだけで、判断の根拠を重複させない。
+本 Issue の成果物はドキュメントのみだが、書くべきドキュメントの内容そのものが設計判断の集合である。以下はその判断の記録であり、AD-1〜AD-50 のうちプロジェクト全体に効くものが `.adr/013` へ昇格する。**設計判断の記録先は本ファイルだけである** — plan.md / steps.md は結論を参照するだけで、判断の根拠を重複させない。
 
 ---
 
@@ -56,6 +56,7 @@ Proposed
 **`outbox_events` を `jobs` とは別のテーブルとして、両 DO クラスに置く。共通化するのは列名・状態遷移・Alarm scheduler・backoff・lease・prune の規約であり、分離するのは同一性と配送状態である。**
 
 - **訂正（レビュー3周目・W-004）: 「共通化する規約」は Alarm scheduler / backoff / lease / prune の4項である。** 列名と状態遷移そのものは項目として数えず、同名・同意味であることは下の「揃える列（8つ）」が、値域の差は分離する側の「配送状態の値域」が持つ（`.adr/013` の 2. / `spec/database/index.md` と同じ4項）。上の Decision 本文の6項の列挙はそれ以前の版であり、**確定した数は4項である**。
+- **訂正（レビュー4周目・W-003）: 「分離する規約」も3項である**（同一性と収束の有無 / 配送状態の値域 / 終端時に `NULL` にする列）。**上の Decision 本文の2項の言い方はそれ以前の版であり、確定した数は3項である**（`.adr/013` の 2. / `spec/database/index.md` / `ADP-outbox-events-001` と同じ3項）。3つ目（終端時に `owner_token` を `NULL` にしない）は AD-6 の 2. が「これは AD-2 が言う『分離する規約』の1つ」として帰属させているものである。**削除の対象集合が違うこと（`jobs` は終端2値の両方を消し、`outbox_events` は `published` だけを消す）は4つ目として数えず、値域の分離の帰結として畳む。**
 - **揃える列（8つ）**（`jobs` と同名・同意味にして、ランナーの実装を共有できるようにする）: `payload` / `attempt` / `next_run_at` / `status` / `lease_until` / `owner_token` / `terminal_reason` / `completed_at`。**`payload` は両表が持つ共有列である** — `outbox_events` 固有として数えると、`jobs` の列数（AD-8 で `provider_idempotency_key` を落として11列）と算術が合わなくなる。
 - **`outbox_events` 固有の列（5つ）**: `id`（`EventId`。`IdGenerator` が採番する不変の主キー）/ `type` / `aggregate_id` / `occurred_at` / `created_at`。**`created_at` は行が Outbox に載った時刻であり、`occurred_at`（ドメインが決めた発生時刻）とは別物である** — backlog の滞留時間を読む起点は前者であり、後者はドメインが過去の時刻を入れうるので滞留の観測に使えない。`dedupe_key` は置かない（AD-7）。`provider_idempotency_key` も置かない（AD-8）。
 - **`jobs` 固有の列（3つ）**: `operation_key`（同一性）/ `kind` / `payload_digest`。**この3つが「収束する表」と「収束しない表」を分けている実体である。** 以上より `jobs` は 8 + 3 = **11列**、`outbox_events` は 8 + 5 = **13列**である。
@@ -209,6 +210,7 @@ Issue の受け入れ条件は「PII と再利用可能な秘密が event payloa
 
 - payload に載せるもの: `tokenId`（識別子）/ メール種別 / **発行元 Identity Directory bucket の routing key**（`.adr/002` により既に鍵付きハッシュ済みの内部キーであり、生のメールアドレスでも SSO subject でもない）。
   - **訂正（AD-40）: 3つ目の routing key は payload から落とした。** ドメイン payload は `tokenId` / メール種別の**2つだけ**であり、routing key は relay が publish 時に Queue メッセージへ押す項目である。理由は AD-40 を読むこと。**Queue メッセージが5項目のうちの1つとして routing key を運ぶことは変わらない。**
+  - **訂正（レビュー2周目・W-019）: routing key の粒度は発行元 DO 自身の locator（`dir:g{世代}:b{番号}`）であり、クレデンシャル単位の鍵付きハッシュではない。正本は `spec/async/index.md`「Queue メッセージ」。** 上の括弧書き（「`.adr/002` により既に鍵付きハッシュ済みの内部キー」）はそれ以前の版である。**クレデンシャル単位の内部キー（canonical の全長 HMAC）を Queue メッセージに載せると、窓で切れない仮名が DLQ に残り、`aggregate_id`（窓キー）を Queue から外した理由（DLQ 上での宛先相関）をそのまま無効化する。**
 - payload に載せないもの: メールアドレス、生トークン、`userId`、その他の PII。
 - consumer が呼ぶ RPC は「送信材料の取得」であって「送信」ではない。**復号と HMAC 導出は DO の中に閉じたまま**で、consumer が受け取るのは送信直前の完成品である。**訂正（AD-44）: 「送信直前の完成品」は本文ではなく送信材料3点である。DO の中に閉じるのは復号と HMAC 導出であって、レンダリングではない。**
 - **RPC の応答は2分岐のタグ付きユニオンであり、これが全数である。**
@@ -224,7 +226,9 @@ Issue の受け入れ条件は「PII と再利用可能な秘密が event payloa
   2. **`outbox_events` は終端時に `owner_token` を `NULL` にしない。** `jobs` は `done` / `poison` へ落とすときに `lease_until` / `owner_token` / `next_run_at` を `NULL` にする（`spec/database/index.md` L460 付近）が、`outbox_events` の `owner_token` は**終端後も照合材料として残す**。`lease_until` / `next_run_at` は `jobs` と同じく `NULL` にする。**これは AD-2 が言う「分離する規約」の1つであり、書き落とすとガード (c) が `published` の行に対して必ず失敗し、1. の訂正がそのまま無効になる。**
   3. **DLQ の保持期間 < リセットトークンの TTL を運用値の制約として書く**（値の確定は #38）。満たしていれば DLQ からの再駆動が成功しても、トークンは既に失効している。満たせない場合は 1. のガードだけが有効な防壁になるので、**択一ではなく両方置く。**
      - **訂正（AD-37）: この根拠は不等式が意味することの逆である。** `DLQ 保持期間 < TTL` なら再駆動は TTL の内側に収まり、**トークンは生きている。** したがって制約1 は**機能要件**（再駆動が有効なリンクを届けられる）であって持参人証への防壁ではない。防壁は AD-36 の禁止則（ログ非出力・DLQ 非転送）と DLQ への到達制御（#38）の2本である。
+     - **訂正（レビュー4周目・B-003）: 制約1 の左辺は `Queue の最大 retry 期間 + DLQ の保持期間` である。** 確定形は **`Queue の最大 retry 期間 + DLQ の保持期間 < リセットトークンの TTL`** で、上の 3. の本文（`DLQ 保持期間 < TTL`）はそれ以前の版である。**`DLQ の保持期間 < TTL` とだけ書くと、機能要件（DLQ 滞在の末期に再駆動しても有効なリンクを届けられる）が導けない** — 再駆動の時点でトークンが経過しているのは DLQ の滞在時間だけではなく、その前に Queue が retry を焼き切るまでの時間も含むからである。**不等式の方向も、AD-37 が確定させた「制約1 は防壁ではない」も動かない。**
   4. **`published` 行の保持期間 ≥ Queue の最大 retry 期間 + DLQ の保持期間**（値の確定は #38）。ガードが行の存在（(a)）を要求する以上、prune が行を消した後の DLQ 再駆動は必ず `nothing-to-send` になる。**上側（3.）だけを書くと、値の決定者が両立しない2値を選べてしまい、再駆動が恒久的に空振りする** — その形は運用上ほとんど検出できない。3. と合わせて `Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間` かつ `DLQ 保持期間 < トークン TTL` が制約の全数である。
+     - **訂正（レビュー4周目・B-003）: 総括の後半も左辺を揃える。** 確定形は **`Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間` かつ `Queue 最大 retry + DLQ 保持期間 < トークン TTL`** である。**2本は左辺が同じ `Queue 最大 retry + DLQ 保持期間` で、上限として置く相手だけが違う**（`published` 行の保持期間とリセットトークンの TTL）。相手は独立に決まる運用値なので片方から他方は導けず、**「配送の運用値の制約は2本で全数」は動かない。**
 
 ### 検討した代替案
 
@@ -614,6 +618,7 @@ AD-7 が `dedupe_key` を撤回したことで、これまで `jobs` の pending
 **Identity Directory DO に `reset_request_windows` を新設し、UoW コンテキストの `resetThrottleStore` から読み書きする。**
 
 - **キーは canonical 化したメールアドレスのハッシュ（対象の全長 HMAC）と依頼の窓の対である。** `jobs.operation_key` と同じ導出を使い、**クライアントから受け取らない**（`CLAUDE.md`「Cross-request idempotency keys never come from the client」）。
+  - **訂正（AD-24 / AD-47 / レビュー4周目・W-004）: 根拠として `jobs.operation_key` の導出規則を引かない。導出規則の正本は `spec/database/index.md` の `reset_request_windows` の節である。キーの中身（対象 canonical の全長 HMAC と依頼の窓）と「クライアントから受け取らない」は変わらない。** 現行の `jobs.kind` 11種はいずれもジョブの同一性から導く値（DO ごとの定数キー・`operationId` 由来・対象バージョンや世代由来）で、「対象と時間窓から導く」形は旧 `send-mail` が使っていたものなので、引くと失効した規則を指すことになる。AD-24 が「この言い回しは根拠としては使わない」と名指ししているのは、この1文である。
 - **登録の有無に関係なく行を作る。** 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）のどれでも、同じ1文で読み、同じ1文で書く。行の有無が観測可能な差にならない。
 - **生のメールアドレスも SSO subject も持たない。** 持つのは鍵付きハッシュと時刻だけであり、`credential_mappings` の `encrypted_canonical` のような原本を持たない。したがって「未登録アドレスの記録が残る」ことによる PII の増加は無い。
 - **期限切れの掃除は既存の `sweep-reset-tokens` に同居させる。** 新しい `jobs.kind` は作らない。同ジョブの**責務**を「期限切れのリセットトークン行の削除**と、期限切れの窓行（`reset_request_windows`）の削除**」へ広げ、`spec/async/index.md` の全数表の用途欄と `spec/database/index.md` の同 `kind` の欄を同時に直す。**`jobs.kind` は 11 種のまま動かず、受け入れ条件12 の初期値分類も動かない。**
@@ -947,7 +952,7 @@ Proposed（**ステップ7 の実装中に確定した。AD-6 / AD-7 が payload
 **`aggregateId` には `PasswordResetThrottlePort.claimWindow` に渡した `windowKey`（対象 canonical の全長 HMAC + 依頼の窓）を入れる。**
 
 - **4ケースのどれでも同じ導出で必ず決まる唯一の識別子である。** 窓のキーは canonical から導くので、登録の有無・認証方式・宛先の存在を1つも参照しない。AD-16 が窓ストアを `credential_mappings` から分離したのと同じ理由がそのまま当てはまる。
-- **鍵付きハッシュ済みなので原本を含まない。** `reset_request_windows.window_key` と同じ値であり、`spec/database/index.md` が「この表を新設しても PII は増えない」と言っているのと同じ根拠が効く。
+- **鍵付きハッシュ済みなので原本を含まない。** `reset_request_windows.window_key` と同じ値であり、`spec/database/index.md` が「この表を新設しても PII は増えない」と言っているのと同じ根拠が効く。**補足（AD-50）: 「原本を含まない」は「窓をまたぐ相関材料にならない」までは言っていない。** 合成の一方向性を要求するか否かと、その射程は AD-50 が持つ。
 - **DO の外へは出ない。** Queue メッセージが運ぶのは `event.id` / `type` / `payload` / routing key / `owner_token` であり（`spec/async/index.md`「Queue メッセージ」）、`aggregate_id` はその列挙に無い。したがって窓キーが consumer 側・DLQ 側へ漏れる経路は無い。
 - **「イベントが指す集約」としての読みも通る。** このイベントの発生源は特定のクレデンシャルではなく「その窓のリセット依頼」そのものであり、`requestPasswordReset` が扱う一貫性の単位と一致する。
 
@@ -1295,6 +1300,8 @@ AD-6 の 3. は制約1の根拠を「満たしていれば DLQ からの再駆�
 
 **持参人証への防壁は AD-36 の禁止則（ログ非出力・DLQ 非転送）と、DLQ に到達できる者の制御（#38）の2本である。** `.adr/013` の影響と plan.md [P-002] の「実効的な防壁は制約1本」を、この形へ書き直す。
 
+- **訂正（レビュー4周目・B-003）: 制約1 の左辺は `Queue の最大 retry 期間 + DLQ の保持期間` である。** 本 AD の表題と本文が持つ `DLQ 保持期間 < トークン TTL` はそれ以前の版であり、確定形は **`Queue の最大 retry 期間 + DLQ の保持期間 < リセットトークンの TTL`** である。**本 AD の結論（不等式の方向を動かさない / 制約1 は機能要件であって防壁ではない）は動かない** — 動いたのは左辺の完成度だけで、`DLQ 保持期間 < TTL` とだけ書くと機能要件そのものが導けないことが4周目に判明した。
+
 ### 検討した代替案
 
 **制約1を防壁として維持し、不等式を `DLQ 保持期間 ≥ トークン TTL` へ反転させる** — 防壁としては筋が通る。採らなかった理由は、**AC-20 と plan.md [P-002] が名指しで固定した方向の反転**であり、決定済み事項の変更に当たること。テストとマニュアルテストの主期待値も「届かない」へ倒れる。
@@ -1386,7 +1393,7 @@ AD-6 は event payload に載せるものを `tokenId` / メール種別 / **発
 **routing key をドメイン draft の payload から落とす。ドメイン payload は `tokenId` / メール種別の2つだけである。routing key は relay が publish 時に Queue メッセージへ押す項目とする。**
 
 - `EventId` と同じ扱いになる — どちらも配送のための識別子であり、ドメインではなくアプリケーション層 / アダプターが付ける。
-- **relay は自分の DO の routing key を自明に知っている**ので、行にもドメイン payload にも持たせる必要が無い。導出鍵を持つのはアダプター（DO クラス）だけである。
+- **relay は自分の DO の routing key を自明に知っている**ので、行にもドメイン payload にも持たせる必要が無い。**訂正（レビュー2周目・W-019 / レビュー4周目・B-005）: 「導出鍵を持つのはアダプター（DO クラス）だけである」という一文は落とす** — routing key の粒度は発行元 DO 自身の locator（`dir:g{世代}:b{番号}`）であって鍵付きハッシュではないので、そもそも導出鍵が要らない。加えて canonical を全長 HMAC へ写す写像鍵は request Worker 側（stub 選択アダプター）にあり DO の中には無いので（AD-45 / `.adr/013` の「影響」）、この一文は二重に誤りである。
 - **Queue メッセージの5項目（`event.id` / `type` / `payload` / 宛先 DO の routing key / `owner_token`）は動かない。** 落としたのは payload の内訳としての routing key であって、メッセージの項目ではない。
 - 記述点は `spec/domains/index.md`（draft の契約）/ `spec/domains/identity.md`（payload 欄と draft ファクトリの引数）/ `spec/usecases/identity.md` / `spec/async/index.md` の全数表 / `spec/inventory/{domain,usecase}.md` / `spec/testcases/identity/requestPasswordReset.md` であり、**Queue メッセージ側（`spec/async/index.md`「Queue メッセージ」/ `spec/inventory/adapter.md` の relay 行 / `spec/manual-tests/account.md` の DLQ 確認手順）は5項目のまま維持する。**
 
@@ -1612,6 +1619,7 @@ Proposed（**レビュー3周目のトリアージで確定した。論点12 へ
 
 - 注記の本文（`spec/database/index.md` の `reset_request_windows` の窓内隔離の項と、対になるマニュアルテストの手順に同じ内容で置く）: **隔離行の再駆動が有効なリンクを届けられるのはリセットトークンが TTL 内のときだけである。`quarantined` は恒久保持なので DLQ 側の `DLQ 保持期間 < トークン TTL` に相当する束縛を置けない。TTL を過ぎてからの再駆動は送信材料 RPC が `nothing-to-send` を返し、利用者側の復旧は窓が明けてからの再依頼になる。**
 - **DLQ 側と隔離側の非対称は実体の非対称である。** DLQ 側が断定できるのは保持期間という上限が存在するからで、隔離側には存在しない。**非対称を消すために片方を歪めない。**
+  - **訂正（レビュー4周目・B-003）: DLQ 側の制約の左辺は `Queue の最大 retry 期間 + DLQ の保持期間` である**（確定形は `Queue 最大 retry + DLQ 保持期間 < リセットトークン TTL`）。本 AD の Context と上の注記本文が持つ `DLQ 保持期間 < トークン TTL` はそれ以前の版である。**DLQ 側が断定できる理由も、隔離側との非対称も、制約が2本で全数であることも動かない** — DLQ 側の経過時間を上から押さえているのが `DLQ の保持期間`ではなく `Queue 最大 retry + DLQ 保持期間` である、というだけである。
 - **窓の運用値と同じ扱いにする** — 配送の「2本で全数」は配送についての宣言であって、外側の注記まで無いという意味ではない（`.adr/013` の 6. が既にこの読み方を明示している）。
 
 ### 検討した代替案
@@ -1663,3 +1671,113 @@ W-005 は `reset_request_windows.window_key` の根拠として `jobs.operation_
 - 良い点: W-005 が実際に必要とした結論（`window_key` の根拠に `jobs.operation_key` を引かない）は無傷である。前半を弱めても「対象と時間窓から導く形は現行の `kind` には無い」は真のままで、後半は逐語で残る。
 - トレードオフ: `spec/` 側の2箇所だけ旧ジョブを固有名で呼べなくなり、`.adr/013` を読まないと「旧構成の外部送信ジョブ」が何かが分からない。**それでも `spec/async/index.md` の全数表の由来欄が同じファイル群の中に `旧 send-mail` を持っている**ので、辿る経路は残る。
 - トレードオフ: 同じ趣旨の文が `spec/` 側と `.adr/` / `.thread/` 側で1語だけ違う形になる。差が生じる理由（検査の射程）を本 AD が持つ。
+
+---
+
+## AD-48: `sweep-reset-tokens` の投入時 `next_run_at` は窓の終端から導き、猶予はアダプター側の掃除条件に閉じる
+
+### Status
+
+Proposed（**レビュー4周目・論点13（design B-001 / impl W-008）への決定。2周目 W-020 が3箇所へ置いた逐語文を、`claimWindow` の契約から到達できる材料へ置き換える**）
+
+### Context
+
+2周目 W-020 の修正で「**投入時の `next_run_at` は窓行の `expires_at` から導く**」という1文が3箇所（`spec/usecases/identity.md` 手順6 / `spec/database/index.md` / `spec/async/index.md` の全数表）へ逐語で入った（`.adr/010` の「3箇所に同じ1文」規則の対象）。
+
+ところが `enqueueJob` を呼ぶのはユースケースであり、ユースケースが窓について得られるのは `PasswordResetThrottlePort.claimWindow(windowKey, now): boolean` の戻り値だけである（AD-45 / AC-39。「メソッドは1つだけでこれが全数」「戻り値の `boolean` が唯一の分岐」と二重に締められている）。`reset_request_windows.expires_at` は **窓の終端 + 猶予**であり、**猶予の読み手はアダプター側しか宣言されていない**（`ADP-identity-027`）。2層が同じ設定値を読むと明記されているのは**窓の長さだけ**である。
+
+したがって #51 は spec の外で (i) 猶予の定数をユースケース側にも置く、(ii) ポートの戻り値を広げる、(iii) 「`expires_at` から導く」を諦める、のどれかを選ばされる。
+
+### Decision
+
+**投入時刻の材料を「窓の終端（= その窓の開始 + 窓の長さ）」へ緩め、猶予はアダプター側の掃除条件にだけ効かせる。`claimWindow` の戻り値も AC-39 の「1メソッド」も動かさない。**
+
+- 3箇所の逐語文を**全文置換**する（置換後の文は `.thread/50/review/triage-draft-004.md` の [文A]）。要旨は3点 — **窓の終端から導く / 送る側でもリセットトークンの `expires_at` を材料にしない / 猶予は投入時刻の材料にしない。**
+- **`spec/domains/identity.md` の「窓の長さは2層が同じ設定値を読む」は無改訂で正しいまま残る。** 猶予を2層へ広げないので、この文の射程は動かない。
+- **窓の終端に起きた掃除は窓行についてはまだ空振りしうるが、完了時の再武装が2表の索引（`prt_expires_idx` / `rrw_expires_idx`）から `min(expires_at)` を読み直して正しい時刻を張り直すので収束する**（この再武装は `spec/database/index.md` で既に確定済み）。
+- **投入時刻を宛先の登録有無に依存させないことは変わらない**（依存させると AD-16 が守った「4ケースで同じ起床を張る」が割れる）。
+
+### 検討した代替案
+
+**猶予も「単一の設定値を2層が読む」へ格上げする（design B-001 案）** — `expires_at` をユースケース側でも組める。採らなかった理由は、**「ズレると静かに壊れる」2層共有定数を1つ新設する**こと。`spec/database/index.md` は窓の長さについてこの破れ（アダプター側が短いと有効な窓行が消される）を明示的に警戒しており、同型のリスクを猶予について作ることになる。読み手の数と同期義務も増える。
+
+**`claimWindow` の戻り値を `{ claimed, windowExpiresAt }` へ広げる** — 材料が正確に渡る。採らなかった理由は、**AC-39 の「メソッドは1つ・`boolean` が唯一の分岐」と `DOM-identity-050` / `ADP-identity-027` の signature に正面から触れる**こと。指摘したレビュアー自身も採らないと書いている。
+
+### Consequences
+
+- 良い点: **AC-39 / AC-18 / 閉じた数え上げのいずれにも触れない。** 動くのは逐語文3箇所だけである。
+- 良い点: 猶予の読み手が1層（窓行を書くアダプター）に閉じ、二重定義が生まれない。
+- 良い点: 4ケース一様性（AC-37a / AC-38）は「窓の終端」でも同じく成立する — 材料が窓の状態だけで、登録有無を参照しないという性質が保たれる。
+- トレードオフ: 掃除が猶予ぶん早く起き、窓行については空振りしうる。**空振りは1回の追加起床であり、再武装が正しい時刻を張り直すので単調に収束する。**
+
+---
+
+## AD-49: 送信材料 RPC の呼び出しガードは、行の `owner_token` が `NULL` の呼び出しを引数の値にかかわらず常に不一致として扱う
+
+### Status
+
+Proposed（**レビュー4周目・論点15（security B-001）への決定。AD-42（失敗時に `owner_token` を解放）と AD-6（ガードから `status` を外す）の交点で生まれた穴を、どちらの決定にも触れずに閉じる**）
+
+### Context
+
+`outbox_events.owner_token` は nullable であり、`NULL` になる状態は**正常系で頻出する2つ**である — (i) `enqueueEvent` の INSERT 直後から最初の claim まで、(ii) 上限未到達の失敗で `pending` へ戻された後から次の claim まで（**これは AD-42 の決定そのものの帰結**）。
+
+ガードは `status` を照合しない（AD-6）ので、行が `pending` であっても条件 (a)（行の存在）と (b)（`quarantined` でない）は成立する。SQL の `=` では `NULL` は不一致になるが、JS 側で `row.owner_token === callerToken` と書けば `null === null` が真になり、**「`event.id` を知る者が送信材料を引ける」が実装裁量で成立してしまう。**
+
+同じ `spec/database/index.md` の `password_reset_tokens.change_auth_token` には「**列が `NULL` の行は照合で常に不一致とする**」という明示規則の先例がある。
+
+### Decision
+
+**加法的な照合規則を1つ足す。ガードの3条件も、AD-42 も AD-6 も動かさない。**
+
+- **行の `owner_token` が `NULL` の呼び出しは、引数の値にかかわらず常に不一致として扱う**（`password_reset_tokens.change_auth_token` と同じ規則）。
+- **引数側の `owner_token` も、欠落・空文字・規定長（128 bit）未満は照合の前に不一致として扱う。**
+- 記述点は `spec/async/index.md`「呼び出しガード」/ `spec/database/index.md` の `outbox_events.owner_token` 列定義 / `spec/inventory/adapter.md` `ADP-mail-consumer-001` のガード3条件 / `spec/testcases/async/outboxDelivery.md`（1ケース append）である。
+
+### 検討した代替案
+
+**`pending` へ戻すときに `owner_token` を残す** — `NULL` の状態が減る。採らなかった理由は、**AD-42 を覆す**こと。加えて「その回に Queue へ出た対がその場で失効する」という AD-42 が明示した安全側の性質を失う。
+
+**ガードに `status` の条件を足す** — `NULL` の行を構造的に排除できる。採らなかった理由は、**AD-6 を覆す**こと。consumer が RPC を打つのは `published` 到達後なので、正常系の配送が全滅する。
+
+### Consequences
+
+- 良い点: **新しい状態も新しい列も増えない。** 追加されるのは照合の前提だけである。
+- 良い点: 先例（`change_auth_token`）と同じ書き方なので、読み手の学習コストが無い。
+- 良い点: 失効経路（`requeue-quarantined-event` の `owner_token` 再採番、PITR 巻き戻し時の対処）の前提である「`owner_token` の秘匿」が、`owner_token` を要らなくする経路を塞ぐことで初めて成立する。
+- トレードオフ: 実装が SQL の `=` に任せず明示的に書く必要がある（そのために規則として書いている）。
+
+---
+
+## AD-50: `windowKey` の合成に一方向性を要求せず、全長 HMAC が DO 内に残ることの射程を明示する
+
+### Status
+
+Proposed（**レビュー4周目・論点17（security W-002）への決定。AD-45（導出主体）にも AC-39 にも触れずに閉じる**）
+
+### Context
+
+`windowKey` の合成は「窓と合成して組み立てる」「keyed な再導出を行わない」までしか書かれていない（AD-45）。素直な連結だと、canonical の全長 HMAC が `reset_request_windows.window_key` と `outbox_events.aggregate_id`（AD-26）に**逐語で残る**。後者は `quarantined` 行では恒久保持である（AD-38）。
+
+一方で、同じ Identity Directory DO には `credential_mappings.hmac`（canonical の HMAC・全長）が**登録済みクレデンシャルについて既に恒久的に在る**。ユースケースは導出鍵を持たず、`transactionSync` に暗号処理を持ち込まない規則があり、Workers の `crypto.subtle.digest` は非同期なので同期ポートとしては足せない。
+
+### Decision
+
+**一方向性を要求せず、性質と射程を明示して受ける。** 記述点は `spec/database/index.md`「窓キーの導出」の1箇所で、W-015（`list-quarantined-events` の応答）の修正と対で入れる。
+
+- **合成は一方向である必要はない。** したがって `window_key` と `outbox_events.aggregate_id` は canonical の全長 HMAC を逐語で含みうる。
+- 受け入れられる根拠は4つ — (i) 同じ DO の `credential_mappings.hmac` が登録済みクレデンシャルについて同じ値を既に恒久的に持っており、**DO 内部の読み手にとって新しい相関材料ではない**、(ii) 窓行は `sweep-reset-tokens` が掃除する、(iii) **DO の外へ出る経路（Queue メッセージ）には `aggregate_id` を載せない**（AD-26 で既決）、(iv) **`list-quarantined-events` も `aggregate_id` を返さない**（レビュー4周目・W-015 の修正）。
+- **(iii) か (iv) のどちらかを緩めるなら、合成を一方向にする（全長 HMAC と窓を連結したうえで一方向ハッシュを1回通す）ところまで戻る** — 緩めた側では窓で切れない仮名が DO の外へ出る。この条件を同じ節に書き残す。
+
+### 検討した代替案
+
+**合成そのものを stub 選択アダプターへ寄せる** — 全長 HMAC と窓を連結したうえで一方向ハッシュを1回通した `windowKey` をプリミティブで facade へ渡す（アダプターは非同期なので `crypto.subtle` が使える）。導出主体の家族・導出鍵の在り処・ポート数・`aggregateId = windowKey` はいずれも動かないので **AD-45 の覆しではない。** 採らなかった理由は2つ — (i) 窓の境界がアダプター側の時計で決まり、`claimWindow(windowKey, now)` の `now` と**2つの時計**になる、(ii) 記述点が5箇所（`spec/database/index.md`「窓キーの導出」/ `spec/domains/identity.md` / `spec/usecases/identity.md` / `ADP-identity-027` / `spec/inventory/usecase.md`）に広がり、本ラウンドの収束を1つの論点のために遅らせる。
+
+**ユースケース側で一方向ハッシュを通す** — 記述点が1箇所で済む。採らなかった理由は、`transactionSync` の中に暗号処理を持ち込まない規則と、Workers の `crypto.subtle` が非同期であることの両方に当たること。同期の導出ポートを新設する案は、閉じた数え上げ（ドメインポートの Promise 例外2件）の脇にもう1つ数え上げを増やす。
+
+### Consequences
+
+- 良い点: **AD-45 にも AC-39 にも触れない。** 動くのは正本の節1箇所と、W-015 の修正との対だけである。
+- 良い点: 「DO の外へ出さない」という緩和の実体が (iii)(iv) の2経路に名指しで固定され、**緩めるときに戻る先が書かれている。**
+- トレードオフ: **未登録アドレス**については、掃除されるまでのあいだ窓をまたいで相関できる仮名が DO 内に残る（登録済みは `credential_mappings.hmac` として元から残っている）。この残差を受けることが本 AD の実質である。
+- トレードオフ: 「一方向でなくてよい」を明示するので、後任が「では外へ出してもよい」と読む導線が残る。**だから (iii)(iv) を緩めるときの戻り先を同じ文の中に書く。**
