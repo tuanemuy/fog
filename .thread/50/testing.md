@@ -134,14 +134,20 @@
   3. **【検査3】** 「発行点・投入点」欄に空欄が無いこと（AC-7 の他の欄 — owner DO / 実行責任者 / consumer / fan-out / payload / 冪等性キーとその保持先 — も同様に空欄が無いことを目視で確認する）
   4. **【検査4】** 全数表の `event.type` が `spec/domains/` のイベント定義と1対1であること（`grep -rn 'identity.passwordResetRequested' spec/domains/` と表の突き合わせ）
   5. **【検査5】** すべての `event.type` 行で consumer 欄が埋まっていること
-  6. **【検査15】** **旧 `jobs.kind` 12種の集合 == 全数表の「由来」欄の集合**。12種は `send-mail` / `purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `reindex` / `migrate-bulk` / `rotate-encryption` / `finalize-withdrawal` / `resume-link` / `resume-signup` / `resume-credential-change` / `sweep-orphan-mapping`
+  6. **【検査15】** **旧 `jobs.kind` 12種の集合 == 全数表の「由来」欄の集合**（**由来欄が `—` の行 = 同期実行4行 + 0件行 の計5行を除いて集合化する**。下の確認ポイント / `adr.md` AD-23）。12種は `send-mail` / `purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `reindex` / `migrate-bulk` / `rotate-encryption` / `finalize-withdrawal` / `resume-link` / `resume-signup` / `resume-credential-change` / `sweep-orphan-mapping`
+
+     ```bash
+     awk '/^## 全数表/{f=1;next} /^## /{f=0} f' spec/async/index.md \
+       | awk -F'|' '/^\| /{gsub(/^ *| *$/,"",$3); if ($3!="由来（旧 `jobs.kind`）" && $3!="—") print $3}' \
+       | sort -u
+     ```
   7. 表の直後に、**User Data DO のイベント型が初期0件**であることを明示する行と、その行を集合演算から除外する旨の1行があることを読む
 - **期待結果:**
-  - 検査1 の差集合が空。検査2 の重複が0件。検査3 で空欄0。検査4 が1対1。検査5 で consumer 欄の空が0件。検査15 が**完全一致**
+  - 検査1 の差集合が空。検査2 の重複が0件。検査3 で空欄0。検査4 が1対1。検査5 で consumer 欄の空が0件。検査15 が**完全一致** — 手順6 のコマンドが返すのは**ちょうど12個**（`旧 send-mail` + local job 11種）で、旧 `jobs.kind` 12種と過不足なく一致する
   - Outbox 行の識別子は `identity.passwordResetRequested`、由来欄は **`旧 send-mail`**。local job 11種の由来欄は自分自身の名前（AC-8）
   - `sweep-reset-tokens` の用途欄が「トークン行と窓行の**両方**の削除」、投入点欄が「リセットトークン行**または窓行**を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）」になっている（AC-38）
   - **consumer 欄が空のイベントが1つも定義されていない**（AC-19）。User Data DO のイベント型は初期0件であることが表に明示されている
-- **確認ポイント:** **検査 2 / 4 / 5 / 15 は「User Data DO のイベント型 0件」の行を明示的に除外して回す。** この行は識別子欄も由来欄も持てないので、除外せずに集合へ入れると空文字列のズレを踏む。**除外対象はこの1行だけで、それが全数**（steps.md ステップ21 の除外規則）。また `send-mail` は識別子欄には現れない（もう `jobs.kind` ではない）ので、識別子欄での突き合わせは必ず失敗する — **判定は由来欄で行う**
+- **確認ポイント:** **検査 2 / 4 / 5 は「User Data DO のイベント型 0件」の行を明示的に除外して回す。** この行は識別子欄も由来欄も持てないので、除外せずに集合へ入れると空文字列のズレを踏む。**この3つの検査での除外対象はこの1行だけで、それが全数**（steps.md ステップ21 の除外規則）。**検査15 だけは除外の範囲が違う — 「由来欄が `—` の行」= 同期実行4行（FTS5 projection / retention のハードデリート / saga phase の前進 / `purge_after` の一括再計算）+ 0件行 = 5行を除外する**（`adr.md` AD-23。同期実行の行はもともとジョブではないので、由来欄に書ける旧 `jobs.kind` を持たず `—` が入る）。**0件行1行だけを除いて集合化すると `—` が13個目の要素として残り、12種との一致は必ず落ちる**（false red）。除いた後の集合はちょうど12個（`旧 send-mail` + local job 11種）になる。この2つの規則は `spec/async/index.md` の全数表の直後に2段落で並べて書かれているので、検査を書くときはそこを読む。また `send-mail` は識別子欄には現れない（もう `jobs.kind` ではない）ので、識別子欄での突き合わせは必ず失敗する — **判定は由来欄で行う**
 
 ### 5. `outbox_events` / `reset_request_windows` の物理定義 【機械+読解】
 
@@ -348,7 +354,7 @@
      grep -rn '`superseded`' spec CLAUDE.md | grep -v '/review/'
      ```
 - **期待結果:**
-  - 手順1: 残るのは **`spec/async/index.md` の全数表の由来欄（`旧 send-mail`）と `.adr/013` だけ**。`spec/database/index.md` の `jobs` 節と `spec/inventory/adapter.md` に `send-mail` が1件も無い（`ADP-jobs-002` の6種の逐語列挙からも落ちている）
+  - 手順1: 残るのは **`spec/async/index.md` の3件だけ** — 全数表の由来欄（`旧 send-mail`）/ `—` の突き合わせ規則の説明（「`旧 send-mail` + local job 11種」）/ P-001 の差し戻し条件の注記（ステップ3 が明示的に置けと指示したもの）。`spec/database/index.md` の `jobs` 節と `spec/inventory/adapter.md` に `send-mail` が1件も無い（`ADP-jobs-002` の6種の逐語列挙からも落ちている）。**`.adr/013` はこのコマンドの射程外である**（検索対象は `spec` と `CLAUDE.md` で `.adr/` を含まない）ので、期待結果に挙げない。**判定に使うのは「`jobs` 節と `spec/inventory/adapter.md` が0件」であり、`spec/async/index.md` 側の件数ではない**（同ファイルは検査15 の判定材料を持つので、由来欄を消してはいけない。エッジケース8）
   - 手順2 が **0件**、手順3 が **0**
   - 手順4: `no-recipient` が **0件**。`` `superseded` ``（バッククォート付きの識別子表記）も **0件**
 - **確認ポイント:** **検査13 を素の `grep -rn 'superseded' spec CLAUDE.md` で回してはいけない。** 改訂前の実測で **8件**ヒットするが、その8件はすべて **ADR のステータス語**（`spec/index.md:42` / `spec/database/index.md:6` / `spec/adr/005-*.md:5` / `spec/domains/{search,knowledge,memo,index}.md` / `spec/usecases/search.md`）であり、AD-6 が禁じている応答分岐の識別子とは別物である。**識別子としての `superseded`（バッククォート囲み、または `nothing-to-send` と並記された文脈）だけを見る**か、8件が改訂前と同一のファイル・同一の文脈であることを差分で確認する形にする
@@ -363,7 +369,7 @@
   |---|---|---|---|
   | User Data DO のテーブル数 | 16 | **17** | `spec/index.md:25` / `spec/database/index.md` のテーブル一覧の行数 |
   | Identity Directory DO のテーブル数 | 5 | **7** | 同上（`outbox_events` と `reset_request_windows` の2つ） |
-  | 非集約ストア数 | 7 | **9** | `grep -rn '非集約ストア' spec \| wc -l` = **9**（改訂前実測）。うち**数を書いている5行**（`spec/database/index.md` L79 / L749 / L753 / L754、`spec/domains/identity.md:378`）が全部 9 になる。残り4件は分類の話で数を持たない |
+  | 非集約ストア数 | 7 | **9** | `grep -rn '非集約ストア' spec \| wc -l` = **9**（改訂前実測）。うち**数を書いている5行**（`spec/database/index.md` L79 / L749 / L753 / L754、`spec/domains/identity.md:378`）が全部 9 になる。残り4件は分類の話で数を持たない。**改訂後は総ヒットが 11 になる**（実測。新設した `outbox_events` / `reset_request_windows` の節がそれぞれ「OCC の `version` は持たない（非集約ストア）」を持つので、数を持たない行が 4→6 に増える）。**判定に使うのは総ヒット数ではなく、数を書いている5行がすべて 9（書き込み口は 8ストア・9メソッド）であること** — 総ヒット数は節が増えるたびに動くので合否の材料にならない。改訂後の5行の所在は `spec/database/index.md` 4行 + `spec/domains/identity.md` 1行のままだが、**行番号は改訂でずれるので `grep` で取り直す** |
   | 非集約ストアの書き込み口 | 6ストア・7メソッド | **8ストア・9メソッド** | `spec/database/index.md:754` / `spec/domains/identity.md:378`。増えるのは `enqueueEvent` と `resetThrottleStore` |
   | `spec/inventory/adapter.md` の schema 行数 | 22 | **25** | `ADP-outbox-events-001` / `-002` / `ADP-reset-request-windows-001` の3行を append |
   | `jobs` の列数 | 12 | **11** | `grep -rn '12列' spec \| wc -l` = **4**（改訂前実測）。**4行すべて**が 11 へ |
@@ -443,7 +449,7 @@
      git diff main...HEAD -- spec/inventory/
      grep -n 'ADP-outbox-events-001\|ADP-outbox-events-002\|ADP-reset-request-windows-001' spec/inventory/adapter.md
      ```
-  2. `spec/inventory/usecase.md` の変更行が1行だけであることを見る
+  2. `spec/inventory/usecase.md` に `UC-*` 行が増えていないことを見る
 
      ```bash
      git diff main...HEAD --stat -- spec/inventory/usecase.md
@@ -462,7 +468,7 @@
      ```
 - **期待結果:**
   - `spec/inventory/adapter.md` の schema 行が **22 → 25**。`ADP-jobs-001` / `-002` の列数（12→11）・種別数（6種 / 5種）・収束規則（残る7種→6種）が訂正され、`ADP-credential-mappings-001` の濫用抑止の列挙から `last_reset_requested_at` が落ちている。`ADP-identity-016`（`MailSender`）の呼び手が **request Worker の `queue()` ハンドラ（mail consumer）**、生トークンの導出が**送信材料 RPC の中（DO 側）**へ訂正され、`spec/domains/identity.md` の `MailSender` の記述と**一字レベルで揃っている**（AC-26）
-  - **relay / mail consumer / DLQ ハンドラの層帰属がアダプター層**であることが1行で書かれ、**`spec/inventory/usecase.md` に行が足されていない**（手順2 の差分が `UC-identity-005` の1行だけ）（AC-26）
+  - **relay / mail consumer / DLQ ハンドラの層帰属がアダプター層**であることが1行で書かれ、**`spec/inventory/usecase.md` に行が足されていない**（AC-26）。手順2 の `--stat` は **`2 insertions(+), 2 deletions(-)`** — 差分は `UC-identity-005` の1行と `生成元: spec/usecases/（最終同期: …）` の同期日行の**2行だけ**で、**`UC-*` 行は1本も増えていない**（同期日行は他の台帳と同じ扱いで更新される）。**「1行だけ」を期待すると false red になる**
   - `spec/testcases/async/outboxDelivery.md` が存在し、plan.md「テスト方針 (b)」の機構側12項目（原子性 / relay / at-least-once / 順序逆転 / backoff / lease / quarantine / DLQ / 再駆動 / prune / PII 非露出 / fail-closed × DLQ）がケースに落ちている（AC-27）
   - マニュアルテストの追加先が **`spec/manual-tests/account.md`** で、**新規カテゴリーは作られていない**（件数表の行数が7のまま）。backlog 観測手順に **fail-closed 由来の滞留の判別材料**（`schema_version` を `read-schema-version` で確認）が1行入っている。`spec/manual-tests/index.md` の L9（spec バージョン行）・L22（合計）・L41（実行記録テンプレートの `/204件`）の**3箇所**が更新されている（AC-28）
 - **確認ポイント:** **新規ケースは表の末尾に append する**（`spec/inventory/test.md` の `#L{n}` アンカー規約）。途中挿入すると下の全行のアンカーが狂う。手順1・3 の差分で、既存行の行番号がまとめてずれていないかを見る
@@ -513,9 +519,11 @@
 - `spec/database/index.md` はステップ4 が3節と3行を挿入するため、**ステップ5 が挙げる L428 以降のアンカーはその時点で別の行を指す**。行番号ではなく検索文字列（`同じ12列` / `残る7種` / `ユースケースから投入する 8 種`）で対象を特定したかを、差分の内容で確認する
 - `spec/inventory/test.md` の `#L{n}` アンカーは、テストケースファイルの**途中**に行を挿入すると下の全行が狂う。新規ケースが**末尾に append** されていることを差分で確認する（確認項目16）
 
-### 6. 集合演算に0件行を混ぜる
+### 6. 集合演算に0件行を混ぜる／検査15 の除外範囲を狭く取る
 
-全数表の「User Data DO のイベント型: 0件」の行は識別子欄も由来欄も持てない。機械検査 **2 / 4 / 5 / 15** の4つすべてから除外しないと、空文字列を集合に入れてズレを踏む。**除外対象はこの1行だけで、それが全数**。除外を書いていない検査スクリプトは、通っても信用できない。
+全数表の「User Data DO のイベント型: 0件」の行は識別子欄も由来欄も持てない。機械検査 **2 / 4 / 5 / 15** の4つすべてから除外しないと、空文字列を集合に入れてズレを踏む。**検査 2 / 4 / 5 での除外対象はこの1行だけで、それが全数**。
+
+**検査15 だけは除外の範囲が広い。** 由来欄は同期実行の4行（FTS5 projection / retention のハードデリート / saga phase の前進 / `purge_after` の一括再計算）でも `—` である — もともとジョブではないので、書ける旧 `jobs.kind` を持たない（`spec/async/index.md` の全数表の直後 / `adr.md` AD-23）。**検査15 が除外するのは「由来欄が `—` の行」= 同期実行4行 + 0件行 = 5行**であり、0件行1行だけを除いて集合化すると `—` が13個目の要素として残って**12種との一致が必ず落ちる**（false red を出し、実装側は正しいのに直しに行くことになる）。除外を書いていない検査スクリプトは、通っても信用できない。
 
 ### 7. 相互参照の切れ
 

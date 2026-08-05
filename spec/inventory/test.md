@@ -203,24 +203,27 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-registerWithPassword-014 | 同時登録レース | spec/testcases/identity/registerWithPassword.md#L20 | 予約獲得に敗北し ConflictError("EMAIL_ALREADY_REGISTERED") なら PASS |
 | TC-registerWithPassword-015 | hash 失敗 | spec/testcases/identity/registerWithPassword.md#L21 | SystemError・ユーザー非作成なら PASS |
 | TC-registerWithPassword-016 | UserSettingsRepository.insert DB 例外 | spec/testcases/identity/registerWithPassword.md#L22 | SystemError でユーザー単位設定側がロールバックされ、別境界の予約は巻き戻らず「そのメールで登録もログインもできない」だけが観測されれば PASS |
-| TC-requestPasswordReset-001 | 依頼の正常系（送る側） | spec/testcases/identity/requestPasswordReset.md#L9 | 同じ transactionSync で窓行が1行・イベント行がちょうど1行書かれ、トークンが発行され sweep-reset-tokens が投入され、配送後にリセットメールが送られて void 正常終了なら PASS |
+| TC-requestPasswordReset-001 | 依頼の正常系（送る側） | spec/testcases/identity/requestPasswordReset.md#L9 | 同じ transactionSync で窓行が1行・イベント行がちょうど1行書かれ、トークンが発行され sweep-reset-tokens が投入され、配送後に sendPasswordResetMail(to, resetToken, providerIdempotencyKey) が呼ばれて void 正常終了なら PASS |
 | TC-requestPasswordReset-002 | 未登録メールの送らない側 | spec/testcases/identity/requestPasswordReset.md#L10 | 窓行・イベント行・ジョブの投入・起床・応答が登録済みの場合と一致し、tokenId に不透明値が入って行の形が一字も違わず、送信材料 RPC が nothing-to-send を返せば PASS |
 | TC-requestPasswordReset-003 | SSO 専用アカウントの送らない側 | spec/testcases/identity/requestPasswordReset.md#L11 | 判定が passwordVerifier の有無で行われ、窓行・イベント行・投入・起床・応答が他ケースと一致すれば PASS |
-| TC-requestPasswordReset-004 | 4ケースの応答と処理経路の同一性 | spec/testcases/identity/requestPasswordReset.md#L12 | 同じ窓の状態に対して4ケースが一様（最初の依頼なら必ずちょうど1行、発行済みの窓なら1行も書かない）で、応答も区別不能なら PASS |
+| TC-requestPasswordReset-004 | 4ケースの応答と処理経路の同一性 | spec/testcases/identity/requestPasswordReset.md#L12 | 同じ窓の状態に対して4ケースが一様（最初の依頼なら必ずちょうど1行、発行済みの窓なら1行も書かない）で、応答も区別不能で、差が無いことの主張が測定対象4つに限定され（総書き込み行数と実測処理時間では測らない）応答が配送の完了を待たないことが根拠として書かれていれば PASS |
 | TC-requestPasswordReset-005 | メール形式不正 | spec/testcases/identity/requestPasswordReset.md#L13 | BusinessRuleError(InvalidEmail) なら PASS |
 | TC-requestPasswordReset-006 | 正規化後一致での送る側 | spec/testcases/identity/requestPasswordReset.md#L14 | 大文字混在メールでも正規化後の一致で送る側になり、windowKey が canonical 由来なので同じ窓に落ちれば PASS |
 | TC-requestPasswordReset-007 | トークン発行障害 | spec/testcases/identity/requestPasswordReset.md#L15 | SystemError なら PASS |
 | TC-requestPasswordReset-008 | 配送側の送信基盤障害 | spec/testcases/identity/requestPasswordReset.md#L16 | 送信基盤の失敗が依頼の応答に一切現れず、Queue の retry → DLQ で扱われれば PASS |
 | TC-requestPasswordReset-009 | CredentialMappingRepository.findByEmail DB 例外 | spec/testcases/identity/requestPasswordReset.md#L17 | SystemError なら PASS |
 | TC-requestPasswordReset-010 | 連打時の窓による発行判断 | spec/testcases/identity/requestPasswordReset.md#L18 | 2回目以降は claimWindow が false を返してイベント行もトークンも書かれず、書き込みと起床が窓の数に比例すれば PASS |
-| TC-requestPasswordReset-011 | スロットル中の依頼 | spec/testcases/identity/requestPasswordReset.md#L19 | イベント行を1行も書かずに他の3ケースと同一の書き込み・起床・応答になれば PASS |
-| TC-requestPasswordReset-012 | イベント行の payload の中身 | spec/testcases/identity/requestPasswordReset.md#L20 | 載るのが tokenId / メール種別 / 発行元 bucket の routing key だけで、メールアドレス・生トークン・userId が載らなければ PASS |
+| TC-requestPasswordReset-011 | スロットル中の依頼 | spec/testcases/identity/requestPasswordReset.md#L19 | 応答・起床の有無・sweep-reset-tokens の投入・窓行が1行のままであることの4つが一致し、差がイベント行0行とトークン非発行の2つに限られ、比較先が同じ窓の状態（発行済みの窓）に置いた他の3ケースであれば PASS（この4つは TC-requestPasswordReset-016 の測定対象4つとは別の集合） |
+| TC-requestPasswordReset-012 | イベント行の payload の中身 | spec/testcases/identity/requestPasswordReset.md#L20 | 載るのが tokenId / メール種別の2つだけで、メールアドレス・生トークン・userId も発行元 bucket の routing key も載らなければ PASS（routing key は relay が publish 時に Queue メッセージへ押す項目） |
 | TC-requestPasswordReset-013 | 未使用トークンの置き換え | spec/testcases/identity/requestPasswordReset.md#L21 | 新しい窓での最初の依頼だけがそのクレデンシャル宛の未使用トークンをすべて置き換えれば PASS |
 | TC-requestPasswordReset-014 | 同一窓への連打で届くのは1通 | spec/testcases/identity/requestPasswordReset.md#L22 | 有効なリンクを含むメールが1通だけ届き（0通でも2通でもない）、1通目のリンクが2回目の依頼後も有効なら PASS |
 | TC-requestPasswordReset-015 | 順序逆転した新旧2件の配送 | spec/testcases/identity/requestPasswordReset.md#L23 | 新しいほうが send で送信され、古いほうが nothing-to-send を返して no-op になれば PASS（理由は期待値に書けない） |
 | TC-requestPasswordReset-016 | 未登録アドレスでの4測定対象の一致 | spec/testcases/identity/requestPasswordReset.md#L24 | outbox_events の行数・reset_request_windows の行数・Alarm 起床の有無・sweep-reset-tokens 投入の有無の4つが登録済みの場合と一致すれば PASS（総書き込み行数では測らない） |
 | TC-requestPasswordReset-017 | 窓ストア障害 | spec/testcases/identity/requestPasswordReset.md#L25 | claimWindow のストア障害が SystemError になり、宛先の実在性に起因する失敗は応答に反映されなければ PASS |
 | TC-requestPasswordReset-018 | イベント行の aggregate_id | spec/testcases/identity/requestPasswordReset.md#L26 | windowKey が入り credentialId が入らなければ PASS（4ケースで同じ導出で決まる） |
+| TC-requestPasswordReset-019 | sweep-reset-tokens のトークン行と窓行の同時削除 | spec/testcases/identity/requestPasswordReset.md#L27 | 期限切れの password_reset_tokens の行と reset_request_windows の窓行が同じ起床で削除されれば PASS（kind は増えない） |
+| TC-requestPasswordReset-020 | 期限内の窓行の残存 | spec/testcases/identity/requestPasswordReset.md#L28 | expires_at を過ぎた窓行だけが削除され、期限内の窓行が残って claimWindow の判定に効けば PASS |
+| TC-requestPasswordReset-021 | 未登録アドレスだけの bucket での窓行の掃除 | spec/testcases/identity/requestPasswordReset.md#L29 | トークン行が1行も無い bucket でもジョブが投入され期限切れの窓行が削除され、reset_request_windows が単調増加しなければ PASS |
 | TC-revokeAiClientConnection-001 | 失効の正常系 | spec/testcases/identity/revokeAiClientConnection.md#L7 | revoked へ遷移・version+1 で void 正常終了なら PASS |
 | TC-revokeAiClientConnection-003 | 接続不在 | spec/testcases/identity/revokeAiClientConnection.md#L8 | NotFoundError("CONNECTION_NOT_FOUND") なら PASS |
 | TC-revokeAiClientConnection-004 | 他ユーザー接続の指定 | spec/testcases/identity/revokeAiClientConnection.md#L9 | 自 DO の中だけを引くため null が返り、不在と区別しない NotFoundError で相手の接続が不変なら PASS |
@@ -856,7 +859,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-001 | 3つが同じ transactionSync で確定する | spec/testcases/async/outboxDelivery.md#L9 | 業務データ・FTS5 projection・outbox_events の行が同じ transactionSync の中で一度に確定すれば PASS |
 | TC-outboxDelivery-002 | rollback で3つとも巻き戻る | spec/testcases/async/outboxDelivery.md#L10 | 業務データの失敗でイベント行も projection も巻き戻り、イベント行だけが残らなければ PASS |
 | TC-outboxDelivery-003 | FTS5 projection は配送を待たない | spec/testcases/async/outboxDelivery.md#L11 | relay や Queue の状態と独立に、作成・更新の直後の検索でヒットすれば PASS |
-| TC-outboxDelivery-004 | relay の相1（claim） | spec/testcases/async/outboxDelivery.md#L12 | 実行可能な行が上限件数まで publishing になり lease_until / owner_token が CAS で書かれれば PASS |
+| TC-outboxDelivery-004 | relay の相1（claim） | spec/testcases/async/outboxDelivery.md#L12 | 実行可能な行が next_run_at の昇順で上限件数まで publishing になり lease_until / owner_token が CAS で書かれ、打ち切りで残るのが常により後の next_run_at の行なら PASS |
 | TC-outboxDelivery-005 | relay の相2〜相3（publish と終端） | spec/testcases/async/outboxDelivery.md#L13 | Queue 送信だけがトランザクション外で行われ、published へ落ちても owner_token が NULL にならなければ PASS |
 | TC-outboxDelivery-006 | Alarm の多重化 | spec/testcases/async/outboxDelivery.md#L14 | 2表の最早時刻の min が張られ、両方の実行可能集合が空のときだけ deleteAlarm されれば PASS |
 | TC-outboxDelivery-007 | lease 中の行の算入 | spec/testcases/async/outboxDelivery.md#L15 | leased 行が max(next_run_at, lease_until) で算入され、空振り起床を繰り返さなければ PASS |
@@ -865,16 +868,17 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-010 | 順序逆転した2件の配送 | spec/testcases/async/outboxDelivery.md#L18 | 新しいほうが send、古いほうが nothing-to-send で、どちらも ack されれば PASS（理由は期待値に書けない） |
 | TC-outboxDelivery-011 | publish 失敗の行単位 backoff | spec/testcases/async/outboxDelivery.md#L19 | 失敗した行だけが attempt を進めて先送りされ、同じ起床の他の行が止まらなければ PASS |
 | TC-outboxDelivery-012 | alarm() から throw しない | spec/testcases/async/outboxDelivery.md#L20 | per-row catch で失敗が吸収され、残りの outbox 行と jobs パスが実行され Alarm が張り直されれば PASS |
-| TC-outboxDelivery-013 | 上限超過での quarantine | spec/testcases/async/outboxDelivery.md#L21 | quarantined + terminal_reason になり、terminal_reason に PII と秘密が入らなければ PASS |
+| TC-outboxDelivery-013 | 上限超過での quarantine | spec/testcases/async/outboxDelivery.md#L21 | quarantined + terminal_reason になり、terminal_reason に PII と秘密が入らず、以後の起床で再 claim されず（実行可能集合は status IN ('pending','publishing')）他の行の配送が止まらなければ PASS |
 | TC-outboxDelivery-014 | quarantined 行への送信材料 RPC | spec/testcases/async/outboxDelivery.md#L22 | 呼び出しガード (b) により nothing-to-send を返せば PASS |
 | TC-outboxDelivery-015 | quarantine の一覧 | spec/testcases/async/outboxDelivery.md#L23 | list-quarantined-events で隔離行が一覧でき、jobs.kind にも event.type にも入らなければ PASS |
-| TC-outboxDelivery-016 | quarantine の再駆動 | spec/testcases/async/outboxDelivery.md#L24 | requeue-quarantined-event で pending へ戻り、次の起床で relay の対象になれば PASS |
+| TC-outboxDelivery-016 | quarantine の再駆動 | spec/testcases/async/outboxDelivery.md#L24 | requeue-quarantined-event が status='pending' / next_run_at=現在時刻 / attempt=0 / completed_at=NULL を書き、terminal_reason を残し owner_token を採番し直して次の起床で relay の対象になれば PASS |
 | TC-outboxDelivery-017 | published の prune と quarantined の保持 | spec/testcases/async/outboxDelivery.md#L25 | 保持期間を過ぎた published だけが上限件数まで削除され、quarantined が残れば PASS |
 | TC-outboxDelivery-018 | prune 後の DLQ 再駆動 | spec/testcases/async/outboxDelivery.md#L26 | 呼び出しガード (a) を満たさず nothing-to-send になり、運用値の制約2本で恒久的な空振りが防がれていれば PASS |
 | TC-outboxDelivery-019 | consumer 失敗の DLQ 落とし | spec/testcases/async/outboxDelivery.md#L27 | メッセージが DLQ へ落ち、発行元 DO は published のまま ack を書き戻されなければ PASS |
 | TC-outboxDelivery-020 | fail-closed の DO は relay しない | spec/testcases/async/outboxDelivery.md#L28 | 行が滞留するが失われず、Alarm が張ったまま残り、コードが揃った次の起床で流れれば PASS |
 | TC-outboxDelivery-021 | fail-closed × DLQ の逆向き | spec/testcases/async/outboxDelivery.md#L29 | 送信材料 RPC がゲートで SystemError を返し、retry を焼き切って DLQ へ落ち、再駆動で復旧できれば PASS |
 | TC-outboxDelivery-022 | PII と秘密の非露出 | spec/testcases/async/outboxDelivery.md#L30 | payload / Queue / DLQ / ログ / terminal_reason のいずれにも載らず、宛先と生トークンが RPC 応答と provider 呼び出しにしか存在しなければ PASS |
-| TC-outboxDelivery-023 | status を照合しない正常系 | spec/testcases/async/outboxDelivery.md#L31 | published の行に対して send が返り、二重送信の抑止が providerIdempotencyKey 側にあれば PASS |
+| TC-outboxDelivery-023 | status を照合しない正常系 | spec/testcases/async/outboxDelivery.md#L31 | 送る側（検証材料を持つクレデンシャル宛・トークンが未使用で期限内）の published の行に対して send が返り、二重送信の抑止が providerIdempotencyKey 側にあれば PASS |
 | TC-outboxDelivery-024 | イベント行は収束しない | spec/testcases/async/outboxDelivery.md#L32 | 同じ内容のイベントを2回発行すると2行になり、dedupe_key も部分 UNIQUE 索引も無ければ PASS |
 | TC-outboxDelivery-025 | relay パスと jobs パスの独立上限 | spec/testcases/async/outboxDelivery.md#L33 | 1回の起床で両方のパスを必ず1回通り、片方の上限到達が他方を飢えさせなければ PASS |
+| TC-outboxDelivery-026 | 同じ起床で claim した行の owner_token の相異 | spec/testcases/async/outboxDelivery.md#L34 | 同じ起床で claim された2行以上の owner_token が互いに異なり、暗号論的乱数（128 bit 以上・時刻や連番から導かない）から採られていれば PASS |

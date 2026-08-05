@@ -28,17 +28,17 @@
 | 識別子 | 由来（旧 `jobs.kind`） | 類型 | owner DO クラス | 実行責任者 | 発行点・投入点（全数） | consumer | fan-out | payload | 冪等性キーとその保持先 |
 |---|---|---|---|---|---|---|---|---|---|
 | FTS5 projection | — | 同期実行 | User Data | 業務トランザクションそのもの | memo / knowledge の本体を書くリポジトリ実装（作成・更新・ソフトデリート・復元・ハードデリート）。**本体を書くのと同じ `transactionSync`** | — | 無 | なし（別機構へ渡さない） | — （原子性が担保するので再実行が起きない） |
-| retention のハードデリート | — | 同期実行 | User Data | 業務トランザクションそのもの | `purge-trash` の削除フェーズのトランザクション（本体行・リビジョン・出典リンク・検索 projection を同じ `transactionSync` で消す） | — | 無 | なし | — |
-| saga phase の前進 | — | 同期実行 | User Data / Identity Directory | 業務トランザクションそのもの | `operations.phase` を書く各段のトランザクション（`resume-link` / `resume-signup` / `resume-credential-change` / `finalize-withdrawal` の各起床の中） | — | 無 | なし | — （`operations` の `payload_digest` と phase が再送を吸収する） |
-| `purge_after` の一括再計算 | — | 同期実行 | User Data | 業務トランザクションそのもの | `changeTrashRetentionDays` のトランザクションと、`purge-trash` の再計算フェーズ（自己消尽する作業述語。database/index.md の `user_settings` の項） | — | 無 | なし | — |
-| `identity.passwordResetRequested` | **旧 `send-mail`** | Outbox event（**差し戻し条件は末尾の P-001**） | Identity Directory | Queue の retry と DLQ（発行元 DO は publish までしか関与しない） | `requestPasswordReset` のトランザクション。**分岐の材料は `reset_request_windows` の窓の状態だけで、登録有無・認証方式・宛先の存在を参照しない** — その窓での最初の依頼なら4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）とも必ずちょうど1行、既に発行済みの窓なら4ケースとも1行も書かない | mail consumer | 無（consumer は1つ） | `tokenId` / メール種別 / 発行元 bucket の routing key。**メールアドレス・生トークン・`userId` を載せない。`tokenId` は nullable にせず、宛先の有無から独立に生成した不透明値を置く**（形が割れると payload が列挙オラクルになる） | `event.id`。**mail consumer は保持しない** — (i) `event.id` から DO が導いた `providerIdempotencyKey` を provider へ渡す、(ii) 送信材料 RPC がトークンの生存と supersede を再確認する、の2段で冪等化する |
+| retention のハードデリート | — | 同期実行 | User Data | 業務トランザクションそのもの | `purge-trash` の削除フェーズのトランザクション（本体行・リビジョン・出典リンク・検索 projection を同じ `transactionSync` で消す）。**`purge-trash` の内部フェーズであり、独立した起床契機を持たない** | — | 無 | なし | — |
+| saga phase の前進 | — | 同期実行 | User Data / Identity Directory | 業務トランザクションそのもの | **前進させる先は owner DO クラスで分かれる** — User Data DO では `operations.phase` を書く各段のトランザクション（`resume-link` / `finalize-withdrawal` の各起床の中）、Identity Directory DO では予約行の `status` / `saga_committed` と `credential_mappings.change_state` を書く各段のトランザクション（`resume-signup` / `resume-credential-change` の各起床の中）。**`operations` は User Data DO にしか無いので、Identity Directory 側はそこに触れない**（database/index.md） | — | 無 | なし | — （User Data DO では `operations` の `payload_digest` と `phase`、Identity Directory DO では予約行の `saga_committed` と `credential_mappings.change_state` が再送を吸収する） |
+| `purge_after` の一括再計算 | — | 同期実行 | User Data | 業務トランザクションそのもの | **2つあり、性格が違う** — (1) `changeTrashRetentionDays` のトランザクション（**独立した発行点**）、(2) `purge-trash` の再計算フェーズ（**`purge-trash` の内部フェーズであり、こちらは独立した起床契機を持たない**。自己消尽する作業述語。database/index.md の `user_settings` の項） | — | 無 | なし | — |
+| `identity.passwordResetRequested` | **旧 `send-mail`** | Outbox event（**差し戻し条件は末尾の P-001**） | Identity Directory | Queue の retry と DLQ（発行元 DO は publish までしか関与しない） | `requestPasswordReset` のトランザクション。**分岐の材料は `reset_request_windows` の窓の状態だけで、登録有無・認証方式・宛先の存在を参照しない** — その窓での最初の依頼なら4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）とも必ずちょうど1行、既に発行済みの窓なら4ケースとも1行も書かない。**ただし4ケースは互いに素ではない — スロットル中は窓の状態の側であり、他の3つと同じ軸には並ばない**（実際の分割はクレデンシャル3状態 × 窓2状態） | mail consumer | 無（consumer は1つ） | `tokenId` / メール種別の**2つだけ**。**宛先 DO の routing key は payload に入れない** — routing key は relay が publish 時に Queue メッセージへ押す項目であって、ドメインの payload ではない（`EventId` と同じ扱い。`.adr/013` の「配送機構をドメインへ出さない」）。**メールアドレス・生トークン・`userId` を載せない。`tokenId` は nullable にせず、宛先の有無から独立に生成した不透明値を置く**（形が割れると payload が列挙オラクルになる） | `event.id`。**mail consumer は保持しない** — (i) `event.id` から DO が導いた `providerIdempotencyKey` を provider へ渡す、(ii) 送信材料 RPC がトークンの生存と supersede を再確認する、の2段で冪等化する |
 | `purge-trash` | `purge-trash` | local job（期限処理） | User Data | 所有 DO の Alarm ジョブランナー | ソフトデリートの4ユースケース（`softDeleteMemo` / AI の `delete` / `trashDocument` / `trashTopic`）と `changeTrashRetentionDays`。`purge_after` を書くのと同じトランザクションで `TrashQueryPort.findEarliestPurgeAfter()` を読んで張る（domains/trash.md「保持期限」） | — | 無 | 対象 ID など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（所有 DO の `jobs`。定数キー） |
 | `reindex` | `reindex` | local job（チェックポイント分割を要する一括処理） | User Data | 所有 DO の Alarm ジョブランナー | migration ゲート（トークナイザ・正規化規則の変更を含む `schema_version` の前進時）。アダプター側で、usecase からは投入しない | — | 無 | 対象バージョンと段。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（進捗は `migration_progress`） |
 | `migrate-bulk` | `migrate-bulk` | local job（チェックポイント分割を要する一括処理） | User Data | 所有 DO の Alarm ジョブランナー | migration ゲート（データ書き換えを伴う段を切り出すとき）。アダプター側で、usecase からは投入しない | — | 無 | 対象バージョンと段。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（進捗は `migration_progress`） |
 | `finalize-withdrawal` | `finalize-withdrawal` | local job（cross-DO saga の前進） | User Data | 所有 DO の Alarm ジョブランナー | **2つあり、これが全数である** — (1) 退会の開始（`account.status` を `deleting` にするのと同じトランザクション）、(2) 新規登録 saga の終端規則によるアカウントの放棄（**その手順は #45 が定める**が、投入点が2つであること自体は本表が持つ） | — | 無 | 対象 locator など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `operations.operation_id` |
 | `sweep-orphan-mapping` | `sweep-orphan-mapping` | local job（cross-DO saga の前進） | User Data | 所有 DO の Alarm ジョブランナー | `unlinkSsoCredential` の逆引き削除（`credential_locators` の行を消すのと同じトランザクション）。**これが唯一の投入点である** — 落とすと写像の削除が落ちたときに `active` な孤児 mapping が恒久的に残る | — | 無 | 対象 locator。**PII と再利用可能な秘密を入れない** | `jobs.operation_key`（定数キー） |
 | `resume-link` | `resume-link` | local job（cross-DO saga の前進） | User Data | 所有 DO の Alarm ジョブランナー | SSO 連携 saga の開始（`operations` 行を記録するのと同じトランザクション） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `operations.operation_id` |
-| `resume-signup` | `resume-signup` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | 新規登録 saga の予約行を書くのと同じトランザクション。**コーディネーター bucket だけが自分に投入する**（非コーディネーター bucket には投入しない） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `operations.operation_id` |
+| `resume-signup` | `resume-signup` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | 新規登録 saga の予約行を書くのと同じトランザクション。**コーディネーター bucket だけが自分に投入する**（非コーディネーター bucket には投入しない） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.operation_id`（コーディネーター bucket の予約行）。**`operations` は保持先にしない — User Data DO にしか無い**（database/index.md） |
 | `resume-credential-change` | `resume-credential-change` | local job（cross-DO saga の前進） | Identity Directory | 所有 DO の Alarm ジョブランナー | クレデンシャル変更 saga の開始（`change_state` を `pending` にするのと同じトランザクション） | — | 無 | `operationId` など。**PII と再利用可能な秘密を入れない** | `jobs.operation_key` + `credential_mappings.change_state` |
 | `sweep-reservations` | `sweep-reservations` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | 予約行を書く3箇所（新規登録 saga の予約2つと SSO 連携の予約）。**予約を書いた bucket が自分に投入する** | — | 無 | なし（作業述語は `cm_reservation_idx` から引く） | `jobs.operation_key`（定数キー） |
 | `sweep-reset-tokens` | `sweep-reset-tokens` | local job（期限処理） | Identity Directory | 所有 DO の Alarm ジョブランナー | **リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）。宛先の登録有無で投入を分けない** — 窓行は4ケースすべてで作られるので、投入も4ケースすべてで起きる | — | 無 | なし（作業述語は `prt_expires_idx` / `rrw_expires_idx` から引く） | `jobs.operation_key`（定数キー） |
@@ -61,6 +61,9 @@
 
 - **`outbox_events.payload` / `jobs.payload` / Queue のメッセージ / DLQ のメッセージ / ログ / `terminal_reason` のいずれにも、PII と再利用可能な秘密を載せない。** `terminal_reason` は運用者が読む場所であり、`payload` は PITR の保持期間ぶん残る。
 - **保証範囲は「載らない・永続化されない」であって「DO の境界を出ない」ではない。** 宛先メールアドレスと生トークンは**送信材料 RPC の応答として境界を越え、配送の瞬間だけ consumer のメモリに載る。** どこにも永続化されないことと、復号鍵・HMAC 導出鍵が DO の中から出ないことが保証の実体である。「境界を出ない」と読むと、consumer 側のログ方針や秘密管理を緩める根拠に使われる。
+- **`owner_token` は再利用可能な秘密である。** `(event.id, owner_token)` の対を握れば送信材料 RPC が `send` を返すので、対そのものが「宛先と生トークンを引ける持参人証」になる。それでも Queue メッセージと DLQ に載るのは、**呼び出しガードを成立させるために必要な明示的な例外**だからであり、上の禁止則が緩むわけではない。例外の代償として、次の2条が掛かる。
+  - **Queue メッセージをログへ出さない** — 個々の項目だけでなくメッセージ全体を出さない。**ログに載せてよいのは `event.id` と `type` までである。**
+  - **DLQ のメッセージを外部の監視基盤・ログ集約先へ転送しない。** 転送する設計を足すなら、`.adr/013` の判断へ戻る。
 - **Queue メッセージは宛先 DO の routing key を運ぶ。** Identity Directory 宛では `.adr/002` により既に鍵付きハッシュ済みの内部キーなので、禁止項目（`userId`）と衝突しない。**ただし User Data DO のイベントを足すと、その routing key は `userId` そのものになりうる。** 初期のイベント型は0件なので今は潜在的だが、規則として残す — **User Data DO のイベントを足すときは、routing key の扱い（`userId` を Queue に載せるか、別の不透明キーへ写すか）を同時に決める。**
 
 ## 配送の性質
@@ -101,22 +104,30 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 - **同一性の判定は `owner_token` が単独で負う。** 再 claim が起きれば `owner_token` は書き換わるので、古い Queue メッセージを持った consumer の呼び出しは 3. で弾かれて `nothing-to-send` に落ちる。
 - **`outbox_events` は終端へ落とすときも `owner_token` を `NULL` にしない**（`jobs` と分離する規約。database/index.md）。落とすと 3. が `published` の行に対して必ず失敗する。
 
+**`owner_token` の生成要件**（`jobs` の「claim した実行主体の識別子」という読みを `outbox_events` では採らない。こちらは行ごとの capability である）:
+
+- **claim ごと・行ごとに一意である。** 同じ起床で claim した複数の行に同じ値を書かない。行をまたいで共有すると、DLQ に落ちた1件の `owner_token` と、Queue / DLQ を通る他行の `event.id` を組み合わせるだけで他行のガードを通せる。
+- **暗号論的乱数から生成し、時刻・連番・DO 識別子から導かない。** 導出可能な値は 3. を推測で通せることを意味する。
+- **長さの下限は 128 bit。**
+
 ### 運用値の制約
 
 **2本あり、これが全数である**（実値の確定は #38）。
 
-1. **`DLQ の保持期間 < リセットトークンの TTL`.** 満たしていれば、DLQ からの再駆動が成功してもトークンは既に失効している。
+1. **`DLQ の保持期間 < リセットトークンの TTL`.** これは**機能要件**である — 満たしていれば、DLQ からの再駆動が **TTL の内側に収まり、有効なリンクを届けられる。** 逆向きの値を選ぶと、再駆動が成功しても利用者の手元には既に失効したリンクしか届かない。**この制約は `(event.id, owner_token)` の持参人証に対する防壁ではない**（防壁は上の衛生規則の禁止則 — ログ非出力と DLQ 非転送 — と、DLQ そのものへの到達制御である。到達制御の実体は #38）。
 2. **`Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間`.** 呼び出しガードの 1.（行の存在）を要求する以上、prune が行を消した後の DLQ 再駆動は必ず `nothing-to-send` になる。
 
 **片方だけを書くと、値の決定者が両立しない2値を選べてしまう。** 2. を落とすと再駆動が恒久的に空振りし、その形は運用上ほとんど検出できない。
+
+**この2本は「配送の」運用値についての全数である。** スロットル窓の長さと窓行の `expires_at` の猶予はこの全数の**外側**の別の運用値であり、正本は `spec/database/index.md` の `reset_request_windows` の節が持つ（値の決定者は同じく #38）。「2本で全数」を根拠に窓の運用値まで無いと読まない。
 
 ## 配送機構の契約と責務
 
 ### Queue メッセージ
 
-- 載せるのは `event.id` / `type` / `payload` / **宛先 DO の routing key**（送信材料 RPC の宛先を選ぶための鍵付きハッシュ済み内部キー）と、呼び出しガードが照合する `owner_token` である。
-- **PII と再利用可能な秘密は載せない。**
-- **メッセージは `outbox_events` の行の写しであり、Queue 側で組み立て直さない。**
+- 載せるのは `event.id` / `type` / `payload` / **宛先 DO の routing key**（送信材料 RPC の宛先を選ぶための鍵付きハッシュ済み内部キー。**relay が publish 時に押す項目であり、行にもドメイン payload にも無い**）/ 呼び出しガードが照合する `owner_token` の**5項目**である。
+- **PII と再利用可能な秘密は載せない**（`owner_token` は上の衛生規則が定める明示的な例外である）。
+- **メッセージの各項目は `outbox_events` の行の値をそのまま使い、Queue 側で組み立て直さない。運ぶのは上に列挙した5項目だけで、行の他の列は載せない** — メッセージは行の写しではない。**特に `aggregate_id`（窓キー）は載せない。** 同一アドレス・同一窓に対して安定した仮名なので、載せると DLQ 上で複数のメッセージを同一の宛先へ相関させる材料になる。
 
 ### consumer の一覧と責務
 

@@ -19,7 +19,7 @@ fog の永続化スキーマ。**Cloudflare Workers + ユーザー単位 SQLite-
 - **テナント分離の保証は列条件ではなく到達可能性による**（domains/index.md「テナント分離」）。同じ User Data DO の中に他ユーザーの行は原理的に存在せず、他ユーザーの DO stub を得る経路も存在しない。**したがってどのテーブルも `user_id` 列を持たず、複合インデックスの先頭に `user_id` を置くこともしない**（唯一 `credential_mappings.user_id` だけは例外だが、それは分離のための述語ではなくクレデンシャルから `userId` への**写像そのもの**である）
   - **`outbox_events` も `user_id` 列を持たない。ただし配送メッセージは宛先 DO の routing key を運ぶ** — DO の識別子が DO の外へ出る唯一の点である。Identity Directory 宛のそれは `.adr/002` の「正規化値を鍵付きハッシュした内部キー」であって、生のメールアドレスでも `userId` でもない（async/index.md「payload と `terminal_reason` の衛生規則」）
 - 自分の `userId` は `_meta.self_locator` に1行だけ持つ。用途はエクスポートのヘッダ・移送と検証・DO 名が使えない経路のフォールバックに限り、**行データの絞り込みには使わない**
-- 1 DO あたりのストレージ上限は 10 GB で、**本体と FTS5 インデックスの合計**で見る（requirements 5.3）。**`outbox_events` と `reset_request_windows` も同じ 10 GB に算入する**（前者は保持期間ぶんの終端行を、後者は掃除されるまでの窓行を抱える）。逼迫時は書き込みだけが失敗し読みと削除は通るので、導線は「ゴミ箱を空にする / エクスポートして削除する」が生きる
+- 1 DO あたりのストレージ上限は 10 GB で、**本体と FTS5 インデックスの合計**で見る（requirements 5.3）。**`outbox_events` と `reset_request_windows` も同じ 10 GB に算入する**（前者は保持期間ぶんの `published` 行と `quarantined` 行を、後者は掃除されるまでの窓行を抱える）。**`quarantined` の行は prune の対象外であり、自動では減らない** — 減らす手段は operator 経路の再駆動と明示削除だけである（`outbox_events` の節 / 「operator 専用 maintenance 経路」）。逼迫時は書き込みだけが失敗し読みと削除は通るので、導線は「ゴミ箱を空にする / エクスポートして削除する」が生きる
 
 ## 共通方針
 
@@ -464,7 +464,8 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
   - **(2) `status = 'poison'` の行への再投入は、`kind` によらず同じ行を `pending` へ戻し、`attempt` を 0 にして `next_run_at` / `payload` / `payload_digest` を引数の値で置き換える。別行は作らない**（`operation_key` はそのジョブの同一性なので、行を増やすと同一性の意味が壊れる）。`terminal_reason` は上書きせずに残す
   - **(3) `status = 'done'` の行を `pending` へ戻すのは、再武装する5種（`purge-trash` / `sweep-reservations` / `sweep-reset-tokens` / `sweep-orphan-mapping` / `rotate-encryption`）に限る。残る6種は `done` の行を復活させず、何も書かずに成功を返す。** 5種を復帰させるのは、定数 `operation_key` を持つこれらが1回完走した時点で prune の保持期間ぶん再投入を受け付けなくなるからである（平常時はどれも必ず `done` へ落ちるので、投入点からの復帰が唯一の再起動手段になる）。残る6種の `done` は「その `operation_key` が表す一回分の仕事が完了した」という意味なので、**同じキーの再投入は新しい仕事ではなく重複依頼である** — 復活させると、たとえば `resume-credential-change` の重複依頼や `finalize-withdrawal` の二重投入が、完了済みの saga を起こし直して起床回数と書き込み行数を依頼回数に比例させる。**`payload_digest` の一致では5種と6種を分けられない**（5種は投入点が毎回同じ payload を渡すので digest も一致する）
   - **3つの射程は外部からの再投入だけである。** ジョブ自身が完了時に行う再スケジュール（後述の再武装）には (1) を適用しない — 適用すると次の期限が現在の `next_run_at` より後のときに何も書けず、`done` に落ちて二度と起きなくなる
-- **claim と完了は CAS で行う。** `UPDATE jobs SET status='running', lease_until=?, owner_token=? WHERE operation_key=? AND (status='pending' OR (status='running' AND lease_until < ?))` の 0 行更新を「他が持っている」とみなす。**第2の選言に `status='running'` を必ず含める**（落とすと `done` / `poison` の行が過去の `lease_until` を保持したまま再 claim の対象になる）。完了も `WHERE operation_key=? AND owner_token=?` の CAS。**`outbox_events` の claim / finalize も同じ形の CAS である**（値域が `publishing` に変わるだけ）
+- **claim と完了は CAS で行う。** `UPDATE jobs SET status='running', lease_until=?, owner_token=? WHERE operation_key=? AND (status='pending' OR (status='running' AND lease_until < ?))` の 0 行更新を「他が持っている」とみなす。**第2の選言に `status='running'` を必ず含める**（落とすと `done` / `poison` の行が過去の `lease_until` を保持したまま再 claim の対象になる）。完了も `WHERE operation_key=? AND owner_token=?` の CAS。**`outbox_events` の claim / finalize も同じ形の CAS であり、述語キーは `id` である**（`jobs` の `operation_key` に対応する位置。`UPDATE outbox_events SET status='publishing', lease_until=?, owner_token=? WHERE id=? AND (status='pending' OR (status='publishing' AND lease_until < ?))` と `WHERE id=? AND owner_token=?`。値域が `publishing` に変わるだけ）
+  - **「上限件数まで claim」の実装形を確定させる。** `UPDATE ... LIMIT` / `DELETE ... LIMIT` は `SQLITE_ENABLE_UPDATE_DELETE_LIMIT` を有効にしたビルドでしか使えず、**DO の SQLite で使える保証が無い**ので、これを前提にした書き方をしない。**実行可能集合を索引順に上限件数だけ `SELECT` し、行ごとの CAS を1文ずつ発行する**（0 行更新の行は他が持っているものとして飛ばす）。`WHERE id IN (?, …)` のような一括形へまとめる場合は、**件数上限を 100 bind parameter の内側に収める**（CLAUDE.md「Storage limits」。bulk insert を chunk するのと同じ制約であり、素朴に展開すると bind の上限が件数上限の実質的な天井になる）
   - **Alarm の張り直しは、この CAS の第2選言と対で読む。** claim が `lease_until` の満了を要求する以上、**lease 中の行（`running` / `publishing`）は `max(next_run_at, lease_until)` で算入する。** 過去の `next_run_at` を持つ leased 行だけが残った状態で `next_run_at` をそのまま採ると、「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転になる。**この規則は `jobs` と `outbox_events` の両方に同じ形で掛かる**（後述の「Alarm の多重化」）
 - **backoff と終端。** 失敗時は `attempt` を進めて指数バックオフで `next_run_at` を先送りする。上限を超えたら `status='poison'` にして `terminal_reason` を残し、ホットパスの索引から外す。**`done` / `poison` のどちらへ落とすときも、同じトランザクションで `completed_at` に現在時刻を書き、`lease_until` / `owner_token` / `next_run_at` を `NULL` にする**
   - **`outbox_events` には例外が1つある。** backoff と終端の規約そのものは共有するが、**`outbox_events` は終端（`published` / `quarantined`）へ落とすときも `owner_token` を `NULL` にしない** — 送信材料 RPC の呼び出しガードの照合材料として終端後も残すためである。`NULL` にする列は `lease_until` / `next_run_at` の2つだけになる（後述の `outbox_events` の節と async/index.md「呼び出しガード」）
@@ -473,6 +474,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 - **1回の起動で触る量は件数だけで有界にする。** 経過時間では測らない（`Date.now()` はコード実行中に進まない）。ジョブ件数・チャンク反復回数・1チャンクの行数の3階層の上限を置き、値は #51 が spike で出して #38 が運用値として確定する。**relay パスは独立した件数上限を持つ**（上限を共有すると片方の滞留がもう片方を飢えさせる。後述の「Alarm の多重化」）
 - **チャンク反復回数の上限に達したら、その時点の進捗をコミットするのと同じトランザクションで `status` を `pending` へ戻し、`lease_until` / `owner_token` を解放して次の起床へ回す**（解放した行は同じ起動の中では再 claim しない。しないと上限を置いた意味が消える）。**したがって「残件が空になるまで回す」と書かれたフェーズもこの上限の内側にある** — 空になるまでというのは**フェーズの順序の規定であって、1回の起床で終わることの規定ではない**。該当するのは `purge-trash` の再計算フェーズで、**削除フェーズへ進むのは再計算の残件が空になった起床でだけである**（有限回の起床で空になる根拠は `user_settings` の項の自己消尽する作業述語が持つ）
 - **prune 専用の `kind` は置かない。** ジョブランナーが1回の起動の末尾で、保持期間を過ぎた `done` / `poison` を上限件数だけ削除する（`jobs_completed_idx` から引く）。**`outbox_events` の prune も同じ末尾処理に載せる**（`outbox_completed_idx` から引き、`published` を削除して `quarantined` は残す）
+  - **prune の実装形も claim と同じ制約を受ける。** `DELETE ... LIMIT` を前提にせず、`DELETE FROM <表> WHERE <PK> IN (SELECT <PK> FROM <表> WHERE status = ? AND completed_at < ? ORDER BY completed_at LIMIT ?)` の形で書く（副問い合わせの `LIMIT` は bind を件数ぶん消費しない）。対象を先に `SELECT` してから `IN (?, …)` へ展開する形を採る場合は、**上限件数を 100 bind parameter の内側に収める**
   - **`published` 行の保持期間には運用値の制約が2本掛かり、これが全数である**（実値の確定は #38）。**`Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間`**（下側）と **`DLQ の保持期間 < リセットトークンの TTL`**（上側）である。前者は、送信材料 RPC の呼び出しガードが行の存在を要求するので、prune が行を消した後の DLQ 再駆動が必ず空振りするからである。**上側だけを書くと両立しない2値を選べてしまい、再駆動が恒久的に空振りする形は運用上ほとんど検出できない**ので、対で書く
 
 #### `kind` の全数
@@ -493,13 +495,17 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 
 ```text
 setAlarm( min(
-    min(jobs.next_run_at)          WHERE status IN ('pending','running'),
-    min(outbox_events.next_run_at) WHERE status IN ('pending','publishing')
+    min(jobs.next_run_at)          WHERE status = 'pending',      -- jobs_runnable_idx
+    min(jobs.lease_until)          WHERE status = 'running',      -- jobs_lease_idx
+    min(outbox_events.next_run_at) WHERE status = 'pending',      -- outbox_runnable_idx
+    min(outbox_events.lease_until) WHERE status = 'publishing'    -- outbox_lease_idx
 ) )
-※ lease 中の行（running / publishing）は max(next_run_at, lease_until) で算入する
-両方が空のときだけ deleteAlarm()
+両表の実行可能集合（jobs: pending / running、outbox_events: pending / publishing）が
+両方とも空のときだけ deleteAlarm()
 ```
 
+- **式は4本の min の合成として書く。索引で解ける形にするためである。** 4本はいずれも宣言済みの索引の先頭列等値 + 次の列の最小で引ける（上のコードブロックの注記が対応を示す）。`min(max(next_run_at, lease_until))` を1本の SQL として発行すると**式を key にした索引が無いので実行可能集合の全走査になり、そのコストが backlog の件数に比例して毎起床かかる。**
+- **4本の合成が「lease 中の行は `max(next_run_at, lease_until)` で算入する」と一致する根拠は、leased 行では `next_run_at ≤ lease_until` が常に成り立つことである**（claim の時点で `next_run_at` は過去、`lease_until` は未来なので、`max` は必ず `lease_until` を採る）。したがって leased 行を `lease_until` だけで数え、`pending` の行を `next_run_at` だけで数えれば、両者の最小は式の値と等しい。
 - **lease の算入規則を明示するのは、claim の CAS が `lease_until` の満了を要求するからである**（上の claim の項）。算入しないと、過去の `next_run_at` を持つ leased 行だけが残った状態で空振り起床を繰り返す。**`jobs` 側にも同じ形で掛かる。**
 - **件数上限は各パスが独立に持ち、毎回の起床で両方のパスを必ず1回通す。** 片方が上限を使い切っても他方は必ず走る（上限を共有すると片方の滞留がもう片方を飢えさせる）。
 - **relay の1パスは3相で、Queue への送信だけがトランザクションの外にある。**
@@ -517,7 +523,7 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 |---|---|---|
 | `id` | TEXT | PK。`EventId`。`IdGenerator` が採番する**不変**の値。`jobs.operation_key`（同一性で収束する）とは対照的に、**イベントは収束しない** |
 | `type` | TEXT | NOT NULL。`event.type`（`jobs.kind` に対応する位置づけ） |
-| `payload` | TEXT | NOT NULL。JSON。**PII および再利用可能な秘密を入れない**（`jobs.payload` と同じ制約） |
+| `payload` | TEXT | NOT NULL。JSON。**PII および再利用可能な秘密を入れない**（`jobs.payload` と同じ制約）。**100 KB/文・2 MB/行の内側に収める**（後述） |
 | `aggregate_id` | TEXT | NOT NULL。イベントが指す集約の識別子 |
 | `occurred_at` | INTEGER | NOT NULL。**ドメインが決めた発生時刻** |
 | `created_at` | INTEGER | NOT NULL。**行が Outbox に載った時刻**。backlog の滞留時間を読む起点はこちらで、`occurred_at` では代用できない（ドメインが過去の時刻を入れうる） |
@@ -525,7 +531,7 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 | `next_run_at` | INTEGER | nullable。次に relay してよい時刻。終端行では `NULL`（`jobs` と**同名・同意味**） |
 | `status` | TEXT | NOT NULL, CHECK (`status IN ('pending','publishing','published','quarantined')`)。**形は `jobs` と同じで名前が別である** — `published` は「Queue へ渡した」であって「処理された」ではない |
 | `lease_until` | INTEGER | nullable。claim の有効期限（`jobs` と**同名・同意味**） |
-| `owner_token` | TEXT | nullable。claim した実行主体の識別子。finalize は CAS でこれを照合し、**送信材料 RPC の呼び出しガードの照合材料でもある。終端（`published` / `quarantined`）へ落とすときも `NULL` にしない** — 名前は `jobs` と同じだが**意味の射程が広い** |
+| `owner_token` | TEXT | nullable。**claim ごと・行ごとに一意な capability である**（`jobs` の「claim した実行主体の識別子」という言い回しはこの表では使わない）。**暗号論的乱数から生成し、時刻・連番・DO 識別子など推測可能な材料から導かない。長さは 128 bit 以上とする。** finalize は CAS でこれを照合し、**送信材料 RPC の呼び出しガードの照合材料でもある。終端（`published` / `quarantined`）へ落とすときも `NULL` にしない** — 名前は `jobs` と同じだが**意味の射程が広い**（後述） |
 | `terminal_reason` | TEXT | nullable。終端の理由。**PII と秘密を入れない**（運用者が読む） |
 | `completed_at` | INTEGER | nullable。`published` / `quarantined` へ落ちた時刻（`jobs` と**同名・同意味**） |
 
@@ -543,10 +549,10 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 
 `jobs` との規約の関係を明示する。
 
-- **共通化する規約**: Alarm scheduler（張り直しの式と lease の算入）/ backoff（`attempt` を進めて指数バックオフで先送り、上限超過で終端）/ lease（claim の CAS と `lease_until` 満了による回収）/ prune（ジョブランナーの起動末尾で保持期間を過ぎた終端行を上限件数だけ削除）。**ランナーの実装は2表で共有する。**
+- **共通化する規約**: Alarm scheduler（張り直しの式と lease の算入）/ backoff（`attempt` を進めて指数バックオフで先送り、上限超過で終端）/ lease（claim の CAS と `lease_until` 満了による回収）/ prune（ジョブランナーの起動末尾で、保持期間を過ぎた行を上限件数だけ削除）。**ランナーの実装は2表で共有する。ただし削除の対象集合は共有しない** — 下の 2.（値域の分離）から決まり、`outbox_events` 側で消えるのは `published` だけである
 - **分離する規約**は3つで、これが全数である。
   1. **同一性と収束の有無** — `jobs` は `operation_key` で収束し、収束規則3つが載る。**`outbox_events` は例外なく「1イベント1行・不変」であり、収束しない。** 2回起きた事実を1行に畳むと片方が配送されない
-  2. **配送状態の値域** — `pending` / `publishing` / `published` / `quarantined`（`jobs` は `pending` / `running` / `done` / `poison`）
+  2. **配送状態の値域** — `pending` / `publishing` / `published` / `quarantined`（`jobs` は `pending` / `running` / `done` / `poison`）。**prune の対象集合はこの値域の差から決まる** — `jobs` は終端2値（`done` / `poison`）の両方を消すが、`outbox_events` が消すのは `published` だけで、**`quarantined` は恒久保持する**（下の「その他」）
   3. **終端時に `NULL` にする列** — `outbox_events` は `lease_until` / `next_run_at` の**2つだけ**であり、**`owner_token` は残す**（`jobs` は3つとも `NULL` にする）。落とすと呼び出しガードが `published` の行に対して必ず失敗し、正常系の配送が全滅する
 
 その他:
@@ -556,7 +562,10 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 - **書き込み口は UoW コンテキストの `enqueueEvent` だけである**（`jobs` の `enqueueJob` と同じ形。同期・戻り値なし・同じ `transactionSync` の中で行を書く）。`EventId` の採番は UoW 実装が `IdGenerator` に対して行う。claim・publish・finalize・prune は relay（アダプター）が同じ行に対して行うので、口を通らない
 - OCC の `version` は持たない（非集約ストア）
 - `user_id` 列は持たない（構造的テナント分離）。**ただし配送メッセージは宛先 DO の routing key を運ぶ**（「物理境界」の項）
-- **保持期間は `published` と `quarantined` で別に持つ。** `quarantined` は運用者の検査のために残す。`published` の保持期間に掛かる運用値の制約2本は `jobs` の prune の項が持つ
+- **保持期間を持つのは `published` だけである。`quarantined` は運用者が再駆動するか明示的に削除するまで恒久保持し、prune は触らない**（隔離の原因を調べる材料そのものなので、運用者が見る前に消える窓を作らない）。`published` の保持期間に掛かる運用値の制約2本は `jobs` の prune の項が持つ
+  - **したがって隔離行は自動では減らない。** Queue producer binding の障害などで一斉に隔離が起きると、10 GB へ向かう増加が運用でしか止まらない。これを明示的な運用制約として引き受ける（減らす手段の全数は「operator 専用 maintenance 経路」が持つ）
+- **`payload` は 100 KB/文・2 MB/行の内側に収める**（CLAUDE.md「Storage limits」）。イベント行は業務トランザクションと同じ `transactionSync` の中で INSERT されるので、**payload が大きいと業務データの書き込みごと失敗する**（`jobs.payload` は投入点が限られるが、イベントは任意のユースケースから積まれうる）。**大きな材料は payload に載せず、発行元 DO から引き直す**（送信材料 RPC と同じ形）
+- **`owner_token` は claim ごと・行ごとに一意で、暗号論的乱数から採る**（列定義）。**同じ起床で claim した複数行に同じ値を書かない** — 共有させると、DLQ に落ちた1件から得た `(event.id, owner_token)` の対で同じバッチの他の行の呼び出しガードを通せる（`event.id` は Queue メッセージにも DLQ にも載る）。**主キーではないので「共通方針」の ID の例外の数え上げには入らない**（例外は `password_reset_tokens.token_id` と `jobs.operation_key` の2つのままである）
 - **失敗の記録先は「Queue に入る前か後か」で分かれる。** relay が publish できない失敗はこの表の `quarantined` + `terminal_reason`、consumer の失敗は Queue の retry → DLQ である。**consumer からの ack を発行元 DO へ書き戻さない**（async/index.md「責務分界と DLQ」）
 - **DDL 分類は単発適用である**（`CREATE TABLE` + 空テーブルへの `CREATE INDEX`。後述の「単発適用で足りる DDL」）
 
@@ -730,7 +739,7 @@ DO ごとのメタ情報。単一行。
 | カラム | 型 | 制約 |
 |---|---|---|
 | `window_key` | TEXT | PK。**対象 canonical の全長 HMAC と依頼の窓から決定的に導く**（`jobs.operation_key` と同じ導出）。**クライアントから受け取らない** |
-| `key_generation` | INTEGER | NOT NULL。HMAC 鍵の世代 |
+| `key_generation` | INTEGER | NOT NULL。**`window_key` を導いた写像鍵の世代**（`credential_mappings.generation` と同じ番号体系であり、`password_reset_tokens.token_key_generation` のリセットトークン鍵の世代とも `credential_mappings.encryption_generation` の暗号鍵の世代とも別である）。**読み手は診断**（後述） |
 | `first_requested_at` | INTEGER | NOT NULL。その窓での最初の依頼の時刻 |
 | `last_requested_at` | INTEGER | NOT NULL。その窓での最後の依頼の時刻（2回目以降はこの列だけを更新する） |
 | `expires_at` | INTEGER | NOT NULL。窓の終端 + 猶予。掃除の駆動源 |
@@ -742,9 +751,15 @@ DO ごとのメタ情報。単一行。
 | `rrw_expires_idx` | (`expires_at`) | `sweep-reset-tokens` の期限切れ窓行の掃除（`prt_expires_idx` と同じ役割・同じ形） |
 
 - **登録の有無に関係なく行を作る。** 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）のどれでも**同じ1文で読み、同じ1文で書く。行の有無が観測可能な差にならないことが、この表を新設した理由そのものである**
-- **書き込み口は UoW コンテキストの `resetThrottleStore` の `claimWindow` ただ1つであり、これが全数である。** その窓の最初の依頼なら行を作って `true`、既存の窓なら `last_requested_at` だけを更新して `false` を返す。**「読み」と「計上」を2つの書き込み箇所として数えない** — 判定と計上は1回の呼び出しで原子的に行われる（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の**両方を決める唯一の分岐**である
+- **書き込み口は UoW コンテキストの `resetThrottleStore` の `claimWindow` ただ1つであり、これが全数である。** その窓の最初の依頼なら行を作って `true`、既存の窓なら `last_requested_at` だけを更新して `false` を返す。**「読み」と「計上」を2つの書き込み箇所として数えない** — 判定と計上は1回の呼び出しで原子的に行われる（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の**両方を決める唯一の分岐**である。**掃除の `DELETE` は `sweep-reset-tokens`（アダプター）が同じ行に対して行うので口を通らない**（`jobs` / `outbox_events` と同じ形）
 - **期限切れ行の掃除は `sweep-reset-tokens` が担う**（新しい `jobs.kind` を足さない）。**投入点は「リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）」であり、宛先の登録有無で投入を分けない**
-- **行は依頼回数ではなく窓の数に比例して増える。** ただし**未登録アドレス宛の依頼でも行が増える**ので、掃除が止まると 10 GB 上限へ向かって伸び続ける
+- **窓の長さと `expires_at` の猶予は運用値であり、実値の確定は #38 である**（`jobs` の件数上限が「#51 が spike で出して #38 が確定する」のと同じ形）。窓の長さは (a) スロットルの強度、(b) この表の行数（= 10 GB 算入分）、(c) `sweep-reset-tokens` の起床頻度を同時に決める。**値の選び方には制約が1本掛かる — `スロットル窓の長さ < リセットトークンの TTL` を満たすこと。** 満たさないと、リンクが期限切れになった利用者が窓の明けるまで再送を得られず、`spec/scenario/account.md` の異常系（「リセットリンクが期限切れの場合、その旨が表示され再送をやり直せる」）と衝突する。**この制約は配送の運用値の制約2本（`jobs` の prune の項 / async/index.md「運用値の制約」）の外側にある別の1本であり、あちらの「2本で全数」を開かない**
+  - **窓の中で配送が `quarantined` / DLQ に落ちた場合、その窓のあいだ利用者は1通も受け取れないまま再送も得られない**（2回目以降の依頼は `claimWindow` が `false` を返すのでイベント行を書かない）。復旧は operator 経路（隔離行の再駆動 / DLQ の再駆動）だけである
+- **`key_generation` の読み手は診断である** — 索引にも `claimWindow` の述語にも現れない（世代は既に `window_key` へ畳み込まれているので PK にも入らない）。運用者が「どの写像鍵世代で導かれた行か」を判別するために持つ。旧世代の行は誰にも引かれないまま `expires_at` で掃除されるので、**世代を述語にした一括削除は置かない**
+  - **写像鍵の世代が進むと、同じ canonical・同じ時間窓でも `window_key` が別値になる**ので、同じ窓に2世代の行が併存し、**その窓のスロットルが一度だけリセットされる** — 新世代側の `claimWindow` が `true` を返し、未使用トークンの全置換（= 利用者の手元のリンクが死ぬ）と2通目のメールが起きうる。**これを許容する。** ローテーションは operator 起動の稀事象で、窓は分オーダー、破れは世代の前進1回ぶんに限られる一方、世代跨ぎの探索を `claimWindow` の契約へ入れると旧世代キーの再導出をアダプターへ要求することになり、釣り合わない
+  - **世代を進める主体は #44（写像鍵のローテーション）である。** `rotate-encryption` はメール暗号鍵の世代を進めるジョブであり、この列は動かさない
+- **行は依頼回数ではなく窓の数に比例して増える。** ただし**未登録アドレス宛の依頼でも行が増える**ので、**掃除が追いつかない、または窓の中で distinct なアドレスが大量に撒かれると** 10 GB 上限へ向かって伸び続ける（`requestPasswordReset` は未認証で叩け、窓キーは canonical ごとに独立なので、**canonical 単位のスロットルは異なるアドレスを撒く経路を抑止しない**）
+  - **逼迫の影響はこの bucket に写像を持つ全ユーザーへ及ぶ。** Identity Directory DO は bucket 共有であり、逼迫した DO は書き込みだけが失敗するので、**同じ bucket の他ユーザーの新規登録・クレデンシャル変更・リセット依頼が巻き添えで止まる**（User Data DO の 10 GB と違い、単独ユーザーに閉じた話ではない）。発信元単位のレート制限は transport 境界の責務であり、本ファイルの範囲外である（#38 / #51）
 - OCC の `version` は持たない（非集約ストア）
 - **DDL 分類は単発適用である**（`CREATE TABLE` + 空テーブルへの `CREATE INDEX`。後述）
 
@@ -812,7 +827,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 - **データ量に依存しない（単発適用で足りる）**: `CREATE TABLE`、**制約を伴わない** `ALTER TABLE ADD COLUMN` / `RENAME`
 - **データ量に依存する（分割か回避が要る）**: (i) CHECK 制約付きの列追加・NOT NULL の生成列追加・列削除、(ii) **`CREATE INDEX`**（索引構築は全行走査 + ソートである）
 - **索引は原則としてテーブル新設時に同時に張る**（空テーブルへの `CREATE INDEX` は安い）。既に大きく育ったテーブルへ索引を足す必要が生じたら、`CREATE INDEX` を直接発行せず「**索引つきの新テーブルを作る → `migrate-bulk` で行をコピーする → 参照を切り替える → 旧テーブルを落とす**」という多段の forward-only migration へ分解する。SQLite では `CREATE INDEX` をチャンク分割できないので、逃がし先がこれしか無い
-- **本改訂で生じる3件の分類を明示する。**
+- **本改訂で実際に生じる DDL 差分は0件である。** 本ファイルの実装先はまだ配備されていない（#51 が新設する DO のアダプター。冒頭）ので、**#51 は改訂後の形で `CREATE TABLE` する** — `jobs` は最初から11列、`credential_mappings` は最初からリセット依頼スロットル列なしで作られ、`ALTER TABLE DROP COLUMN` は1回も発行されない。**以下の3件は、配備後に同じ変更を行う場合の分類である。**
   - **`outbox_events`（両クラス）と `reset_request_windows` の追加は単発適用である。** `CREATE TABLE` はデータ量に依存せず、索引も**空テーブルへの `CREATE INDEX`** なので安い。**`migrate-bulk` は行のコピーのための機構であり、コピーすべき行が0件のここでは出番が無い。** DO 全体が 10 GB まで育っていても、新設・空の表には関係しない（上の多段分解は「**既に大きく育った既存テーブル**へ索引を足す」場合の逃がし方であって、本件には当たらない）
   - **`jobs` からの、外部プロバイダへ渡す冪等キーの列の削除は (i) の列削除に当たる。**
   - **`credential_mappings` からのリセット依頼スロットル列の削除も (i) の列削除に当たる。** 新テーブル追加側だけ分類を書いて列削除側を書かないのは非対称なので、両方を書く
@@ -871,6 +886,13 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 ジョブが一様な終端（`terminal_reason` + `poison`）に達したときのエスカレーション先として、**operator 専用の maintenance 経路が存在する**。`purge-user-mappings`（退会の最後の砦）と `cancel-reservation`（新規登録の予約の取り消し）の2つで、どちらも `jobs.kind` の11種には入らない（ジョブではなく RPC である）。診断用の `read-schema-version` / `list-bucket-user-ids` と、`rotate-encryption` の起動（全数表が名指しする唯一の投入点）も同じ経路に属する。**到達制御・監査ログ・運用手順の実体は #38 が定める。**
 
 **`outbox_events` の `quarantined` に対する導線も同じ経路に属する** — `list-quarantined-events`（一覧）と `requeue-quarantined-event`（`pending` へ戻す再駆動）である。**どちらも `jobs.kind` にも `event.type` にも入らない**（ジョブでもイベントでもなく RPC である）。**consumer 側の失敗の導線はここではなく DLQ ハンドラである**（責務分界は「Queue に入る前か後か」の1本。async/index.md）。
+
+**`requeue-quarantined-event` が書く列を確定させる。** 同じトランザクションで `status='pending'` / `next_run_at = 現在時刻` / `attempt = 0` / `completed_at = NULL` の4つを書き、`terminal_reason` は残し、`owner_token` は採番し直す。
+
+- **`next_run_at` を書かないと再駆動が黙って空振りする。** 終端時に `NULL` にされる列なので（`outbox_events` の「分離する規約」3.）、`status` だけ戻すと (1) Alarm の張り直しの `min(outbox_events.next_run_at)` が SQL の `min()` の NULL 無視でこの行を拾わず、(2) claim の対象を選ぶ述語（`next_run_at <= now`）にも掛からず、(3) それでも実行可能集合は空でないので `deleteAlarm()` もされない、という「起きるが1行も進まない」状態が残る。`attempt` の 0 復帰と `completed_at` の `NULL` 復帰は `jobs` の収束規則 (2)（`poison` → `pending`）と同じ形である
+- **`terminal_reason` は残す。** これも `jobs` の収束規則 (2) と同じで、隔離の原因は再駆動の後も運用者が読む唯一の記録である（次の失敗で上書きされる）
+- **`owner_token` は再採番する** — 列の生成要件が「claim ごと・行ごとに一意な暗号論的乱数」である以上、終端後も残っている古い値を再駆動が引き継ぐ理由が無い。再採番すると、隔離前に Queue / DLQ へ渡っていた `(event.id, owner_token)` の対が呼び出しガードの 3.（`owner_token` の一致。async/index.md）で弾かれ、持参人証としての露出窓がその時点で閉じる。**副作用として、同じイベントの古い DLQ メッセージを再駆動すると `nothing-to-send` になる** — ただし行そのものは次の claim（そこでも `owner_token` は採番し直される）と publish で配送されるので、**配送は失われない。** 2つの operator 導線を同じイベントに対して両方回しても二重送信にはならない
+- **`quarantined` の行を減らす手段は、この再駆動（`published` へ進めば prune の対象に戻る）と operator による明示削除の2つだけであり、自動では減らない**（`outbox_events` の「その他」/ 「物理境界」の 10 GB の項）。**明示削除の口は本ファイルでは名前まで確定させない** — 到達制御・監査ログ・運用手順と同じく、maintenance 経路の実体は #38 が定める
 
 ## 本ファイルで定義しないテーブル
 
@@ -947,9 +969,11 @@ account.caller_token        ──→ credential_mappings.caller_token（同じ�
 | 予約の期限切れ掃除（`sweep-reservations`） | `cm_reservation_idx` |
 | リセットトークンの期限切れ掃除（`sweep-reset-tokens`） | `prt_expires_idx` |
 | スロットル窓の期限切れ掃除（`sweep-reset-tokens` の第2の目的） | `rrw_expires_idx` |
-| ジョブの claim と Alarm の張り直し | `jobs_runnable_idx` |
+| ジョブの claim（実行可能集合の最早行） | `jobs_runnable_idx` |
+| lease 満了の `running` 行の回収 | `jobs_lease_idx` |
 | 完了ジョブの prune | `jobs_completed_idx` |
-| relay の claim と Alarm の張り直し | `outbox_runnable_idx` |
+| relay の claim（実行可能集合の最早行） | `outbox_runnable_idx` |
 | lease 満了の `publishing` 行の回収 | `outbox_lease_idx` |
-| 配送済みイベントの prune | `outbox_completed_idx` |
+| 配送済み（`published`）イベントの prune | `outbox_completed_idx` |
+| Alarm の張り直し（4本の min の合成。「Alarm の多重化」） | `jobs_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `jobs_lease_idx`（`status='running'` の `min(lease_until)`）/ `outbox_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `outbox_lease_idx`（`status='publishing'` の `min(lease_until)`） |
 | bucket 内の `userId` 列挙（運用の診断経路） | `cm_user_idx` |
