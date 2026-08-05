@@ -93,15 +93,17 @@
           <(printf '## ステータス\n## コンテキスト\n## 決定\n## 検討した代替案\n## 影響\n') \
        && echo "5節 OK"
      ```
-  3. `.adr/004` / `spec/adr/005-search-index-via-outbox.md` が**ステータス節だけ**の変更であることを差分で見る
+  3. `.adr/004` / `.adr/005-search-projection-inside-write-transaction.md` / `spec/adr/005-search-index-via-outbox.md` が**ステータス節だけ**の変更であることを差分で見る
 
      ```bash
-     git diff main...HEAD -- .adr/004-do-local-commit-and-alarm-jobs.md spec/adr/005-search-index-via-outbox.md
+     git diff main...HEAD -- .adr/004-do-local-commit-and-alarm-jobs.md \
+       .adr/005-search-projection-inside-write-transaction.md \
+       spec/adr/005-search-index-via-outbox.md
      ```
   4. `.adr/013` の「検討した代替案」節を読み、Issue 本文の4案が全部あることを確認する
   5. `.adr/013` の「ステータス」節と「影響」節を読み、supersede の範囲と `.thread/34/design.md` の失効宣言5節を確認する
 - **期待結果:**
-  - 手順1: `.adr/` が **13件**。差分は `A .adr/013-*.md` の1行と `M .adr/004-*.md` のみ。`.adr/001`〜`.adr/003` / `.adr/005`〜`.adr/012` に `M` が付かない
+  - 手順1: `.adr/` が **13件**。差分は `A .adr/013-*.md` / `M .adr/004-*.md` / `M .adr/005-*.md` の**3行**。`.adr/001`〜`.adr/003` / `.adr/006`〜`.adr/012` に `M` が付かない。**`.adr/005` が `M` なのは、`.adr/013` が検索の更新方式に触れていないことを `.adr/005` 側からも辿れるようにステータス節へ注記を足したため**であり、本文（コンテキスト・決定・代替案・影響）は無改変である（手順3 で確認する）
   - 手順2: `5節 OK`
   - 手順3: 差分の追加行が**ステータス節の中にだけ**現れる。コンテキスト・決定・検討した代替案・影響の各節に `+` / `-` が1行も無い（AC-3）
   - 手順4: (1) 各業務 DO に Outbox + Alarm relay = **採用** / (2) 専用 Outbox DO = 不採用 / (3) すべて `jobs` + Alarm = 不採用 / (4) transaction 内で外部 I/O = 不採用 の**4案すべて**に不採用理由が書かれている。加えて撤回した旧案（`dedupe_key` / 3分岐応答 / `last_reset_requested_at` 相乗り / 窓掃除に新 `kind` / consumer を3本目の Worker / relay を `jobs.kind` に）も記録されている（AC-2）

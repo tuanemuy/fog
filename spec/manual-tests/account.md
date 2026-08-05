@@ -600,7 +600,7 @@
 |---|---|---|
 | 1 | Queue の producer binding を落とし、publish できない状態にする | — |
 | 2 | 依頼フォームで `test@example.com` のリセットを依頼する | 「登録されていれば送信された」旨が表示される。**publish できないことは依頼の応答に一切現れない** |
-| 3 | backoff の上限回数を超えるまで待つ（または前提条件の「backoff を早送りする手段」で進める。手段が無ければ本手順は対象外とし、備考に記録する） | — |
+| 3 | backoff の上限回数を超えるまで待つ（または前提条件の「backoff と retry を早送りする手段」のうち **DO 側の早送り**で進める。手段が無ければ本手順は対象外とし、備考に記録する） | — |
 | 4 | `list-quarantined-events` で隔離された行を一覧する | 当該イベントが `quarantined` として現れ、`terminal_reason` に失敗の理由が入っている。**`terminal_reason` にメールアドレス・生トークン・`userId` が含まれていない** |
 | 5 | Queue の producer binding を復旧させる | — |
 | 6 | `requeue-quarantined-event` で当該行を再駆動する | 行が `pending` へ戻り、次の起床で relay され、リセットメールが届く |

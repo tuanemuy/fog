@@ -1447,7 +1447,7 @@ AD-4 は relay の相3 を「`published` へ落とす／失敗なら `attempt` �
 
 ### Decision
 
-**上限に達していない失敗は、同じトランザクションで `status='pending'` へ戻し、`lease_until` / `owner_token` を解放したうえで `attempt` と `next_run_at` を書く。** あわせて**実行可能集合の定義側に、claim の選択述語が `next_run_at <= now` を含むことを明記する**（現状は本文中の括弧書きにしかなく、定義は `status` だけで書かれている）。
+**上限に達していない失敗は、同じトランザクションで `status='pending'` へ戻し、`lease_until` / `owner_token` を解放したうえで `attempt` と `next_run_at` を書く。** あわせて**claim の選択述語が `next_run_at <= now` を含むことを規範として明記する**（現状は本文中の括弧書きにしかない。**なお実行可能集合そのものは `status` だけで定義したままにする** — 時刻の条件を集合の定義へ入れると、まだ時刻の来ていない行しか残っていない DO で「両表の実行可能集合が空」が成立して `deleteAlarm()` が打たれ、その DO が二度と起きなくなる。正本は `spec/database/index.md`「Alarm の多重化」）。
 
 - **既存のチャンク上限の規則と同じ形である** — local job がチャンク反復の上限に達したとき、進捗をコミットするのと同じトランザクションで `pending` へ戻し `lease_until` / `owner_token` を解放する。新しい概念を持ち込まない。
 - **`jobs` にも同じ形で掛かる**（共通化する規約の側）。`outbox_events` 側だけを直すと、共通化しているはずの backoff 規約が2表で割れる。
