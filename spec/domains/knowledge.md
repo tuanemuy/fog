@@ -5,6 +5,7 @@
 - 上流: [requirements.md](../requirements.md) 2章 / 4.2 / 4.3、[scenario/document.md](../scenario/document.md)、[scenario/ai.md](../scenario/ai.md)、[scenario/trash.md](../scenario/trash.md)
 - 関連 ADR: [ADR-001](../adr/001-restore-document-without-topic.md)（所属トピック消失時の復元）、[ADR-003](../adr/003-source-link-after-hard-delete.md)（ハードデリート後の出典リンク）、[ADR-004](../adr/004-domain-boundaries.md)（topic と document を同一ドメインに置く理由）、[.adr/003](../../.adr/003-sqlite-fts5-only-search.md)、[.adr/004](../../.adr/004-do-local-commit-and-alarm-jobs.md)（同一トランザクションでのインデックス更新。`spec/adr/005` は superseded）
 - コード規約: [docs/backend_implementation_example.md](../../docs/backend_implementation_example.md) に従う（値オブジェクトは unique symbol ブランド型 + `create` ファクトリで `BusinessRuleError` を throw、エンティティは判別可能ユニオン + 純関数ファクトリ、`now: Date` と id は引数で受ける、状態遷移は次状態のエンティティだけを返す）
+- 検索インデックスの更新は、本体を書くのと**同一のトランザクションの中の projection 処理**として行う（`.adr/004`。詳細は search.md「インデックスの維持」）。**検索インデックスについては配送しない。knowledge ドメインはイベントを定義しない** — consumer が無く、業務上の変更履歴は `document_revisions` が持つからである。**外部への配送の契約と全数は [async/index.md](../async/index.md)**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）
 
 ## ユビキタス言語
 

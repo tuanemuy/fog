@@ -375,7 +375,7 @@ export const TokenScope = {
 | `CredentialMappingRepository` | 認証情報側（Identity Directory） | メール・SSO 主体の一意性、パスワードの検証材料、`userId` の解決 |
 | `UserSettingsRepository` | ユーザー単位設定側（User Data DO） | `User`（クレデンシャル集合の要約・`trashRetentionDays`・OCC） |
 
-**`User` 集約に畳まないストアが2つある。** `AccountStore`（アカウントの状態と失効の権威）と `CredentialLocatorStore`（保有クレデンシャルの逆引き）で、どちらも `User` の一部ではないので `UserSettingsRepository` には畳まない。**ただし `spec/database/index.md` の「非集約ストア」の分類に入るのは `CredentialLocatorStore` の側だけである** — `account` は OCC の `version` を持つ集約ルート側のテーブルで、非集約ストアの全数（`jobs` / `operations` / `migration_progress` / `credential_locators` / `password_reset_tokens` / `rotation_checkpoints` / `_meta` の7つ）にも、その書き込み口の全数（6ストア・7メソッド）にも入らない。**畳まないことと非集約であることは別である。** 物理的な置き場と列は `spec/database/index.md` が正本で、本節が定めるのは**ドメインから見た名前と契約**である。
+**`User` 集約に畳まないストアが2つある。** `AccountStore`（アカウントの状態と失効の権威）と `CredentialLocatorStore`（保有クレデンシャルの逆引き）で、どちらも `User` の一部ではないので `UserSettingsRepository` には畳まない。**ただし `spec/database/index.md` の「非集約ストア」の分類に入るのは `CredentialLocatorStore` の側だけである** — `account` は OCC の `version` を持つ集約ルート側のテーブルで、非集約ストアの全数（`jobs` / `outbox_events` / `operations` / `migration_progress` / `credential_locators` / `password_reset_tokens` / `reset_request_windows` / `rotation_checkpoints` / `_meta` の9つ）にも、その書き込み口の全数（8ストア・9メソッド）にも入らない。**畳まないことと非集約であることは別である。** 物理的な置き場と列は `spec/database/index.md` が正本で、本節が定めるのは**ドメインから見た名前と契約**である。
 
 ### CredentialMappingRepository
 
@@ -432,7 +432,7 @@ export interface CredentialMappingRepository {
   | `promoteVerifier` | 検証材料の昇格 | 保留の検証材料を正本にし、`credentialVersion` を揃え、`changeState` / `changeOrigin` を `null` へ戻す。**同じトランザクションで `failedAttempts` を 0 に、`nextAttemptAllowedAt` を過去へ戻す**（濫用抑止からの脱出経路） | `changeState` が `"advanced"` のときだけ通す |
   | `deleteMapping` | 解除・退会 | 対象 `credentialId` の写像行と、そのクレデンシャル宛のリセットトークン行を消す | 「無ければ成功」の冪等操作 |
 
-  **これらは `CredentialMappingRepository` のメソッドではない。** 手続きの各段が認証情報側へ発行する操作であり、`find*` の3本のようにドメイン型を返す読み取りとは性質が違う（実装形は `spec/database/index.md` と #37 が決める）。ここで固定するのは名前・効果・冪等性の3つだけである。
+  **これらは `CredentialMappingRepository` のメソッドではない。** 手続きの各段が認証情報側へ発行する操作であり、`find*` の3本のようにドメイン型を返す読み取りとは性質が違う（実装形は `spec/database/index.md` と #51 が決める）。ここで固定するのは名前・効果・冪等性の3つだけである。
 
   **中間状態のあいだは旧新どちらのパスワードでもログインできない**（fail closed）。前進不能が確定した場合の終端は一様である（記録を残して運用へエスカレーションする）。**終端の具体的な手順は [#45](https://github.com/tuanemuy/fog/issues/45) が定める。**
 
@@ -609,6 +609,29 @@ export interface PasswordResetTokenPort {
   - 無効・期限切れ・使用済みトークンはエラーではなく `null`（ユースケースが `ValidationError("RESET_TOKEN_INVALID")` 等に変換し、S-AC-07 の「期限切れの場合は再送をやり直せる」表示につなげる）
   - ストア障害 → `SystemError`
 
+### PasswordResetThrottlePort
+
+- 目的: リセット依頼のスロットル窓の判定と計上（S-AC-07）。**「その窓で既に依頼を受け付けたか」を1回の呼び出しで判定し、同時に計上する**
+- **置き場は認証情報側（Identity Directory）である。** 窓のキーは対象クレデンシャルではなく canonical 化したメールアドレスから導くので、**未登録の宛先でも成立する**必要がある。物理形は `reset_request_windows`（`spec/database/index.md`）で、UoW コンテキスト側のハンドル名は `resetThrottleStore` である（`resetTokenStore` / `PasswordResetTokenPort` と同じ「ハンドル名とポート名が別」の形）
+
+```ts
+export interface PasswordResetThrottlePort {
+  /**
+   * その窓の最初の依頼なら行を作って true、
+   * 既存の窓なら最終依頼時刻だけを更新して false を返す。
+   */
+  claimWindow(windowKey: string, now: Date): boolean;
+}
+```
+
+- **メソッドは1つだけであり、これが全数である。** 判定と計上を2メソッドに分けない — 分けると「4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）が一様に落ちる」が2つの呼び出しの組み合わせの性質になり、呼び出し順序を誤ると一様性が静かに壊れる。1メソッドなら**単一の呼び出しの性質**として書ける
+- **戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の両方を決める唯一の分岐である。** 発行判断と窓判定は同じ1つの分岐であって、2つの独立した条件ではない（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）
+- **`windowKey` は呼び出し側が導出して渡す** — 対象 canonical の全長 HMAC と依頼の窓から決定的に導く（`jobs.operation_key` と同じ導出）。**クライアントからは受け取らない。** ポートは導出鍵を知らない
+- **登録の有無に関係なく行を作る。** 行の有無が観測可能な差にならないことが、このポートを置いた理由そのものである
+- **同期契約である**（`transactionSync` の中で呼ぶ）。domains/index.md の `Promise` 例外2件は動かない
+- エラーケース:
+  - ストア障害 → `SystemError`
+
 ### MailSender
 
 - 目的: ユーザーへのメール送信。現状はパスワードリセットメールのみ
@@ -620,8 +643,40 @@ export interface MailSender {
 }
 ```
 
+- **呼ぶのは Alarm ジョブではなく、request Worker の `queue()` ハンドラ（mail consumer）である**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。consumer は `identity.passwordResetRequested` のメッセージを受けて発行元 Identity Directory bucket へ**送信材料 RPC** を打ち、応答が `send` のときだけ本ポートを呼ぶ（`nothing-to-send` なら no-op して ack する）。**宛先の復号と生トークンの導出は DO の中に閉じたまま**であり、`to` / `resetToken` は RPC の応答としてのみ consumer に渡り、どこにも永続化されない（async/index.md「送信材料 RPC」）
 - エラーケース:
-  - 送信基盤の失敗 → `SystemError`。ただしリセット依頼ユースケースは「登録されていれば送信された」旨のみ返すため（S-AC-07 異常系）、宛先実在性に起因する失敗をユーザー応答に反映してはならない
+  - 送信基盤の失敗 → `SystemError`。ただしリセット依頼ユースケースは「登録されていれば送信された」旨のみ返すため（S-AC-07 異常系）、宛先実在性に起因する失敗をユーザー応答に反映してはならない。**依頼の応答は配送の成否を待たない** — 配送は結果整合であり、送信の失敗は Queue の retry → DLQ で扱う
+
+## ドメインイベント
+
+**イベント型を定義するドメインは identity だけである**（全数は [async/index.md](../async/index.md)）。契約の骨格は全ドメイン共通で、domains/index.md「ドメインイベントの契約」が上位の規約を持つ。
+
+### 共通の契約
+
+| 契約 | 形 | 補足 |
+|---|---|---|
+| `EventId` | 不透明な非空文字列 | 形式（UUIDv7 等）は `IdGenerator` の責務。ドメインは形式を知らない |
+| イベント draft | `{ type, payload, occurredAt, aggregateId }` | **`EventId` を持たない。** ドメインが identity-less な draft を返し、アプリケーション層（UoW 実装）が採番して付ける |
+| イベント | draft + `{ id: EventId }` | UoW が `outbox_events` へ書く形 |
+| ファクトリ / 遷移の戻り値 | `{ entity, eventDrafts }` | 状態遷移とイベントの発生を1つの戻り値で表す |
+
+- **ドメインは `IdGenerator` にも時計にも触らない。** `occurredAt` は引数として受けた `now` を使う
+- **登録口は UoW コンテキストの `enqueueEvent(drafts)` 1つだけ**であり、ドメインポートではない（domains/index.md）。ユースケースが draft を渡し、`outbox_events` への INSERT は業務データの書き込みと同じ `transactionSync` の中で起きる
+- **payload に PII と再利用可能な秘密を載せない。** メールアドレス・生トークン・`userId` は payload にも `terminal_reason` にもログにも出さない（衛生規則の正本は [async/index.md](../async/index.md)）
+
+### identity.passwordResetRequested
+
+| 項目 | 内容 |
+|---|---|
+| `type` | `identity.passwordResetRequested` |
+| 発行点 | `requestPasswordReset` のトランザクション。**その窓での最初の依頼のときだけ、4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）とも必ずちょうど1行**。既に発行済みの窓なら4ケースとも1行も書かない（usecases/identity.md） |
+| `aggregateId` | **スロットル窓のキー**（`PasswordResetThrottlePort.claimWindow` に渡した `windowKey`）。4ケースのどれでも同じ導出で決まる唯一の識別子であり、鍵付きハッシュ済みなので原本を含まない。**`credentialId` は使えない** — 未登録の宛先には存在せず、有無が観測可能な差になる |
+| payload | `tokenId` / メール種別 / **発行元 Identity Directory bucket の routing key**（`.adr/002` により既に鍵付きハッシュ済みの内部キー） |
+| consumer | mail consumer（1つ。request Worker の `queue()` ハンドラ） |
+
+- **`tokenId` を nullable にしない。** 未登録 / SSO 専用ではトークンが発行されないが、**宛先の有無から独立に生成した不透明値**（トークンと同じ形・同じ長さ）を置く。`NULL` か否かが観測できると payload そのものが列挙オラクルになる。**行の形が4ケースで一字も違わないことが、経路一致の実体である**
+- **consumer は payload から送信内容を組み立てない。** 宛先・本文・`providerIdempotencyKey` は発行元 DO への送信材料 RPC で取得する（async/index.md）
+- **他のイベント型を定義しない。** 登録・パスワード変更・ゴミ箱保持期限の変更はいずれも consumer を持たず、`spec/requirements.md` に監査要件も無い。**consumer が存在せず明示的な監査要件も無いイベントは定義しない**（判定規則2 は「独立した consumer へ委譲する」を要求するので、consumer が無いイベントは類型を名乗れない）
 
 ## ユースケース（概要）
 

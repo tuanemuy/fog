@@ -1,0 +1,33 @@
+# テストケース: outboxDelivery
+
+[async/index.md](../../async/index.md) が定める DO ローカル Outbox の配送機構に対するテストケース。**どのユースケースにも属さない機構のテストである** — ここで検証するのは relay・Queue・consumer・DLQ の契約であって、イベントを発行する側の振る舞い（4ケース経路一致・連打の収束）は [identity/requestPasswordReset.md](../identity/requestPasswordReset.md) が持つ。
+
+**中心的な検証点は3つである。** (1) 業務データ・FTS5 projection・Outbox 行が**同じ `transactionSync` で一度に確定し、rollback すると3つとも巻き戻る**こと。(2) 配送が **at-least-once・順序保証なし**であり、重複と順序逆転を受け入れたうえで正しく終わること。(3) 失敗の記録先が「**Queue に入る前か後か**」の1本で分かれ、同じ失敗が2箇所に現れないこと。**順序逆転と重複配送の期待値は、送信材料 RPC の2分岐（`send` / `nothing-to-send`）で書く** — `nothing-to-send` は理由を1つも載せない空なので、「なぜ送らなかったか」は期待値に書けない。
+
+| 前提条件 | 操作 | 期待結果 | 実装ステータス |
+|---|---|---|---|
+| イベントを発行するユースケースを実行する | 業務データの書き込み・FTS5 projection の更新・`enqueueEvent` によるイベント行の追加を観測する | **3つが同じ `transactionSync` の中で一度に確定する。** イベント行は別ストアへの RPC でも遅延書き込みでもなく、同じ DO の `outbox_events` への INSERT である | |
+| 同じトランザクションの後段で業務データの書き込みが失敗する | トランザクション全体をロールバックさせる | **業務データ・FTS5 projection・`outbox_events` の行の3つとも巻き戻る。** イベント行だけが残って存在しない更新の配送が起きる、という状態にならない | |
+| メモまたはドキュメントを作成・更新する | 直後に検索する | **FTS5 projection は Outbox の配送を待たず、同じトランザクションで反映済みである。** relay が動いたか否か・Queue が滞留しているか否かと**独立**にヒットする（検索インデックスに consumer は存在しない） | |
+| `pending` のイベント行が1件以上ある | Alarm が起床する | 相1で実行可能な行が上限件数まで claim され、`status` が `publishing`、`lease_until` と `owner_token` が CAS で書かれる。**claim は `transactionSync` の中で完結する** | |
+| claim 済みの行がある | 相2で Queue へ publish し、相3で終端させる | **Queue への送信だけがトランザクションの外にある。** 成功すると相3の `transactionSync` で `status` が `published`、`completed_at` が入り、`lease_until` / `next_run_at` が `NULL` になる。**`owner_token` は `NULL` にしない**（送信材料 RPC の照合材料として残す） | |
+| `jobs` と `outbox_events` の両方に実行可能な行がある | Alarm の起床時刻を確認する | `min(min(jobs.next_run_at) WHERE status IN ('pending','running'), min(outbox_events.next_run_at) WHERE status IN ('pending','publishing'))` が張られる。**両方の実行可能集合が空のときだけ `deleteAlarm()` される** | |
+| 過去の `next_run_at` を持つ `publishing` の行だけが残っている（lease は未満了） | Alarm を起床させる | **lease 中の行は `max(next_run_at, lease_until)` で算入される。** 過去の `next_run_at` をそのまま採って「起床 → 1行も claim できない → 同じ過去時刻へ張り直す」の空転にならない | |
+| 相2（publish）の直後・相3（`published` への落とし込み）の前に DO がリセットする | `lease_until` の満了を待って次の起床を観測する | **同じ行が再 claim され再 publish される**（at-least-once の根拠）。再 claim で `owner_token` が書き換わるので、**リセット前に publish された古いメッセージについての送信材料 RPC は `nothing-to-send` を返す**（呼び出しガード (c) の不一致）。新しいメッセージの側は `send` を返す | |
+| 同じ `event.id` のメッセージが consumer へ2回届き、どちらも `owner_token` が一致している | 2回とも送信材料 RPC を打つ | どちらも `send` を返す。**provider へ渡す `providerIdempotencyKey` は `event.id` から決定的に導かれるので2回とも同じ値**であり、provider 側で抑止される。**consumer は処理済み `EventId` を保持しない**（冪等化は provider 側のキーと RPC の再確認の2段） | |
+| 窓をまたいで積まれた新旧2件のイベント行があり、**古いほうが後に** consumer へ届く（順序逆転） | それぞれ送信材料 RPC を打つ | 新しいほうは `send`、古いほうは `nothing-to-send` を返す。**期待値は「`nothing-to-send` が返る」までであり、理由は期待値に書けない**（応答は理由を1つも載せない空である）。consumer はどちらも ack し、`nothing-to-send` は失敗ではない | |
+| relay の相2で Queue への publish が失敗する（binding 障害等） | 相3を観測する | **その行だけ**が `attempt` を1つ進め、backoff で `next_run_at` を先送りされる。**backoff は行ごとであり、1件の失敗が同じ起床の他の行の配送を止めない** | |
+| 1行の relay が例外で失敗する | `alarm()` の戻りを観測する | **`alarm()` から throw しない。** per-row の catch が失敗を吸収し、同じ起床の残りの outbox 行も、続く (3-b) の `jobs` パスも実行される。Alarm は最後に両表から再計算して張り直される | |
+| publish の失敗が backoff の上限回数を超える | その行を観測する | `status` が `quarantined` になり `terminal_reason` が入る。**`terminal_reason` に PII と再利用可能な秘密が入らない**（運用者が読む場所である）。`owner_token` は残る | |
+| `quarantined` の行がある | その `event.id` について送信材料 RPC を打つ | **呼び出しガード (b) により `nothing-to-send` を返す**（理由は返さない） | |
+| `quarantined` の行がある | operator 専用 maintenance 経路の `list-quarantined-events` を呼ぶ | 隔離された行が一覧できる。**このエントリは `jobs.kind` にも `event.type` にも入らない**（ジョブでもイベントでもなく RPC である） | |
+| `quarantined` の行がある | `requeue-quarantined-event` で再駆動する | 行が `pending` へ戻り、次の起床で relay の対象になる。**consumer 側の失敗の導線はここではなく DLQ ハンドラである**（責務分界は「Queue に入る前か後か」の1本） | |
+| 保持期間を過ぎた `published` の行と `quarantined` の行がある | ジョブランナーの起動末尾の prune を観測する | **`published` の行だけが上限件数まで削除され、`quarantined` の行は残る**（運用者の検査材料）。prune 専用の `kind` は増えない | |
+| prune が `published` の行を消した後、その `event.id` のメッセージを DLQ から再駆動する | 送信材料 RPC を打つ | **呼び出しガード (a)（行の存在）を満たさないので `nothing-to-send` になる。** これが恒久的に起きないよう、運用値は `Queue の最大 retry 期間 + DLQ の保持期間 ≤ published 行の保持期間` を満たす（もう1本は `DLQ の保持期間 < リセットトークンの TTL`。**制約は2本でこれが全数**。実値の確定は #38） | |
+| consumer が処理に失敗する | Queue の retry を焼き切らせる | メッセージが **DLQ へ落ちる**。**発行元 DO の `outbox_events` は `published` のまま変わらない** — `published` は「Queue へ渡した」の意味であり「処理された」ではない。**consumer からの ack を発行元 DO へ書き戻さない** | |
+| DO のコードが期待するスキーマバージョンより DO 側が進んでいる（fail-closed） | Alarm を起床させる | migration ゲートで戻るので **(3-a) の relay パスに到達せず、outbox 行が滞留する**。**滞留は失われた配送ではない** — 行は残り、コードが揃った次の起床で流れる。ゲート呼び出しは `alarm()` の中で catch され、Alarm は**張ったまま**にされる（`deleteAlarm()` しない） | |
+| fail-closed になる**前に** publish 済みのメッセージが Queue に残っている | consumer がそれを処理しようとする | 送信材料 RPC が migration ゲートで `SystemError` を返し、**retry を焼き切って DLQ へ落ちる。** DO 側の滞留が「失われない」のとは**非対称な挙動**である。デプロイのスキュー期間に限られ、復旧は DLQ の再駆動 | |
+| 任意のイベント行が Queue へ publish される | `outbox_events.payload` / Queue メッセージ / DLQ メッセージ / ログ / `terminal_reason` を確認する | **PII と再利用可能な秘密がどこにも載らない。** Queue メッセージが運ぶのは `event.id` / `type` / `payload` / 宛先 DO の routing key / `owner_token` だけで、**メッセージは行の写しであり Queue 側で組み立て直さない**。宛先メールアドレスと生トークンは**送信材料 RPC の応答と provider へのリクエストにのみ存在し、どこにも永続化されない**（「境界を出ない」ではない） | |
+| `published` の行がある（consumer が RPC を打つのは relay が `published` へ落とした後である） | 送信材料 RPC を打つ | **`status` は照合条件に入らないので `send` が返る。** `status = 'publishing'` を条件にすると正常系の配送が全滅する。**二重送信の抑止は `status` ではなく `providerIdempotencyKey` が担う** | |
+| 同じ内容のイベントを同じ窓の外で2回発行する | `outbox_events` の行を確認する | **2行になる。** `outbox_events` は例外なく「1イベント1行・不変」であり、`jobs` の `operation_key` のような収束は起きない（`dedupe_key` も部分 UNIQUE 索引も無い）。2回起きた事実を1行に畳むと片方が配送されない | |
+| `jobs` 側に大量の実行可能な行があり、outbox 側にも実行可能な行がある | Alarm を1回起床させる | **(3-a) と (3-b) の両方を必ず1回通る。** 件数上限は各パスが独立に持ち、片方が上限を使い切っても他方は必ず走る（共有すると片方の滞留がもう片方を飢えさせる） | |

@@ -11,7 +11,7 @@
 - `UserId` も identity ドメインの型を参照する（ID参照のみ）
 - **出典リンクは knowledge ドメインが保持する**（ADR-004）。memo は自分がどのドキュメントの出典になっているかを知らない。タイムライン上の「→ ドキュメントX」導線は、表示時に knowledge 側へ `MemoId` で照会（メモ群を出典とする出典リンクの逆引き）して実現する。同様に、メモのハードデリート時の出典リンク消去（ADR-003）は**同期方式**で行う: trash ドメインのユースケースが同一 UnitOfWork 内で `MemoRepository.hardDelete`（メモ本体とリビジョンの消去）と knowledge の `DocumentRepository.deleteSourceLinksByMemo`（出典リンクの消去）を呼ぶオーケストレーション責務を負う。memo ドメイン自身は出典リンクに関知しない
 - **差分は保存しない**。リビジョンは毎回全文スナップショットであり、任意二点間の差分は表示時（presentation 層）に計算する
-- 検索インデックスの更新は、メモ本体を書くのと**同一のトランザクションの中の projection 処理**として行う（`.adr/004`。詳細は search.md「インデックスの維持」）。別ストアへ配送する経路は持たない
+- 検索インデックスの更新は、メモ本体を書くのと**同一のトランザクションの中の projection 処理**として行う（`.adr/004`。詳細は search.md「インデックスの維持」）。**検索インデックスについては配送しない。memo ドメインはイベントを定義しない** — consumer が無く、業務上の変更履歴は `memo_revisions` が持つからである。**外部への配送の契約と全数は [async/index.md](../async/index.md)**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）
 
 ## ユビキタス言語
 

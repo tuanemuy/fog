@@ -1,6 +1,6 @@
 # Inventory — domain
 
-生成元: spec/domains/（最終同期: 2026-08-01）
+生成元: spec/domains/（最終同期: 2026-08-06）
 
 ## identity
 
@@ -45,6 +45,12 @@
 | DOM-identity-042 | CredentialLocatorStore.record | spec/domains/identity.md#CredentialLocatorStore | upsert。既存があれば `credentialVersion` / `usableForLogin` / `label` を上書きする。**`credentialVersion` は `credentialId` 単位で単調非減少**（引数と既存の最大値のうち大きいほう）。**既存行があれば何もしない no-op にしてはならない**（記録が空振りすると到達性検査が利用者を締め出す） |
 | DOM-identity-043 | CredentialLocatorStore.advanceCredentialVersion | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の `credentialVersion` を1つ進める。**その credential のすべての行に同時に効く**（1つだけ更新すると認証情報側との食い違いが残る） |
 | DOM-identity-044 | CredentialLocatorStore.deleteByCredentialId | spec/domains/identity.md#CredentialLocatorStore | その `credentialId` の行をすべて消す。「無ければ成功」の冪等操作。SSO 連携の解除・退会が使う（消す前に写像材料を控える。消した後は認証情報側の行へ辿り着けない） |
+| DOM-identity-045 | EventId 値オブジェクト | spec/domains/identity.md#共通の契約 | 不透明な非空文字列。形式（UUIDv7 等）は `IdGenerator` の責務であり、**ドメインは形式を知らず採番もしない**（採番するのはアプリケーション層の UoW 実装） |
+| DOM-identity-046 | イベント draft の契約 | spec/domains/identity.md#共通の契約 | `{ type, payload, occurredAt, aggregateId }`。**`EventId` を持たない** — ドメインは identity-less な draft を返し、UoW 実装が採番して付ける。`occurredAt` は引数で受けた `now` を使い、ドメインは時計にも `IdGenerator` にも触らない。**payload に PII と再利用可能な秘密を載せない** |
+| DOM-identity-047 | イベントの契約 | spec/domains/identity.md#共通の契約 | draft + `{ id: EventId }`。UoW が `outbox_events` へ書く形である。**登録口は UoW コンテキストの `enqueueEvent(drafts)` 1つだけでドメインポートではない**（ポートにすると、トランザクションの外からイベントだけを書く経路が構造的に残る。domains/index.md） |
+| DOM-identity-048 | ファクトリ / 遷移の戻り値の形 | spec/domains/identity.md#共通の契約 | `{ entity, eventDrafts }`。状態遷移とイベントの発生を1つの戻り値で表す。イベントを発行しない遷移では `eventDrafts` が空になる |
+| DOM-identity-049 | identity.passwordResetRequested | spec/domains/identity.md#identity.passwordResetRequested | **本 spec で定義される唯一のイベント型である**（全数は spec/async/index.md）。発行点は `requestPasswordReset` のトランザクションで、**その窓での最初の依頼のときだけ4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）とも必ずちょうど1行**、既に発行済みの窓なら4ケースとも1行も書かない。`aggregateId` は**スロットル窓のキー**（`claimWindow` に渡した `windowKey`。`credentialId` は未登録の宛先に存在せず有無が観測可能な差になるので使えない）。payload は `tokenId` / メール種別 / 発行元 bucket の routing key で、**メールアドレス・生トークン・`userId` を載せず、`tokenId` を nullable にしない**（送らない側では宛先の有無から独立に生成した不透明値を置く）。**登録・パスワード変更・保持期限変更のイベント型は定義しない**（consumer も明示的な監査要件も無い） |
+| DOM-identity-050 | PasswordResetThrottlePort.claimWindow | spec/domains/identity.md#PasswordResetThrottlePort | リセット依頼のスロットル窓の判定と計上。**メソッドは1つだけでこれが全数である** — その窓の最初の依頼なら行を作って `true`、既存の窓なら `last_requested_at` だけを更新して `false` を返す。**判定と計上は1回の呼び出しで原子的に行われる**（2メソッドに分けると4ケース一様性が呼び出し順序に依存する性質になる）。戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の**両方を決める唯一の分岐**である。`windowKey` は呼び出し側が導出して渡す（対象 canonical の全長 HMAC + 依頼の窓。**クライアントから受け取らない**）ので、ポートは導出鍵を知らない。**登録の有無に関係なく行を作る。同期契約**（`transactionSync` の中で呼ぶので domains/index.md の `Promise` 例外2件は動かない）。置き場は認証情報側（Identity Directory） |
 
 ## memo
 
