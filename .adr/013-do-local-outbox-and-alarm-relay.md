@@ -6,12 +6,13 @@
 
 承認済み
 
-`.adr/004-do-local-commit-and-alarm-jobs.md` の次の2点を supersede する。
+`.adr/004-do-local-commit-and-alarm-jobs.md` の次の3点を supersede する。
 
+- **決定のリード文**（「Durable Object のローカル SQLite トランザクションと、オブジェクトごとの Alarm ジョブへ全面的に移行し、**Outbox / relay / consumer / DLQ を廃止する**」）のうち、廃止を言う後半。**失効の範囲は下の第3項と同じである** — 本 ADR は Outbox / relay / consumer / DLQ を DO ローカル Outbox + Alarm relay + Queue consumer + DLQ として復活させる。前半（DO ローカル SQLite トランザクションと Alarm ジョブへの移行）は有効である。
 - **決定の第3項**（ドメインイベントを配送の transport として扱うのをやめ、業務・監査の表現としても残さず、Unit of Work からのイベント収集そのものを廃止する）と、影響の対応する項（「ドメインイベントの機構そのものが無くなる」）。
 - **決定の第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件**。外部 I/O は「同期トランザクションの中では実行できない」ことしか含意せず、**実行責任がどこにあるかを何も言わない**。第2項が名指しする `.thread/34/design.md` 第7.4節（載る処理の全数）も失効し、全数は `spec/async/index.md` が持つ。
 
-**supersede しないもの**: 永続ジョブと Alarm という機構そのもの（第2項の残り）と、第1項（本体データと検索索引を DO ローカルの同一トランザクションで同期的に確定させる）。`.adr/002-cloudflare-workers-and-user-data-durable-objects.md` の User Data DO / Identity Directory DO への集約、`.adr/003-sqlite-fts5-only-search.md` の FTS5 単独検索、`.adr/005-search-projection-inside-write-transaction.md` の「検索インデックスの更新は本体を書くトランザクションの中の projection である」は**すべて維持する**。本 ADR は検索インデックスの更新方式に一切触れない。
+**supersede しないもの**: 決定のリード文の**前半**（DO ローカル SQLite トランザクションと、オブジェクトごとの Alarm ジョブへの全面移行）、永続ジョブと Alarm という機構そのもの（第2項の残り）、第1項（本体データと検索索引を DO ローカルの同一トランザクションで同期的に確定させる）。`.adr/002-cloudflare-workers-and-user-data-durable-objects.md` の User Data DO / Identity Directory DO への集約、`.adr/003-sqlite-fts5-only-search.md` の FTS5 単独検索、`.adr/005-search-projection-inside-write-transaction.md` の「検索インデックスの更新は本体を書くトランザクションの中の projection である」は**すべて維持する**。本 ADR は検索インデックスの更新方式に一切触れない。
 
 `.adr/010-job-enqueue-points-and-reenqueue-rules.md` については、機構（投入点の全数宣言・収束規則3つ）を維持したうえで、**2項の帰属を移し、1項の射程を広げる（計3項。全数は下の「影響」）**。
 
@@ -98,10 +99,11 @@ Issue #50 が要求するのは、判定軸を実行責任の所有者へ移し�
   - 分岐を分けないのは、(i) 発行が未使用トークンを全置換するので **DO 側の状態から supersede と宛先不在を区別できない**こと、(ii) **区別できること自体が列挙オラクルになる**こと（応答は consumer のログにも DLQ にも落ちうる）による。**分岐を1つに畳むのは実装上の妥協ではなく、秘密と PII を DO の外へ出さない範囲の延長である。**
   - **「なぜ送らなかったか」を consumer 側に残さない。** 運用の追跡が要るなら DO 側の観測に閉じる。
 - **`providerIdempotencyKey` は DO が `event.id` から導出してこの応答に載せる。** 導出鍵は DO 側にあり consumer では導けないので、表の列にもせず、consumer にも鍵を配らない。
-- **呼び出しガードを置く。** 生トークンは `tokenId` から導かれ、`tokenId` は Queue メッセージと DLQ を通って DO の外へ出る。この RPC が無条件だと「`tokenId` を知る者 = リセットリンクを引ける者」になる。応答が `send` になるのは次の3条件がすべて成り立つときだけである。
+- **呼び出しガードを置く。** 生トークンは行の `payload` が持つ `tokenId` から導かれる。**`event.id` は Queue メッセージと DLQ を通って DO の外へ出るので、この RPC が無条件だと「`event.id` を知る者 = リセットリンクを引ける者」になる。** 応答が `send` になるのは次の3条件がすべて成り立つときだけである。
   1. その `event.id` の行が `outbox_events` に**存在する**
   2. 行が `quarantined` **でない**
   3. 呼び出しが持つ**不透明な `owner_token` が行の値と一致する**
+  - **RPC が受け取るのは `event.id` と `owner_token` の2つだけであり、これが全数である。`tokenId` は行の payload から DO が読むので引数に取らない**（正本は `spec/async/index.md`「呼び出しガード」）。
   - **`status` は照合条件に入れない。** consumer が RPC を打つのは relay の相 3（`published` への落とし込み）の**後**なので、`status = 'publishing'` を条件にすると正常系の配送が全滅する。**二重送信の抑止は `status` ではなく `providerIdempotencyKey` が担い、役割を混ぜない。**
   - 同一性の判定は `owner_token` が単独で負う。再 claim で `owner_token` が書き換わるので、古い Queue メッセージを持った consumer の呼び出しは 3. で弾かれて `nothing-to-send` に落ちる。
 - **`outbox_events` は終端（`published` / `quarantined`）へ落とすときも `owner_token` を `NULL` にしない。** `jobs` は `NULL` にするが、こちらは照合材料として残す。**落とすとガード 3. が `published` の行に対して必ず失敗し、正常系の配送が全滅する。**
@@ -225,7 +227,7 @@ Issue #50 が要求するのは、判定軸を実行責任の所有者へ移し�
 - **`CLAUDE.md` から `jobs.kind` / `event.type` の全数列挙が消える。** `spec/database/index.md` が持っていた「両方の表を同時に直す」義務は1本になる。
 - **Cloudflare Queues への依存が復活する。** `.adr/004` が Outbox / relay / consumer / DLQ を廃止して以降、`CLAUDE.md` は「Queues を持たない」をランタイムの性質として宣言していた。本 ADR はそれを反転させ、プラットフォーム依存が1つ増える。provisioning の義務も戻る — Queue 1本と DLQ 1本（`infra/cloudflare/pulumi`）、**state Worker（DO 側）の producer binding**、request Worker の consumer / DLQ binding、4つの wrangler テンプレートの更新である。producer binding が state Worker 側に立つのは、publish するのが relay = DO だからである（上の 5.）。実際の追加は #51、運用値（retry 期間 / DLQ の保持期間）は #38。
 - **consumer が秘密を扱う実行主体になる。** メール provider の API キーが帰属し、宛先と生トークンを配送の瞬間だけ保持する。**帰属は state Worker から request Worker へ移る**（`apps/web/.dev.vars.example` への実際の追記は #51）。`CLAUDE.md` の「Each Worker has its own, non-overlapping set of secrets」の対象が1件増える。**canonical を全長 HMAC へ写す写像鍵は（本 ADR 以前から）request Worker 側の秘密であり、#51 の `.dev.vars.example` 追記の対象に含める** — 帰属が動くのはメール provider の秘密1件だけだが、宣言されていない既存の帰属がもう1つあることを同じ表に載せる。
-- **秘密と PII について保証するのは「載らない・永続化されない」であって「DO の境界を出ない」ではない。** 保証は3つ — (i) `outbox_events.payload` / Queue メッセージ / DLQ / ログ / `terminal_reason` のいずれにも PII と再利用可能な秘密を載せない（**明示的な例外は `owner_token` ただ1つで、載せる理由と代わりに置く禁止則は下の持参人証の項が持つ**）、(ii) 宛先メールアドレスと生トークンは送信材料 RPC の応答と provider へのリクエストにのみ存在し、どこにも永続化されない、(iii) **DO の中から出ないのは、宛先の復号鍵とリセットトークンの導出鍵である。** canonical を全長 HMAC へ写す**写像鍵は bucket 選択のために request Worker 側（stub 選択アダプター）にあり、DO の中には無い**（正本は `spec/database/index.md`「窓キーの導出」）。これは本 ADR 以前からの帰属であり、本 ADR はそれを窓キー導出の前提として明示しただけである（上の 9.）。**無限定に「HMAC 導出鍵は DO の中から出ない」と書かない** — 書くと (a) 窓キーの導出を DO 側へ寄せる案（`claimWindow` に canonical を渡す形。上の 9. が却下している）への導線になり、(b) 写像鍵が request Worker の秘密であることが `.dev.vars.example` の帰属表（#51）から落ちる。**「境界を出ない」と書くと、後任が consumer 側のログ方針や秘密管理を緩める導線になる。**
+- **秘密と PII について保証するのは「載らない・永続化されない」であって「DO の境界を出ない」ではない。** 保証は3つ — (i) `outbox_events.payload` / Queue メッセージ / DLQ / ログ / `terminal_reason` のいずれにも PII と再利用可能な秘密を載せない（**明示的な例外は `owner_token` ただ1つで、載せる理由と代わりに置く禁止則は下の持参人証の項が持つ**）、(ii) 宛先メールアドレスと生トークンは送信材料 RPC の応答と provider へのリクエストにのみ存在し、どこにも永続化されない、(iii) **DO の中から出ないのは、宛先の復号鍵・リセットトークンの導出鍵・`providerIdempotencyKey` の導出鍵の3つである**（3本目は上の 6.）。canonical を全長 HMAC へ写す**写像鍵は bucket 選択のために request Worker 側（stub 選択アダプター）にあり、DO の中には無い**（正本は `spec/database/index.md`「窓キーの導出」）。これは本 ADR 以前からの帰属であり、本 ADR はそれを窓キー導出の前提として明示しただけである（上の 9.）。**無限定に「HMAC 導出鍵は DO の中から出ない」と書かない** — 書くと (a) 窓キーの導出を DO 側へ寄せる案（`claimWindow` に canonical を渡す形。上の 9. が却下している）への導線になり、(b) 写像鍵が request Worker の秘密であることが `.dev.vars.example` の帰属表（#51）から落ちる。**「境界を出ない」と書くと、後任が consumer 側のログ方針や秘密管理を緩める導線になる。**
 - **判定規則2の根拠が細る。** 上の 6. の RPC 往復により、consumer が実際に担うのは provider 呼び出し1回だけで、送信材料の解決・宛先の有無・トークン生存の再確認はすべて DO へ戻る。「実行責任を独立した consumer へ委譲する」に照らすと委譲されている責任は薄い。**この事実を全数表の該当行の差し戻し条件と対にして残す** — 実装で RPC 往復のコストが想定を超えた場合、規則3を根拠に local job へ差し戻すことが規則上は可能であり、そのときは Outbox に載るイベントが0件になる。
 - **送信材料 RPC は、バケット共有の Identity Directory DO を配送1件あたり1回占有する。** `.adr/002` は「1利用者のリクエストが1つの Durable Object に直列化する」ことを構造的制約として名指ししており、Identity Directory DO はバケット単位で多数の利用者に共有される。本文レンダリングと復号・HMAC 導出を DO の中に置く（上の 6.）以上、その直列化キューを配送のぶんだけ占有するコストを受け入れる。負荷の実測は #38 であり、閾値を超えた場合の逃げ道は1つ上の差し戻しである。
 - **未認証の `requestPasswordReset` の増幅係数が上がる。** distinct な canonical 1件につき、窓行1 + `outbox_events` 行1 + Queue メッセージ1 + cross-Worker RPC 1往復が生じる。**canonical 単位のスロットルはこれを抑止しない** — 窓のキーは canonical ごとに独立なので、異なるアドレスを撒く経路には一切掛からない。逼迫すると書き込みだけが失敗し、影響は**バケットを共有する他の利用者**にも及ぶ。**発信元単位のレート制限は transport 境界の責務であり、本 ADR の範囲外として #38 / #51 へ引き継ぐ。**

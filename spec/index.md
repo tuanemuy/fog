@@ -49,5 +49,5 @@
 |---|---|
 | [.adr/002](../.adr/002-cloudflare-workers-and-user-data-durable-objects.md) | Cloudflare Workers とユーザー単位 Durable Objects を本番構成とする |
 | [.adr/003](../.adr/003-sqlite-fts5-only-search.md) | 検索は SQLite FTS5 の全文検索のみとする（`spec/adr/005` の根拠側を supersede） |
-| [.adr/004](../.adr/004-do-local-commit-and-alarm-jobs.md) | ローカル同期コミットと Alarm ジョブへ移行する（`spec/adr/005` の更新方式を supersede）。**一部が `.adr/013` に supersede されている** — 失効するのは決定の第3項（ドメインイベント transport の廃止）と、第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件。**永続ジョブと Alarm という機構そのものと第1項は有効である** |
+| [.adr/004](../.adr/004-do-local-commit-and-alarm-jobs.md) | ローカル同期コミットと Alarm ジョブへ移行する（`spec/adr/005` の更新方式を supersede）。**一部が `.adr/013` に supersede されている** — 失効するのは決定のリード文が言う「Outbox / relay / consumer / DLQ を廃止する」、決定の第3項（ドメインイベント transport の廃止）、第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件の3点。**リード文の前半（DO ローカル SQLite トランザクションと Alarm ジョブへの移行）、永続ジョブと Alarm という機構そのもの、第1項は有効である** |
 | [.adr/013](../.adr/013-do-local-outbox-and-alarm-relay.md) | DO ローカル Outbox と Alarm relay へ移行し、ドメインイベント配送を維持する（全数表の正本は [async/index.md](./async/index.md)） |

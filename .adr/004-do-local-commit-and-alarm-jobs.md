@@ -6,7 +6,7 @@
 
 `spec/adr/005-search-index-via-outbox.md`「検索インデックスの更新方式」の**更新方式**部分を `.adr/003-sqlite-fts5-only-search.md` と共同で supersede する。
 
-**一部が `.adr/013-do-local-outbox-and-alarm-relay.md` に supersede されている。** 失効するのは、決定の**第3項**（ドメインイベント transport の廃止）と影響の対応する項、および**第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件**である。**永続ジョブと Alarm という機構そのもの（第2項の残り）と、第1項（ローカルの同一トランザクションでの同期コミット）は有効である。** あわせて第2項が名指しする `.thread/34/design.md` の**第7.4節（載る処理の全数）と第7.7節（ジョブ契約の正文）**も、`.adr/013` が置き換えた範囲で失効する。載る処理の全数は `spec/async/index.md` が持つ。
+**一部が `.adr/013-do-local-outbox-and-alarm-relay.md` に supersede されている。** 失効するのは、決定の**リード文が言う「Outbox / relay / consumer / DLQ を廃止する」**（機構は `.adr/013` が DO ローカル Outbox + Alarm relay + Queue consumer + DLQ として復活させた。失効の範囲は第3項と同じである）、決定の**第3項**（ドメインイベント transport の廃止）と影響の対応する項、および**第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件**である。**永続ジョブと Alarm という機構そのもの（第2項の残り）と、第1項（ローカルの同一トランザクションでの同期コミット）は有効である。** あわせて第2項が名指しする `.thread/34/design.md` の**第7.4節（載る処理の全数）と第7.7節（ジョブ契約の正文）**も、`.adr/013` が置き換えた範囲で失効する。載る処理の全数は `spec/async/index.md` が持つ。
 
 ## コンテキスト
 

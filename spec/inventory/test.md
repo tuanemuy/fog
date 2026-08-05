@@ -863,7 +863,7 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-003 | FTS5 projection は配送を待たない | spec/testcases/async/outboxDelivery.md#L11 | relay や Queue の状態と独立に、作成・更新の直後の検索でヒットすれば PASS |
 | TC-outboxDelivery-004 | relay の相1（claim） | spec/testcases/async/outboxDelivery.md#L12 | lease 未満了の publishing 行が1件も無い前提のもとで、実行可能な行が next_run_at の昇順で上限件数まで publishing になり lease_until / owner_token が CAS で書かれ、打ち切りで残るのが常により後の next_run_at を持つ実行可能かつ claim 可能な行なら PASS（射程は claim に成功した行の集合について。lease 未満了で CAS に弾かれた行はより早い next_run_at を持ったまま残りうるので前提で排除する。TC-outboxDelivery-007） |
 | TC-outboxDelivery-005 | relay の相2〜相3（publish と終端） | spec/testcases/async/outboxDelivery.md#L13 | Queue 送信だけがトランザクション外で行われ、published へ落ちても owner_token が NULL にならなければ PASS |
-| TC-outboxDelivery-006 | Alarm の多重化 | spec/testcases/async/outboxDelivery.md#L14 | 2表の最早時刻の min が張られ、両方の実行可能集合が空のときだけ deleteAlarm されれば PASS |
+| TC-outboxDelivery-006 | Alarm の多重化 | spec/testcases/async/outboxDelivery.md#L14 | 2表の最早時刻の min が張られ、両方の実行可能集合が空のときだけ deleteAlarm されれば PASS。索引で解ける形への分解（1本の SQL にしないこと）は起床時刻の観測では判定できないので PASS 条件に含めず、実装レビューの確認項目とする |
 | TC-outboxDelivery-007 | lease 中の行の算入 | spec/testcases/async/outboxDelivery.md#L15 | leased 行が max(next_run_at, lease_until) で算入され、空振り起床を繰り返さなければ PASS |
 | TC-outboxDelivery-008 | DO reset による再 claim と再 publish | spec/testcases/async/outboxDelivery.md#L16 | 送る側（検証材料を持つクレデンシャル宛・トークンが未使用で期限内）のイベント行で組み、lease 満了後に再 claim・再 publish され、古いメッセージ側の RPC が nothing-to-send、新しい側が send を返せば PASS |
 | TC-outboxDelivery-009 | 重複配送の冪等化 | spec/testcases/async/outboxDelivery.md#L17 | 送る側（同上）のイベント行で組み、2回とも send でも providerIdempotencyKey が同じ値で provider 側が抑止し、consumer が EventId を保持しなければ PASS |
@@ -871,11 +871,11 @@ testcases 側にテストケース ID の記載はないため、全行 `TC-{テ
 | TC-outboxDelivery-011 | publish 失敗の行単位 backoff | spec/testcases/async/outboxDelivery.md#L19 | 失敗した行だけが attempt を進めて先送りされ、同じトランザクションで pending へ戻って lease_until / owner_token が NULL に解放され、next_run_at が来るまでの起床では claim 対象の SELECT 述語（next_run_at <= now）で再 claim されず、同じ起床の他の行が止まらなければ PASS |
 | TC-outboxDelivery-012 | alarm() から throw しない | spec/testcases/async/outboxDelivery.md#L20 | per-row catch で失敗が吸収され、残りの outbox 行と jobs パスが実行され Alarm が張り直されれば PASS |
 | TC-outboxDelivery-013 | 上限超過での quarantine | spec/testcases/async/outboxDelivery.md#L21 | quarantined + terminal_reason になり、terminal_reason に PII と秘密が入らず、以後の起床で再 claim されず（実行可能集合は status IN ('pending','publishing')）他の行の配送が止まらなければ PASS |
-| TC-outboxDelivery-014 | quarantined 行への送信材料 RPC | spec/testcases/async/outboxDelivery.md#L22 | 呼び出しガード (b) により nothing-to-send を返せば PASS |
+| TC-outboxDelivery-014 | quarantined 行への送信材料 RPC | spec/testcases/async/outboxDelivery.md#L22 | 呼び出しガードの 2. により nothing-to-send を返せば PASS |
 | TC-outboxDelivery-015 | quarantine の一覧 | spec/testcases/async/outboxDelivery.md#L23 | list-quarantined-events で隔離行が一覧でき、jobs.kind にも event.type にも入らなければ PASS |
 | TC-outboxDelivery-016 | quarantine の再駆動 | spec/testcases/async/outboxDelivery.md#L24 | 隔離行だけが残り deleteAlarm() 済みの DO で、requeue-quarantined-event が status='pending' / next_run_at=現在時刻 / attempt=0 / completed_at=NULL を書き、terminal_reason を残し owner_token を採番し直し、そのあと4本の min の合成で setAlarm が張り直されて次の起床で relay の対象になれば PASS |
 | TC-outboxDelivery-017 | published の prune と quarantined の保持 | spec/testcases/async/outboxDelivery.md#L25 | 保持期間を過ぎた published だけが上限件数まで削除され、quarantined が残れば PASS |
-| TC-outboxDelivery-018 | prune 後の DLQ 再駆動 | spec/testcases/async/outboxDelivery.md#L26 | 呼び出しガード (a) を満たさず nothing-to-send になり、運用値の制約2本（左辺はどちらも Queue の最大 retry 期間 + DLQ の保持期間で、上限の相手だけが published 行の保持期間とリセットトークンの TTL に分かれる）で恒久的な空振りが防がれていれば PASS |
+| TC-outboxDelivery-018 | prune 後の DLQ 再駆動 | spec/testcases/async/outboxDelivery.md#L26 | 呼び出しガードの 1. を満たさず nothing-to-send になり、運用値の制約2本（左辺はどちらも Queue の最大 retry 期間 + DLQ の保持期間で、上限の相手だけが published 行の保持期間とリセットトークンの TTL に分かれる）で恒久的な空振りが防がれていれば PASS |
 | TC-outboxDelivery-019 | consumer 失敗の DLQ 落とし | spec/testcases/async/outboxDelivery.md#L27 | メッセージが DLQ へ落ち、発行元 DO は published のまま ack を書き戻されなければ PASS |
 | TC-outboxDelivery-020 | fail-closed の DO は relay しない | spec/testcases/async/outboxDelivery.md#L28 | 行が滞留するが失われず、Alarm が張ったまま残り、コードが揃った次の起床で流れれば PASS |
 | TC-outboxDelivery-021 | fail-closed × DLQ の逆向き | spec/testcases/async/outboxDelivery.md#L29 | 送信材料 RPC がゲートで SystemError を返し、retry を焼き切って DLQ へ落ち、再駆動で復旧できれば PASS |

@@ -107,9 +107,9 @@
   - 手順2: `5節 OK`
   - 手順3: 差分の追加行が**ステータス節の中にだけ**現れる。コンテキスト・決定・検討した代替案・影響の各節に `+` / `-` が1行も無い（AC-3）
   - 手順4: (1) 各業務 DO に Outbox + Alarm relay = **採用** / (2) 専用 Outbox DO = 不採用 / (3) すべて `jobs` + Alarm = 不採用 / (4) transaction 内で外部 I/O = 不採用 の**4案すべて**に不採用理由が書かれている。加えて撤回した旧案（`dedupe_key` / 3分岐応答 / `last_reset_requested_at` 相乗り / 窓掃除に新 `kind` / consumer を3本目の Worker / relay を `jobs.kind` に）も記録されている（AC-2）
-  - 手順5: **supersede するのは `.adr/004` の決定第3項（ドメインイベント transport の廃止）と、第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件だけ**であり、**永続ジョブと Alarm という機構そのものと第1項（ローカル同期コミット）は有効**と明記されている。`.adr/002` の DO 集約と `.adr/003` の FTS5 単独検索・`.adr/005` のトランザクション内 projection を**維持する**と明記されている（AC-1）
+  - 手順5: **supersede するのは `.adr/004` の決定のリード文が言う「Outbox / relay / consumer / DLQ を廃止する」（失効の範囲は第3項と同じ。リード文の前半 — DO ローカル SQLite トランザクションと Alarm ジョブへの移行 — は有効）、決定第3項（ドメインイベント transport の廃止）、第2項のうち「外部 I/O を伴う処理は必ずこちらに載る」という十分条件の3点だけ**であり、**永続ジョブと Alarm という機構そのものと第1項（ローカル同期コミット）は有効**と明記されている。`.adr/002` の DO 集約と `.adr/003` の FTS5 単独検索・`.adr/005` のトランザクション内 projection を**維持する**と明記されている（AC-1）
   - `spec/adr/005` のステータス節に「**本 ADR を検索 indexer consumer の復活根拠に使わない**」が入っている（AC-4）
-- **確認ポイント:** `.adr/004` の注記が「第2項は有効」とだけ書いて終わっていないか。第2項の十分条件も失効させないと、本 Issue が訂正した当の論点で「外部 I/O は必ず `jobs` に載る」という失効した根拠が生き残る（plan.md AC-3 / steps.md ステップ2）。`.thread/34/design.md` の失効宣言が **7.3 / 7.4 / 7.6 / 7.7 / 1.4 の5節**であり、plan.md「含まれないもの」の列挙と一致していること（7.6 は**部分失効**）
+- **確認ポイント:** `.adr/004` の注記が「第2項は有効」とだけ書いて終わっていないか。第2項の十分条件も失効させないと、本 Issue が訂正した当の論点で「外部 I/O は必ず `jobs` に載る」という失効した根拠が生き残る（plan.md AC-3 / steps.md ステップ2）。**決定のリード文が失効側にも有効側にも現れないまま「第1項と第2項の残りは有効」と閉じた形で宣言していないか** — リード文は「Outbox / relay / consumer / DLQ を廃止する」と言っており、名指しされなければ「有効」と読める（レビュー5周目・B-001）。`.adr/013` のステータス節も同じ穴を持つので、supersede 対象が **3点**になっていることを併せて見る。`.thread/34/design.md` の失効宣言が **7.3 / 7.4 / 7.6 / 7.7 / 1.4 の5節**であり、plan.md「含まれないもの」の列挙と一致していること（7.6 は**部分失効**）
 
 ### 3. 3類型の判定規則と配送機構の契約 【読解】
 
@@ -132,6 +132,17 @@
 - **目的:** `spec/async/index.md` の全数表が、すべての `event.type` とすべての `jobs.kind` を**ちょうど1回ずつ**覆い、欄に空きが無く、旧 `jobs.kind` 12種と1対1で辿れることを確認する（steps.md ステップ21 の機械検査 **1 / 2 / 3 / 4 / 5 / 15**）
 - **手順:**
   1. **【検査1】** `spec/database/index.md` が言及する `kind` の集合が、全数表の `jobs.kind` 集合の**部分集合**であること（差集合が空）。**一致では検査しない** — 移設後の `spec/database/index.md` には再武装5種と収束規則の例示しか残らないので、一致で見ると恒常的に赤になる
+
+     **`spec/database/index.md` 自身が「`jobs.kind` ではない」と名指ししている識別子は集合から除外する** — `rotate-remap`（Alarm ジョブではない）と operator 専用 maintenance 経路の RPC 名6つ（`purge-user-mappings` / `cancel-reservation` / `read-schema-version` / `list-bucket-user-ids` / `list-quarantined-events` / `requeue-quarantined-event`）の**計7つが除外の全数である。** あわせて、`kind` と同じ綴りの形を持つが識別子ではない値（送信材料 RPC の応答値 `nothing-to-send`）も抽出パターン次第で混じるので集合に入れない。**除外を書かずに回すと差集合が `{rotate-remap}` になり false red を出す。**
+
+     ```bash
+     awk '/^## 全数表/{f=1;next} /^## /{f=0} f' spec/async/index.md \
+       | awk -F'|' '/^\| /{gsub(/^ *| *$/,"",$2); print $2}' \
+       | grep '^`' | tr -d '`' | sort -u > /tmp/kinds_table.txt
+     grep -o '`[a-z][a-z0-9]*\(-[a-z0-9]\+\)\+`' spec/database/index.md | tr -d '`' | sort -u \
+       | grep -vxE 'rotate-remap|purge-user-mappings|cancel-reservation|read-schema-version|list-bucket-user-ids|list-quarantined-events|requeue-quarantined-event|nothing-to-send' \
+       | comm -23 - /tmp/kinds_table.txt
+     ```
   2. **【検査2】** 全数表の識別子欄で同じ識別子が2つの類型に現れないこと（識別子欄を切り出して `sort | uniq -d` が空）
   3. **【検査3】** 「発行点・投入点」欄に空欄が無いこと（AC-7 の他の欄 — owner DO / 実行責任者 / consumer / fan-out / payload / 冪等性キーとその保持先 — も同様に空欄が無いことを目視で確認する）
   4. **【検査4】** 全数表の `event.type` が `spec/domains/` のイベント定義と1対1であること（`grep -rn 'identity.passwordResetRequested' spec/domains/` と表の突き合わせ）
@@ -238,7 +249,7 @@
 - **期待結果:**
   - payload・ログ・`terminal_reason` に **PII と再利用可能な秘密を載せない**規則がある。`send-mail`（= `identity.passwordResetRequested`）について、**メールアドレスと生リセットトークンが payload・Queue メッセージ・DLQ・ログのいずれにも出ない**経路が定義されている
   - **保証範囲が「載らない・永続化されない」**であり、「DO の境界を出ない」とは書かれていない（宛先と生トークンは送信材料 RPC の応答として境界を越え、配送の瞬間だけ consumer のメモリに載る）（AC-20）
-  - **呼び出しガードが3条件** — (a) その `event.id` の行が存在し (b) `quarantined` でなく (c) 呼び出しの `owner_token` が行の値と一致する。**`status` は照合条件に入れない**ことと、その理由（`published` へ落とした後に consumer が到達するので `status='publishing'` を条件にすると正常系が全滅する／二重送信の抑止は `providerIdempotencyKey` が担う）が書かれている（AC-20）
+  - **呼び出しガードが3条件** — 1. その `event.id` の行が存在し 2. `quarantined` でなく 3. 呼び出しの `owner_token` が行の値と一致する。**`status` は照合条件に入れない**ことと、その理由（`published` へ落とした後に consumer が到達するので `status='publishing'` を条件にすると正常系が全滅する／二重送信の抑止は `providerIdempotencyKey` が担う）が書かれている（AC-20）
   - 応答は **`send` / `nothing-to-send` の2分岐で全数**であり、`nothing-to-send` は**理由を1つも載せない空**である（AC-24）
   - **`outbox_events` は終端時に `owner_token` を `NULL` にしない**こと、運用値の制約2本（`Queue 最大 retry + DLQ 保持期間 < リセットトークン TTL` / `Queue 最大 retry + DLQ 保持期間 ≤ published 保持期間`）が書かれている（AC-20）。**2本は左辺が同じ `Queue 最大 retry + DLQ 保持期間` で、上限として置く相手だけが違う（リセットトークンの TTL と `published` 行の保持期間）。2本という数は動かない**（`plan.md` AC-20 の訂正注記と対）
   - 配送が **at-least-once・順序保証なし**で、consumer が `event.id` を基準に冪等化されること、**冪等性キーの保持先が consumer ごとに全数表で宣言される**ことが定義されている。mail consumer の `providerIdempotencyKey` は **DO 側で導出され送信材料 RPC の応答で渡される**（`outbox_events` の列ではない）（AC-24）
