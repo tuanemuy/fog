@@ -23,7 +23,7 @@ fog の永続化スキーマ。**Cloudflare Workers + ユーザー単位 SQLite-
 
 ## 共通方針
 
-- **ID**: 単一の `TEXT` 列を主キーに持つテーブルでは、その値は UUIDv7 等（生成は `IdGenerator` ポート）とし、ブランド VO への再水和はアダプターの責務とする。**例外は2つで、これが全数である** — (a) `password_reset_tokens.token_id`（時刻由来を避けた暗号論的乱数の不透明値。後述）、(b) `jobs.operation_key`（**生成せず、ジョブの同一性から決定的に導く値である**。DO ごとに定数のキーを持つ種別と、対象と時間窓から導く種別がある。**`IdGenerator` で採番すると再投入のたびに別のキーになり、`jobs` の収束規則3つがどれも成立しない**。導出の規則は `jobs` の節と各ユースケースが正本）。**`outbox_events.id` は生成 ID なので例外は増えない**（`IdGenerator` が採番する不変の主キーであり、収束させないことが `outbox_events` の契約そのものである。後述）。**`reset_request_windows.window_key` は例外 (b) と同じ1件である** — 生成せず、`jobs.operation_key` と**同じ導出**（対象 canonical の全長 HMAC + 依頼の窓）で決まる同一性キーであり、別の例外を新設しない（同じ窓に同じキーが出ることがスロットル判定の成立条件そのものである。後述）。**主キーの形は3通りある** — (1) 単一 `TEXT` 列、(2) 複合キー（`memo_revisions` / `source_links` / `credential_locators` / `credential_mappings` / `migration_progress` / `rotation_checkpoints`）、(3) `search_entries` の `rowid INTEGER PRIMARY KEY`（`id TEXT` は名前つき UNIQUE 索引を持つ別列。後述）。**単一行のテーブル**（`account` / `user_settings` / `_meta`）は業務上の主キーを持たない（単一行制約の掛け方は実装裁量とする。#51）。**どのテーブルがどの形を採るかは各テーブルの節が正本であり、節に無いサロゲートの `id` 列を足してよいという読み方はしない**
+- **ID**: 単一の `TEXT` 列を主キーに持つテーブルでは、その値は UUIDv7 等（生成は `IdGenerator` ポート）とし、ブランド VO への再水和はアダプターの責務とする。**例外は2つで、これが全数である** — (a) `password_reset_tokens.token_id`（時刻由来を避けた暗号論的乱数の不透明値。後述）、(b) `jobs.operation_key`（**生成せず、ジョブの同一性から決定的に導く値である**。**現行の11種はすべて DO ごとに定数のキーを持つか `operationId` 由来であり、対象と時間窓から導く形は旧 `send-mail` が使っていたもので現行の `kind` には無い**。**`IdGenerator` で採番すると再投入のたびに別のキーになり、`jobs` の収束規則3つがどれも成立しない**。導出の規則は `jobs` の節と各ユースケースが正本）。**`outbox_events.id` は生成 ID なので例外は増えない**（`IdGenerator` が採番する不変の主キーであり、収束させないことが `outbox_events` の契約そのものである。後述）。**`reset_request_windows.window_key` は例外 (b) と同じ1件である** — 生成せず、**対象 canonical の全長 HMAC と依頼の窓から決定的に導く**同一性キーであり、別の例外を新設しない（同じ窓に同じキーが出ることがスロットル判定の成立条件そのものである。**導出主体と導出鍵の在り処を含む導出規則の正本は `reset_request_windows` の節であり、`jobs.operation_key` の規則を参照しない** — 上のとおり、この導出形を採る現行の `kind` は無い）。**主キーの形は3通りある** — (1) 単一 `TEXT` 列、(2) 複合キー（`memo_revisions` / `source_links` / `credential_locators` / `credential_mappings` / `migration_progress` / `rotation_checkpoints`）、(3) `search_entries` の `rowid INTEGER PRIMARY KEY`（`id TEXT` は名前つき UNIQUE 索引を持つ別列。後述）。**単一行のテーブル**（`account` / `user_settings` / `_meta`）は業務上の主キーを持たない（単一行制約の掛け方は実装裁量とする。#51）。**どのテーブルがどの形を採るかは各テーブルの節が正本であり、節に無いサロゲートの `id` 列を足してよいという読み方はしない**
 - **日時**: `INTEGER`（Unix epoch ミリ秒）。カラム名は `*_at`
 - **version（OCC）**: 集約ルートに `version INTEGER NOT NULL`（生成時 0）。`save` / `delete` は `WHERE id = ? AND version = ?（読み取り時の値）` の条件付き更新とし、**0 行更新を `ConflictError("OPTIMISTIC_LOCK_FAILURE")` にマップする**。**単一行テーブルは `id` 列を持たないので `WHERE version = ?` だけで条件付ける**（`id` 述語は不要。他の行が存在しないため）。**本 spec の範囲でこの形の条件付き更新を発行するのは `user_settings` だけである** — `account` も `version` 列を持つが書き手が無い（後述の `account` の項）。0 行かどうかは `UPDATE ... WHERE id = ? AND version = ? RETURNING 1` が返した行の有無で読む（単一行テーブルでは `id` 述語を除いた同じ形。意味論がその文の中で閉じるため。`changes()` は第二候補、課金単位である書き込み行数カウンタは使わない）。リビジョン・出典リンクは不変の子行のため `version` を持たない。**持つテーブル / 持たないテーブルの全数は後述**
 - **boolean**: `INTEGER`（0 / 1）
@@ -554,7 +554,7 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 
 `jobs` との規約の関係を明示する。
 
-- **共通化する規約**: Alarm scheduler（張り直しの式と lease の算入）/ backoff（`attempt` を進めて指数バックオフで先送り、上限超過で終端）/ lease（claim の CAS と `lease_until` 満了による回収）/ prune（ジョブランナーの起動末尾で、保持期間を過ぎた行を上限件数だけ削除）。**ランナーの実装は2表で共有する。ただし削除の対象集合は共有しない** — 下の 2.（値域の分離）から決まり、`outbox_events` 側で消えるのは `published` だけである
+- **共通化する規約**（**列名と状態遷移そのものは規約の項目として数えず、上の列表と `status` の欄が持つ** — 同名・同意味の列は各列定義が、値域の差は下の 2. が正本である）: Alarm scheduler（張り直しの式と lease の算入）/ backoff（`attempt` を進めて指数バックオフで先送り、上限超過で終端）/ lease（claim の CAS と `lease_until` 満了による回収）/ prune（ジョブランナーの起動末尾で、保持期間を過ぎた行を上限件数だけ削除）。**ランナーの実装は2表で共有する。ただし削除の対象集合は共有しない** — 下の 2.（値域の分離）から決まり、`outbox_events` 側で消えるのは `published` だけである
 - **分離する規約**は3つで、これが全数である。
   1. **同一性と収束の有無** — `jobs` は `operation_key` で収束し、収束規則3つが載る。**`outbox_events` は例外なく「1イベント1行・不変」であり、収束しない。** 2回起きた事実を1行に畳むと片方が配送されない
   2. **配送状態の値域** — `pending` / `publishing` / `published` / `quarantined`（`jobs` は `pending` / `running` / `done` / `poison`）。**prune の対象集合はこの値域の差から決まる** — `jobs` は終端2値（`done` / `poison`）の両方を消すが、`outbox_events` が消すのは `published` だけで、**`quarantined` は恒久保持する**（下の「その他」）
@@ -566,6 +566,7 @@ DO ローカル Outbox のイベント行。**業務データの書き込み・F
 - **外部プロバイダへ渡す冪等キーの列を置かない。** `event.id` から DO が導出し、送信材料 RPC の応答で consumer へ渡す
 - **書き込み口は UoW コンテキストの `enqueueEvent` だけである**（`jobs` の `enqueueJob` と同じ形。同期・戻り値なし・同じ `transactionSync` の中で行を書く）。`EventId` の採番は UoW 実装が `IdGenerator` に対して行う。claim・publish・finalize・prune は relay（アダプター）が同じ行に対して行うので、口を通らない
   - **`enqueueEvent` は draft の配列を取るので、draft ごとに1文で INSERT する（まとめる場合は 100 bind parameter の内側に収める）** — 13 列なので **N ≥ 8 で上限に触れる**（CLAUDE.md「Storage limits」。claim / prune の一括形に掛かるのと同じ制約である）
+  - **INSERT が書くのは `id` / `type` / `payload` / `aggregate_id` / `occurred_at` / `created_at = now` / `attempt = 0` / `next_run_at = now` / `status = 'pending'` の9列であり、`lease_until` / `owner_token` / `terminal_reason` / `completed_at` は `NULL` である**（9 + 4 = 13 列の内訳と対になる）。**`next_run_at` を省いて `NULL` のまま入れない** — 「operator 専用 maintenance 経路」が再駆動について警戒しているのと同じ「起きるが1行も進まない」状態（張り直しの `min()` が SQL の `min()` の NULL 無視でこの行を拾わず、claim の述語 `next_run_at <= now` にも掛からず、それでも実行可能集合は空でないので `deleteAlarm()` もされない）が、そのまま新規イベント側で起きて backlog だけが伸びる
 - OCC の `version` は持たない（非集約ストア）
 - `user_id` 列は持たない（構造的テナント分離）。**ただし配送メッセージは宛先 DO の routing key を運ぶ**（「物理境界」の項）
 - **保持期間を持つのは `published` だけである。`quarantined` は運用者が再駆動するか明示的に削除するまで恒久保持し、prune は触らない**（隔離の原因を調べる材料そのものなので、運用者が見る前に消える窓を作らない）。`published` の保持期間に掛かる運用値の制約2本は `jobs` の prune の項が持つ
@@ -744,7 +745,7 @@ DO ごとのメタ情報。単一行。
 
 | カラム | 型 | 制約 |
 |---|---|---|
-| `window_key` | TEXT | PK。**対象 canonical の全長 HMAC と依頼の窓から決定的に導く**（`jobs.operation_key` と同じ導出）。**クライアントから受け取らない** |
+| `window_key` | TEXT | PK。**対象 canonical の全長 HMAC と依頼の窓から決定的に導く**（導出主体と導出鍵の在り処は下の「窓キーの導出」が正本）。**クライアントから受け取らない** |
 | `key_generation` | INTEGER | NOT NULL。**`window_key` を導いた写像鍵の世代**（`credential_mappings.generation` と同じ番号体系であり、`password_reset_tokens.token_key_generation` のリセットトークン鍵の世代とも `credential_mappings.encryption_generation` の暗号鍵の世代とも別である）。**読み手は診断**（後述） |
 | `first_requested_at` | INTEGER | NOT NULL。その窓での最初の依頼の時刻 |
 | `last_requested_at` | INTEGER | NOT NULL。その窓での最後の依頼の時刻（2回目以降はこの列だけを更新する） |
@@ -756,12 +757,14 @@ DO ごとのメタ情報。単一行。
 |---|---|---|
 | `rrw_expires_idx` | (`expires_at`) | `sweep-reset-tokens` の期限切れ窓行の掃除（`prt_expires_idx` と同じ役割・同じ形） |
 
+- **窓キーの導出。この節が導出規則の正本であり、他のファイルはここを参照する。** `windowKey` は **bucket 選択のために canonical の全長 HMAC を既に計算しているアダプター（Identity Directory の stub を選ぶ側）が、その同じ値を DO facade へプリミティブとして渡し**、ユースケースが窓と合成して組み立てる。**導出鍵はその stub 選択アダプターの中にあり、ユースケースにもポートにも渡らない。** facade が受け取る HMAC は server-side で導出された値であって外部入力ではないので、`CLAUDE.md`「Input validation」の第3の検証点にはならない（**クライアントからは受け取らない**）。合成は keyed な再導出を行わない（鍵付きの部分は HMAC 側で済んでいる）ので、`transactionSync` の中に暗号処理を持ち込まない
 - **登録の有無に関係なく行を作る。** 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）のどれでも**同じ1文で読み、同じ1文で書く。行の有無が観測可能な差にならないことが、この表を新設した理由そのものである**
 - **書き込み口は UoW コンテキストの `resetThrottleStore` の `claimWindow` ただ1つであり、これが全数である。** その窓の最初の依頼なら行を作って `true`、既存の窓なら `last_requested_at` だけを更新して `false` を返す。**「読み」と「計上」を2つの書き込み箇所として数えない** — 判定と計上は1回の呼び出しで原子的に行われる（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の**両方を決める唯一の分岐**である。**掃除の `DELETE` は `sweep-reset-tokens`（アダプター）が同じ行に対して行うので口を通らない**（`jobs` / `outbox_events` と同じ形）
 - **期限切れ行の掃除は `sweep-reset-tokens` が担う**（新しい `jobs.kind` を足さない）。**投入点は「リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）」であり、宛先の登録有無で投入を分けない**
 - **窓の長さと `expires_at` の猶予は運用値であり、実値の確定は #38 である**（`jobs` の件数上限が「#51 が spike で出して #38 が確定する」のと同じ形）。窓の長さは (a) スロットルの強度、(b) この表の行数（= 10 GB 算入分）、(c) `sweep-reset-tokens` の起床頻度を同時に決める。**値の選び方には制約が1本掛かる — `スロットル窓の長さ < リセットトークンの TTL` を満たすこと。** 満たさないと、リンクが期限切れになった利用者が窓の明けるまで再送を得られず、`spec/scenario/account.md` の異常系（「リセットリンクが期限切れの場合、その旨が表示され再送をやり直せる」）と衝突する。**この制約は配送の運用値の制約2本（`jobs` の prune の項 / async/index.md「運用値の制約」）の外側にある別の1本であり、あちらの「2本で全数」を開かない**
   - **窓の長さは単一の設定値であり、`windowKey` の導出（ユースケース側）と `expires_at` の算出（アダプター側）が同じ値を読む。2箇所に別々の定数を置かない。** 同じ運用値が2層で必要になるのは、`claimWindow(windowKey, now)` が窓長を引数に取らないからである。ズレると静かに壊れる — アダプター側が短いと、まだ有効な窓の行が `sweep-reset-tokens` に消され、`claimWindow` が同じ窓で2度目の `true` を返す（下の世代跨ぎで例外的に許容している破れが、設定ミスで恒常化する）
   - **窓の中で配送が `quarantined` / DLQ に落ちた場合、その窓のあいだ利用者は1通も受け取れないまま再送も得られない**（2回目以降の依頼は `claimWindow` が `false` を返すのでイベント行を書かない）。復旧は operator 経路（隔離行の再駆動 / DLQ の再駆動）だけである
+    - 隔離行の再駆動が**有効なリンクを届けられるのはリセットトークンが TTL 内のときだけ**である。`quarantined` は恒久保持なので DLQ 側の `DLQ 保持期間 < トークン TTL` に相当する束縛を置けない。TTL を過ぎてからの再駆動は送信材料 RPC が `nothing-to-send` を返し、利用者側の復旧は窓が明けてからの再依頼になる。**これは窓の運用値と同じ「外側の注記」であり、配送の運用値の制約2本（`jobs` の prune の項 / async/index.md「運用値の制約」）の「2本で全数」を開かない**（縛る対象が設定値ではなく operator の反応時間なので、3本目の不等式としては書けない）
 - **`key_generation` の読み手は診断である** — 索引にも `claimWindow` の述語にも現れない（世代は既に `window_key` へ畳み込まれているので PK にも入らない）。運用者が「どの写像鍵世代で導かれた行か」を判別するために持つ。旧世代の行は誰にも引かれないまま `expires_at` で掃除されるので、**世代を述語にした一括削除は置かない**
   - **写像鍵の世代が進むと、同じ canonical・同じ時間窓でも `window_key` が別値になる**ので、同じ窓に2世代の行が併存し、**その窓のスロットルが一度だけリセットされる** — 新世代側の `claimWindow` が `true` を返し、未使用トークンの全置換（= 利用者の手元のリンクが死ぬ）と2通目のメールが起きうる。**これを許容する。** ローテーションは operator 起動の稀事象で、窓は分オーダー、破れは世代の前進1回ぶんに限られる一方、世代跨ぎの探索を `claimWindow` の契約へ入れると旧世代キーの再導出をアダプターへ要求することになり、釣り合わない
   - **世代を進める主体は #44（写像鍵のローテーション）である。** `rotate-encryption` はメール暗号鍵の世代を進めるジョブであり、この列は動かさない
@@ -987,3 +990,4 @@ account.caller_token        ──→ credential_mappings.caller_token（同じ�
 | 配送済み（`published`）イベントの prune | `outbox_completed_idx` |
 | Alarm の張り直し（4本の min の合成。「Alarm の多重化」） | `jobs_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `jobs_lease_idx`（`status='running'` の `min(lease_until)`）/ `outbox_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `outbox_lease_idx`（`status='publishing'` の `min(lease_until)`） |
 | bucket 内の `userId` 列挙（運用の診断経路） | `cm_user_idx` |
+| スロットル窓の判定と計上（`claimWindow`） | `reset_request_windows` の PK (`window_key`) |

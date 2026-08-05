@@ -65,7 +65,7 @@
 - **`owner_token` は再利用可能な秘密である。** `(event.id, owner_token)` の対を握れば送信材料 RPC が `send` を返すので、対そのものが「宛先と生トークンを引ける持参人証」になる。それでも Queue メッセージと DLQ に載るのは、**呼び出しガードを成立させるために必要な明示的な例外**だからであり、上の禁止則が緩むわけではない。例外の代償として、次の2条が掛かる。
   - **Queue メッセージをログへ出さない** — 個々の項目だけでなくメッセージ全体を出さない。**ログに載せてよいのは `event.id` と `type` までである。**
   - **DLQ のメッセージを外部の監視基盤・ログ集約先へ転送しない。** 転送する設計を足すなら、`.adr/013` の判断へ戻る。
-- **Queue メッセージは宛先 DO の routing key を運ぶ。** Queue メッセージが運ぶ routing key は、**発行元 DO 自身の locator** である（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する。この粒度なので禁止項目（`userId`）とも衝突しない。**ただし User Data DO のイベントを足すと、その routing key は `userId` そのものになりうる。** 初期のイベント型は0件なので今は潜在的だが、規則として残す — **User Data DO のイベントを足すときは、routing key の扱い（`userId` を Queue に載せるか、別の不透明キーへ写すか）を同時に決める。**
+- **Queue メッセージは宛先 DO の routing key を運ぶ。粒度の定義本体は下の「Queue メッセージ」が持ち、ここでは繰り返さない**（重複させると片方だけが伸びて割れる）。衛生規則としてここで確認するのは、**その粒度が個人を指さない**こと — したがって禁止項目（`userId`）と衝突しない — の1点だけである。**ただし User Data DO のイベントを足すと、その routing key は `userId` そのものになりうる。** 初期のイベント型は0件なので今は潜在的だが、規則として残す — **User Data DO のイベントを足すときは、routing key の扱い（`userId` を Queue に載せるか、別の不透明キーへ写すか）を同時に決める。**
 
 ## 配送の性質
 
@@ -76,7 +76,9 @@
 
 ## 送信材料 RPC
 
-consumer は event payload から送信内容を組み立てず、**発行元 DO へ RPC して、レンダリング済みの送信材料を取得してから provider を呼ぶ。** 復号と HMAC 導出は DO の中に閉じたままである。
+consumer は event payload から送信内容を組み立てず、**発行元 DO へ RPC して送信材料を取得してから provider を呼ぶ。**
+
+`send` が持つのは**宛先・生リセットトークン・`providerIdempotencyKey`** の3つである。**URL の組み立てとメール本文のレンダリングは `MailSender` アダプター（request Worker）の責務**であり、DO はテンプレートも base URL も持たない。DO の中に閉じるのは**復号と HMAC 導出**であって、レンダリングではない（`CLAUDE.md` の「CPU-bound work は request Worker」。レンダリングを DO へ寄せると、バケット共有 DO の直列化キューをその分だけ余計に占有する）。
 
 ### 応答の全数
 
@@ -84,7 +86,7 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 
 | 分岐 | 内容 | consumer の振る舞い |
 |---|---|---|
-| `send` | 宛先・レンダリング済み本文・`providerIdempotencyKey` | provider を呼び、ack する |
+| `send` | 宛先・**生リセットトークン**・`providerIdempotencyKey`（**本文は載らない** — 上のとおり組み立てとレンダリングは `MailSender` アダプター側） | provider を呼び、ack する |
 | `nothing-to-send` | **理由を1つも載せない空である** | no-op して ack する。**失敗ではない** |
 
 - 未登録 / SSO 専用 / 消費済み / 期限切れ / より新しい発行に置き換えられた、のいずれであっても**同じ `nothing-to-send` が返る。**

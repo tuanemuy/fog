@@ -609,7 +609,7 @@ export interface PasswordResetTokenPort {
 }
 ```
 
-- **`issue` は生トークンと `tokenId` の両方を返す。** 生トークンは**アダプターの外へ出るが、ユースケースはこれを読まない・保持しない・どこへも渡さない**（現状の読み手は0件であり、送信時は送信材料 RPC が `tokenId` から導出し直す。メールの URL 組み立ても RPC の側で行う）。返し続けるのは、payload の必須項目である `tokenId` を同じ戻り値で得るためである — **`tokenId` を返さない形にすると、ユースケースが payload の必須項目を手に入れる経路が無くなる**
+- **`issue` は生トークンと `tokenId` の両方を返す。** 生トークンは**アダプターの外へ出るが、ユースケースはこれを読まない・保持しない・どこへも渡さない**（現状の読み手は0件であり、送信時は送信材料 RPC が `tokenId` から導出し直す。**URL の組み立てとメール本文のレンダリングは RPC の側では行わない** — それは `MailSender` アダプターの責務である。下の `MailSender`）。返し続けるのは、payload の必須項目である `tokenId` を同じ戻り値で得るためである — **`tokenId` を返さない形にすると、ユースケースが payload の必須項目を手に入れる経路が無くなる**
 - **したがって `token` は「戻り値に居るが読み手が0件の値」である。** ログ・DTO・イベント payload・Queue メッセージのいずれにも載せない。**この禁止は signature が守ってくれないので、実装レビューの確認項目として残す**（`spec/async/index.md`「payload と `terminal_reason` の衛生規則」）
 - **`mintDecoyTokenId` は「送らない側」（未登録 / SSO 専用）の payload に置くデコイを採る唯一の口である。** 行を1つも書かず、`verifyAndConsume` で解決できる値も返さない
 - **4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）で `tokenId` の生成器が同一であることが契約である。** `issue` が返す `tokenId` と `mintDecoyTokenId` が返す値は、同じ CSPRNG・同じ長さ・同じ符号化で採る。**生成器が割れると、送らない側の payload だけが別の形になり、payload そのものが列挙オラクルになる**（`.adr/013`）
@@ -638,8 +638,10 @@ export interface PasswordResetThrottlePort {
 
 - **メソッドは1つだけであり、これが全数である。** 判定と計上を2メソッドに分けない — 分けると「4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）が一様に落ちる」が2つの呼び出しの組み合わせの性質になり、呼び出し順序を誤ると一様性が静かに壊れる。1メソッドなら**単一の呼び出しの性質**として書ける
 - **戻り値の `boolean` が「イベント行を書くか」と「リセットトークンを発行するか」の両方を決める唯一の分岐である。** 発行判断と窓判定は同じ1つの分岐であって、2つの独立した条件ではない（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）
-- **`windowKey` は呼び出し側が導出して渡す** — 対象 canonical の全長 HMAC と依頼の窓から決定的に導く（`jobs.operation_key` と同じ導出）。**クライアントからは受け取らない。** ポートは導出鍵を知らない
-- **窓の長さは引数に現れないが、2層が同じ値を読む。** 呼び出し側は `windowKey` の導出のために、アダプターは窓行の `expires_at`（窓の終端 + 猶予）の算出のために、それぞれ窓の長さを知る必要がある。**正本は単一の設定値であり、`spec/database/index.md` の `reset_request_windows` の節が持つ**（実値の確定は #38）。**2箇所に別々の定数を置かない** — アダプター側が短いと、まだ有効な窓の行が `sweep-reset-tokens` に消され、`claimWindow` が同じ窓で2度目の `true` を返す（同節が写像鍵の世代跨ぎに限って明示的に許容している破れが、設定ミスで恒常化する）
+- **`windowKey` は呼び出し側が導出して渡す** — 対象 canonical の全長 HMAC と依頼の窓から決定的に導く（**導出規則の正本は `spec/database/index.md` の `reset_request_windows` の節**）。**クライアントからは受け取らない。** ポートは導出鍵を知らない
+- **導出主体は次のとおりである。** `windowKey` は **bucket 選択のために canonical の全長 HMAC を既に計算しているアダプター（Identity Directory の stub を選ぶ側）が、その同じ値を DO facade へプリミティブとして渡し**、ユースケースが窓と合成して組み立てる。**導出鍵はその stub 選択アダプターの中にあり、ユースケースにもポートにも渡らない。** facade が受け取る HMAC は server-side で導出された値であって外部入力ではないので、`CLAUDE.md`「Input validation」の第3の検証点にはならない（**クライアントからは受け取らない**）。合成は keyed な再導出を行わない（鍵付きの部分は HMAC 側で済んでいる）ので、`transactionSync` の中に暗号処理を持ち込まない
+  - **HMAC を返すドメインポートは足さない。** bucket 選択のために既に計算されている値を捨てて計算し直さないので、本ファイルのポートの数え上げも domains/index.md の `Promise` 例外2件（`PasswordHasher` / `MailSender`）も動かない
+- **窓の長さは引数に現れないが、2層が同じ値を読む。** 呼び出し側は `windowKey` の合成（HMAC + 窓）のために、アダプターは窓行の `expires_at`（窓の終端 + 猶予）の算出のために、それぞれ窓の長さを知る必要がある。**正本は単一の設定値であり、`spec/database/index.md` の `reset_request_windows` の節が持つ**（実値の確定は #38）。**2箇所に別々の定数を置かない** — アダプター側が短いと、まだ有効な窓の行が `sweep-reset-tokens` に消され、`claimWindow` が同じ窓で2度目の `true` を返す（同節が写像鍵の世代跨ぎに限って明示的に許容している破れが、設定ミスで恒常化する）
 - **登録の有無に関係なく行を作る。** 行の有無が観測可能な差にならないことが、このポートを置いた理由そのものである
 - **同期契約である**（`transactionSync` の中で呼ぶ）。domains/index.md の `Promise` 例外2件は動かない
 - エラーケース:
@@ -667,6 +669,7 @@ export interface MailSender {
 - **値は consumer が組み立てず、送信材料 RPC の応答として発行元 DO から受け取る**（`event.id` から DO 側で決定的に導く。async/index.md）。`outbox_events` の列ではない
 - **引数が1つ増えても、非同期ポートの例外は `PasswordHasher` / `MailSender` の2件のまま動かない**（domains/index.md「ポートの同期契約」）。例外の判定基準は「実装できる API が非同期しか無いか」であって引数の数ではない
 - **呼ぶのは Alarm ジョブではなく、request Worker の `queue()` ハンドラ（mail consumer）である**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。consumer は `identity.passwordResetRequested` のメッセージを受けて発行元 Identity Directory bucket へ**送信材料 RPC** を打ち、応答が `send` のときだけ本ポートを呼ぶ（`nothing-to-send` なら no-op して ack する）。**宛先の復号と生トークンの導出は DO の中に閉じたまま**であり、`to` / `resetToken` は RPC の応答としてのみ consumer に渡り、どこにも永続化されない（async/index.md「送信材料 RPC」）
+- **`send` が持つのは宛先・生リセットトークン・`providerIdempotencyKey` の3つである。URL の組み立てとメール本文のレンダリングは本ポートのアダプター（request Worker）の責務**であり、DO はテンプレートも base URL も持たない。**DO の中に閉じるのは復号と HMAC 導出であって、レンダリングではない**（`CLAUDE.md` の「CPU-bound work は request Worker」）。上の signature に本文を受け取る引数が無いのはこの帰結である
 - エラーケース:
   - 送信基盤の失敗 → `SystemError`。ただしリセット依頼ユースケースは「登録されていれば送信された」旨のみ返すため（S-AC-07 異常系）、宛先実在性に起因する失敗をユーザー応答に反映してはならない。**依頼の応答は配送の成否を待たない** — 配送は結果整合であり、送信の失敗は Queue の retry → DLQ で扱う
 
@@ -698,7 +701,8 @@ export interface MailSender {
 | consumer | mail consumer（1つ。request Worker の `queue()` ハンドラ） |
 
 - **`tokenId` を nullable にしない。** 未登録 / SSO 専用ではトークンが発行されないが、**宛先の有無から独立に生成した不透明値**（トークンと同じ形・同じ長さ）を置く。`NULL` か否かが観測できると payload そのものが列挙オラクルになる。**行の形が4ケースで一字も違わないことが、経路一致の実体である**
-- **consumer は payload から送信内容を組み立てない。** 宛先・本文・`providerIdempotencyKey` は発行元 DO への送信材料 RPC で取得する（async/index.md）
+- **consumer は payload から送信内容を組み立てない。** 宛先・生リセットトークン・`providerIdempotencyKey` は発行元 DO への送信材料 RPC で取得する（async/index.md）。**本文はこの3つに含まれない** — URL の組み立てとレンダリングは `MailSender` アダプターが行う
+- **メール種別の値域は `"password-reset"` の1値であり、これが全数である。** draft ファクトリはこれを union 型で受け、裸の `string` にしない（下の draft ファクトリ）。**現時点でこの値を読んで分岐する主体は無い** — consumer は業務判断を1つも持たず（async/index.md「consumer の一覧と責務」）、送信材料 RPC 側にも今は分岐が無い。載せているのは**2つ目のメール種別が現れたときに送信材料 RPC が分岐する材料**にするためであり、値域を増やす変更は同時に RPC 側の分岐を定めることを条件とする。**payload が「`tokenId` / メール種別の2つだけ」であることは動かさない**
 - **他のイベント型を定義しない。** 登録・パスワード変更・ゴミ箱保持期限の変更はいずれも consumer を持たず、`spec/requirements.md` に監査要件も無い。**consumer が存在せず明示的な監査要件も無いイベントは定義しない**（判定規則2 は「独立した consumer へ委譲する」を要求するので、consumer が無いイベントは類型を名乗れない）
 
 #### draft ファクトリ
@@ -706,10 +710,13 @@ export interface MailSender {
 `identity.passwordResetRequested` は**エンティティ遷移から出ないイベント**である（`requestPasswordReset` は `User` も `CredentialMapping` も遷移させない）。したがって `{ entity, eventDrafts }` の形では出せないので、**draft ファクトリを1本置き、ユースケースはその戻り値を `enqueueEvent` へ渡すだけにする**（domains/index.md「ドメインイベントの契約」）。
 
 ```ts
+/** メール種別の値域。現状は1値でこれが全数 */
+export type MailKind = "password-reset";
+
 export function passwordResetRequestedDraft(input: {
   windowKey: string;
   tokenId: string;
-  mailKind: string;
+  mailKind: MailKind;
   now: Date;
 }): EventDraft; // = { type, payload, occurredAt, aggregateId }（上の共通の契約）
 ```
@@ -717,6 +724,7 @@ export function passwordResetRequestedDraft(input: {
 - **`type` の文字列・`aggregateId` の選び方・payload の形を決める唯一の場所である。** ユースケースがオブジェクトリテラルで組み立てる形にすると、「4ケースで一字も違わない行」を保証する主体が誰も居なくなる
 - `aggregateId` には `windowKey` をそのまま入れる。`occurredAt` には引数の `now` を使う（ドメインは時計にも `IdGenerator` にも触らない）
 - **`tokenId` の出所はファクトリの外である** — 送る側は `PasswordResetTokenPort.issue` の戻り値、送らない側は `mintDecoyTokenId()` で、どちらも同じ生成器から採る。ファクトリは受け取った値を検査せず、**形が同一であることの担保はポート側の契約が持つ**
+- **`mailKind` は `MailKind` の union で受け、裸の `string` にしない。** 値域は1値なので、型が「4ケースで同じ値が入る」ことをそのまま守る（上の payload 欄）
 - **routing key は取らない。** ドメインは自分がどの DO に載っているかを知らない（上の payload 欄）
 - **4ケースのどれでも同じ引数の形で呼ぶ。** 呼ぶか呼ばないかを決めるのは `claimWindow` の戻り値だけで、登録有無・認証方式・宛先の存在では分岐しない（usecases/identity.md）
 
