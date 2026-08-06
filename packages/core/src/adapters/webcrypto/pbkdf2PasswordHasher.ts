@@ -29,9 +29,8 @@ type Digest = "SHA-256" | "SHA-512";
  * development D1, once its remaining rows are gone. #18's rehash-on-login
  * landing is not that moment: it rewrites those rows by verifying them
  * through this branch, so the branch has to outlive it and may only go
- * once it has finished sweeping. `.thread/20/adr.md` ADR-002 carries how
- * far that premise was verified and the one thing to check before
- * deleting.
+ * once it has finished sweeping. `.adr/015` carries how far that premise
+ * was verified and the one thing to check before deleting.
  */
 export const hashFor = (algorithm: string): Digest | null =>
   algorithm === "pbkdf2-sha512"
