@@ -88,10 +88,10 @@ describe("createPbkdf2PasswordHasher", () => {
     await expect(weak.verify(PASSWORD, strongHash)).resolves.toBe(true);
   });
 
-  it("defaults to the OWASP count for the algorithm it ships", async () => {
-    const hash = await hasher.hash(PASSWORD);
-
-    expect(hash.split("$")[0]).toBe("pbkdf2-sha512");
+  // The constant only. Walking the default path is the job of `takes the
+  // OWASP default for its algorithm when given no argument`, which is where
+  // the claim about what a default hasher actually writes lives.
+  it("declares the OWASP count for the algorithm it ships", () => {
     expect(DEFAULT_PBKDF2_ITERATIONS).toBe(210_000);
   });
 
@@ -101,6 +101,7 @@ describe("createPbkdf2PasswordHasher", () => {
   it("writes one identifier and derives with the digest it names", () => {
     expect(ALGORITHM_ID).toBe("pbkdf2-sha512");
     expect(hashFor("pbkdf2-sha512")).toBe("SHA-512");
+    expect(hashFor("argon2id")).toBeNull();
   });
 
   // Verifying a hash written before #20 is what keeps the read-only
@@ -118,13 +119,40 @@ describe("createPbkdf2PasswordHasher", () => {
     ).resolves.toBe(false);
   });
 
+  // The shipped format's own external fixture, and deliberately independent
+  // of the legacy one above so that retiring the `pbkdf2-sha256` branch does
+  // not take it along: a round trip cannot see a change to what `derive`
+  // feeds WebCrypto — a pepper, a normalisation pass, another text encoding
+  // — because `hash` and `verify` move together. Generated outside this
+  // codebase with node:crypto `pbkdf2Sync("password123", salt, 1000, 32,
+  // "sha512")`, and confirmed to differ from the SHA-256 derivation of the
+  // same inputs, so passing it means the SHA-512 branch really ran.
+  it("verifies a SHA-512 hash it did not write itself", async () => {
+    const fixture = PasswordHash.create(
+      "pbkdf2-sha512$1000$xV4JrROqj4l6BU/mz+2B9g==$i5P8QP0hYHeNdKtkyb1rETDplCkz+X7QmHsa1UC9YKA=",
+    );
+
+    await expect(hasher.verify(PASSWORD, fixture)).resolves.toBe(true);
+    await expect(
+      hasher.verify(PlainPassword.create("password124"), fixture),
+    ).resolves.toBe(false);
+  });
+
   it.each([
     ["wrong field count", "pbkdf2-sha512$1000$c2FsdA=="],
+    // The complement of the row above. Nothing rejects a fifth field except
+    // `parts.length !== 4`, and that the encoder can never produce one rests
+    // on base64 never containing `$` — pinned here rather than assumed.
+    ["too many fields", "pbkdf2-sha512$1000$c2FsdA==$aGFzaA==$extra"],
+    ["empty algorithm", "$1000$c2FsdA==$aGFzaA=="],
     ["unknown algorithm", "argon2id$1000$c2FsdA==$aGFzaA=="],
-    // `hashFor` is a total function rather than a lookup, so this can no
-    // longer slip through — the case stays as the regression net for any
-    // future rewrite that reaches for a table again.
+    // `hashFor` is a total function rather than a lookup, so these can no
+    // longer slip through — the cases stay as the regression net for any
+    // future rewrite that reaches for a table again. Both spellings are
+    // here because a plain-object lookup leaks them differently:
+    // `obj.constructor` is a function, `obj.__proto__` is the prototype.
     ["prototype key as algorithm", "constructor$1000$c2FsdA==$aGFzaA=="],
+    ["__proto__ as algorithm", "__proto__$1000$c2FsdA==$aGFzaA=="],
     ["non-numeric iterations", "pbkdf2-sha512$many$c2FsdA==$aGFzaA=="],
     ["zero iterations", "pbkdf2-sha512$0$c2FsdA==$aGFzaA=="],
     ["malformed base64", "pbkdf2-sha512$1000$!!!$aGFzaA=="],
@@ -269,9 +297,14 @@ describe("DEFAULT_PBKDF2_ITERATIONS", () => {
   // The pin holds only while `DUMMY_PASSWORD_HASH_ITERATIONS` infers a
   // literal type. Annotating it `: number` — a plausible readability edit —
   // widens `typeof` and silently drops the pin, letting the two work
-  // factors drift apart and reviving the timing oracle. The directive below
-  // is the whole assertion: it goes unused the moment the pin is gone, and
-  // `@ts-expect-error` with nothing to suppress fails the type check.
+  // factors drift apart and reviving the timing oracle. That one edit is
+  // what the directive below catches, and it catches it as a type error:
+  // `@ts-expect-error` with nothing left to suppress fails the type check.
+  // Removing the adapter's own `: typeof …` annotation is outside its
+  // reach — both sides still infer the same literal, so `pnpm typecheck`
+  // stays green. What covers that case is the runtime comparison in
+  // `identity.integration.test.ts`, which reads the dummy's iteration field
+  // back against `DEFAULT_PBKDF2_ITERATIONS`.
   it("is pinned to the literal the login path declares", () => {
     // @ts-expect-error the adapter default is the literal
     // `DUMMY_PASSWORD_HASH_ITERATIONS`, not `number`
@@ -286,7 +319,13 @@ describe("ALGORITHM_ID", () => {
   // see it. Checked against the adapter's declaration rather than the
   // login path's constant, because what has to stay pinned is the
   // identifier this adapter writes — widening the application-side
-  // constant to `string` would still be caught here.
+  // constant to `string`, or to a union that still reads, is caught here.
+  // Three layers divide the work and only the first is type checking:
+  // this directive for the application-side constant; the round-trip tests
+  // above for `SHIPPED_HASH` drifting away from `ALGORITHM_ID`; and the
+  // literal `pbkdf2-sha512` regex in `identity.integration.test.ts` for the
+  // adapter's `: typeof …` annotation being dropped outright, which leaves
+  // both sides inferring the same literal and every type check green.
   it("is pinned to the literal the login path declares", () => {
     // @ts-expect-error the adapter identifier is the literal
     // `DUMMY_PASSWORD_HASH_ALGORITHM_ID`, not `string`

@@ -645,7 +645,11 @@ describe("loginWithPassword (integration)", () => {
       ),
     ).resolves.toBe(false);
     // Self-describing at production strength: a constant re-made at a
-    // token cost would still verify, and would still buy nothing.
+    // token cost would still verify, and would still buy nothing. Never
+    // rebuild the `pbkdf2-sha512` literal from `ALGORITHM_ID` — this is the
+    // only check left standing once the adapter's `: typeof …` pin is
+    // dropped, and assembling both sides from one constant makes it
+    // self-referential and worthless.
     expect(dummy).toMatch(
       new RegExp(`^pbkdf2-sha512\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
     );

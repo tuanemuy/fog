@@ -10,20 +10,25 @@ import {
 } from "@repo/core/domain/identity/valueObject";
 import { fromBase64, timingSafeEqual, toBase64 } from "./encoding";
 
+/** WebCrypto digest names this adapter can drive PBKDF2 with. */
+export type Digest = "SHA-256" | "SHA-512";
+
 /**
  * Maps a stored algorithm identifier onto the WebCrypto digest name;
  * `null` means "an identifier this adapter cannot read".
  *
  * Total on purpose, and deliberately not a lookup table: a bare object
  * indexed by the stored string would let prototype keys (`constructor`)
- * answer truthy, and a `Map` would put `undefined` in the return type,
- * which the write path would then have to cope with. Two branches need no
- * table.
+ * answer truthy. A table keyed by a literal type would be total as well,
+ * but with only two algorithms the cost of keeping the table outweighs
+ * what it buys.
  *
  * `pbkdf2-sha256` is a read-only branch kept for rows written before #20;
- * nothing writes it any more.
+ * nothing writes it any more. No production row carries that format, so
+ * the branch may be deleted once the development D1's remaining rows are
+ * gone or #18's rehash-on-login lands, whichever comes first.
  */
-export const hashFor = (algorithm: string): "SHA-256" | "SHA-512" | null =>
+export const hashFor = (algorithm: string): Digest | null =>
   algorithm === "pbkdf2-sha512"
     ? "SHA-512"
     : algorithm === "pbkdf2-sha256"
@@ -53,7 +58,8 @@ const DERIVED_BITS = 256;
  * the two numbers differ because the table calibrates each algorithm to
  * roughly the same defender cost, and SHA-512 costs more per iteration.
  * (Its resistance to GPU/ASIC parallelism is why *we* pick SHA-512; it is
- * not why OWASP set that row's count.)
+ * not why OWASP set that row's count.) ADR-003 (`.thread/1/adr.md`)
+ * carries the cheat sheet's URL and the date it was read.
  *
  * Typed as the login path's {@link DUMMY_PASSWORD_HASH_ITERATIONS} rather
  * than as `number`: `loginWithPassword` levels its response time by
@@ -94,7 +100,7 @@ export type Pbkdf2PasswordHasherOptions = Readonly<{
 }>;
 
 type StoredHash = Readonly<{
-  hash: "SHA-256" | "SHA-512";
+  digest: Digest;
   iterations: number;
   salt: Uint8Array;
   derived: Uint8Array;
@@ -104,7 +110,7 @@ async function derive(
   plain: string,
   salt: Uint8Array,
   iterations: number,
-  hash: "SHA-256" | "SHA-512",
+  digest: Digest,
 ): Promise<Uint8Array> {
   try {
     const key = await crypto.subtle.importKey(
@@ -117,7 +123,7 @@ async function derive(
     const bits = await crypto.subtle.deriveBits(
       {
         name: "PBKDF2",
-        hash,
+        hash: digest,
         salt: salt as BufferSource,
         iterations,
       },
@@ -137,10 +143,10 @@ async function derive(
 function parse(stored: string): StoredHash {
   const parts = stored.split("$");
   const [algorithm, iterationsRaw, saltRaw, derivedRaw] = parts;
-  const hash = algorithm === undefined ? null : hashFor(algorithm);
+  const digest = algorithm === undefined ? null : hashFor(algorithm);
   if (
     parts.length !== 4 ||
-    hash === null ||
+    digest === null ||
     iterationsRaw === undefined ||
     saltRaw === undefined ||
     derivedRaw === undefined
@@ -167,7 +173,7 @@ function parse(stored: string): StoredHash {
   }
   try {
     return {
-      hash,
+      digest,
       iterations,
       salt: fromBase64(saltRaw),
       derived: fromBase64(derivedRaw),
@@ -236,7 +242,7 @@ export function createPbkdf2PasswordHasher(
         plain,
         stored.salt,
         stored.iterations,
-        stored.hash,
+        stored.digest,
       );
       return timingSafeEqual(candidate, stored.derived);
     },
