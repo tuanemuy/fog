@@ -647,7 +647,7 @@ describe("loginWithPassword (integration)", () => {
     // Self-describing at production strength: a constant re-made at a
     // token cost would still verify, and would still buy nothing.
     expect(dummy).toMatch(
-      new RegExp(`^pbkdf2-sha256\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
+      new RegExp(`^pbkdf2-sha512\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
     );
   });
 
@@ -695,7 +695,7 @@ describe("loginWithPassword (integration)", () => {
     // only place "the column holds the hasher's output, not what the user
     // typed" can be observed for real rather than through a fake.
     const users = await userRows(container);
-    expect(users[0]?.passwordHash).toMatch(/^pbkdf2-sha256\$1000\$/);
+    expect(users[0]?.passwordHash).toMatch(/^pbkdf2-sha512\$1000\$/);
     expect(users[0]?.passwordHash).not.toContain("pass1234");
   });
 

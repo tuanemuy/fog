@@ -1,5 +1,8 @@
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
-import type { DUMMY_PASSWORD_HASH_ITERATIONS } from "@repo/core/application/identity/loginWithPassword";
+import type {
+  DUMMY_PASSWORD_HASH_ALGORITHM_ID,
+  DUMMY_PASSWORD_HASH_ITERATIONS,
+} from "@repo/core/application/identity/loginWithPassword";
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import {
   PasswordHash,
@@ -7,24 +10,64 @@ import {
 } from "@repo/core/domain/identity/valueObject";
 import { fromBase64, timingSafeEqual, toBase64 } from "./encoding";
 
-const ALGORITHM_ID = "pbkdf2-sha256";
+/**
+ * Maps a stored algorithm identifier onto the WebCrypto digest name;
+ * `null` means "an identifier this adapter cannot read".
+ *
+ * Total on purpose, and deliberately not a lookup table: a bare object
+ * indexed by the stored string would let prototype keys (`constructor`)
+ * answer truthy, and a `Map` would put `undefined` in the return type,
+ * which the write path would then have to cope with. Two branches need no
+ * table.
+ *
+ * `pbkdf2-sha256` is a read-only branch kept for rows written before #20;
+ * nothing writes it any more.
+ */
+export const hashFor = (algorithm: string): "SHA-256" | "SHA-512" | null =>
+  algorithm === "pbkdf2-sha512"
+    ? "SHA-512"
+    : algorithm === "pbkdf2-sha256"
+      ? "SHA-256"
+      : null;
+
+/**
+ * The one identifier this adapter writes. Pinned to the login path's
+ * {@link DUMMY_PASSWORD_HASH_ALGORITHM_ID} for the reason spelled out on
+ * {@link DEFAULT_PBKDF2_ITERATIONS}.
+ */
+export const ALGORITHM_ID: typeof DUMMY_PASSWORD_HASH_ALGORITHM_ID =
+  "pbkdf2-sha512";
+
+/**
+ * The digest `hash()` hands WebCrypto. Held directly rather than looked up
+ * through {@link hashFor}, so no `null` ever reaches the write path.
+ */
+const SHIPPED_HASH = "SHA-512" as const;
+
 const SALT_BYTES = 16;
 const DERIVED_BITS = 256;
 
 /**
- * OWASP's recommendation for PBKDF2-HMAC-SHA256 (2023 cheat sheet).
+ * OWASP's recommendation for PBKDF2-HMAC-SHA512 (2023 cheat sheet) — the
+ * row this adapter ships. The SHA-256 row of the same table is 600,000;
+ * the two numbers differ because the table calibrates each algorithm to
+ * roughly the same defender cost, and SHA-512 costs more per iteration.
+ * (Its resistance to GPU/ASIC parallelism is why *we* pick SHA-512; it is
+ * not why OWASP set that row's count.)
  *
  * Typed as the login path's {@link DUMMY_PASSWORD_HASH_ITERATIONS} rather
  * than as `number`: `loginWithPassword` levels its response time by
  * verifying a dummy hash that declares that cost, so the two numbers have
  * to move together or the timing oracle comes back — inverted if only the
- * dummy moves, in its original direction if only this one does. Raising
- * the work factor therefore means editing both constants; nothing else in
- * the dummy needs regenerating, since `verify` derives at whatever cost
- * the stored value declares.
+ * dummy moves, in its original direction if only this one does. The
+ * algorithm identifier is covered by a second pin of the same shape
+ * ({@link ALGORITHM_ID}), since `verify` derives with whatever algorithm
+ * *and* cost the stored value declares — moving either one alone leaves
+ * the dummy burning the wrong amount of work. Only the dummy's salt and
+ * digest stay arbitrary; nothing regenerates them.
  *
- * Equalisation stays imperfect for hashes written at an earlier cost:
- * until those rows are rewritten by rehash-on-login, a wrong
+ * Equalisation stays imperfect for hashes written at an earlier cost or
+ * algorithm: until those rows are rewritten by rehash-on-login, a wrong
  * password on such an account is cheaper than an unknown address.
  */
 export const DEFAULT_PBKDF2_ITERATIONS: typeof DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
@@ -51,6 +94,7 @@ export type Pbkdf2PasswordHasherOptions = Readonly<{
 }>;
 
 type StoredHash = Readonly<{
+  hash: "SHA-256" | "SHA-512";
   iterations: number;
   salt: Uint8Array;
   derived: Uint8Array;
@@ -60,6 +104,7 @@ async function derive(
   plain: string,
   salt: Uint8Array,
   iterations: number,
+  hash: "SHA-256" | "SHA-512",
 ): Promise<Uint8Array> {
   try {
     const key = await crypto.subtle.importKey(
@@ -72,7 +117,7 @@ async function derive(
     const bits = await crypto.subtle.deriveBits(
       {
         name: "PBKDF2",
-        hash: "SHA-256",
+        hash,
         salt: salt as BufferSource,
         iterations,
       },
@@ -92,9 +137,10 @@ async function derive(
 function parse(stored: string): StoredHash {
   const parts = stored.split("$");
   const [algorithm, iterationsRaw, saltRaw, derivedRaw] = parts;
+  const hash = algorithm === undefined ? null : hashFor(algorithm);
   if (
     parts.length !== 4 ||
-    algorithm !== ALGORITHM_ID ||
+    hash === null ||
     iterationsRaw === undefined ||
     saltRaw === undefined ||
     derivedRaw === undefined
@@ -121,6 +167,7 @@ function parse(stored: string): StoredHash {
   }
   try {
     return {
+      hash,
       iterations,
       salt: fromBase64(saltRaw),
       derived: fromBase64(derivedRaw),
@@ -135,19 +182,22 @@ function parse(stored: string): StoredHash {
 }
 
 /**
- * `PasswordHasher` backed by WebCrypto PBKDF2-HMAC-SHA256 — available on
+ * `PasswordHasher` backed by WebCrypto PBKDF2-HMAC-SHA512 — available on
  * Workers, so `packages/core` gains no crypto dependency.
  *
  * The stored form is self-describing:
  *
  * ```
- * pbkdf2-sha256$<iterations>$<saltBase64>$<hashBase64>
+ * pbkdf2-sha512$<iterations>$<saltBase64>$<hashBase64>
  * ```
  *
  * `verify` reads the algorithm and parameters back out of the stored
  * value rather than assuming the current settings, so raising
  * `iterations` — or later adding an Argon2id branch and re-hashing on
- * login — leaves existing hashes verifiable.
+ * login — leaves existing hashes verifiable. What it reads is
+ * deliberately wider than what it writes: `pbkdf2-sha256` still verifies
+ * (rows written before #20) while `pbkdf2-sha512` is the only identifier
+ * this adapter emits.
  *
  * `iterations` is a factory argument and deliberately *not* an
  * environment variable: strength would otherwise drift per deployment
@@ -174,7 +224,7 @@ export function createPbkdf2PasswordHasher(
   return {
     async hash(plain: PlainPassword): Promise<PasswordHash> {
       const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-      const derived = await derive(plain, salt, iterations);
+      const derived = await derive(plain, salt, iterations, SHIPPED_HASH);
       return PasswordHash.create(
         `${ALGORITHM_ID}$${iterations}$${toBase64(salt)}$${toBase64(derived)}`,
       );
@@ -182,7 +232,12 @@ export function createPbkdf2PasswordHasher(
 
     async verify(plain: PlainPassword, hash: PasswordHash): Promise<boolean> {
       const stored = parse(hash);
-      const candidate = await derive(plain, stored.salt, stored.iterations);
+      const candidate = await derive(
+        plain,
+        stored.salt,
+        stored.iterations,
+        stored.hash,
+      );
       return timingSafeEqual(candidate, stored.derived);
     },
   };
