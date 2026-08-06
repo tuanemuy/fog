@@ -646,10 +646,12 @@ describe("loginWithPassword (integration)", () => {
     ).resolves.toBe(false);
     // Self-describing at production strength: a constant re-made at a
     // token cost would still verify, and would still buy nothing. Never
-    // rebuild the `pbkdf2-sha512` literal from `ALGORITHM_ID` — this is the
-    // only check left standing once the adapter's `: typeof …` pin is
-    // dropped, and assembling both sides from one constant makes it
-    // self-referential and worthless.
+    // rebuild the `pbkdf2-sha512` literal from `ALGORITHM_ID` — assembling
+    // both sides from one constant makes it self-referential and
+    // worthless. What this catches is drift in the dummy's own constants,
+    // and once the adapter's `: typeof …` pin is dropped it is the only
+    // check that still catches it; drift on the adapter's side falls to
+    // the unit tests and to TC-loginWithPassword-009 below.
     expect(dummy).toMatch(
       new RegExp(`^pbkdf2-sha512\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
     );

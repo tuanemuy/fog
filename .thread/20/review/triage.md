@@ -27,6 +27,26 @@
 | `plan.md:AC-15/grep判定基準が実装形と不一致` | R1 | fix（完了報告のみ） | コードは正しい。残存ヒット3種の内訳を完了報告に書いて機械判定との差を残さない | 0 |
 | `PR#53:AC-3/プローブ撤去後のCI緑が未検証` | R1 | fix | 最終 head の CI 結果と run URL を完了報告に載せる | 0 |
 
+## Round 2（review-002）
+
+Blocker 1 / Warning 13。round 1 の Blocker 2件は解消を確認済み（Docs レビュアーが CI ログを実地照合し、attempt 3 = 比 1.5078 / attempt 4 = 比 1.4756 が ADR の記載と1桁まで一致）。
+
+| Key | 初出 | 判定 | 理由（一行） | 再指摘 |
+|---|---|---|---|---|
+| `pbkdf2PasswordHasher.ts:DEFAULT_PBKDF2_ITERATIONS JSDoc/OWASPの未出典な断定` | R2 | fix | **Blocker.** Docs B-001 / Adapter W-001 / Docs W-005 が同一ブロックを指す。ADR 側で「採らない」と明示した「防御側コストを揃えるようキャリブレート」を JSDoc がそのまま断定し、ADR 側で削除した版指定「(2023 cheat sheet)」も残り、ADR 参照が ADR-046（パス前置）に反する。**単位分割の隙間で取り残された** | 0 |
+| `steps.md:キャリブレーション断定を事実として書けという指示` | R2 | fix | Docs W-001。B-001 の根本原因。steps.md は Phase 8 以降も残るので、直さないと同じ誤りが書き戻される | 0 |
+| `identity.integration.test.ts:コメント/「the only check left standing」の不正確さ` | R2 | fix | Sec W-001 と Test W-002 が同一。ドリフトの方向を限定していないため、実際の守備範囲より広く読める | 0 |
+| `.thread/1/adr.md:一括注記/ADRリストが実態より広い` | R2 | fix | Docs W-002。方式名を実際に含むのは5本で ADR-021 / 033 は該当ゼロ。`:632`（ADR-014 Context）が節の性格の規則と噛み合っていない点も併せて直す | 0 |
+| `.thread/20/adr.md:「JSDocにも渡す」と実態の乖離` | R2 | fix | Docs W-003。JSDoc に 97ms は無い。**JSDoc を膨らませるのではなく ADR 側を実態に合わせる** | 0 |
+| `pbkdf2PasswordHasher.ts:旧枝JSDoc/退役条件の断定と参照欠落` | R2 | fix | Docs W-004。「本番に行が無い」を断定形で書く以上、ADR-002 の限界（CF アカウント側は未確認）と削除時の golden vector 確認への参照が要る | 0 |
+| `pbkdf2PasswordHasher.ts:Digest/不要なexport` | R2 | fix | Adapter W-002。参照は同一ファイル内3箇所のみで、`ALGORITHM_ID` / `hashFor` と違い「テストが呼ぶ」という根拠が無い。フラットな exports なので export は公開 API を増やす | 0 |
+| `.thread/20/adr.md:MAX_PBKDF2_ITERATIONS/根拠が案B前提` | R2 | fix | Adapter W-003。案 A では上限の最悪ケースが約 1.4 秒 → 約 6.0 秒。**脅威モデルは不変（DB 書き込み権限が要る）なので定数は動かさず**、記録だけ1行 | 0 |
+| `PR#53:AC-3/プローブ撤去後のCI緑が未確認` | R1 | fix | Test W-001。R1 から継続。最終コミット後の CI で確認する | 1 |
+| `loginWithPassword.ts:DoS/デプロイとの前後関係が未記載` | R2 | wont-fix | Sec W-002。前後関係は ADR-002 Context の「前提確認の記録（初回本番デプロイ未実施）」が既に述べており、同じ事実を2箇所に書くことになる | 0 |
+| `pbkdf2PasswordHasher.ts:parse()/salt・derivedの長さ未検証` | R2 | wont-fix | Sec W-003。**レビュアー自身が現状維持を推奨**。fail-closed でバイパスは無く、空フィールドは `false`（不一致）に落ちるだけで情報を漏らさない | 0 |
+
+**観測（対応不要）**: Adapter レビュアーがソース無変更の状態で `pnpm typecheck` が1度だけ TS2578 で落ちる現象を報告（その後 32 回は緑）。この時間帯は複数のエージェントが同一ワークツリーを書き換えており、Test レビュアーが同じ理由で別 worktree に退避している。**並列レビューの副作用と判断し、プロダクトの問題としては扱わない。**
+
 ## 裁定メモ（メインが決めた事項）
 
 1. **`SHIPPED_HASH` を型で結ぶためのリテラルキー表引きは採らない。** ADR-002 の結論（2方式に表は不要）は正しく、`SHIPPED_HASH` と `ALGORITHM_ID` のドリフトは往復テスト4件が必ず赤くすることが変異注入で実証されている。表を導入すれば「表を持たない」と決めた設計をこの PR で覆すことになり、ADR も書き直しになる。**コードは現状維持し、成立していない根拠の文言だけを直す。** 単位1（JSDoc）と単位4（ADR-002 Decision）で**同一文言**を使う:

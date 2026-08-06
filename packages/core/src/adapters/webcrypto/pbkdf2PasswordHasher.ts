@@ -11,7 +11,7 @@ import {
 import { fromBase64, timingSafeEqual, toBase64 } from "./encoding";
 
 /** WebCrypto digest names this adapter can drive PBKDF2 with. */
-export type Digest = "SHA-256" | "SHA-512";
+type Digest = "SHA-256" | "SHA-512";
 
 /**
  * Maps a stored algorithm identifier onto the WebCrypto digest name;
@@ -24,9 +24,11 @@ export type Digest = "SHA-256" | "SHA-512";
  * what it buys.
  *
  * `pbkdf2-sha256` is a read-only branch kept for rows written before #20;
- * nothing writes it any more. No production row carries that format, so
- * the branch may be deleted once the development D1's remaining rows are
- * gone or #18's rehash-on-login lands, whichever comes first.
+ * nothing writes it any more. No production row is expected to carry that
+ * format, so the branch may be deleted once the development D1's
+ * remaining rows are gone or #18's rehash-on-login lands, whichever comes
+ * first. `.thread/20/adr.md` ADR-002 carries how far that premise was
+ * verified and the one thing to check before deleting.
  */
 export const hashFor = (algorithm: string): Digest | null =>
   algorithm === "pbkdf2-sha512"
@@ -53,13 +55,10 @@ const SALT_BYTES = 16;
 const DERIVED_BITS = 256;
 
 /**
- * OWASP's recommendation for PBKDF2-HMAC-SHA512 (2023 cheat sheet) — the
- * row this adapter ships. The SHA-256 row of the same table is 600,000;
- * the two numbers differ because the table calibrates each algorithm to
- * roughly the same defender cost, and SHA-512 costs more per iteration.
- * (Its resistance to GPU/ASIC parallelism is why *we* pick SHA-512; it is
- * not why OWASP set that row's count.) ADR-003 (`.thread/1/adr.md`)
- * carries the cheat sheet's URL and the date it was read.
+ * OWASP's recommendation for PBKDF2-HMAC-SHA512 — the row this adapter
+ * ships. SHA-512's resistance to GPU/ASIC parallelism is why *we* pick
+ * it, not why OWASP set that row's count. `.thread/1/adr.md` ADR-003
+ * carries the table, its source and the date it was read.
  *
  * Typed as the login path's {@link DUMMY_PASSWORD_HASH_ITERATIONS} rather
  * than as `number`: `loginWithPassword` levels its response time by
