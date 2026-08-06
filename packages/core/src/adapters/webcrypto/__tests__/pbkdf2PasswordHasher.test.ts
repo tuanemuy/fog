@@ -305,7 +305,9 @@ describe("DEFAULT_PBKDF2_ITERATIONS", () => {
   // one below alike:
   // - widening an application-side constant (`: number`, `: string`, or a
   //   union that still reads): these two directives, as a type error;
-  // - drift in the adapter's own value: the unit tests in this file;
+  // - drift in the adapter's own value: the unit tests in this file (the
+  //   type check catches it too while the pin is in place, since the
+  //   literal no longer satisfies `typeof`);
   // - `SHIPPED_HASH` drifting away from `ALGORITHM_ID`: the round-trip
   //   tests above;
   // - an application-side constant drifting once the adapter's

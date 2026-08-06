@@ -607,12 +607,15 @@ describe("loginWithPassword (integration)", () => {
 
   // The burn above is only a burn if the production hasher can actually
   // read the hash it is handed: `burnVerificationTime` swallows the
-  // throw, so an algorithm swap, an iteration count outside the accepted
-  // range or a typo in the constant would make the equalisation cost
-  // nothing while every other assertion in the suite stayed green. The
-  // fake never parses its input, so this is the only place that can
-  // notice. Recording what the usecase passes (rather than importing the
-  // constant) keeps the assertion true however the value is produced.
+  // throw, so an iteration count outside the accepted range, a typo in
+  // the constant or an encoding this adapter cannot read at all would
+  // make the equalisation cost nothing while every other assertion in
+  // the suite stayed green. An algorithm swap is the quieter case — the
+  // `pbkdf2-sha256` branch still parses, so the dummy keeps verifying,
+  // just at the wrong cost. The fake never parses its input, so this is
+  // the only place that can notice either. Recording what the usecase
+  // passes (rather than importing the constant) keeps the assertion true
+  // however the value is produced.
   it("burns against a hash the production hasher derives from, not just any string", async () => {
     const burnt: string[] = [];
     const delegate = new FakePasswordHasher();
