@@ -6,6 +6,8 @@
 
 ## AD-1: 非同期処理を「実行責任の所有者」で3類型へ分類する
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -41,6 +43,8 @@ Issue #50 が要求するのは、判定軸を実行責任の所有者へ移す�
 
 ## AD-2: `outbox_events` を独立したテーブルにし、`jobs` に相乗りさせない
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -73,6 +77,8 @@ Proposed
 
 ## AD-3: `outbox_events` を両 DO クラスに置く（User Data DO のイベントが初期0件でも）
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -104,6 +110,8 @@ Proposed
 ---
 
 ## AD-4: 1本の Alarm で Outbox relay と local jobs を多重化する — relay を `jobs.kind` にしない
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -151,6 +159,8 @@ Proposed
 
 ## AD-5: イベント登録口は `collectEvents` を復元せず `enqueueEvent` を新設する。relay を**ドメインポートにしない**
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -188,6 +198,8 @@ Proposed
 ---
 
 ## AD-6: consumer は event payload から送信内容を組み立てず、発行元 DO へ RPC で取りに行く
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -259,6 +271,8 @@ Issue の受け入れ条件は「PII と再利用可能な秘密が event payloa
 
 ## AD-7: `dedupe_key` による行の収束は採らない。連打の抑止は DO transaction 内のスロットル判定、最新性は送信時の再読で保つ
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**`dedupe_key` を置く旧案を撤回して差し替えた。旧案は「検討した代替案」に残す**）
@@ -314,6 +328,8 @@ Proposed（**`dedupe_key` を置く旧案を撤回して差し替えた。旧案
 
 ## AD-8: `provider_idempotency_key` を `jobs` から落とし、どちらの表にも列として持たない
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -347,6 +363,8 @@ Proposed
 ---
 
 ## AD-9: consumer の冪等性キーの保持先は consumer ごとに全数表で宣言する。初期の mail consumer は保持しない
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -383,6 +401,8 @@ Proposed
 ---
 
 ## AD-10: quarantine と DLQ の分界を「Queue に入る前か後か」で切り、発行元 DO へ ack を書き戻さない
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -421,6 +441,8 @@ Proposed
 ---
 
 ## AD-11: 3類型の全数表を `spec/async/index.md` に1本だけ置き、`spec/database/index.md` は参照にする
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -462,6 +484,8 @@ Proposed
 
 ## AD-12: 過去 ADR の本文は改変せず、ステータス節への注記だけで supersede を表現する
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -493,6 +517,8 @@ Issue は「過去の ADR 本文を改変せず、新しい永続 ADR を追加�
 ---
 
 ## AD-13: consumer は request Worker の `queue()` ハンドラに置く。Worker は2本のままにする
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -534,6 +560,8 @@ Proposed（**前提の裏取りが片方だけ取れていない。下の「裏�
 ---
 
 ## AD-14: 全数表の正本は `spec/async/index.md` 1箇所とし、`CLAUDE.md` は判定規則と参照だけを持つ
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -604,6 +632,8 @@ Proposed
 
 ## AD-16: スロットルの窓は Identity Directory DO の専用ストア `reset_request_windows` に置く。`credential_mappings` に相乗りさせず、掃除は `sweep-reset-tokens` に同居させる
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -659,6 +689,8 @@ AD-7 が `dedupe_key` を撤回したことで、これまで `jobs` の pending
 
 ## AD-17: relay / mail consumer / DLQ ハンドラはアダプター層に属する。ユースケース層にハンドラを作らない
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -685,6 +717,8 @@ mail consumer は「送信材料 RPC の応答（2分岐）を受けて `MailSen
 
 ## AD-18: `spec/database/index.md:461` の前方互換点は3本のままとし、outbox 行を足さない
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed
@@ -709,6 +743,8 @@ Proposed
 ---
 
 ## AD-19: スロットル窓ストアのドメイン側契約を `PasswordResetThrottlePort.claimWindow` として1メソッドで置く
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -881,6 +917,8 @@ plan.md の集合演算の除外規則は「除外対象は『User Data DO の�
 
 ## AD-24: `reset_request_windows.window_key` は主キー例外 (b) と同じ1件として扱い、例外の数を2つのまま据え置く
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**ステップ4 の実装中に確定した。AD-16 が決めなかった1点を閉じる**）
@@ -939,6 +977,8 @@ AD-10 は「relay が publish できない失敗は発行元 DO の `quarantined
 ---
 
 ## AD-26: `identity.passwordResetRequested` の `aggregateId` はスロットル窓のキー（`windowKey`）にする
+
+→ `.adr/013` に昇格（片付けフェーズで転記）
 
 ### Status
 
@@ -1188,6 +1228,8 @@ AD-20 は追加先を `spec/manual-tests/account.md` に確定し、「動く数
 
 ## AD-34: `CLAUDE.md` の「Retry は job runner の1箇所だけ」という断言を2箇所へ直し、委譲の例外をキュー境界に限る
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**ステップ19 の実装中に確定した。steps.md ステップ19 の列挙には無い箇所である**）
@@ -1251,6 +1293,8 @@ steps.md ステップ19 は、エントリポイント一覧に「relay が DO �
 
 ## AD-36: `owner_token` は「claim ごと・行ごとの capability」であり、秘密として扱う
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**レビュー1周目のトリアージで確定した。security B-001 / B-002 への決定**）
@@ -1287,6 +1331,8 @@ Proposed（**レビュー1周目のトリアージで確定した。security B-0
 
 ## AD-37: 運用値の制約1（`DLQ 保持期間 < トークン TTL`）は機能要件であり、持参人証への防壁ではない
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**レビュー1周目のトリアージで確定した。test W-004 への決定**）
@@ -1321,6 +1367,8 @@ AD-6 の 3. は制約1の根拠を「満たしていれば DLQ からの再駆�
 
 ## AD-38: `quarantined` 行は保持期間を持たず、運用者の再駆動か明示削除まで恒久保持する
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**レビュー1周目のトリアージで確定した。persistence B-001 への決定**）
@@ -1351,6 +1399,8 @@ Proposed（**レビュー1周目のトリアージで確定した。persistence 
 
 ## AD-39: `.adr/013` の長さは維持し、同期義務の向きを冒頭1行で宣言する
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**レビュー1周目のトリアージで確定した。adr W-005 への決定**）
@@ -1380,6 +1430,8 @@ Proposed（**レビュー1周目のトリアージで確定した。adr W-005 �
 ---
 
 ## AD-40: イベント payload から宛先 DO の routing key を落とし、relay が publish 時に Queue メッセージへ押す
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -1417,6 +1469,8 @@ AD-6 は event payload に載せるものを `tokenId` / メール種別 / **発
 
 ## AD-41: `{ entity, eventDrafts }` は「イベントを発行するファクトリ / 遷移」の契約であり、無条件の宣言にしない
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー2周目のトリアージで確定した。論点7 への決定。AD-5 の契約の射程を狭める**）
@@ -1450,6 +1504,8 @@ AD-5 はイベント登録口を `enqueueEvent` の1つに固定し、ドメイ�
 ---
 
 ## AD-42: relay 相3 の失敗分岐（上限未到達）は `pending` へ戻し、`lease_until` / `owner_token` を解放する
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -1521,6 +1577,8 @@ AC-12 は「業務データ更新・FTS5 projection・`outbox_events` の追加�
 
 ## AD-44: 送信材料 RPC の `send` は「宛先・生リセットトークン・`providerIdempotencyKey`」の3点を返す。URL 組み立てとレンダリングは `MailSender` アダプターが持つ
 
+→ `.adr/013` に昇格（実装フェーズで転記済み）
+
 ### Status
 
 Proposed（**レビュー3周目のトリアージで確定した。論点10 への決定。AD-6 の応答の中身を確定させる**）
@@ -1562,6 +1620,8 @@ AD-6 は応答 `send` を「宛先・**レンダリング済み本文**・`provi
 ---
 
 ## AD-45: `windowKey` は stub 選択アダプターが計算済みの全長 HMAC を facade へ渡し、ユースケースが窓と合成する。新しいポートを足さない
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -1606,6 +1666,8 @@ AD-19 は `windowKey` を「呼び出し側が導出して渡す。ポートは�
 
 ## AD-46: 隔離行の再駆動とリセットトークン TTL の関係は「外側の注記」として書き、配送の運用値の制約は2本のまま据え置く
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー3周目のトリアージで確定した。論点12 への決定。AD-38（`quarantined` の恒久保持）の帰結を閉じる**）
@@ -1641,6 +1703,8 @@ Proposed（**レビュー3周目のトリアージで確定した。論点12 へ
 ---
 
 ## AD-47: 「対象と時間窓から導く形は現行の `kind` に無い」の根拠文から `send-mail` の固有名を落とし、全称命題を導出形の列挙へ弱める
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -1678,6 +1742,8 @@ W-005 は `reset_request_windows.window_key` の根拠として `jobs.operation_
 ---
 
 ## AD-48: `sweep-reset-tokens` の投入時 `next_run_at` は窓の終端から導き、猶予はアダプター側の掃除条件に閉じる
+
+→ `.adr/013` に昇格（片付けフェーズで転記）
 
 ### Status
 
@@ -1717,6 +1783,8 @@ Proposed（**レビュー4周目・論点13（design B-001 / impl W-008）への
 
 ## AD-49: 送信材料 RPC の呼び出しガードは、行の `owner_token` が `NULL` の呼び出しを引数の値にかかわらず常に不一致として扱う
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー4周目・論点15（security B-001）への決定。AD-42（失敗時に `owner_token` を解放）と AD-6（ガードから `status` を外す）の交点で生まれた穴を、どちらの決定にも触れずに閉じる**）
@@ -1754,6 +1822,8 @@ Proposed（**レビュー4周目・論点15（security B-001）への決定。AD
 
 ## AD-50: `windowKey` の合成に一方向性を要求せず、全長 HMAC が DO 内に残ることの射程を明示する
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー4周目・論点17（security W-002）への決定。AD-45（導出主体）にも AC-39 にも触れずに閉じる**）
@@ -1788,6 +1858,8 @@ Proposed（**レビュー4周目・論点17（security W-002）への決定。AD
 ---
 
 ## AD-51: 失効宣言は項番の列挙ではなく「決定のリード文を含む本文の全数」で書く
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -1908,6 +1980,8 @@ Proposed（**レビュー5周目・W-005 への決定。`TC-outboxDelivery-026` 
 
 ## AD-55: `requestPasswordReset` は窓の判定（`claimWindow`）を宛先の解決（`findByEmail`）より先に置く
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー6周目・design W-003 への決定**）
@@ -1975,6 +2049,8 @@ Proposed（**レビュー6周目・design W-004 への決定**）
 
 ## AD-57: claim の `SELECT` は `next_run_at` の昇順とし、そのためのソートを受け入れる
 
+→ `.adr/013` に昇格（片付けフェーズで転記）
+
 ### Status
 
 Proposed（**レビュー6周目・impl W-001 への決定**）
@@ -2007,6 +2083,8 @@ Alarm の張り直しを4本の min へ分解したのと同じ種類の判断�
 ---
 
 ## AD-58: 「投入と同じトランザクションのあとに `setAlarm` を張る」を規則として置き、テストで測る
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
@@ -2066,6 +2144,8 @@ Proposed（**レビュー6周目・impl W-004 への決定**）
 ---
 
 ## AD-60: `setAlarm` の張り直しの射程を閉じた列挙から「例外なしの規則」へ改め、非同期の張る位置を確定する
+
+→ `.adr/013` に昇格（実装フェーズで転記済み）
 
 ### Status
 
