@@ -6,8 +6,8 @@
 
 - **公開面**: identity のユースケースは**すべて人間UI（★）専用**である。human スコープのみに配線し、AI 側の presentation（MCP / REST API）には存在させない（AI クライアントが自分の認可を操作することはない）
 - **セッション・OAuth プロトコルの責務分界**: セッションの生成・破棄・Cookie 管理、OAuth 2.1 のプロトコル詳細（認可コード、PKCE、トークン発行・検証・失効反映、リダイレクト）はすべて**アダプター/presentation 層の責務**。ユースケースは「認可の事実の記録」「認証情報の照合」などドメイン操作のオーケストレーションに限定する
-- 各ユースケースは `ServiceArgs<TInput>` で `container`（`clock` / `idGenerator` / `unitOfWorkProvider` / 各ポート）と `input` を受け取る。`now` / 新規 `id` はユースケース冒頭で解決し、ドメイン内では生成しない
-- 書き込みは `UnitOfWorkProvider.run` 内の**同期**コールバックで行う（`await` を挟めない）。**ドメインの変更を外部へ通知する経路は持たない**。認証情報側（Identity Directory）とユーザー単位設定側（User Data DO）の両方に書く操作は、単一のトランザクションに収まらないので順序と再開の規則を持つ手続きとして各ユースケースに書く
+- 各ユースケースは `ServiceArgs<TInput>` で `container`（`clock` / `idGenerator` / `unitOfWorkProvider` / 各ポート / **ポートでも時計でも ID 生成器でもない運用値**）と `input` を受け取る。`now` / 新規 `id` はユースケース冒頭で解決し、ドメイン内では生成しない。**運用値をユースケースが読む経路は `container` だけであり、定数を直書きしない** — 同じ値をアダプターも読む場合、両者が同じ DI コンテナから受け取ることが「2箇所に別々の定数を置かない」の実体である（現在この形で読むのは `requestPasswordReset` のスロットル窓の長さ1件で、正本は `spec/database/index.md` の `reset_request_windows` の節）
+- 書き込みは `UnitOfWorkProvider.run` 内の**同期**コールバックで行う（`await` を挟めない）。**(1) 業務データの書き込み、(2) FTS5 projection の更新、(3) `enqueueEvent` によるイベント行の追加、の3つを同じ `transactionSync` の中で一度に確定できる**（rollback すると3つとも巻き戻る。[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。**イベントを発行するユースケースの全数は [async/index.md](../async/index.md) が持つ** — identity では `requestPasswordReset` の1つだけである。認証情報側（Identity Directory）とユーザー単位設定側（User Data DO）の両方に書く操作は、単一のトランザクションに収まらないので順序と再開の規則を持つ手続きとして各ユースケースに書く
 - エラー種別の使い分け: 入力・照合の失敗は `ValidationError`、対象不在は `NotFoundError`、一意性・OCC 競合は `ConflictError`、ドメイン規則違反（値オブジェクト生成失敗を含む）は `BusinessRuleError<IdentityErrorCode>`、基盤障害は `SystemError`
 - `input` の `userId` はセッション由来の信頼済み ID（presentation 層が認証済みセッションから注入する）。外部入力として受けるのは `connectionId`（revokeAiClientConnection）等の明示したフィールドのみ。**リセット完了画面（pages P-03）から呼ぶものも例外ではない** — `executePasswordReset` は完走時に新しいセッションを確立するので（後述）、完了画面は認証済みの画面であり、そこから呼ぶ `getCurrentUser` / `listAiClientConnections` / `unlinkSsoCredential` / `revokeAllAiClientConnections` の `userId` もそのセッション由来である
 - 出力DTOのフィールドはプリミティブ型で表記する（ブランド型 VO はプリミティブに widen して射影する）
@@ -182,7 +182,7 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 
 ### 概要
 
-パスワードリセットを依頼する（S-AC-07）。リセットトークンを発行しメールを送る。登録有無・認証方式を応答から明かさない。**「送らない」は「何も書かない」ではない** — 未登録メールと SSO 専用アカウント（メールのクレデンシャルがログイン手段になっていない）に対してはトークンを発行せずメールも送らないが、**処理経路は登録済みの場合と完全に一致させ、どのケースでも同じトランザクションで送信ジョブの行を1行書く**（後述の処理フロー3）。応答は常に「登録されていれば送信された」旨のみとする。
+パスワードリセットを依頼する（S-AC-07）。リセットトークンを発行し、**リセットメールの配送を Outbox のイベントとして登録する**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)。実際の送信は Alarm relay → Queue → mail consumer を経る。契約は [async/index.md](../async/index.md)）。登録有無・認証方式を応答から明かさない。**「送らない」は「何も書かない」ではない** — 未登録メールと SSO 専用アカウント（メールのクレデンシャルがログイン手段になっていない）に対してはトークンを発行せずメールも送らないが、**処理経路は登録済みの場合と完全に一致させる**（後述の処理フロー2。**一致が測定できる対象は処理フロー4 に挙げた4つ**であり、トークン発行の差だけは残存する）。応答は常に「登録されていれば送信された」旨のみとする。**依頼の応答は配送の成否を待たない**（配送は結果整合・at-least-once）。
 
 公開面: ★ 人間UI専用（未ログインでアクセス可能）
 
@@ -199,21 +199,36 @@ IdP との認証フロー（リダイレクト・トークン交換・メール�
 ### 処理フロー
 
 1. `container.clock.now()` で `now` を解決し、`Email.create(input.email)` で値オブジェクトを構築する
-2. **認証情報側**で `CredentialMappingRepository.findByEmail(email)` により対象クレデンシャルを解決する
-3. **登録済み / 未登録 / SSO 専用 / スロットル中の4ケースで処理経路を完全に一致させる。** どのケースでも同じトランザクションで送信ジョブの行を1行書き、同じ起床を張り、同じ応答を返す。**違うのは行の中身だけである** — 行の書き込みそのものが測定可能な処理時間差になり、登録済みメールの列挙オラクルになるため
-4. 送る側に倒すのは「パスワードの検証材料を持つクレデンシャル」がある場合だけである。**判定は「クレデンシャル行の有無」ではなく「検証材料の有無」で行う** — SSO 登録でもメールのクレデンシャル行は置かれるので、行の有無では決まらない。送らない側の行は宛先を持たず、起床した時点で何も送らずに完了する
-5. 送る側の場合は `PasswordResetTokenPort.issue(credentialId, now)` でリセットトークンを発行する。**発行はそのクレデンシャル宛の未使用トークンをすべて置き換える**（古いリンクは以後効かない）
-6. 起床したジョブが `MailSender.sendPasswordResetMail(email, resetToken)` でリセットメールを送る（リセット URL の組み立てはアダプターの責務）。**ジョブ行に載せるのはトークンの識別子だけで、生のトークンは載せない** — 送信直前に認証情報側で導出する
+2. **イベントを発行するか否かは、スロットル窓の状態だけで決める。** 窓のキー（`windowKey`）は**対象 canonical の全長 HMAC と依頼の窓から決定的に導く**（**導出規則の正本は `spec/database/index.md` の `reset_request_windows` の節**）。**導出主体は次のとおりである** — `windowKey` は **bucket 選択のために canonical の全長 HMAC を既に計算しているアダプター（Identity Directory の stub を選ぶ側）が、その同じ値を DO facade へプリミティブとして渡し**、ユースケースが窓と合成して組み立てる。**導出鍵はその stub 選択アダプターの中にあり、ユースケースにもポートにも渡らない。** facade が受け取る HMAC は server-side で導出された値であって外部入力ではないので、`CLAUDE.md`「Input validation」の第3の検証点にはならない（**クライアントからは受け取らない**）。合成は keyed な再導出を行わない（鍵付きの部分は HMAC 側で済んでいる）ので、`transactionSync` の中に暗号処理を持ち込まない。**したがって本ユースケースは HMAC を自分では計算せず、HMAC を返すポートも足さない**（domains/identity.md「PasswordResetThrottlePort」）。**窓の長さは単一の設定値であり、その正本は `spec/database/index.md` の `reset_request_windows` の節が持つ**（実値の確定は #38）— 同じ値を本ユースケース（`windowKey` の合成）とアダプター（窓行の `expires_at` の算出）の2層が読むので、**2箇所に別々の定数を置かない。** ズレると静かに壊れる（アダプター側が短いと、まだ有効な窓の行が `sweep-reset-tokens` に消され、`claimWindow` が同じ窓で2度目の `true` を返す = 手元のリンクが死んだうえで2通目が飛ぶ）。**本ユースケースがその値を読む経路は `container` の運用値である**（上の共通事項の `container` は、ポートでも時計でも ID 生成器でもない運用値を含む）— **窓行を書くアダプターも同じ DI コンテナから同じ値を受け取るので、「2箇所に別々の定数を置かない」は「合成根が単一である」ことで満たす。** ユースケース側に定数を直書きしない。窓の状態は Identity Directory DO の `reset_request_windows`（UoW コンテキストの `resetThrottleStore`。ドメイン側の契約は `PasswordResetThrottlePort`）が持ち、**判定と計上は `claimWindow(windowKey, now)` の1回の呼び出しで原子的に行われる** — その窓の最初の依頼なら行を作って `true`、既存の窓なら `last_requested_at` だけを更新して `false` を返す。**窓行は登録の有無に関係なく必ず書く**（行の有無が観測可能な差にならないことが、この窓ストアを置いた理由そのものである）。読み取りと計上、イベント行の追加、ジョブの投入はすべて**同じ `transactionSync`** の中で行う
+3. **`claimWindow` が `true` を返した場合にだけ**、**認証情報側**で `CredentialMappingRepository.findByEmail(email)` により対象クレデンシャルを解決する。**この順序（窓の判定を宛先の解決より先に置く）は列挙オラクル対策の一部であり、逆にしない。** 逆順にすると、窓が消費済みでも `findByEmail` が毎回走るので、下の残差 (2) がスロットルの外側に置かれ、同一アドレスに対して回数無制限にサンプルできる状態が残る。**`claimWindow` は `windowKey` しか要らず `findByEmail` の結果に依存しない**ので、この順序に制約は無い
+4. **同じ窓の状態に対して、登録済み / 未登録 / SSO 専用 / スロットル中の4ケースは一様に落ちる。** その窓での**最初の依頼なら4ケースとも必ずちょうど1行**（0行でも2行でもない）イベント行を書き、**既に発行済みの窓なら4ケースとも1行も書かない。** どちらでも同じ起床を張り、同じ応答を返す。**分岐の材料は `claimWindow` の戻り値だけであり、（イベント行と窓行の書き込みについて）クレデンシャルの登録有無・認証方式・宛先の存在を一切参照しない** — 参照すると行の書き込みそのものが測定可能な差になり、登録済みメールの列挙オラクルになる
+   - **射程の外にある差は残存し、その出所は1つではない** — (1) トークンの発行（未使用行の全削除 + 挿入）、(2) `CredentialMappingRepository.findByEmail` のヒット / ミス（行が在るときだけ `credential_mappings` の行を1件読み出す差であり、**宛先の復号はこの経路では起きない** — `CredentialMapping` は宛先の原本を持たず、復号が起きるのは送信材料 RPC の中だけで、そちらは依頼の応答時間に現れない。同期契約の下では `transactionSync` の中に復号を置けない）。いずれも**実測処理時間の側の差**であり、**時間側の等価性は主張しない。ただしスロットルは (1)(2) の両方に効き、どちらも窓あたり1サンプルに縛られる** — 手順2（`claimWindow`）が手順3（`findByEmail`）より先に走り、`claimWindow` が `false` を返した依頼は `findByEmail` にも `issue()` にも到達しないからである。**縛られるのはサンプルの回数であって差そのものではない** — 窓ごとに1回は残差が観測でき、窓は時間とともに明けるので、攻撃者は窓の数ぶんのサンプルを積める。**測定可能な等価性の対象は4つのまま動かない**（`outbox_events` の行数 / `reset_request_windows` の行数 / Alarm の起床の有無 / `sweep-reset-tokens` の投入の有無）。「総書き込み行数」では測らない（[testcases/identity/requestPasswordReset.md](../testcases/identity/requestPasswordReset.md) と同じ4つ）
+   - **注記: 4ケースは互いに素な分割ではない。** 4ケース目の「スロットル中」は**窓が消費済みである状態**そのものを指し、クレデンシャルの3状態（登録済み / 未登録 / SSO 専用）と直交しない — 実際の分割は**クレデンシャル3状態 × 窓2状態**である。上の一様性は**窓の状態を固定したうえでの命題**として読む（「スロットル中でありながらその窓での最初の依頼」という組は存在しない）
+5. **`claimWindow` が `true` を返した場合だけ、トークンを発行しイベント行を書く。**
+   - 送る側に倒すのは「パスワードの検証材料を持つクレデンシャル」がある場合だけである。**判定は「クレデンシャル行の有無」ではなく「検証材料の有無」で行う** — SSO 登録でもメールのクレデンシャル行は置かれるので、行の有無では決まらない
+   - 送る側では `PasswordResetTokenPort.issue(credentialId, now)` でリセットトークンを発行し、戻り値の `{ token, tokenId }` から **payload に載せるのは `tokenId` だけである** — 生トークン `token` はイベント行にも Queue メッセージにも載せず、送信時に DO の中で導出し直す（手順7）。**発行はそのクレデンシャル宛の未使用トークンをすべて置き換える**（古いリンクは以後効かない）。**この全置換が起きるのは窓での最初の依頼のときだけである**（後述「連打と窓」）
+   - 送らない側（未登録 / SSO 専用）ではトークンを発行しないが、**イベント行の形は送る側と一字も違わない** — payload の `tokenId` は nullable にせず、**宛先の有無から独立に生成した不透明値**（トークンと同じ形・同じ長さ）を置く。形が割れると payload そのものが列挙オラクルになる
+   - **その不透明値は `PasswordResetTokenPort` のデコイ採番メソッド（`mintDecoyTokenId()`）から採る。`container.idGenerator.next()` を使わない** — `IdGenerator` は UUIDv7（時刻由来）で、`token_id` の生成規則（CSPRNG 由来の不透明値。`spec/database/index.md`）と形が割れる。**4ケースで `tokenId` の生成器が同一であること**がポートの契約であり、生成器はアダプター（bucket）に閉じる（domains/identity.md「PasswordResetTokenPort」）
+   - `enqueueEvent` で `identity.passwordResetRequested` の draft を1件登録する（`aggregateId` は `windowKey`。**payload は `tokenId` / メール種別の2つだけである** — **発行元 bucket の routing key は payload に入れない。** routing key は relay が publish 時に Queue メッセージへ押す項目であって、ドメイン／ユースケースの契約ではない（`EventId` と同じ扱い。[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md) の「配送機構をドメインへ出さない」）。**メールアドレス・生トークン・`userId` を載せない**。domains/identity.md「ドメインイベント」）
+6. **`enqueueJob` により `sweep-reset-tokens` を投入する。投入点は「リセットトークン行または窓行を書くのと同じトランザクション（= `requestPasswordReset` の4ケースすべて）」であり、宛先の登録有無で投入を分けない。** 窓行は4ケースすべてで書かれるので、投入も4ケースすべてで起きる — 分けると (a) 未登録アドレスだけを投げられた bucket で掃除が一度も投入されず窓行が単調増加し、(b) `enqueueJob` の有無が4ケースで割れて起床が観測可能な差になる。同ジョブは期限切れのリセットトークン行と**期限切れの窓行の両方**を掃除する（`jobs.kind` は増やさない。[async/index.md](../async/index.md) / `spec/database/index.md`）。投入時の **`next_run_at` は窓の終端（= その窓の開始 + 窓の長さ）から導き、送る側でもリセットトークンの `expires_at` を材料にしない。** 窓行の `expires_at` は窓の終端に**猶予**を足した値だが、**猶予は窓行を書くアダプター側の掃除条件にだけ効くので、投入時刻の材料にしない** — 投入側にも置くと「2層が同じ設定値を読む」対象が窓の長さに加えてもう1つ増え、ズレたときに静かに壊れる面が広がる。窓の終端に起きた掃除は窓行についてはまだ空振りしうるが、**完了時の再武装が2表の索引（`prt_expires_idx` / `rrw_expires_idx`）から `min(expires_at)` を読み直して正しい時刻を張り直すので収束する。** 投入時刻を宛先の登録有無に依存させないことは変わらない（依存させると「同じ起床を張る」が4ケースで割れる）。
+7. 配送は Alarm relay が担う。**生のトークンはイベント行にも Queue メッセージにも載せず**、mail consumer が発行元 bucket へ打つ**送信材料 RPC** の中（= DO の中）で `tokenId` から導出する。consumer は応答が `send` のときだけ `MailSender.sendPasswordResetMail(to, resetToken, providerIdempotencyKey)` を呼び（`providerIdempotencyKey` は `event.id` から導く。**ユースケースはこのポートを呼ばない** — 呼ぶのは consumer である）、`nothing-to-send` なら no-op して ack する（[async/index.md](../async/index.md)）。**`send` が持つのは宛先・生リセットトークン・`providerIdempotencyKey` の3つであり、URL の組み立てとメール本文のレンダリングは `MailSender` アダプター（request Worker）の責務である** — DO はテンプレートも base URL も持たず、DO の中に閉じるのは復号と HMAC 導出であってレンダリングではない
 
-**同じメールアドレスへの連打は1本のジョブ行に収束する。** 収束のキーは `operationKey` で、**対象クレデンシャルと依頼の窓から決定的に導く**（クライアントから受け取らない）。登録済みでも未登録でも同じで、書き込みと起床は依頼回数ではなく時間の窓の数に比例する
+**連打と窓.** 同一 canonical・同一窓への連打では、**2回目以降はイベント行もリセットトークンも書かない。** 収束を担うのは行の一意制約ではなく `claimWindow` の判定であり、**書き込みと起床は依頼回数ではなく時間の窓の数に比例する**（登録済みでも未登録でも同じ）。窓行のほうは窓ごとに1行で、2回目以降は同じ行への冪等な更新であり新しい行も起床も作らない。
+
+- **発行判断と窓判定は同じ1つの分岐である**（`claimWindow` の戻り値）。2つの独立した条件ではない — 分けて「2回目でも `issue()` は呼ぶ」にすると、**1通目が未送信なら送信時の再読が `nothing-to-send` に落ちて0通になり、1通目が送信済みなら利用者の手元のリンクが死ぬ**
+- したがって**同一窓への連打では、配送が正常なら、その窓で発行される有効なリンクは1回だけである**（受信通数は at-least-once なので上限ではない。同じリンクのメールが複数回届きうる）。**未使用のトークンが残っている限り**、最初に届いたリンクは2回目の依頼後もそのまま使える
+  - **「1回だけ」は発行の回数についての命題であり、受信通数の上下限ではない。** 0通になりうる経路は1つだけで、それは運用側の失敗である — 窓の中で配送が `quarantined` / DLQ に落ちると、その窓のあいだ利用者は1通も受け取れないまま再送も得られない（2回目以降の依頼は `claimWindow` が `false` を返すのでイベント行を書かない）。復旧は operator 経路（隔離行の再駆動 / DLQ の再駆動）だけである（`spec/database/index.md`「reset_request_windows」の窓内隔離の項）
+  - 同様に、**窓の中で `executePasswordReset` がトークンを消費した後の再依頼も何も発行しない** — 手元のリンクは既に使用済みなので、次の窓が明けるまで新しいリンクは得られない
+- **supersede が生じるのは窓をまたいだときだけである。** 新しい窓の最初の依頼が未使用トークンを全置換するので、窓をまたいで積まれた古いイベント行は送信材料 RPC が `nothing-to-send` を返して no-op になる
 
 ### エラーケース
 
 | 条件 | エラー |
 |---|---|
 | メール形式不正 | `BusinessRuleError(IdentityErrorCode.InvalidEmail)` |
-| トークンストア障害・送信基盤障害 | `SystemError`（ただし宛先の実在性に起因する失敗を応答に反映してはならない） |
+| トークンストア・窓ストア障害 | `SystemError`（ただし宛先の実在性に起因する失敗を応答に反映してはならない） |
 | メール未登録 / SSO 専用アカウント / スロットル中 | エラーにしない（正常応答。登録有無も認証方式も明かさない） |
+| 送信基盤の失敗 | **依頼の応答には現れない**（配送はトランザクションの外で結果整合に行われ、失敗は Queue の retry → DLQ が扱う。async/index.md） |
 
 ## executePasswordReset
 

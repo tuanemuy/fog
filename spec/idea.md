@@ -45,5 +45,5 @@
 
 - `packages/core` — domain / application / adapters（フレームワーク非依存）
 - `apps/web` — TanStack Start（ルート・コンポーネント・presentation 層）
-- Unit of Work（DO ローカルの同期トランザクション）+ Alarm ジョブ、ポート & アダプター構成
+- Unit of Work（DO ローカルの同期トランザクション）+ Alarm ジョブ + DO ローカル Outbox（Alarm relay → Queue → consumer）、ポート & アダプター構成
 - MCPサーバーは将来 `apps/*` の新パッケージとして `@repo/core` を再利用する想定

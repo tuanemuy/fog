@@ -288,6 +288,8 @@ memo / knowledge のリポジトリ（`TransactionalRepository` ベース）は�
 
 非同期（ジョブ投入 → ポーリング → ダウンロード URL 発行）は採用しない。理由: ジョブ状態の永続化にエンティティが必要になり「export はエンティティを持たない薄いドメイン」（ADR-004）に反すること、対象が個人スコープのテキストデータでありリクエスト内で完了する規模であること。将来、同期生成が実行時間制限に収まらなくなった場合に ADR を起こして再検討する。
 
+**DO ローカル Outbox が加わった後も export は同期生成のままである**（[.adr/013](../../.adr/013-do-local-outbox-and-alarm-relay.md)）。export はイベントを定義せず、`outbox_events` にも `jobs` にも行を作らない — 生成の完了責任はリクエスト自身が持ち、委譲する consumer が無いからである（全数は [async/index.md](../async/index.md)）。
+
 ## ユースケース（概要）
 
 詳細は Phase 4 で定義する。
