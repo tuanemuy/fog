@@ -512,9 +512,15 @@ setAlarm( min(
 - **4本の合成が「lease 中の行は `max(next_run_at, lease_until)` で算入する」と一致する根拠は、leased 行では `next_run_at ≤ lease_until` が常に成り立つことである**（claim の時点で `next_run_at` は過去、`lease_until` は未来なので、`max` は必ず `lease_until` を採る）。したがって leased 行を `lease_until` だけで数え、`pending` の行を `next_run_at` だけで数えれば、両者の最小は式の値と等しい。
 - **lease の算入規則を明示するのは、claim の CAS が `lease_until` の満了を要求するからである**（上の claim の項）。算入しないと、過去の `next_run_at` を持つ leased 行だけが残った状態で空振り起床を繰り返す。**`jobs` 側にも同じ形で掛かる。**
 - **「実行可能集合」は `status` だけで定義する**（`jobs` は `pending` / `running`、`outbox_events` は `pending` / `publishing`）。**`next_run_at <= now` を集合の定義に入れず、claim の選択述語としてだけ掛ける** — 定義に入れると、まだ時刻の来ていない行しか残っていない DO で `deleteAlarm()` の条件（両表の実行可能集合が空）が成立し、二度と起きなくなる。逆に claim 側で掛け忘れると backoff が無効化される（上の claim の項）。**この区別は `jobs` と `outbox_events` の両方に同じ形で掛かる。**
-- **行を書いた側は、そのトランザクションのあとに上の4本の min の合成で `setAlarm` を張り直す。これが起床を張る規約であり、経路ごとの例外を作らない。** 射程は「実行可能な行を増やす経路」の全数であり、**`enqueueJob` / `enqueueEvent` を含むトランザクションと `requeue-quarantined-event` の再駆動（後述の「operator 専用 maintenance 経路」）がその全数である**（claim / 終端 / prune は `alarm()` の末尾 (4) が張り直すので、この規約の射程ではない）。
-  - **`deleteAlarm()` 済みの DO でも張る。** 終端行しか残っていない DO は定義上 `deleteAlarm()` 済みなので（上の規則）、そこへ `next_run_at = now` の行を1本書いても、張らない実装では**次に誰かがその DO を起こすまで行が動かない。** 休眠中の Identity Directory bucket では「誰か」が来る保証が無いので、リセットメールが静かに配送されないまま残る（`requeue-quarantined-event` の項が再駆動について警戒しているのと同型の停止であり、両方とも同じこの規約で閉じる）。
+- **実行可能な行を増やした主体は、例外なく、その書き込みのあとに上の4本の min の合成で `setAlarm` を張り直す。これが起床を張る規約であり、経路ごとの例外を作らない。**
+  - **射程を経路の閉じた列挙では宣言しない。** 列挙で宣言すると、列挙に載らない投入経路が静かに落ちる — 実際 `reindex` / `migrate-bulk` はユースケースの `enqueueJob` を通らず migration ゲート（アダプター）が投入するので、「`enqueueJob` / `enqueueEvent` を含むトランザクションと `requeue-quarantined-event`」で閉じた形からは漏れる。**規約の射程は「行を増やした」という事実そのものであり、既知の経路は例示であって全数ではない。** 例示: `enqueueJob` / `enqueueEvent` を含むトランザクション、`requeue-quarantined-event` の再駆動（後述の「operator 専用 maintenance 経路」）、**migration ゲートによる `reindex` / `migrate-bulk` の投入**（後述の「スキーマバージョンと lazy migration」）、operator 経路による `rotate-encryption` の起動。**将来足される投入経路も、この例示へ書き足すまでもなく射程に入る — 新しい投入経路を足す者は、経路の側で例外を主張できない。**
+  - **claim / 終端 / prune はこの規約の射程ではない。** 行を増やさないうえ、`alarm()` の末尾 (4) が両表から再計算して張り直すからである。
+  - **`deleteAlarm()` 済みの DO でも張る。** 終端行しか残っていない DO は定義上 `deleteAlarm()` 済みなので（上の規則）、そこへ `next_run_at = now` の行を1本書いても、張らない実装では**次に誰かがその DO を起こすまで行が動かない。** 休眠中の Identity Directory bucket では「誰か」が来る保証が無いので、リセットメールが静かに配送されないまま残る（`requeue-quarantined-event` の項が再駆動について警戒しているのと同型の停止であり、両方とも同じこの規約で閉じる）。**ゴミ箱が空で保留ジョブを持たない User Data DO も同じ状態にあるので、migration ゲートが投入した `reindex` / `migrate-bulk` にもそのまま掛かる。**
   - **張る時刻は4本の min の合成であって、いま書いた行の `next_run_at` ではない** — 他表・他行のほうが早いことがあるので、直接渡すと既存の行の起床を後ろへずらす。
+  - **`setAlarm()` は非同期なので、`transactionSync` の中でも、`await` を1つも挟まない migration ゲートの中でも呼べない。** 張る位置は「**その書き込みが確定したあと、最初に来る非同期の文脈**」であり、**規則はこの1文が全部である。** 下は代表的な経路での実体であって、**ここも例示であり全数ではない**（射程の列挙をここで作り直さない）。
+    - **ユースケース経由**（`enqueueJob` / `enqueueEvent`）と **operator RPC 経由**（`requeue-quarantined-event`）: `UnitOfWorkProvider.run` が戻ったあと、RPC の応答を返す前。
+    - **migration ゲート経由**（`reindex` / `migrate-bulk`）: **ゲートが同期関数として戻った直後、RPC 本体に入る前。** 本体の完了後にしないのは、**本体が throw してもゲートが書いた行はゲート自身のトランザクションで既に確定している**からである（本体の成否に起床を依存させない）。**射程はゲートが実際にジョブ行を投入した起動だけである** — 何も適用しなかったゲート通過では表が動いていないので張らない。これは「行を増やした主体が張る」の言い換えであって例外ではなく、全 RPC が毎回1回の非同期ストレージ操作を負う形も避ける。
+    - **`alarm()` の中でゲートが投入した場合**: 末尾 (4) の張り直しが両表から再計算するので、**追加の呼び出しは要らない**（後述の `alarm()` の順序）。
 - **件数上限は各パスが独立に持ち、毎回の起床で両方のパスを必ず1回通す。** 片方が上限を使い切っても他方は必ず走る（上限を共有すると片方の滞留がもう片方を飢えさせる）。
 - **relay の1パスは3相で、Queue への送信だけがトランザクションの外にある。**
   1. `transactionSync`: 実行可能な行を上限件数まで claim（`status='publishing'`、`lease_until` / `owner_token` を CAS で書く）
@@ -762,6 +768,7 @@ DO ごとのメタ情報。単一行。
 | `rrw_expires_idx` | (`expires_at`) | `sweep-reset-tokens` の期限切れ窓行の掃除（`prt_expires_idx` と同じ役割・同じ形） |
 
 - **窓キーの導出。この節が導出規則の正本であり、他のファイルはここを参照する。** `windowKey` は **bucket 選択のために canonical の全長 HMAC を既に計算しているアダプター（Identity Directory の stub を選ぶ側）が、その同じ値を DO facade へプリミティブとして渡し**、ユースケースが窓と合成して組み立てる。**導出鍵はその stub 選択アダプターの中にあり、ユースケースにもポートにも渡らない。** facade が受け取る HMAC は server-side で導出された値であって外部入力ではないので、`CLAUDE.md`「Input validation」の第3の検証点にはならない（**クライアントからは受け取らない**）。合成は keyed な再導出を行わない（鍵付きの部分は HMAC 側で済んでいる）ので、`transactionSync` の中に暗号処理を持ち込まない
+  - **facade が受け取る全長 HMAC は、同じ DO の中で `credential_mappings` の PK 引き（`CredentialMappingRepository.findByEmail`。domains/identity.md）にも同じ値が使われる。DO 側は HMAC を導出せず、facade から受け取った値を使う。** 「写像鍵は DO の中に無い」という上の帰属と、`findByEmail` が DO の中で PK `(kind, hmac)` を引くこと（`spec/inventory/adapter.md` の `ADP-identity-004`）は、これで両立する — **DO が持たないのは鍵であって HMAC の値ではない。** ポートの signature は `email: Email` のままであり、**HMAC を返すドメインポートも、canonical から HMAC を導く DO 内の経路も足さない**（domains/identity.md `PasswordResetThrottlePort` の「導出主体」）。`requestPasswordReset` は手順2 の `claimWindow` と手順3 の `findByEmail` で**同じ1つの値**を使う
   - **合成は一方向である必要はない。** したがって `window_key` と `outbox_events.aggregate_id` は canonical の全長 HMAC を逐語で含みうる。これを受け入れられるのは次の5つによる — (i) 同じ DO の `credential_mappings.hmac` が登録済みクレデンシャルについて同じ値を既に恒久的に持っており、**DO 内部の読み手にとって新しい相関材料ではない**、(ii) 窓行は `sweep-reset-tokens` が掃除する、(iii) **DO の外へ出る経路（Queue メッセージ）には `aggregate_id` を載せない**、(iv) **`list-quarantined-events` も `aggregate_id` を返さない**、(v) **未登録 canonical については (i) も (ii) も効かない**（(i) の限定は登録済みクレデンシャルまで、(ii) の射程は窓行まで）ので、その宛先の全長 HMAC を DO 内部に恒久的に残しうるのは `quarantined` のイベント行だけになるが、**そこに残ることを受け入れられるのは、`window_key` を導いた写像鍵が DO の中に無い**（この項の本文 / async/index.md の衛生規則）**ことと、(iii)/(iv) が外への出口を閉じていることによる。** **(iii) か (iv) のどちらかを緩めるなら、合成を一方向にする（全長 HMAC と窓を連結したうえで一方向ハッシュを1回通す）ところまで戻る** — 緩めた側では窓で切れない仮名が DO の外へ出る
     - **(v) の帰結として、隔離が一斉に起きると「他にどこにも記録の無いアドレス」の全長 HMAC が DO 内部に蓄積する。** 隔離行は恒久保持なので自動では減らず、**減らす手段は operator 経路の再駆動と明示削除の2つだけである**（「operator 専用 maintenance 経路」/ 「物理境界」の 10 GB の項と同じ全数）。10 GB の算入と同じく、これを明示的な運用制約として引き受ける
 - **登録の有無に関係なく行を作る。** 4ケース（登録済み / 未登録 / SSO 専用 / スロットル中）のどれでも**同じ1文で読み、同じ1文で書く。行の有無が観測可能な差にならないことが、この表を新設した理由そのものである**
@@ -837,6 +844,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 - `alarm()` の順序を固定する。**(1) Alarm の再武装 + 永続化の確認 → (2) 本ゲート → (3-a) outbox relay パス → (3-b) jobs パス → (4) 両表から再計算して張り直す** である。(1) の待機はゲートに入る前に完了するので、上の排他条件は破れない
   - **relay をゲートの中に入れられないのは、ゲートが `await` を1つも挟まない同期関数だからである**（上の排他条件）。relay は相 2 で `queue.send()` を await するので、必ず (3-a) に来る
   - **(3-a) と (3-b) は毎回の起床で両方を必ず1回通し、件数上限は各パスが独立に持つ**（片方の滞留がもう片方を飢えさせないため。「Alarm の多重化」）
+  - **(2) のゲートが `reindex` / `migrate-bulk` を投入した場合、その起床を張るのは (4) である** — (4) は両表から再計算するので、ゲートが投入した行も算入される（(1) はゲートより前なので算入しない）。**RPC エントリから入ったゲートには (4) に当たるものが無いので、そちらは呼び出し側がゲートの直後に張る**（下の「データ書き換えを伴う部分はジョブへ逃がす」/ 上の「Alarm の多重化」の張り直しの項）
 
 ### 単発適用で足りる DDL と、分割・回避が要る DDL
 
@@ -848,6 +856,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
   - **`jobs` からの、外部プロバイダへ渡す冪等キーの列の削除は (i) の列削除に当たる。**
   - **`credential_mappings` からのリセット依頼スロットル列の削除も (i) の列削除に当たる。** 新テーブル追加側だけ分類を書いて列削除側を書かないのは非対称なので、両方を書く
 - **データ書き換えを伴う部分はジョブへ逃がす。** DDL 部分だけを単発のトランザクションで適用して `schema_version` を進め、既存行の書き換え・コピーは `migrate-bulk`、FTS5 の全件再構築は `reindex` に載せる。ジョブの投入自体は同期の1行書き込みなので、ゲートの「`await` を挟まない」条件を破らない
+  - **ただし起床を張るのはゲートの外である。** `setAlarm()` は非同期なのでゲートの中では呼べない。**ゲートが1行でもジョブを投入した起動では、ゲートが戻った直後・RPC 本体に入る前に、4本の min の合成で `setAlarm` を張る**（規約の正本は上の「Alarm の多重化」の張り直しの項。**`alarm()` から入ったゲートについては末尾 (4) が兼ねるので追加の呼び出しは要らない**）。**この経路はユースケースの `enqueueJob` を通らないので、投入口の側の規約からは掛からない** — 張らないと、ゴミ箱が空で保留ジョブを持たない User Data DO（実行可能集合が空なので定義上 `deleteAlarm()` 済みであり、大半の利用者の定常状態である）に `reindex` / `migrate-bulk` の `pending` 行だけが残り、**次に別のジョブが投入されるまで一度も走らない。** tokenizer や正規化規則を変えた migration では、検索インデックスが旧規則のまま静かに残る
 - **FTS5 の `'rebuild'` は使わない。** 1文で全索引を消して全行から作り直す単一 SQL 文であり、中断・再開の単位が存在しない。**`reindex` は projection の全行再実行（1行ずつ「旧値で delete → 新値で insert」）として実装する**
 - **`tokenize` オプションそのものを変える場合**は「新しい `tokenize` の仮想表を作る（単発）→ `reindex` が全行を投入する → 検索の参照先を新しい表へ切り替える → 旧仮想表を落とす」の4段へ分解する（既存の FTS5 表の tokenizer を変更する手段は無い）。**正規化規則だけを変える場合はこの分解は要らない** — 正規化は projection 側で行うので仮想表の定義が変わらない
 
@@ -901,7 +910,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 
 ## operator 専用 maintenance 経路
 
-ジョブが一様な終端（`terminal_reason` + `poison`）に達したときのエスカレーション先として、**operator 専用の maintenance 経路が存在する**。`purge-user-mappings`（退会の最後の砦）と `cancel-reservation`（新規登録の予約の取り消し）の2つで、どちらも `jobs.kind` の11種には入らない（ジョブではなく RPC である）。診断用の `read-schema-version` / `list-bucket-user-ids` と、`rotate-encryption` の起動（全数表が名指しする唯一の投入点）も同じ経路に属する。**到達制御・監査ログ・運用手順の実体は #38 が定める。**
+ジョブが一様な終端（`terminal_reason` + `poison`）に達したときのエスカレーション先として、**operator 専用の maintenance 経路が存在する**。`purge-user-mappings`（退会の最後の砦）と `cancel-reservation`（新規登録の予約の取り消し）の2つで、どちらも `jobs.kind` の11種には入らない（ジョブではなく RPC である）。診断用の `read-schema-version` / `list-bucket-user-ids` と、`rotate-encryption` の起動（全数表が名指しする唯一の投入点）も同じ経路に属する。**行を書く経路には「Alarm の多重化」の張り直しの規約がそのまま掛かる** — `rotate-encryption` の起動も `requeue-quarantined-event` の再駆動（後述）も、そのトランザクションのあとに4本の min の合成で `setAlarm` を張る。**読みしかしないエントリ**（`read-schema-version` / `list-bucket-user-ids` / `list-quarantined-events`）**は行を増やさないので張らない。** **到達制御・監査ログ・運用手順の実体は #38 が定める。**
 
 **`outbox_events` の `quarantined` に対する導線も同じ経路に属する** — `list-quarantined-events`（一覧）と `requeue-quarantined-event`（`pending` へ戻す再駆動）である。**どちらも `jobs.kind` にも `event.type` にも入らない**（ジョブでもイベントでもなく RPC である）。**consumer 側の失敗の導線はここではなく DLQ ハンドラである**（責務分界は「Queue に入る前か後か」の1本。async/index.md）。
 
@@ -1001,3 +1010,4 @@ account.caller_token        ──→ credential_mappings.caller_token（同じ�
 | Alarm の張り直し（4本の min の合成。「Alarm の多重化」） | `jobs_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `jobs_lease_idx`（`status='running'` の `min(lease_until)`）/ `outbox_runnable_idx`（`status='pending'` の `min(next_run_at)`）/ `outbox_lease_idx`（`status='publishing'` の `min(lease_until)`） |
 | bucket 内の `userId` 列挙（運用の診断経路） | `cm_user_idx` |
 | スロットル窓の判定と計上（`claimWindow`） | `reset_request_windows` の PK (`window_key`) |
+| 隔離イベントの一覧（`list-quarantined-events`。`completed_at` 昇順・件数上限） | `outbox_completed_idx`（`status='quarantined'` の等値 + `completed_at` 順。**この順序は宣言済みの索引で解けてソートが要らない** — 「operator 専用 maintenance 経路」。prune 専用の部分索引へ縮めるとこの経路が解けなくなる） |

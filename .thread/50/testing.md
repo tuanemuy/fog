@@ -209,6 +209,7 @@
   2. `spec/async/index.md` の relay の3相と DLQ の節を読む
 - **期待結果:**
   - `setAlarm(min(jobs, outbox))` と、`alarm()` 内の順序 **(1) 再武装 → (2) migration ゲート → (3-a) relay パス → (3-b) jobs パス → (4) 張り直し** が定義されている。各パスが**独立の件数上限**を持ち、relay が上限に達しても jobs パスが飢えない。**両表の実行可能集合が空のときだけ** `deleteAlarm()` する。**lease 中の行（`running` / `publishing`）は `max(next_run_at, lease_until)` で算入**して空振り起床を作らない（AC-13）
+  - **実行可能な行を増やした主体が `setAlarm` を張り直す規約に、経路ごとの例外が無い。** 射程が**経路の閉じた列挙では宣言されておらず**、`enqueueJob` / `enqueueEvent` / `requeue-quarantined-event` に加えて **migration ゲートによる `reindex` / `migrate-bulk` の投入**が例示に入っている（この経路はユースケースの `enqueueJob` を通らない）。**張る位置**が「その書き込みが確定したあと最初に来る非同期の文脈」として確定しており、migration ゲート経由は**ゲートが戻った直後・RPC 本体に入る前**、`alarm()` の中でゲートが投入した場合は末尾 (4) が兼ねる、と書かれている（`setAlarm()` は非同期なので `await` を1つも挟まないゲートの中では呼べない。`adr.md` AD-60）
   - relay が **トランザクション内 claim → トランザクション外 publish → トランザクション内 finalize** の3相で定義され、**Queue publish の直後に DO がリセットすると再送される**ことが at-least-once の根拠として明記されている（AC-14）
   - poison / quarantine（発行元 DO 側）と Queue DLQ（consumer 側）の分界が「**Queue に入る前か後か**」の1本で定義され、それぞれの再駆動と operator 導線が書かれている。**発行元 DO へ ack を書き戻さない**ことが明記されている（AC-25）
   - fail-closed の DO は relay もせず outbox 行が滞留するが**失われた配送ではない**こと、逆に fail-closed 前に publish 済みのメッセージを処理する consumer は migration ゲートに阻まれて DLQ へ落ちることの**両方**が書かれている
