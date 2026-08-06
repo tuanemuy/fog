@@ -524,8 +524,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // The uniformity is the feature: any difference between these would let
-  // an attacker probe which addresses are registered and how.
   it("answers every failure mode identically (TC-loginWithPassword-008)", async () => {
     const container = createTestContainer();
     await seedPasswordUser(container, "user@example.com");

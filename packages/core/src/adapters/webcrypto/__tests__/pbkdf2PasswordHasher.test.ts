@@ -57,7 +57,6 @@ describe("createPbkdf2PasswordHasher", () => {
 
     expect(algorithm).toBe("pbkdf2-sha512");
     expect(iterations).toBe(String(ITERATIONS));
-    // 16-byte salt and a 256-bit derived key, base64-encoded.
     expect(atob(salt ?? "")).toHaveLength(16);
     expect(atob(derived ?? "")).toHaveLength(32);
   });
