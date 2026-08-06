@@ -300,11 +300,20 @@ describe("DEFAULT_PBKDF2_ITERATIONS", () => {
   // factors drift apart and reviving the timing oracle. That one edit is
   // what the directive below catches, and it catches it as a type error:
   // `@ts-expect-error` with nothing left to suppress fails the type check.
-  // Removing the adapter's own `: typeof …` annotation is outside its
-  // reach — both sides still infer the same literal, so `pnpm typecheck`
-  // stays green. What covers that case is the runtime comparison in
-  // `identity.integration.test.ts`, which reads the dummy's iteration field
-  // back against `DEFAULT_PBKDF2_ITERATIONS`.
+  //
+  // How the gates divide the work, for this pin and for the `ALGORITHM_ID`
+  // one below alike:
+  // - widening an application-side constant (`: number`, `: string`, or a
+  //   union that still reads): these two directives, as a type error;
+  // - drift in the adapter's own value: the unit tests in this file;
+  // - `SHIPPED_HASH` drifting away from `ALGORITHM_ID`: the round-trip
+  //   tests above;
+  // - an application-side constant drifting once the adapter's
+  //   `: typeof …` annotation is gone: `burns against a hash the production
+  //   hasher derives from` in `identity.integration.test.ts`.
+  // Dropping that annotation on its own is caught by nothing — both sides
+  // still infer the same literal, so the type check and both suites stay
+  // green.
   it("is pinned to the literal the login path declares", () => {
     // @ts-expect-error the adapter default is the literal
     // `DUMMY_PASSWORD_HASH_ITERATIONS`, not `number`
@@ -320,12 +329,6 @@ describe("ALGORITHM_ID", () => {
   // login path's constant, because what has to stay pinned is the
   // identifier this adapter writes — widening the application-side
   // constant to `string`, or to a union that still reads, is caught here.
-  // Three layers divide the work and only the first is type checking:
-  // this directive for the application-side constant; the round-trip tests
-  // above for `SHIPPED_HASH` drifting away from `ALGORITHM_ID`; and the
-  // literal `pbkdf2-sha512` regex in `identity.integration.test.ts` for the
-  // adapter's `: typeof …` annotation being dropped outright, which leaves
-  // both sides inferring the same literal and every type check green.
   it("is pinned to the literal the login path declares", () => {
     // @ts-expect-error the adapter identifier is the literal
     // `DUMMY_PASSWORD_HASH_ALGORITHM_ID`, not `string`

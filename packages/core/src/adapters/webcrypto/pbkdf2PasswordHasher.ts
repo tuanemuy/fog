@@ -25,10 +25,13 @@ type Digest = "SHA-256" | "SHA-512";
  *
  * `pbkdf2-sha256` is a read-only branch kept for rows written before #20;
  * nothing writes it any more. No production row is expected to carry that
- * format, so the branch may be deleted once the development D1's
- * remaining rows are gone or #18's rehash-on-login lands, whichever comes
- * first. `.thread/20/adr.md` ADR-002 carries how far that premise was
- * verified and the one thing to check before deleting.
+ * format, so the branch may be deleted once no row is left in it — in the
+ * development D1, once its remaining rows are gone. #18's rehash-on-login
+ * landing is not that moment: it rewrites those rows by verifying them
+ * through this branch, so the branch has to outlive it and may only go
+ * once it has finished sweeping. `.thread/20/adr.md` ADR-002 carries how
+ * far that premise was verified and the one thing to check before
+ * deleting.
  */
 export const hashFor = (algorithm: string): Digest | null =>
   algorithm === "pbkdf2-sha512"

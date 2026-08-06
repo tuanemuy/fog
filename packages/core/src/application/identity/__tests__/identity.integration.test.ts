@@ -648,10 +648,9 @@ describe("loginWithPassword (integration)", () => {
     // token cost would still verify, and would still buy nothing. Never
     // rebuild the `pbkdf2-sha512` literal from `ALGORITHM_ID` — assembling
     // both sides from one constant makes it self-referential and
-    // worthless. What this catches is drift in the dummy's own constants,
-    // and once the adapter's `: typeof …` pin is dropped it is the only
-    // check that still catches it; drift on the adapter's side falls to
-    // the unit tests and to TC-loginWithPassword-009 below.
+    // worthless. What this catches is drift in the dummy's own constants;
+    // the map of which gate covers what is on `DEFAULT_PBKDF2_ITERATIONS`
+    // in `pbkdf2PasswordHasher.test.ts`.
     expect(dummy).toMatch(
       new RegExp(`^pbkdf2-sha512\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
     );
