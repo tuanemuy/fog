@@ -5,8 +5,10 @@ import {
 } from "@repo/core/domain/identity/valueObject";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ALGORITHM_ID,
   createPbkdf2PasswordHasher,
   DEFAULT_PBKDF2_ITERATIONS,
+  hashFor,
   MAX_PBKDF2_ITERATIONS,
   MIN_PBKDF2_ITERATIONS,
 } from "../pbkdf2PasswordHasher";
@@ -20,9 +22,10 @@ async function capture(fn: () => Promise<unknown>): Promise<unknown> {
   throw new Error("expected the hasher to reject");
 }
 
-// Production strength is 210k iterations; the tests run at a cost the
-// runner can afford, which is exactly what the factory argument exists
-// for. The parameters, not the cost, are what these assertions pin.
+// Production strength is PBKDF2-HMAC-SHA512 at 210k iterations; the tests
+// run at a cost the runner can afford, which is exactly what the factory
+// argument exists for. The parameters, not the cost, are what these
+// assertions pin.
 const ITERATIONS = 1_000;
 const hasher = createPbkdf2PasswordHasher({ iterations: ITERATIONS });
 
@@ -52,9 +55,8 @@ describe("createPbkdf2PasswordHasher", () => {
     const hash = await hasher.hash(PASSWORD);
     const [algorithm, iterations, salt, derived] = hash.split("$");
 
-    expect(algorithm).toBe("pbkdf2-sha256");
+    expect(algorithm).toBe("pbkdf2-sha512");
     expect(iterations).toBe(String(ITERATIONS));
-    // 16-byte salt and a 256-bit derived key, base64-encoded.
     expect(atob(salt ?? "")).toHaveLength(16);
     expect(atob(derived ?? "")).toHaveLength(32);
   });
@@ -85,30 +87,88 @@ describe("createPbkdf2PasswordHasher", () => {
     await expect(weak.verify(PASSWORD, strongHash)).resolves.toBe(true);
   });
 
-  it("defaults to the OWASP iteration count", () => {
+  // The constant only. Walking the default path is the job of `takes the
+  // OWASP default for its algorithm when given no argument`, which is where
+  // the claim about what a default hasher actually writes lives.
+  it("declares the OWASP count for the algorithm it ships", () => {
     expect(DEFAULT_PBKDF2_ITERATIONS).toBe(210_000);
   });
 
+  // Written out as literals rather than assembled from `ALGORITHM_ID` and
+  // the shipped digest name: building both sides from the constants under
+  // test would pass even if the two drifted to a third algorithm together.
+  it("writes one identifier and derives with the digest it names", () => {
+    expect(ALGORITHM_ID).toBe("pbkdf2-sha512");
+    expect(hashFor("pbkdf2-sha512")).toBe("SHA-512");
+    expect(hashFor("argon2id")).toBeNull();
+  });
+
+  // Verifying a hash written before #20 is what keeps the read-only
+  // `pbkdf2-sha256` branch honest: nothing writes that form any more, so
+  // this hardcoded fixture — captured from the old encoder, for the plain
+  // text `password123` — is its only remaining exercise.
+  it("still verifies a hash written in the pre-#20 SHA-256 encoding", async () => {
+    const legacy = PasswordHash.create(
+      "pbkdf2-sha256$1000$5faRifbz4tbABUNj0fGHwg==$6hroV6AYx3/sZCNZ2b6b5dEvGwem7QxDxqru/lNUeiQ=",
+    );
+
+    await expect(hasher.verify(PASSWORD, legacy)).resolves.toBe(true);
+    await expect(
+      hasher.verify(PlainPassword.create("password124"), legacy),
+    ).resolves.toBe(false);
+  });
+
+  // The shipped format's own external fixture, and deliberately independent
+  // of the legacy one above so that retiring the `pbkdf2-sha256` branch does
+  // not take it along: a round trip cannot see a change to what `derive`
+  // feeds WebCrypto — a pepper, a normalisation pass, another text encoding
+  // — because `hash` and `verify` move together. Generated outside this
+  // codebase with node:crypto `pbkdf2Sync("password123", salt, 1000, 32,
+  // "sha512")`, and confirmed to differ from the SHA-256 derivation of the
+  // same inputs, so passing it means the SHA-512 branch really ran.
+  it("verifies a SHA-512 hash it did not write itself", async () => {
+    const fixture = PasswordHash.create(
+      "pbkdf2-sha512$1000$xV4JrROqj4l6BU/mz+2B9g==$i5P8QP0hYHeNdKtkyb1rETDplCkz+X7QmHsa1UC9YKA=",
+    );
+
+    await expect(hasher.verify(PASSWORD, fixture)).resolves.toBe(true);
+    await expect(
+      hasher.verify(PlainPassword.create("password124"), fixture),
+    ).resolves.toBe(false);
+  });
+
   it.each([
-    ["wrong field count", "pbkdf2-sha256$1000$c2FsdA=="],
+    ["wrong field count", "pbkdf2-sha512$1000$c2FsdA=="],
+    // The complement of the row above. Nothing rejects a fifth field except
+    // `parts.length !== 4`, and that the encoder can never produce one rests
+    // on base64 never containing `$` — pinned here rather than assumed.
+    ["too many fields", "pbkdf2-sha512$1000$c2FsdA==$aGFzaA==$extra"],
+    ["empty algorithm", "$1000$c2FsdA==$aGFzaA=="],
     ["unknown algorithm", "argon2id$1000$c2FsdA==$aGFzaA=="],
-    ["non-numeric iterations", "pbkdf2-sha256$many$c2FsdA==$aGFzaA=="],
-    ["zero iterations", "pbkdf2-sha256$0$c2FsdA==$aGFzaA=="],
-    ["malformed base64", "pbkdf2-sha256$1000$!!!$aGFzaA=="],
+    // `hashFor` is a total function rather than a lookup, so these can no
+    // longer slip through — the cases stay as the regression net for any
+    // future rewrite that reaches for a table again. Both spellings are
+    // here because a plain-object lookup leaks them differently:
+    // `obj.constructor` is a function, `obj.__proto__` is the prototype.
+    ["prototype key as algorithm", "constructor$1000$c2FsdA==$aGFzaA=="],
+    ["__proto__ as algorithm", "__proto__$1000$c2FsdA==$aGFzaA=="],
+    ["non-numeric iterations", "pbkdf2-sha512$many$c2FsdA==$aGFzaA=="],
+    ["zero iterations", "pbkdf2-sha512$0$c2FsdA==$aGFzaA=="],
+    ["malformed base64", "pbkdf2-sha512$1000$!!!$aGFzaA=="],
     // A row claiming an absurd cost turns one login into an unbounded
     // CPU burn, so the ceiling is a refusal to compute rather than a
     // slow success. `Number` would also accept the three spellings
     // below, each of which the encoder can never produce.
     [
       "iterations above the ceiling",
-      `pbkdf2-sha256$${MAX_PBKDF2_ITERATIONS + 1}$c2FsdA==$aGFzaA==`,
+      `pbkdf2-sha512$${MAX_PBKDF2_ITERATIONS + 1}$c2FsdA==$aGFzaA==`,
     ],
     [
       "iterations with surrounding whitespace",
-      "pbkdf2-sha256$ 1000 $c2FsdA==$aGFzaA==",
+      "pbkdf2-sha512$ 1000 $c2FsdA==$aGFzaA==",
     ],
-    ["iterations in exponent notation", "pbkdf2-sha256$1e5$c2FsdA==$aGFzaA=="],
-    ["iterations in hexadecimal", "pbkdf2-sha256$0x10$c2FsdA==$aGFzaA=="],
+    ["iterations in exponent notation", "pbkdf2-sha512$1e5$c2FsdA==$aGFzaA=="],
+    ["iterations in hexadecimal", "pbkdf2-sha512$0x10$c2FsdA==$aGFzaA=="],
   ])(
     "raises SystemError(DATA_INTEGRITY_ERROR) for a stored hash it cannot read: %s",
     async (_label, stored) => {
@@ -154,8 +214,9 @@ describe("createPbkdf2PasswordHasher argument validation", () => {
     await expect(floor.verify(PASSWORD, hash)).resolves.toBe(true);
   });
 
-  it("takes the OWASP default when given no argument", async () => {
+  it("takes the OWASP default for its algorithm when given no argument", async () => {
     const hash = await createPbkdf2PasswordHasher().hash(PASSWORD);
+    expect(hash.split("$")[0]).toBe("pbkdf2-sha512");
     expect(hash.split("$")[1]).toBe(String(DEFAULT_PBKDF2_ITERATIONS));
   });
 });
@@ -177,7 +238,7 @@ describe("createPbkdf2PasswordHasher at the iteration ceiling", () => {
       hasher.verify(
         PASSWORD,
         PasswordHash.create(
-          `pbkdf2-sha256$${MAX_PBKDF2_ITERATIONS}$c2FsdA==$aGFzaA==`,
+          `pbkdf2-sha512$${MAX_PBKDF2_ITERATIONS}$c2FsdA==$aGFzaA==`,
         ),
       ),
     ).resolves.toBe(false);
@@ -235,13 +296,44 @@ describe("DEFAULT_PBKDF2_ITERATIONS", () => {
   // The pin holds only while `DUMMY_PASSWORD_HASH_ITERATIONS` infers a
   // literal type. Annotating it `: number` — a plausible readability edit —
   // widens `typeof` and silently drops the pin, letting the two work
-  // factors drift apart and reviving the timing oracle. The directive below
-  // is the whole assertion: it goes unused the moment the pin is gone, and
-  // `@ts-expect-error` with nothing to suppress fails the type check.
+  // factors drift apart and reviving the timing oracle. That one edit is
+  // what the directive below catches, and it catches it as a type error:
+  // `@ts-expect-error` with nothing left to suppress fails the type check.
+  //
+  // How the gates divide the work, for this pin and for the `ALGORITHM_ID`
+  // one below alike:
+  // - widening an application-side constant (`: number`, `: string`, or a
+  //   union that still reads): these two directives, as a type error;
+  // - drift in the adapter's own value: the unit tests in this file (the
+  //   type check catches it too while the pin is in place, since the
+  //   literal no longer satisfies `typeof`);
+  // - `SHIPPED_HASH` drifting away from `ALGORITHM_ID`: the round-trip
+  //   tests above;
+  // - an application-side constant drifting once the adapter's
+  //   `: typeof …` annotation is gone: `burns against a hash the production
+  //   hasher derives from` in `identity.integration.test.ts`.
+  // Dropping that annotation on its own is caught by nothing — both sides
+  // still infer the same literal, so the type check and both suites stay
+  // green.
   it("is pinned to the literal the login path declares", () => {
     // @ts-expect-error the adapter default is the literal
     // `DUMMY_PASSWORD_HASH_ITERATIONS`, not `number`
     const drifted: typeof DEFAULT_PBKDF2_ITERATIONS = 600_000;
+    void drifted;
+  });
+});
+
+describe("ALGORITHM_ID", () => {
+  // The same assertion as above, for the second half of the pin: an
+  // algorithm swap moves neither work factor, so the iteration pin cannot
+  // see it. Checked against the adapter's declaration rather than the
+  // login path's constant, because what has to stay pinned is the
+  // identifier this adapter writes — widening the application-side
+  // constant to `string`, or to a union that still reads, is caught here.
+  it("is pinned to the literal the login path declares", () => {
+    // @ts-expect-error the adapter identifier is the literal
+    // `DUMMY_PASSWORD_HASH_ALGORITHM_ID`, not `string`
+    const drifted: typeof ALGORITHM_ID = "pbkdf2-sha256";
     void drifted;
   });
 });

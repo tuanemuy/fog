@@ -30,19 +30,37 @@ const invalidCredentials = (): ValidationError =>
  * it equals the shipped hasher's work factor, and the shipped hasher pins
  * itself to it: `DEFAULT_PBKDF2_ITERATIONS` is declared as `typeof` this
  * constant, so raising one without the other stops compiling.
+ *
+ * A second pin of the same shape covers the algorithm — see
+ * {@link DUMMY_PASSWORD_HASH_ALGORITHM_ID} — because cost alone does not
+ * determine what a verification costs.
  */
 export const DUMMY_PASSWORD_HASH_ITERATIONS = 210_000;
+
+/**
+ * The algorithm {@link DUMMY_PASSWORD_HASH} declares, in the adapter's
+ * stored encoding.
+ *
+ * Here for the same reason as {@link DUMMY_PASSWORD_HASH_ITERATIONS}: the
+ * shipped hasher's `ALGORITHM_ID` is declared as `typeof` this constant, so
+ * moving one without the other stops compiling. Without that pin an
+ * algorithm swap that leaves the dummy behind would still parse and still
+ * verify — no throw for `burnVerificationTime` to catch, no warning — and
+ * the timing oracle would come back silently.
+ */
+export const DUMMY_PASSWORD_HASH_ALGORITHM_ID = "pbkdf2-sha512";
 
 /**
  * A throwaway hash, in the `PasswordHasher` adapter's stored encoding, of a
  * password nobody holds. It exists so a login that finds no password
  * account still pays for one key derivation — see `burnVerificationTime`.
  *
- * Only the declared cost has to be current; the salt and digest are
- * arbitrary bytes, since no password is ever meant to match them.
+ * Only the declared algorithm and cost have to be current; the salt and
+ * digest are arbitrary bytes, since no password is ever meant to match
+ * them.
  */
 const DUMMY_PASSWORD_HASH =
-  `pbkdf2-sha256$${DUMMY_PASSWORD_HASH_ITERATIONS}$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=` as PasswordHash;
+  `${DUMMY_PASSWORD_HASH_ALGORITHM_ID}$${DUMMY_PASSWORD_HASH_ITERATIONS}$IPASLZIobSfU953IiVIH2Q==$A5VaiykJ+nWoXmrMVC5ewoE8QX2KddgLOL5qBfMJSRA=` as PasswordHash;
 
 // Latch for the warning below. The fact it reports — this deployment's
 // hasher cannot read the dummy — is a property of the process, not of a
@@ -57,13 +75,15 @@ let dummyHashUnreadableReported = false;
  * account" and "wrong password" paths take comparable time.
  *
  * The result cannot matter and neither can a failure: a hasher that cannot
- * parse {@link DUMMY_PASSWORD_HASH} (an algorithm swap that leaves this
- * constant stale) must not turn an unknown address into a 500. That
- * degrades the equalisation back to today's behaviour rather than breaking
- * login, which is why this is the one place a throw is swallowed — and why
- * it is logged: the request is unaffected, so the warning is the only
- * signal that the mitigation has stopped working. The latch above holds it
- * to once per isolate, which is the granularity of the fact.
+ * parse {@link DUMMY_PASSWORD_HASH} (a different `PasswordHasher` adapter
+ * being wired — the pins tie this constant to the shipped PBKDF2 hasher,
+ * not to whatever the container hands over) must not turn an unknown
+ * address into a 500. That degrades the equalisation back to today's
+ * behaviour rather than breaking login, which is why this is the one place
+ * a throw is swallowed — and why it is logged: the request is unaffected,
+ * so the warning is the only signal that the mitigation has stopped
+ * working. The latch above holds it to once per isolate, which is the
+ * granularity of the fact.
  *
  * Only the failure's type is logged, never the value: the `PasswordHasher`
  * contract forbids putting a `PlainPassword` in what it throws, and

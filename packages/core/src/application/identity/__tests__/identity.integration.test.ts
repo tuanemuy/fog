@@ -524,8 +524,6 @@ describe("loginWithPassword (integration)", () => {
     expect(isValidationError(error) && error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  // The uniformity is the feature: any difference between these would let
-  // an attacker probe which addresses are registered and how.
   it("answers every failure mode identically (TC-loginWithPassword-008)", async () => {
     const container = createTestContainer();
     await seedPasswordUser(container, "user@example.com");
@@ -607,12 +605,15 @@ describe("loginWithPassword (integration)", () => {
 
   // The burn above is only a burn if the production hasher can actually
   // read the hash it is handed: `burnVerificationTime` swallows the
-  // throw, so an algorithm swap, an iteration count outside the accepted
-  // range or a typo in the constant would make the equalisation cost
-  // nothing while every other assertion in the suite stayed green. The
-  // fake never parses its input, so this is the only place that can
-  // notice. Recording what the usecase passes (rather than importing the
-  // constant) keeps the assertion true however the value is produced.
+  // throw, so an iteration count outside the accepted range, a typo in
+  // the constant or an encoding this adapter cannot read at all would
+  // make the equalisation cost nothing while every other assertion in
+  // the suite stayed green. An algorithm swap is the quieter case — the
+  // `pbkdf2-sha256` branch still parses, so the dummy keeps verifying,
+  // just at the wrong cost. The fake never parses its input, so this is
+  // the only place that can notice either. Recording what the usecase
+  // passes (rather than importing the constant) keeps the assertion true
+  // however the value is produced.
   it("burns against a hash the production hasher derives from, not just any string", async () => {
     const burnt: string[] = [];
     const delegate = new FakePasswordHasher();
@@ -645,9 +646,14 @@ describe("loginWithPassword (integration)", () => {
       ),
     ).resolves.toBe(false);
     // Self-describing at production strength: a constant re-made at a
-    // token cost would still verify, and would still buy nothing.
+    // token cost would still verify, and would still buy nothing. Never
+    // rebuild the `pbkdf2-sha512` literal from `ALGORITHM_ID` — assembling
+    // both sides from one constant makes it self-referential and
+    // worthless. What this catches is drift in the dummy's own constants;
+    // the map of which gate covers what is on `DEFAULT_PBKDF2_ITERATIONS`
+    // in `pbkdf2PasswordHasher.test.ts`.
     expect(dummy).toMatch(
-      new RegExp(`^pbkdf2-sha256\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
+      new RegExp(`^pbkdf2-sha512\\$${DEFAULT_PBKDF2_ITERATIONS}\\$`),
     );
   });
 
@@ -695,7 +701,7 @@ describe("loginWithPassword (integration)", () => {
     // only place "the column holds the hasher's output, not what the user
     // typed" can be observed for real rather than through a fake.
     const users = await userRows(container);
-    expect(users[0]?.passwordHash).toMatch(/^pbkdf2-sha256\$1000\$/);
+    expect(users[0]?.passwordHash).toMatch(/^pbkdf2-sha512\$1000\$/);
     expect(users[0]?.passwordHash).not.toContain("pass1234");
   });
 
