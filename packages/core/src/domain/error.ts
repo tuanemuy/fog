@@ -31,7 +31,8 @@ export function isBusinessRuleError(
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "business"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "business"
   );
 }
 

@@ -36,6 +36,7 @@ export abstract class ApplicationError<
   TCode extends string = string,
 > extends CodedError<TCode> {
   override readonly name: string = "ApplicationError";
+  abstract readonly serializedKind: string;
 }
 
 export function isApplicationError(error: unknown): error is ApplicationError {
@@ -63,7 +64,8 @@ export function isNotFoundError(error: unknown): error is NotFoundError {
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "notFound"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "notFound"
   );
 }
 
@@ -86,7 +88,8 @@ export function isConflictError(error: unknown): error is ConflictError {
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "conflict"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "conflict"
   );
 }
 
@@ -136,7 +139,8 @@ export function isValidationError(error: unknown): error is ValidationError {
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "validation"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "validation"
   );
 }
 
@@ -173,7 +177,8 @@ export function isUnauthorizedError(
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "unauthorized"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "unauthorized"
   );
 }
 
@@ -196,7 +201,8 @@ export function isForbiddenError(error: unknown): error is ForbiddenError {
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "forbidden"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "forbidden"
   );
 }
 
@@ -265,6 +271,7 @@ export function isSystemError(error: unknown): error is SystemError {
     typeof error === "object" &&
     error !== null &&
     CODED_ERROR_BRAND in error &&
-    (error as { serializedKind?: string }).serializedKind === "system"
+    (error as unknown as { readonly serializedKind: string }).serializedKind ===
+      "system"
   );
 }

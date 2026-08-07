@@ -166,8 +166,9 @@ function asSerializedError(value: unknown): SerializedError | null {
  * module graph while the serialization adapter loads from the SSR graph, so
  * one process holds two distinct class objects built from this same file —
  * a thrown error fails `instanceof` and silently falls back to Seroval's
- * default `Error` handling, dropping `serialized`. Matching the `name` tag
- * plus a well-formed `kind`-tagged payload is graph-independent.
+ * default `Error` handling, dropping `serialized`. Matching the
+ * `Symbol.for()` brand property plus a well-formed `kind`-tagged payload is
+ * graph-independent.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;

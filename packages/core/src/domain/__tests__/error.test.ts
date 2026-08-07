@@ -1,3 +1,4 @@
+import { ConflictError } from "@repo/core/application/errors";
 import {
   BusinessRuleError,
   isBusinessRuleError,
@@ -23,6 +24,10 @@ describe("isBusinessRuleError", () => {
 
   it("returns false for a plain Error", () => {
     expect(isBusinessRuleError(new Error("plain"))).toBe(false);
+  });
+
+  it("returns false for a ConflictError", () => {
+    expect(isBusinessRuleError(new ConflictError("TEST", "test"))).toBe(false);
   });
 });
 

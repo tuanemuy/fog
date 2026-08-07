@@ -79,6 +79,10 @@ describe("isNotFoundError", () => {
   it("returns false for null", () => {
     expect(isNotFoundError(null)).toBe(false);
   });
+
+  it("returns false for a plain Error", () => {
+    expect(isNotFoundError(new Error("plain"))).toBe(false);
+  });
 });
 
 describe("isValidationError", () => {
@@ -92,6 +96,10 @@ describe("isValidationError", () => {
 
   it("returns false for null", () => {
     expect(isValidationError(null)).toBe(false);
+  });
+
+  it("returns false for a plain Error", () => {
+    expect(isValidationError(new Error("plain"))).toBe(false);
   });
 });
 
@@ -109,6 +117,10 @@ describe("isUnauthorizedError", () => {
   it("returns false for null", () => {
     expect(isUnauthorizedError(null)).toBe(false);
   });
+
+  it("returns false for a plain Error", () => {
+    expect(isUnauthorizedError(new Error("plain"))).toBe(false);
+  });
 });
 
 describe("isForbiddenError", () => {
@@ -122,6 +134,10 @@ describe("isForbiddenError", () => {
 
   it("returns false for null", () => {
     expect(isForbiddenError(null)).toBe(false);
+  });
+
+  it("returns false for a plain Error", () => {
+    expect(isForbiddenError(new Error("plain"))).toBe(false);
   });
 });
 
@@ -138,5 +154,9 @@ describe("isSystemError", () => {
 
   it("returns false for null", () => {
     expect(isSystemError(null)).toBe(false);
+  });
+
+  it("returns false for a plain Error", () => {
+    expect(isSystemError(new Error("plain"))).toBe(false);
   });
 });
