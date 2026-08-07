@@ -1,4 +1,12 @@
-import { isConflictError, isSystemError } from "@repo/core/application/errors";
+import {
+  ConflictError,
+  isConflictError,
+  isSystemError,
+} from "@repo/core/application/errors";
+import {
+  BusinessRuleError,
+  isBusinessRuleError,
+} from "@repo/core/domain/error";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { mapDbError } from "../repositories/helpers";
@@ -109,5 +117,62 @@ describe("mapDbError SQLITE_CONSTRAINT_* classification (integration)", () => {
     if (isSystemError(caught)) {
       expect(caught.code).toBe("DATABASE_ERROR");
     }
+  });
+});
+
+// The pass-through is the intent, not a side effect of the guard being wide.
+// `mapDbError` translates driver-native failures only; anything already
+// speaking the shared error contract is re-thrown by identity so the usecase
+// sees what the domain / application layer raised. Re-wrapping a
+// `BusinessRuleError` that `reconstruct` threw inside `fn` would turn an
+// invariant violation into `SystemError(DATABASE_ERROR)` — a 500 where the
+// cross-layer catch policy asks for the domain error to reach the usecase
+// unchanged.
+describe("mapDbError contract pass-through (integration)", () => {
+  const PASSED_THROUGH = [
+    {
+      label: "a BusinessRuleError raised by reconstruct inside the callback",
+      build: () =>
+        new BusinessRuleError("IDENTITY_EMAIL_TOO_LONG", "Email is too long"),
+    },
+    {
+      label: "a ConflictError the callback classified itself",
+      build: () => new ConflictError("OPTIMISTIC_LOCK_FAILURE", "stale write"),
+    },
+  ];
+
+  it.each(PASSED_THROUGH)("rethrows $label by identity", async (testCase) => {
+    const thrown = testCase.build();
+
+    let caught: unknown;
+    try {
+      await mapDbError("pass-through", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(thrown);
+    expect(isSystemError(caught)).toBe(false);
+  });
+
+  it("leaves a BusinessRuleError answering the domain guard, not an application one", async () => {
+    const thrown = new BusinessRuleError(
+      "IDENTITY_EMAIL_TOO_LONG",
+      "Email is too long",
+    );
+
+    let caught: unknown;
+    try {
+      await mapDbError("pass-through", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isBusinessRuleError(caught)).toBe(true);
+    expect(isConflictError(caught)).toBe(false);
   });
 });

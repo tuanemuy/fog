@@ -5,8 +5,22 @@ import {
   type SerializedValidationError,
 } from "./errorResponse";
 
-class InputValidationError extends CodedError {
+/**
+ * The transport boundary's shape failure, serialized as `kind: "validation"`.
+ *
+ * Exported because it is one of the layer's error types, not an implementation
+ * detail of {@link validateInput}: it is the second producer of the
+ * `validation` kind alongside the application layer's `ValidationError`, and
+ * `packages/core/src/lib/error.ts` names it as the reason `serializedKind` is
+ * many-to-one. It is not an `ApplicationError` — the guards it answers to are
+ * `isCodedError` / `isValidationError`, never `isApplicationError`.
+ *
+ * `validateInput` is the only producer in this repository; throw it directly
+ * only from another transport-boundary validator.
+ */
+export class InputValidationError extends CodedError {
   override readonly name = "InputValidationError";
+  readonly serializedKind: SerializedValidationError["kind"] = "validation";
 
   constructor(public readonly fieldErrors: FieldErrors) {
     super("INVALID_INPUT", "Invalid input");

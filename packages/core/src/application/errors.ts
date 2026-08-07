@@ -1,7 +1,7 @@
 import {
-  CODED_ERROR_BRAND,
   CodedError,
   type FieldErrors,
+  hasSerializedKind,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
 
@@ -32,22 +32,39 @@ export type SerializedSystemError = SerializedErrorBase & {
   kind: "system";
 };
 
+/**
+ * Brand of its own rather than a `serializedKind` match: `ApplicationError` is
+ * an abstract layer boundary, not one serialized kind, and its subclasses each
+ * report a different `serializedKind`.
+ */
+const APPLICATION_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/core/ApplicationError",
+);
+
 export abstract class ApplicationError<
   TCode extends string = string,
 > extends CodedError<TCode> {
   override readonly name: string = "ApplicationError";
-  abstract readonly serializedKind: string;
+  readonly [APPLICATION_ERROR_BRAND] = true as const;
 }
 
+/**
+ * Narrows to the application layer's own errors only. `BusinessRuleError` is a
+ * `CodedError` but not an `ApplicationError`, so it answers `false` here; use
+ * `isCodedError` when the question is "already translated into the shared error
+ * contract" regardless of layer.
+ */
 export function isApplicationError(error: unknown): error is ApplicationError {
   return (
-    typeof error === "object" && error !== null && CODED_ERROR_BRAND in error
+    typeof error === "object" &&
+    error !== null &&
+    APPLICATION_ERROR_BRAND in error
   );
 }
 
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
-  readonly serializedKind = "notFound" as const;
+  readonly serializedKind: SerializedNotFoundError["kind"] = "notFound";
 
   override toSerialized(): SerializedNotFoundError {
     return {
@@ -60,18 +77,12 @@ export class NotFoundError extends ApplicationError {
 }
 
 export function isNotFoundError(error: unknown): error is NotFoundError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "notFound"
-  );
+  return hasSerializedKind(error, "notFound");
 }
 
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
-  readonly serializedKind = "conflict" as const;
+  readonly serializedKind: SerializedConflictError["kind"] = "conflict";
 
   override toSerialized(): SerializedConflictError {
     return {
@@ -84,13 +95,7 @@ export class ConflictError extends ApplicationError {
 }
 
 export function isConflictError(error: unknown): error is ConflictError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "conflict"
-  );
+  return hasSerializedKind(error, "conflict");
 }
 
 /**
@@ -110,7 +115,7 @@ export function isConflictError(error: unknown): error is ConflictError {
  */
 export class ValidationError extends ApplicationError {
   override readonly name = "ValidationError";
-  readonly serializedKind = "validation" as const;
+  readonly serializedKind: SerializedValidationError["kind"] = "validation";
 
   constructor(
     code: string,
@@ -134,14 +139,16 @@ export class ValidationError extends ApplicationError {
   }
 }
 
-export function isValidationError(error: unknown): error is ValidationError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "validation"
-  );
+/**
+ * Structural return type, not `error is ValidationError`: the presentation
+ * layer's `InputValidationError` reports the same `serializedKind` and is not a
+ * `ValidationError`, so claiming the concrete class here would be unsound.
+ */
+export function isValidationError(error: unknown): error is CodedError & {
+  readonly serializedKind: SerializedValidationError["kind"];
+  toSerialized(): SerializedValidationError;
+} {
+  return hasSerializedKind(error, "validation");
 }
 
 /**
@@ -158,7 +165,7 @@ export function isValidationError(error: unknown): error is ValidationError {
  */
 export class UnauthorizedError extends ApplicationError {
   override readonly name = "UnauthorizedError";
-  readonly serializedKind = "unauthorized" as const;
+  readonly serializedKind: SerializedUnauthorizedError["kind"] = "unauthorized";
 
   override toSerialized(): SerializedUnauthorizedError {
     return {
@@ -173,18 +180,12 @@ export class UnauthorizedError extends ApplicationError {
 export function isUnauthorizedError(
   error: unknown,
 ): error is UnauthorizedError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "unauthorized"
-  );
+  return hasSerializedKind(error, "unauthorized");
 }
 
 export class ForbiddenError extends ApplicationError {
   override readonly name = "ForbiddenError";
-  readonly serializedKind = "forbidden" as const;
+  readonly serializedKind: SerializedForbiddenError["kind"] = "forbidden";
 
   override toSerialized(): SerializedForbiddenError {
     return {
@@ -197,13 +198,7 @@ export class ForbiddenError extends ApplicationError {
 }
 
 export function isForbiddenError(error: unknown): error is ForbiddenError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "forbidden"
-  );
+  return hasSerializedKind(error, "forbidden");
 }
 
 /**
@@ -250,7 +245,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
 
 export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
-  readonly serializedKind = "system" as const;
+  readonly serializedKind: SerializedSystemError["kind"] = "system";
 
   override get retryable(): boolean {
     return RETRYABLE_SYSTEM_CODES.has(this.code);
@@ -267,11 +262,5 @@ export class SystemError extends ApplicationError<SystemErrorCode> {
 }
 
 export function isSystemError(error: unknown): error is SystemError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "system"
-  );
+  return hasSerializedKind(error, "system");
 }

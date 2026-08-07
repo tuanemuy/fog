@@ -12,7 +12,7 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.4.15
+        specifier: ^2.5.5
         version: 2.5.5
       '@cloudflare/vitest-pool-workers':
         specifier: ^0.16.4

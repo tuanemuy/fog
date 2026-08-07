@@ -2,6 +2,7 @@ import { FakeLogger } from "@repo/core/application/__tests__/fakes";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import {
+  ConflictError,
   SystemError,
   SystemErrorCode,
   ValidationError,
@@ -20,6 +21,7 @@ import {
   extractSerializedError,
   isAppServerError,
   type SerializedError,
+  serializeError,
 } from "../errorResponse";
 import {
   errorResponseMiddleware,
@@ -320,5 +322,76 @@ describe("guardStreamedRender", () => {
       fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
     });
     expect(logger.entries).toEqual([]);
+  });
+});
+
+// Spreading a real `AppServerError` keeps its `serialized` own property and
+// its symbol brand; the clone then drops the symbol key, which is exactly the
+// shape an error arrives in once it has crossed `structuredClone`, a JSON
+// roundtrip or the Worker ↔ Durable Object RPC hop.
+function acrossSerializationBoundary(serialized: SerializedError): unknown {
+  return structuredClone({ ...new AppServerError(serialized) });
+}
+
+// The brand crosses a module-graph split but not a serialization boundary, so
+// the boundary cannot identify a re-thrown `AppServerError` by brand alone.
+// Reading the surviving payload structurally is what keeps the status the
+// usecase earned: a brand-only path collapses these onto `unknown` and 500,
+// which is the regression this pins.
+const BRAND_STRIPPED_CASES = [
+  {
+    kind: "conflict",
+    status: 409,
+    build: () =>
+      new ConflictError("EMAIL_ALREADY_REGISTERED", "Email already registered"),
+  },
+  {
+    kind: "validation",
+    status: 422,
+    build: () =>
+      new ValidationError("INVALID_CREDENTIALS", LOGIN_FAILURE_MESSAGE, {
+        email: [LOGIN_FAILURE_MESSAGE],
+      }),
+  },
+] as const;
+
+describe("errorResponseMiddleware across a serialization boundary", () => {
+  it.each(BRAND_STRIPPED_CASES)(
+    "answers $status for a brand-stripped $kind error",
+    async (testCase) => {
+      const serialized = serializeError(testCase.build());
+      const remnant = acrossSerializationBoundary(serialized);
+
+      expect(isAppServerError(remnant)).toBe(false);
+
+      const caught = await captureFrom(run, remnant);
+
+      expect(serializedOf(caught)).toEqual(serialized);
+      expect(mocks.statuses).toEqual([testCase.status]);
+      // Neither kind is an operational incident; logging them would drown the
+      // signal the `system` / `unknown` branch exists to raise.
+      expect(logger.entries).toEqual([]);
+    },
+  );
+
+  // The counterweight: reading the remnant structurally must not turn any
+  // object with a `serialized` key into a trusted status. A payload the union
+  // does not recognise still fails closed onto 500.
+  it("still fails closed to 500 when the surviving payload is malformed", async () => {
+    const caught = await captureFrom(
+      run,
+      structuredClone({
+        name: "AppServerError",
+        serialized: { kind: "not-a-kind", message: "x" },
+      }),
+    );
+
+    expect(extractSerializedError(caught)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "System error",
+    });
+    expect(mocks.statuses).toEqual([500]);
+    expect(logger.byLevel("error")).toHaveLength(1);
   });
 });

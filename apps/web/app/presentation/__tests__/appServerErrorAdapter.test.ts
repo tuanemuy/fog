@@ -47,6 +47,8 @@ describe("appServerErrorAdapter", () => {
     expect(foreign.AppServerError).not.toBe(AppServerError);
 
     const error = new foreign.AppServerError(invalidCredentials);
+    // biome-ignore lint/plugin: negative control — this false is the failure mode `isAppServerError` exists to replace, and the adapter silently dropping `kind` is what it caused
+    expect(error instanceof AppServerError).toBe(false);
     expect(isAppServerError(error)).toBe(true);
 
     expect(appServerErrorAdapter.test(error)).toBe(true);

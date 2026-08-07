@@ -1,9 +1,9 @@
 import {
   ConflictError,
-  isApplicationError,
   SystemError,
   SystemErrorCode,
 } from "@repo/core/application/errors";
+import { isCodedError } from "@repo/core/lib/error";
 import { OCC_GUARD_CHECK_NAME } from "../schema";
 
 // Walks the `cause` chain because driver errors (D1's `Error_` from
@@ -88,7 +88,12 @@ export async function mapDbError<T>(
   try {
     return await fn();
   } catch (error) {
-    if (isApplicationError(error)) throw error;
+    // Anything already speaking the shared error contract passes through
+    // untouched — only driver-native failures are ours to translate. A
+    // `BusinessRuleError` thrown by `reconstruct` inside `fn` is therefore
+    // re-thrown as-is, which is what the cross-layer catch policy asks for:
+    // domain errors reach the usecase without adapter re-translation.
+    if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {
       throw new ConflictError(

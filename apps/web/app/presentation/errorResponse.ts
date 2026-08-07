@@ -115,7 +115,7 @@ export function httpStatusFor(serialized: SerializedError): number {
 
 const APP_SERVER_ERROR_BRAND: unique symbol = Symbol.for(
   "@repo/web/AppServerError",
-) as never;
+);
 
 const APP_SERVER_ERROR_NAME = "AppServerError";
 
@@ -169,6 +169,13 @@ function asSerializedError(value: unknown): SerializedError | null {
  * default `Error` handling, dropping `serialized`. Matching the
  * `Symbol.for()` brand property plus a well-formed `kind`-tagged payload is
  * graph-independent.
+ *
+ * The brand crosses module graphs but **not** a serialization boundary: it is
+ * a symbol-keyed own property, so `structuredClone` / JSON / the Worker ↔
+ * Durable Object RPC hop all drop it and this guard then answers `false`. The
+ * receiver for those values is the second stage of
+ * {@link extractSerializedError}, which matches the surviving `serialized`
+ * remnant structurally — never widen this guard with a `name` comparison.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;

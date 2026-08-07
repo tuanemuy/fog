@@ -58,6 +58,13 @@ const SAMPLES = {
 
 const KINDS = Object.keys(SAMPLES) as readonly SerializedErrorKind[];
 
+// `errorResponse.ts` keeps the brand module-private; the realm-wide registry
+// is what makes the same symbol reachable from here, which is the same reason
+// a second module graph observes it. Re-deriving it lets the branded-but-
+// malformed cases below reach `isAppServerError`'s payload check, which no
+// unbranded fixture can.
+const APP_SERVER_ERROR_BRAND = Symbol.for("@repo/web/AppServerError");
+
 const REDACTED_KINDS = [
   "system",
   "unknown",
@@ -171,6 +178,77 @@ describe("isAppServerError", () => {
 
   it("returns false for a plain object with a name property", () => {
     expect(isAppServerError({ name: "AppServerError" })).toBe(false);
+  });
+
+  // Positive control for the branded-but-malformed table below: without it a
+  // drift in the brand key would make every one of those cases pass for the
+  // wrong reason, leaving the payload check uncovered again.
+  it("returns true for a branded literal carrying a well-formed payload", () => {
+    expect(
+      isAppServerError({ [APP_SERVER_ERROR_BRAND]: true, serialized }),
+    ).toBe(true);
+  });
+
+  // The brand alone is not enough: `AppServerError`'s only job is to carry a
+  // payload the status mapping can read, so a branded value without one has to
+  // fall through to the `unknown` / 500 path rather than be trusted.
+  const MALFORMED_PAYLOADS: ReadonlyArray<readonly [string, object]> = [
+    ["no serialized property at all", {}],
+    ["a null payload", { serialized: null }],
+    ["a non-object payload", { serialized: "conflict" }],
+    ["a payload missing kind", { serialized: { message: "x" } }],
+    ["a payload missing message", { serialized: { kind: "conflict" } }],
+    [
+      "a payload whose message is not a string",
+      { serialized: { kind: "conflict", message: 1 } },
+    ],
+    [
+      "a payload whose kind is outside the union",
+      { serialized: { kind: "not-a-kind", message: "x" } },
+    ],
+  ];
+
+  it.each(MALFORMED_PAYLOADS)(
+    "returns false for a branded object with %s",
+    (_label, shape) => {
+      expect(
+        isAppServerError({ [APP_SERVER_ERROR_BRAND]: true, ...shape }),
+      ).toBe(false);
+    },
+  );
+});
+
+// The brand is a symbol-keyed own property, so it survives a module-graph
+// split but not `structuredClone` / JSON / the RPC hop. Spreading a real
+// `AppServerError` and cloning the result reproduces exactly what arrives on
+// the far side: the `serialized` own property intact, the brand gone.
+describe("after the brand was stripped by a serialization boundary", () => {
+  const serialized = SAMPLES.conflict;
+
+  const REMNANTS: ReadonlyArray<readonly [string, unknown]> = [
+    ["structuredClone", structuredClone({ ...new AppServerError(serialized) })],
+    [
+      "a JSON roundtrip",
+      JSON.parse(JSON.stringify({ ...new AppServerError(serialized) })),
+    ],
+  ];
+
+  it.each(REMNANTS)(
+    "is rejected by isAppServerError but still read by extractSerializedError after %s",
+    (_label, remnant) => {
+      expect(isAppServerError(remnant)).toBe(false);
+      expect(extractSerializedError(remnant)).toEqual(serialized);
+    },
+  );
+
+  // `isAppServerError` deliberately does not widen back to a `name` comparison
+  // to cover the case above — the remnant stage of `extractSerializedError` is
+  // the single receiver, and a forgeable `name` must not become an identity.
+  it("keeps a name-only impostor out of the guard while the remnant stage still reads it", () => {
+    const impostor = { name: "AppServerError", serialized };
+
+    expect(isAppServerError(impostor)).toBe(false);
+    expect(extractSerializedError(impostor)).toEqual(serialized);
   });
 });
 

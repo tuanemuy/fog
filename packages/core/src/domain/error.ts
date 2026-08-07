@@ -1,6 +1,6 @@
 import {
-  CODED_ERROR_BRAND,
   CodedError,
+  hasSerializedKind,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
 
@@ -12,7 +12,7 @@ export class BusinessRuleError<
   TCode extends string = never,
 > extends CodedError<TCode> {
   override readonly name = "BusinessRuleError";
-  readonly serializedKind = "business" as const;
+  readonly serializedKind: SerializedBusinessError["kind"] = "business";
 
   override toSerialized(): SerializedBusinessError {
     return {
@@ -27,14 +27,18 @@ export class BusinessRuleError<
 export function isBusinessRuleError(
   error: unknown,
 ): error is BusinessRuleError<string> {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    CODED_ERROR_BRAND in error &&
-    (error as unknown as { readonly serializedKind: string }).serializedKind ===
-      "business"
-  );
+  return hasSerializedKind(error, "business");
 }
+
+/**
+ * Identity brand for {@link RehydrationError}, which does not extend
+ * `CodedError` and therefore needs one of its own. Same registry mechanics and
+ * the same two limits as `CODED_ERROR_BRAND` — it does not survive a
+ * serialization boundary, and it is spoofable, so it is not a trust signal.
+ */
+const REHYDRATION_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/core/RehydrationError",
+);
 
 /**
  * Raised when an aggregate's `reconstruct` cannot rebuild a valid entity
@@ -55,10 +59,6 @@ export function isBusinessRuleError(
  * failed without the upper layers having to enumerate value-object
  * error codes.
  */
-const REHYDRATION_ERROR_BRAND: unique symbol = Symbol.for(
-  "@repo/core/RehydrationError",
-) as never;
-
 export class RehydrationError extends Error {
   override readonly name = "RehydrationError";
   readonly [REHYDRATION_ERROR_BRAND] = true as const;

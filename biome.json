@@ -52,7 +52,7 @@
       }
     }
   },
-  "plugins": ["packages/core/lint/no-instanceof-error.grit"],
+  "plugins": ["lint/no-instanceof-error.grit"],
   "javascript": {
     "formatter": {
       "quoteStyle": "double"

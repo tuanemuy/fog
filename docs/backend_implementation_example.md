@@ -59,7 +59,7 @@ packages/core/src/
         └── migrations/            SQL migrations read by wrangler
 
 packages/core/src/lib/
-└── error.ts                       CodedError base + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
+└── error.ts                       CodedError base (identity brand + isCodedError / hasSerializedKind) + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
 ```
 
 ## Domain Layer
@@ -445,9 +445,12 @@ await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 d
 |---|---|---|
 | Domain | `BusinessRuleError<FooErrorCode>` | `packages/core/src/domain/error.ts` |
 | Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors.ts` |
-| Presentation | `AppServerError` | `apps/web/app/presentation/errorResponse.ts` |
+| Presentation | `InputValidationError` | `apps/web/app/presentation/validator.ts` |
+| Presentation | `AppServerError` (transport envelope, extends `Error`) | `apps/web/app/presentation/errorResponse.ts` |
 
-Every error class extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+Every error class in that table except `AppServerError` extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, the `Symbol.for("@repo/core/CodedError")` identity brand, and two abstract members: `serializedKind` and `toSerialized()`. The latter's base return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+
+`serializedKind` is what the guards match on, declared as `readonly serializedKind: SerializedConflictError["kind"] = "conflict"` so it cannot drift from that variant's `kind`. Identity is tested structurally, never with `instanceof` (which is false across the SSR / RSC module-graph split and is rejected by `lint/no-instanceof-error.grit`): `isCodedError(error)` for the brand alone, `hasSerializedKind(error, "conflict")` for brand + discriminator, which is the one line every per-kind guard is. `.adr/016-symbol-for-error-brands.md` records the reasoning, including why a `serializedKind` match narrows to the contract rather than to a class.
 
 `code` is a plain string. The per-class enums are deliberately collapsed (the domain enum plus the `SerializedErrorKind` assembled in presentation cover the classification we need). `SystemErrorCode` is kept because it is used for the runtime `retryable` decision.
 
