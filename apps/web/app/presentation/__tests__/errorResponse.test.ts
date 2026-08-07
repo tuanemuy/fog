@@ -107,6 +107,29 @@ describe("serializeError", () => {
     expect(SAMPLES[kind].kind).toBe(kind);
   });
 
+  // `throw "..."` is legal JavaScript and now reaches the server side too, via
+  // `toClientError`. Without this the string arm of `errorMessage` is dead
+  // weight to the suite: dropping it degrades a bare-string throw to
+  // "Unexpected error" and nothing notices.
+  it("reports a thrown string as its own message", () => {
+    expect(serializeError("boom")).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "boom",
+    });
+  });
+
+  // The counterweight, so the case above cannot be satisfied by a guard that
+  // stringifies everything: a non-string, non-Error throw has no message to
+  // read and must land on the fixed fallback.
+  it("reports a thrown non-string as the fixed fallback message", () => {
+    expect(serializeError(42)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "Unexpected error",
+    });
+  });
+
   type SerializedLayerlessError = SerializedErrorBase & { kind: "layerless" };
 
   // A `CodedError` whose `kind` is outside the union assembled in
@@ -459,12 +482,11 @@ describe("extractSerializedError", () => {
     expect(result).toEqual(serialized);
   });
 
-  // The *branded* stage, which the remnant stage below cannot stand in for.
-  // Holding the brand is not evidence the payload is ours: the serialization
+  // Holding the brand proves nothing about the payload: the serialization
   // adapter builds a genuine `AppServerError` out of any request body tagged
-  // `$TSR/t/AppServerError`, so this stage has to rebuild the payload too.
-  // Handing `error.serialized` on as-is passes every `toEqual` on the known
-  // keys and still lets this one through.
+  // `$TSR/t/AppServerError`, so a branded instance goes through the same
+  // rebuild an anonymous remnant does. Handing `error.serialized` on as-is
+  // passes every `toEqual` on the known keys and still lets this one through.
   it("rebuilds a branded instance's payload instead of trusting it", () => {
     const forged = new AppServerError(
       fromTheWire({
@@ -481,6 +503,26 @@ describe("extractSerializedError", () => {
 
     expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
     expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+  });
+
+  // Why the function can read the payload without consulting the brand at all:
+  // the brand changes nothing about what comes back. Pinning it here is what
+  // keeps a future "restore the branded fast path" from claiming a difference
+  // that does not exist — and what would catch the reverse, a rebuild that
+  // quietly starts depending on the brand.
+  it.each([
+    ["a well-formed payload", serialized],
+    [
+      "a payload carrying an undeclared key",
+      fromTheWire({ ...serialized, evil: "pii" }),
+    ],
+    ["a payload outside the contract", fromTheWire({ kind: "conflict" })],
+  ])("reads %s the same branded and unbranded", (_label, payload) => {
+    const branded = { [APP_SERVER_ERROR_BRAND]: true, serialized: payload };
+
+    expect(extractSerializedError(branded)).toEqual(
+      extractSerializedError({ serialized: payload }),
+    );
   });
 });
 

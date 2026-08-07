@@ -5,7 +5,19 @@ import {
   isBusinessRuleError,
   isRehydrationError,
   RehydrationError,
+  type SerializedBusinessError,
 } from "../error";
+
+// Re-derived instead of imported: the brands are module-private, and going
+// through the registry is exactly the lookup that makes them work across module
+// graphs — a test that imported them would not exercise that.
+const CODED_ERROR_BRAND = Symbol.for("@repo/core/CodedError");
+const REHYDRATION_ERROR_BRAND = Symbol.for("@repo/core/RehydrationError");
+
+// Mutual assignability rather than `extends`: a `toSerialized()` that widened
+// back to `SerializedErrorBase & { kind: string }` still accepts the narrow type
+// in one direction, so only the two-way check catches that regression.
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 // A sibling `CodedError` defined here rather than imported from the application
 // layer: the dependency direction is inward-only, so a domain test must not
@@ -51,6 +63,24 @@ const NON_ERROR_VALUES: ReadonlyArray<readonly [string, unknown]> = [
   ["a plain Error", new Error("plain")],
 ];
 
+// Answers every condition `isCodedError` checks for `kind: "business"` except
+// the brand, so a guard rejecting it can only be rejecting it on the brand. The
+// thinner objects the case below also passes are rejected for several reasons at
+// once and therefore pin none of them individually.
+function unbrandedBusinessContract(): Record<string, unknown> {
+  return {
+    serializedKind: "business",
+    code: "TEST",
+    message: "test",
+    toSerialized: () => ({
+      kind: "business",
+      code: "TEST",
+      message: "test",
+      retryable: false,
+    }),
+  };
+}
+
 // The `?dup` query hands Vite a second instance of the same source file, which
 // reproduces the SSR / RSC module-graph split that makes `instanceof` unusable.
 async function loadForeignGraph(): Promise<typeof import("../error")> {
@@ -72,12 +102,26 @@ describe("isBusinessRuleError", () => {
   });
 
   it("returns true for another CodedError reporting the same serializedKind", () => {
-    const foreign = new ForeignBusinessError("TEST", "test");
+    const foreign: unknown = new ForeignBusinessError("TEST", "test");
 
     expect(isBusinessRuleError(foreign)).toBe(true);
+    if (!isBusinessRuleError(foreign)) throw new Error("unreachable");
     // biome-ignore lint/plugin: negative control — the guard matched something that is not this class, which is why its return type is structural
     expect(foreign instanceof BusinessRuleError).toBe(false);
-    expect(foreign.toSerialized().kind).toBe(
+
+    // Unannotated on purpose: `narrowed` takes whatever type the guard's return
+    // type gives the call, and the two pins below hold it to the variant.
+    // Reading `.kind` alone cannot — it passes just as well against the wide
+    // `SerializedErrorBase & { kind: string }` this guard degrades to if its
+    // `Omit<CodedError, "toSerialized">` is written back as a plain
+    // intersection. `Exact` is the two-way half, since the narrow type stays
+    // assignable to the wide one.
+    const narrowed = foreign.toSerialized();
+    const exact: Exact<typeof narrowed, SerializedBusinessError> = true;
+    const serialized: SerializedBusinessError = narrowed;
+
+    expect(exact).toBe(true);
+    expect(serialized.kind).toBe(
       new BusinessRuleError("TEST", "test").toSerialized().kind,
     );
   });
@@ -92,6 +136,20 @@ describe("isBusinessRuleError", () => {
         message: "test",
       }),
     ).toBe(false);
+    expect(isBusinessRuleError(unbrandedBusinessContract())).toBe(false);
+  });
+
+  // Positive control for the case above: the same object plus the brand passes.
+  // Without it, "unbranded" is not shown to be the reason that case answers
+  // false — and the brand is what `Symbol.for` makes forgeable, so this also
+  // documents the limit of the guard rather than a property to rely on.
+  it("returns true for a branded forgery satisfying the whole contract", () => {
+    expect(
+      isBusinessRuleError({
+        [CODED_ERROR_BRAND]: true,
+        ...unbrandedBusinessContract(),
+      }),
+    ).toBe(true);
   });
 
   it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {
@@ -116,6 +174,18 @@ describe("isRehydrationError", () => {
     const namedError = new Error("test");
     Object.defineProperty(namedError, "name", { value: "RehydrationError" });
     expect(isRehydrationError(namedError)).toBe(false);
+  });
+
+  // Its own brand, not the shared one: a `CodedError` must not answer true here.
+  it("returns false for a value carrying only the CodedError brand", () => {
+    expect(isRehydrationError({ [CODED_ERROR_BRAND]: true })).toBe(false);
+  });
+
+  // The brand is the whole of this guard, so this pins the registry key itself.
+  // Nothing else does: a typo in `error.ts` leaves both module graphs agreeing
+  // on the same wrong symbol, and the foreign-graph case stays green.
+  it("returns true for a bare object carrying the brand", () => {
+    expect(isRehydrationError({ [REHYDRATION_ERROR_BRAND]: true })).toBe(true);
   });
 
   it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {

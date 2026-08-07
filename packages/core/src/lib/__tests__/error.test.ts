@@ -67,6 +67,73 @@ function brandedImpostor(props: Record<string, unknown>): unknown {
   return { [CODED_ERROR_BRAND]: true, ...props };
 }
 
+// The members `isCodedError` reads off a value, held apart so each negative case
+// below can drop exactly one of them and satisfy the rest.
+const FORGED_KIND = "test";
+const FORGED_CODE = "TEST";
+const FORGED_MESSAGE = "test";
+const forgedToSerialized = () => ({
+  kind: FORGED_KIND,
+  code: FORGED_CODE,
+  message: FORGED_MESSAGE,
+});
+
+const COMPLETE_FORGERY: unknown = brandedImpostor({
+  serializedKind: FORGED_KIND,
+  code: FORGED_CODE,
+  message: FORGED_MESSAGE,
+  toSerialized: forgedToSerialized,
+});
+
+// One entry per condition the guard checks, each satisfying the other four. That
+// is what makes every condition individually load-bearing: a negative case that
+// misses several conditions at once cannot say which one rejected it, and that
+// is how `CODED_ERROR_BRAND in value` could be deleted from `isCodedError` with
+// the whole suite still green.
+const ONE_CONDITION_SHORT: ReadonlyArray<readonly [string, unknown]> = [
+  [
+    "the brand",
+    {
+      serializedKind: FORGED_KIND,
+      code: FORGED_CODE,
+      message: FORGED_MESSAGE,
+      toSerialized: forgedToSerialized,
+    },
+  ],
+  [
+    "serializedKind",
+    brandedImpostor({
+      code: FORGED_CODE,
+      message: FORGED_MESSAGE,
+      toSerialized: forgedToSerialized,
+    }),
+  ],
+  [
+    "toSerialized",
+    brandedImpostor({
+      serializedKind: FORGED_KIND,
+      code: FORGED_CODE,
+      message: FORGED_MESSAGE,
+    }),
+  ],
+  [
+    "code",
+    brandedImpostor({
+      serializedKind: FORGED_KIND,
+      message: FORGED_MESSAGE,
+      toSerialized: forgedToSerialized,
+    }),
+  ],
+  [
+    "message",
+    brandedImpostor({
+      serializedKind: FORGED_KIND,
+      code: FORGED_CODE,
+      toSerialized: forgedToSerialized,
+    }),
+  ],
+];
+
 const NON_ERROR_VALUES: ReadonlyArray<readonly [string, unknown]> = [
   ["null", null],
   ["undefined", undefined],
@@ -140,17 +207,18 @@ describe("isCodedError", () => {
 
   // The brand is reachable through `Symbol.for`, so a value that answers the
   // whole contract is indistinguishable from a real one. This documents the
-  // limit rather than a property worth relying on.
+  // limit rather than a property worth relying on — and it is the positive
+  // control the one-condition-short cases below are measured against.
   it("returns true for a forgery that satisfies every checked condition", () => {
-    expect(
-      isCodedError(
-        brandedImpostor({
-          serializedKind: "test",
-          toSerialized: () => ({ kind: "test", code: null, message: "" }),
-        }),
-      ),
-    ).toBe(true);
+    expect(isCodedError(COMPLETE_FORGERY)).toBe(true);
   });
+
+  it.each(ONE_CONDITION_SHORT)(
+    "returns false for that same forgery missing only %s",
+    (_label, value) => {
+      expect(isCodedError(value)).toBe(false);
+    },
+  );
 });
 
 describe("hasSerializedKind", () => {
@@ -175,6 +243,21 @@ describe("hasSerializedKind", () => {
       hasSerializedKind(brandedImpostor({ serializedKind: "test" }), "test"),
     ).toBe(false);
   });
+
+  // `hasSerializedKind` is `isCodedError` plus a discriminator comparison, so
+  // every condition of the former has to stay load-bearing here too — including
+  // the brand, which is the only thing separating the value in the first case
+  // from the one in the second.
+  it("returns true for a forgery that satisfies every checked condition", () => {
+    expect(hasSerializedKind(COMPLETE_FORGERY, "test")).toBe(true);
+  });
+
+  it.each(ONE_CONDITION_SHORT)(
+    "returns false for that same forgery missing only %s",
+    (_label, value) => {
+      expect(hasSerializedKind(value, "test")).toBe(false);
+    },
+  );
 
   // `TKind extends string` accepts anything, so a mistyped kind cannot be a
   // compile error — it silently degrades into a guard that never matches.

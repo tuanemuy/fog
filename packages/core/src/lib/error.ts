@@ -59,9 +59,15 @@ export abstract class CodedError<TCode extends string = string> extends Error {
    *
    * The type is derived from the subclass's own `toSerialized()` return type,
    * so a value that disagrees with the `kind` that method emits does not
-   * compile (TS2416) — with or without an explicit annotation on the subclass.
+   * compile (TS2416) — with or without an explicit annotation here.
    * Annotating it as `readonly serializedKind: SerializedConflictError["kind"]`
    * is therefore optional, and documents intent rather than enforcing it.
+   *
+   * That derivation only bites where the subclass narrows its `toSerialized()`
+   * return type to its own variant: leave the return type off, or annotate it
+   * in this base's shape, and the constraint degrades to `string` and drift
+   * compiles. The effective net is the runtime scan asserting
+   * `serializedKind === toSerialized().kind` over every concrete class.
    */
   abstract readonly serializedKind: ReturnType<this["toSerialized"]>["kind"];
 
@@ -87,9 +93,19 @@ export abstract class CodedError<TCode extends string = string> extends Error {
  *
  * The brand alone cannot make this predicate sound: anyone can call
  * `Symbol.for` with the same key, so a forged value will always be able to
- * satisfy it. Checking `toSerialized` and `serializedKind` on top closes the
- * accidental shapes — a value that happens to carry the brand but cannot answer
- * the contract — which is the most a structural guard can do here.
+ * satisfy it. Checking the contract on top closes the accidental shapes — a
+ * value that happens to carry the brand but cannot answer it — which is the
+ * most a structural guard can do here.
+ *
+ * The four checked members are the ones callers read off the narrowed value:
+ * `toSerialized` and `serializedKind` are the contract itself, and `code` /
+ * `message` are what the per-kind guards, which are this check plus a
+ * discriminator comparison, hand to production callers. What stays unchecked is
+ * the rest of `CodedError`'s promise — being an `Error`, and with it `name`,
+ * `stack` and `cause`. That residue rides on the brand rather than on a test of
+ * its own; weakening the predicate to a structural type would not remove it,
+ * only push it into the per-kind guards, which assert the same class-shaped
+ * contract off this very function.
  */
 export function isCodedError(value: unknown): value is CodedError {
   return (
@@ -97,7 +113,10 @@ export function isCodedError(value: unknown): value is CodedError {
     value !== null &&
     CODED_ERROR_BRAND in value &&
     typeof (value as { toSerialized?: unknown }).toSerialized === "function" &&
-    typeof (value as { serializedKind?: unknown }).serializedKind === "string"
+    typeof (value as { serializedKind?: unknown }).serializedKind ===
+      "string" &&
+    typeof (value as { code?: unknown }).code === "string" &&
+    typeof (value as { message?: unknown }).message === "string"
   );
 }
 

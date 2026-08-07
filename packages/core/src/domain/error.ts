@@ -34,8 +34,17 @@ const BUSINESS_KIND: SerializedBusinessError["kind"] = "business";
  * Written out rather than generated the way the application layer generates its
  * six guards — that factory lives in `application/errors.ts`, and the domain
  * must not depend outward on it.
+ *
+ * `toSerialized` is removed from `CodedError` rather than intersected over it,
+ * matching what that factory's `NarrowedByKind` does and for the same reason:
+ * an intersection keeps both method signatures and overload resolution picks
+ * the base one, leaving `toSerialized()` at the wide
+ * `SerializedErrorBase & { kind: string }`.
  */
-export function isBusinessRuleError(error: unknown): error is CodedError & {
+export function isBusinessRuleError(error: unknown): error is Omit<
+  CodedError,
+  "toSerialized"
+> & {
   readonly serializedKind: SerializedBusinessError["kind"];
   toSerialized(): SerializedBusinessError;
 } {

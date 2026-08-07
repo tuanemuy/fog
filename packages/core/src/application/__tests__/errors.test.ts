@@ -11,7 +11,12 @@ import { describe, expect, it } from "vitest";
 import * as errors from "../errors";
 // Named as well as namespaced: the GritQL ban matches the identifier as
 // written, so only these bindings put the negative controls below under lint.
-import { ApplicationError, ConflictError } from "../errors";
+import {
+  ApplicationError,
+  ConflictError,
+  type SerializedConflictError,
+  type SerializedValidationError,
+} from "../errors";
 
 type ErrorsModule = typeof errors;
 
@@ -19,6 +24,12 @@ type ErrorsModule = typeof errors;
 // through the registry is exactly the lookup that makes it work across module
 // graphs — a test that imported it would not exercise that.
 const CODED_ERROR_BRAND = Symbol.for("@repo/core/CodedError");
+const APPLICATION_ERROR_BRAND = Symbol.for("@repo/core/ApplicationError");
+
+// Mutual assignability rather than `extends`: a `toSerialized()` that widened
+// back to `SerializedErrorBase & { kind: string }` still accepts the narrow type
+// in one direction, so only the two-way check catches that regression.
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 type GuardCase = {
   readonly kind: string;
@@ -97,6 +108,28 @@ class LayerlessCodedError extends CodedError {
   }
 }
 
+// Answers every condition `isCodedError` checks for the given kind except the
+// brand, so a guard rejecting it can only be rejecting it on the brand. The
+// bare `{ serializedKind }` object the matrix also passes is rejected for four
+// other reasons at once and therefore pins none of them.
+function unbrandedContract(kind: string): Record<string, unknown> {
+  return {
+    serializedKind: kind,
+    code: "TEST",
+    message: "test",
+    toSerialized: () => ({
+      kind,
+      code: "TEST",
+      message: "test",
+      retryable: false,
+    }),
+  };
+}
+
+function brandedContract(kind: string): unknown {
+  return { [CODED_ERROR_BRAND]: true, ...unbrandedContract(kind) };
+}
+
 // The `?dup` query hands Vite a second instance of the same source file, which
 // reproduces the SSR / RSC module-graph split that makes `instanceof` unusable.
 async function loadForeignGraph(): Promise<ErrorsModule> {
@@ -122,6 +155,19 @@ describe("kind discrimination matrix", () => {
       "rejects an unbranded object whose serializedKind is $kind",
       (candidate) => {
         expect(subject.guard({ serializedKind: candidate.kind })).toBe(false);
+        expect(subject.guard(unbrandedContract(candidate.kind))).toBe(false);
+      },
+    );
+
+    // Positive control for the row above: the same object plus the brand is
+    // accepted by the guard whose kind it claims. Without it, "unbranded" is not
+    // shown to be the reason the row above answers false.
+    it.each(ALL_CASES)(
+      "answers a branded forgery claiming $kind the same way it answers the class",
+      (candidate) => {
+        expect(subject.guard(brandedContract(candidate.kind))).toBe(
+          subject.kind === candidate.kind,
+        );
       },
     );
 
@@ -173,12 +219,43 @@ describe("per-kind guards narrow to the contract, not the class", () => {
     const foreign: unknown = new ForeignConflictError("TEST", "test");
 
     if (!errors.isConflictError(foreign)) throw new Error("unreachable");
-    expect(foreign.toSerialized()).toEqual({
+
+    // Unannotated on purpose: `narrowed` takes whatever type the guard's return
+    // type gives the call, and the two pins below hold it to the variant.
+    // `toEqual` alone cannot — it passes just as well against the wide
+    // `SerializedErrorBase & { kind: string }` that `NarrowedByKind` degrades to
+    // if its `Omit<CodedError, "toSerialized">` is written back as a plain
+    // intersection. `Exact` is the two-way half, since the narrow type stays
+    // assignable to the wide one.
+    const narrowed = foreign.toSerialized();
+    const exact: Exact<typeof narrowed, SerializedConflictError> = true;
+    const serialized: SerializedConflictError = narrowed;
+
+    expect(exact).toBe(true);
+    expect(serialized).toEqual({
       kind: "conflict",
       code: "TEST",
       message: "test",
       retryable: false,
     });
+  });
+
+  // `fieldErrors` exists on no other variant, so referencing it is what shows
+  // the narrowing reaches the variant's own shape and not just its `kind`.
+  it("exposes a variant-only field through the narrowed type", () => {
+    const error: unknown = new errors.ValidationError("TEST", "test", {
+      email: ["required"],
+    });
+
+    if (!errors.isValidationError(error)) throw new Error("unreachable");
+
+    const narrowed = error.toSerialized();
+    const exact: Exact<typeof narrowed, SerializedValidationError> = true;
+    const serialized: SerializedValidationError = narrowed;
+
+    expect(exact).toBe(true);
+    expect(serialized.fieldErrors).toEqual({ email: ["required"] });
+    expect(error.toSerialized().fieldErrors).toEqual({ email: ["required"] });
   });
 });
 
@@ -208,18 +285,18 @@ describe("isApplicationError", () => {
   // shapes, so a deliberate forgery satisfying the whole contract still passes
   // it. The layer brand is a separate property and is not forged here.
   it("returns false for an object forging the CodedError contract", () => {
-    const impostor = {
-      [CODED_ERROR_BRAND]: true,
-      serializedKind: "conflict",
-      toSerialized: () => ({
-        kind: "conflict",
-        code: "TEST",
-        message: "test",
-        retryable: false,
-      }),
-    };
+    const impostor = brandedContract("conflict");
     expect(errors.isApplicationError(impostor)).toBe(false);
     expect(isCodedError(impostor)).toBe(true);
+  });
+
+  // The layer brand is the whole of this guard, so this pins the registry key
+  // itself. Nothing else does: a typo in `errors.ts` leaves both module graphs
+  // agreeing on the same wrong symbol, and every foreign-graph case stays green.
+  it("returns true for a bare object carrying the layer brand", () => {
+    expect(errors.isApplicationError({ [APPLICATION_ERROR_BRAND]: true })).toBe(
+      true,
+    );
   });
 
   it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {

@@ -25,6 +25,11 @@ export const errorResponseMiddleware = createMiddleware({
   try {
     return await next();
   } catch (error) {
+    // `isNotFound` is `obj?.isNotFound === true` and `isRedirect` is its twin,
+    // so this pass-through rides the same invariant `extractSerializedError`'s
+    // JSDoc states — a thrown value's shape never derives from external input.
+    // Break that invariant and this line skips classification entirely, not
+    // just the remnant stage.
     if (isRedirect(error) || isNotFound(error)) throw error;
     const appError = await toClientError(error);
     setResponseStatus(httpStatusFor(appError.serialized));

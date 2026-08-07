@@ -254,9 +254,9 @@ export const UNVERIFIED_SERIALIZED_ERROR: SerializedError = Object.freeze({
  * The brand crosses module graphs but **not** a serialization boundary: it is
  * a symbol-keyed own property, so `structuredClone` / JSON / the Worker ↔
  * Durable Object RPC hop all drop it and this guard then answers `false`. The
- * receiver for those values is the second stage of
- * {@link extractSerializedError}, which matches the surviving `serialized`
- * remnant structurally — never widen this guard with a `name` comparison.
+ * receiver for those values is {@link extractSerializedError}, which matches
+ * the surviving `serialized` remnant structurally and never looks at the brand
+ * at all — never widen this guard with a `name` comparison.
  *
  * This is the one guard that still claims a concrete class rather than the
  * contract the per-kind guards narrow to: `createSerializationAdapter` types
@@ -272,9 +272,21 @@ export function isAppServerError(value: unknown): value is AppServerError {
 }
 
 /**
- * Reads the `kind`-tagged payload out of a caught value: from the brand first,
- * then from a `serialized` remnant that outlived a serialization boundary, and
- * finally from `serializeError` for anything else.
+ * Reads the `kind`-tagged payload out of a caught value: from a `serialized`
+ * remnant rebuilt through {@link asSerializedError}, and from `serializeError`
+ * for anything else.
+ *
+ * **The brand is deliberately not consulted here.** Matching it is
+ * {@link isAppServerError}'s job — it is what the serialization adapter binds
+ * its `test` to — and it is neither necessary nor sufficient for this
+ * function: it does not survive the serialization boundary whose far side this
+ * receives values from, and it is forgeable by anyone who can call
+ * `Symbol.for`, so a genuinely branded instance is still no evidence that its
+ * payload is ours (Seroval reconstructs one from any request body tagged
+ * `$TSR/t/AppServerError` — see `appServerErrorAdapter`). Branded or not, the
+ * payload therefore goes through the same structural rebuild, which is also
+ * what stops an unknown property riding along and surviving
+ * `redactForClient`'s spread all the way to the client.
  *
  * **Invariant this rests on: the shape of a thrown value never derives from
  * external input.** The remnant stage matches structurally — any object with a
@@ -289,20 +301,11 @@ export function isAppServerError(value: unknown): value is AppServerError {
  * the stage safe. Re-throwing a value that came off the wire breaks it
  * silently; translate such a value into an error class instead.
  *
- * The brand is not the defence here and cannot become one: it is forgeable by
- * anyone who can call `Symbol.for`, and it does not survive the boundary this
- * stage exists to cross. That is why **both** stages go through
- * `asSerializedError` rather than handing `error.serialized` on as-is: a
- * genuinely branded instance is not evidence its payload is ours — Seroval
- * reconstructs one from any request body tagged `$TSR/t/AppServerError` (see
- * `appServerErrorAdapter`) — and an unknown property riding along would
- * survive `redactForClient`'s spread all the way to the client.
+ * The same invariant carries `errorResponseMiddleware`'s `isNotFound` /
+ * `isRedirect` pass-through, which is structural for the same reason; both
+ * consumers break together if it ever stops holding.
  */
 export function extractSerializedError(error: unknown): SerializedError {
-  if (isAppServerError(error)) {
-    const structural = asSerializedError(error.serialized);
-    if (structural !== null) return structural;
-  }
   if (hasSerializedRemnant(error)) {
     const structural = asSerializedError(error.serialized);
     if (structural !== null) return structural;

@@ -102,6 +102,12 @@ export async function mapDbError<T>(
     // site (`D1UserRepository.toUser`). A repository that skips that step
     // lands here and degrades to `DATABASE_ERROR` — still a 5xx, never a
     // client-visible business error.
+    //
+    // The wrapping itself has no such fallback: `isCodedError` passes
+    // `BusinessRuleError` through, so a `reconstruct` that lets a value
+    // object's error escape unwrapped surfaces an integrity failure as a
+    // client-visible 422 — `errorResponseMiddleware` logs `system` /
+    // `unknown` only, and `redactForClient` is a no-op on `business`.
     if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {

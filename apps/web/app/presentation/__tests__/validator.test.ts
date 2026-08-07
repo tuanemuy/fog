@@ -10,6 +10,7 @@ import {
   extractSerializedError,
   httpStatusFor,
   isAppServerError,
+  type SerializedValidationError,
 } from "../errorResponse";
 import { InputValidationError, validateInput } from "../validator";
 
@@ -81,9 +82,13 @@ describe("InputValidationError", () => {
 
     expect(isValidationError(error)).toBe(true);
     // Reached through the guard so its structural return type — not the
-    // concrete class — is what supplies `toSerialized`.
+    // concrete class — is what supplies `toSerialized`. The annotation is the
+    // assertion: narrowing that hands back the base `{ kind: string }` payload
+    // still satisfies every `toEqual` below, so only a compile error catches
+    // it.
     if (!isValidationError(error)) throw new Error("unreachable");
-    expect(error.toSerialized()).toEqual({
+    const serialized: SerializedValidationError = error.toSerialized();
+    expect(serialized).toEqual({
       kind: "validation",
       code: "INVALID_INPUT",
       message: "Invalid input",

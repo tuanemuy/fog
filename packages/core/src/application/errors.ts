@@ -71,10 +71,24 @@ export function isApplicationError(error: unknown): error is ApplicationError {
  * classes, but nothing in the type system, the linter or the tests keeps the
  * others at one, and the failure mode of that changing is a silent unsound
  * narrowing.
+ *
+ * `toSerialized` is removed from `CodedError` rather than intersected over it:
+ * an intersection keeps both method signatures and overload resolution picks
+ * the base one, so `toSerialized()` would still return the wide
+ * `SerializedErrorBase & { kind: string }` and this half of the narrowing would
+ * be inert. Everything else `CodedError` carries — including its symbol-keyed
+ * brand, which is what stops an outside object literal from claiming this type
+ * — survives the `Omit`.
+ *
+ * The runtime behind this type checks `serializedKind === kind` and nothing
+ * more; that `toSerialized()` really returns `TSerialized` is unverified. It
+ * holds today only because every `Serialized*Error` adds nothing but optional
+ * properties to `SerializedErrorBase & { kind }`. Give any variant a required
+ * field and this type starts lying with no compile error to show for it.
  */
 type NarrowedByKind<
   TSerialized extends SerializedErrorBase & { kind: string },
-> = CodedError & {
+> = Omit<CodedError, "toSerialized"> & {
   readonly serializedKind: TSerialized["kind"];
   toSerialized(): TSerialized;
 };

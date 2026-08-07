@@ -5,10 +5,18 @@
 //
 // MAINTENANCE — this matches the identifier as written, so a new error class is
 // NOT covered until its name is added below. Nobody has to remember that:
-// `lint/banList.test.ts` scans `apps/`, `packages/` and `infra/` for exported
-// error classes and fails naming any this list is missing (and any entry here
-// whose class is gone), so the omission is loud rather than silent. That test
-// makes this list the repository's error-class roster.
+// `lint/banList.test.ts` scans `apps/`, `packages/`, `infra/` and `lint/` for
+// class declarations named `*Error` or visibly extending one, and fails naming
+// any this list is missing (and any entry here whose class is gone), so the
+// omission is loud rather than silent. That makes this list the roster of every
+// error class that scan can see — which is not quite every error class; the
+// third limit below says which ones it misses, and `banList.test.ts` pins both
+// its reach and that gap with direct cases.
+//
+// WIRING — `lint/pluginWiring.test.ts` lints a throwaway fixture and asserts a
+// `category: "plugin"` diagnostic comes back, so deleting `biome.json`'s
+// `plugins` line or dropping the `register_diagnostic(...)` call below turns
+// red instead of quietly disarming everything above.
 //
 // SUPPRESSION — `// biome-ignore lint/plugin: <reason>` on the preceding line
 // (the intended use is a negative control asserting that `instanceof` really
@@ -28,6 +36,17 @@
 //   subtracted there). `banList.test.ts` scans those paths regardless, so a
 //   class declared in one still lands on this list — it is the call sites there
 //   that go unchecked.
+// - Roster — the scan reads declarations textually, so a class reaches this list
+//   only if its own name ends in `Error` or the base it names does. Two forms
+//   therefore never arrive on their own: `export default class extends Error {}`
+//   (anonymous), and a non-`*Error` name over an aliased base
+//   (`import { CodedError as Base }` → `class Weird extends Base`). The first is
+//   beyond this plugin either way — an anonymous default export gives its call
+//   sites no stable identifier to match. The second is a real hole, of the same
+//   shape as the alias evasion above and equally conspicuous in review. Every
+//   other declaration form is covered: `export class`, `export abstract class`,
+//   `export default class Named`, and a bare `class X {}` re-exported by a later
+//   `export { X }`.
 //
 // Why not widen to a regex such as `r"^[A-Za-z0-9_.]*Error$"` plus an allow-list
 // (measured to work in Biome's GritQL, and it does close the namespace evasion):
