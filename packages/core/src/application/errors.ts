@@ -62,6 +62,39 @@ export function isApplicationError(error: unknown): error is ApplicationError {
   );
 }
 
+/**
+ * What a per-kind guard narrows to: the shared error contract plus the one
+ * `serializedKind` that was matched. Deliberately not a concrete class —
+ * `serializedKind` is many-to-one (`ValidationError` and the presentation
+ * layer's `InputValidationError` both report `"validation"`), so class identity
+ * cannot be derived from it for any kind. Today only `validation` has two
+ * classes, but nothing in the type system, the linter or the tests keeps the
+ * others at one, and the failure mode of that changing is a silent unsound
+ * narrowing.
+ */
+type NarrowedByKind<
+  TSerialized extends SerializedErrorBase & { kind: string },
+> = CodedError & {
+  readonly serializedKind: TSerialized["kind"];
+  toSerialized(): TSerialized;
+};
+
+/**
+ * Builds a per-kind guard so every one of them is generated from the same
+ * shape rather than hand-written.
+ *
+ * Taking the kind as `TSerialized["kind"]` is also what enforces
+ * `hasSerializedKind`'s calling convention: its own `TKind extends string`
+ * accepts any string, so a typo would compile into a guard that is always
+ * `false`. Here it is a compile error.
+ */
+function kindGuard<TSerialized extends SerializedErrorBase & { kind: string }>(
+  kind: TSerialized["kind"],
+): (error: unknown) => error is NarrowedByKind<TSerialized> {
+  return (error): error is NarrowedByKind<TSerialized> =>
+    hasSerializedKind(error, kind);
+}
+
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
   readonly serializedKind: SerializedNotFoundError["kind"] = "notFound";
@@ -76,9 +109,7 @@ export class NotFoundError extends ApplicationError {
   }
 }
 
-export function isNotFoundError(error: unknown): error is NotFoundError {
-  return hasSerializedKind(error, "notFound");
-}
+export const isNotFoundError = kindGuard<SerializedNotFoundError>("notFound");
 
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
@@ -94,9 +125,7 @@ export class ConflictError extends ApplicationError {
   }
 }
 
-export function isConflictError(error: unknown): error is ConflictError {
-  return hasSerializedKind(error, "conflict");
-}
+export const isConflictError = kindGuard<SerializedConflictError>("conflict");
 
 /**
  * Input / credential verification failure raised by a usecase.
@@ -140,16 +169,13 @@ export class ValidationError extends ApplicationError {
 }
 
 /**
- * Structural return type, not `error is ValidationError`: the presentation
- * layer's `InputValidationError` reports the same `serializedKind` and is not a
- * `ValidationError`, so claiming the concrete class here would be unsound.
+ * The kind with two producers today: the presentation layer's
+ * `InputValidationError` reports the same `serializedKind` and is not a
+ * `ValidationError`, so a match here says "a validation failure crossed the
+ * contract", never which class raised it.
  */
-export function isValidationError(error: unknown): error is CodedError & {
-  readonly serializedKind: SerializedValidationError["kind"];
-  toSerialized(): SerializedValidationError;
-} {
-  return hasSerializedKind(error, "validation");
-}
+export const isValidationError =
+  kindGuard<SerializedValidationError>("validation");
 
 /**
  * Authorization failures raised by usecases. Distinguished into two kinds:
@@ -177,11 +203,8 @@ export class UnauthorizedError extends ApplicationError {
   }
 }
 
-export function isUnauthorizedError(
-  error: unknown,
-): error is UnauthorizedError {
-  return hasSerializedKind(error, "unauthorized");
-}
+export const isUnauthorizedError =
+  kindGuard<SerializedUnauthorizedError>("unauthorized");
 
 export class ForbiddenError extends ApplicationError {
   override readonly name = "ForbiddenError";
@@ -197,9 +220,8 @@ export class ForbiddenError extends ApplicationError {
   }
 }
 
-export function isForbiddenError(error: unknown): error is ForbiddenError {
-  return hasSerializedKind(error, "forbidden");
-}
+export const isForbiddenError =
+  kindGuard<SerializedForbiddenError>("forbidden");
 
 /**
  * Codes for unrecoverable system faults surfaced by adapters.
@@ -261,6 +283,4 @@ export class SystemError extends ApplicationError<SystemErrorCode> {
   }
 }
 
-export function isSystemError(error: unknown): error is SystemError {
-  return hasSerializedKind(error, "system");
-}
+export const isSystemError = kindGuard<SerializedSystemError>("system");

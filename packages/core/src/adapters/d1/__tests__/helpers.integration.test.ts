@@ -121,22 +121,21 @@ describe("mapDbError SQLITE_CONSTRAINT_* classification (integration)", () => {
 });
 
 // The pass-through is the intent, not a side effect of the guard being wide.
-// `mapDbError` translates driver-native failures only; anything already
-// speaking the shared error contract is re-thrown by identity so the usecase
-// sees what the domain / application layer raised. Re-wrapping a
-// `BusinessRuleError` that `reconstruct` threw inside `fn` would turn an
-// invariant violation into `SystemError(DATABASE_ERROR)` — a 500 where the
-// cross-layer catch policy asks for the domain error to reach the usecase
-// unchanged.
+// `mapDbError` translates driver-native failures only, so an error already
+// speaking the shared contract is re-thrown by identity — flattening it into
+// `SystemError(DATABASE_ERROR)` would erase a classification another layer
+// deliberately chose. The two cases straddle the layer boundary on purpose:
+// `isCodedError` spans both, where the `isApplicationError` it replaced would
+// have flattened the domain one.
 describe("mapDbError contract pass-through (integration)", () => {
   const PASSED_THROUGH = [
     {
-      label: "a BusinessRuleError raised by reconstruct inside the callback",
+      label: "a domain-layer BusinessRuleError",
       build: () =>
         new BusinessRuleError("IDENTITY_EMAIL_TOO_LONG", "Email is too long"),
     },
     {
-      label: "a ConflictError the callback classified itself",
+      label: "an application-layer ConflictError",
       build: () => new ConflictError("OPTIMISTIC_LOCK_FAILURE", "stale write"),
     },
   ];

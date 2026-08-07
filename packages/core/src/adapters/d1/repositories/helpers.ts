@@ -88,11 +88,20 @@ export async function mapDbError<T>(
   try {
     return await fn();
   } catch (error) {
-    // Anything already speaking the shared error contract passes through
-    // untouched — only driver-native failures are ours to translate. A
-    // `BusinessRuleError` thrown by `reconstruct` inside `fn` is therefore
-    // re-thrown as-is, which is what the cross-layer catch policy asks for:
-    // domain errors reach the usecase without adapter re-translation.
+    // Only driver-native failures are ours to translate; anything already
+    // speaking the shared contract is re-thrown by identity, because
+    // flattening it into `SystemError(DATABASE_ERROR)` would erase a
+    // classification another layer deliberately chose. Two producers sit
+    // inside `fn` today: the row-integrity checks the read callbacks run
+    // (`SystemError(DataIntegrityError)`) and the unit of work's OCC
+    // conflict handler (`ConflictError(OPTIMISTIC_LOCK_FAILURE)`).
+    //
+    // Deliberately no `isRehydrationError` branch: `RehydrationError` is not
+    // a `CodedError`, and translating it needs the aggregate that failed to
+    // rehydrate, so each repository does it at its own `reconstruct` call
+    // site (`D1UserRepository.toUser`). A repository that skips that step
+    // lands here and degrades to `DATABASE_ERROR` — still a 5xx, never a
+    // client-visible business error.
     if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {

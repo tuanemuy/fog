@@ -4,11 +4,11 @@
 // `serializedKind` guard functions (`isConflictError`, `isAppServerError`, …).
 //
 // MAINTENANCE — this matches the identifier as written, so a new error class is
-// NOT covered until its name is added below. The declarations live in
-// `packages/core/src/lib/error.ts`, `packages/core/src/domain/error.ts`,
-// `packages/core/src/application/errors.ts`,
-// `apps/web/app/presentation/errorResponse.ts` and
-// `apps/web/app/presentation/validator.ts`.
+// NOT covered until its name is added below. Nobody has to remember that:
+// `lint/banList.test.ts` scans `apps/`, `packages/` and `infra/` for exported
+// error classes and fails naming any this list is missing (and any entry here
+// whose class is gone), so the omission is loud rather than silent. That test
+// makes this list the repository's error-class roster.
 //
 // SUPPRESSION — `// biome-ignore lint/plugin: <reason>` on the preceding line
 // (the intended use is a negative control asserting that `instanceof` really
@@ -16,13 +16,25 @@
 // does not work, and neither does `overrides[].plugins: []` — `overrides` only
 // adds plugins, so an empty array is a no-op.
 //
-// KNOWN LIMITS, accepted — an aliased import
-// (`import { ConflictError as CE }` → `e instanceof CE`) and a namespace access
-// (`import * as errs` → `e instanceof errs.ConflictError`) both slip through.
-// Why not widen to a pattern such as `r"(.*Error)$"`: it would also flag the
-// legitimate `instanceof Error` uses in the repo and any third-party `*Error`,
-// and curating the resulting allow-list costs more than the two evasions it
-// would close — both of which are conspicuous in review.
+// KNOWN LIMITS, accepted:
+// - Evasion — an aliased import (`import { ConflictError as CE }` →
+//   `e instanceof CE`) and a namespace access (`import * as errs` →
+//   `e instanceof errs.ConflictError`) both slip through. Both are conspicuous
+//   in review.
+// - Placement — the plugin only runs over `biome.json`'s `linter.includes`.
+//   Measured: the same `e instanceof ConflictError` yields a diagnostic under
+//   `packages/core/src/` but none in a repo-root `*.ts` or under
+//   `**/components/ui/**` (nor `**/styles/**` / `**/templates/**`, all
+//   subtracted there). `banList.test.ts` scans those paths regardless, so a
+//   class declared in one still lands on this list — it is the call sites there
+//   that go unchecked.
+//
+// Why not widen to a regex such as `r"^[A-Za-z0-9_.]*Error$"` plus an allow-list
+// (measured to work in Biome's GritQL, and it does close the namespace evasion):
+// the allow-list is only `Error` today, but it grows with every builtin or
+// third-party `*Error` the repo starts using, and the alias evasion survives the
+// switch either way. The one real advantage — that a regex needs no maintenance
+// when a class is added — is what `banList.test.ts` already buys.
 `$value instanceof $type` where {
   $type <: or {
     // packages/core/src/lib/error.ts

@@ -64,6 +64,11 @@ export async function guardStreamedRender<T>(
 
 // The single redaction point: the raw serialized form goes to the injected
 // `Logger` for ops triage, the client only ever sees `redactForClient(...)`.
+//
+// Classifying here is what put `extractSerializedError`'s structural stage on
+// the server side, so this function is the reason its invariant — a thrown
+// value's shape never derives from external input — has to hold. Read the
+// JSDoc there before routing a new kind of value into this catch.
 async function toClientError(error: unknown): Promise<AppServerError> {
   // Not `isAppServerError` + `serializeError`: the brand does not survive a
   // serialization boundary, so an error that already crossed one would lose its

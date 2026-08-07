@@ -323,6 +323,29 @@ describe("guardStreamedRender", () => {
     });
     expect(logger.entries).toEqual([]);
   });
+
+  // The half of the JSDoc contract that is not implied by sharing
+  // `toClientError` with the middleware: classification survives a
+  // serialization boundary here too, so the redaction and logging branches see
+  // the kind the usecase earned rather than collapsing onto `unknown`. Sharing
+  // an implementation is not the reason to believe that — a change that made
+  // the middleware read the remnant some other way would leave this untested.
+  it("classifies a brand-stripped failure the same way the middleware does", async () => {
+    const serialized = serializeError(
+      new ConflictError("EMAIL_ALREADY_REGISTERED", "Email already registered"),
+    );
+    const remnant = acrossSerializationBoundary(serialized);
+
+    expect(isAppServerError(remnant)).toBe(false);
+
+    const caught = await captureFrom(guardStreamedRender, remnant);
+
+    expect(serializedOf(caught)).toEqual(serialized);
+    expect(logger.entries).toEqual([]);
+    // Where it differs from the middleware: the response status is already
+    // committed by the time a streamed leaf throws.
+    expect(mocks.statuses).toEqual([]);
+  });
 });
 
 // Spreading a real `AppServerError` keeps its `serialized` own property and
@@ -338,12 +361,24 @@ function acrossSerializationBoundary(serialized: SerializedError): unknown {
 // Reading the surviving payload structurally is what keeps the status the
 // usecase earned: a brand-only path collapses these onto `unknown` and 500,
 // which is the regression this pins.
+//
+// `client` is the payload the caller is allowed to see and `logged` says
+// whether the failure is an operational incident. The `system` row needs both:
+// the remnant stage restores a payload that was never redacted, so redaction
+// runs on a value the boundary recovered rather than on one it built itself.
 const BRAND_STRIPPED_CASES = [
   {
     kind: "conflict",
     status: 409,
     build: () =>
       new ConflictError("EMAIL_ALREADY_REGISTERED", "Email already registered"),
+    client: {
+      kind: "conflict",
+      code: "EMAIL_ALREADY_REGISTERED",
+      message: "Email already registered",
+      retryable: false,
+    },
+    logged: false,
   },
   {
     kind: "validation",
@@ -352,8 +387,35 @@ const BRAND_STRIPPED_CASES = [
       new ValidationError("INVALID_CREDENTIALS", LOGIN_FAILURE_MESSAGE, {
         email: [LOGIN_FAILURE_MESSAGE],
       }),
+    client: {
+      kind: "validation",
+      code: "INVALID_CREDENTIALS",
+      message: LOGIN_FAILURE_MESSAGE,
+      retryable: false,
+      fieldErrors: { email: [LOGIN_FAILURE_MESSAGE] },
+    },
+    logged: false,
   },
-] as const;
+  {
+    kind: "system",
+    status: 500,
+    build: () =>
+      new SystemError(SystemErrorCode.DatabaseError, INTERNAL_DETAIL),
+    client: {
+      kind: "system",
+      code: null,
+      message: "System error",
+      retryable: false,
+    },
+    logged: true,
+  },
+] as const satisfies ReadonlyArray<{
+  readonly kind: string;
+  readonly status: number;
+  readonly build: () => unknown;
+  readonly client: SerializedError;
+  readonly logged: boolean;
+}>;
 
 describe("errorResponseMiddleware across a serialization boundary", () => {
   it.each(BRAND_STRIPPED_CASES)(
@@ -366,11 +428,30 @@ describe("errorResponseMiddleware across a serialization boundary", () => {
 
       const caught = await captureFrom(run, remnant);
 
-      expect(serializedOf(caught)).toEqual(serialized);
+      expect(serializedOf(caught)).toEqual(testCase.client);
       expect(mocks.statuses).toEqual([testCase.status]);
-      // Neither kind is an operational incident; logging them would drown the
-      // signal the `system` / `unknown` branch exists to raise.
-      expect(logger.entries).toEqual([]);
+
+      if (!testCase.logged) {
+        // Neither kind is an operational incident; logging them would drown the
+        // signal the `system` / `unknown` branch exists to raise.
+        expect(logger.entries).toEqual([]);
+        return;
+      }
+
+      // The raw payload the remnant carried is what the operator needs, and
+      // exactly what the client must not get.
+      expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+        kind: "system",
+        code: SystemErrorCode.DatabaseError,
+        message: INTERNAL_DETAIL,
+      });
+
+      const wire = JSON.stringify(serializedOf(caught));
+
+      expect(wire).not.toContain("D1_ERROR");
+      expect(wire).not.toContain("no such table");
+      expect(wire).not.toContain("/var/task");
+      expect(wire).not.toContain(SystemErrorCode.DatabaseError);
     },
   );
 

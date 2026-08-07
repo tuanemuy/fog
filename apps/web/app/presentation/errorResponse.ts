@@ -8,6 +8,7 @@ import type {
 } from "@repo/core/application/errors";
 import type { SerializedBusinessError } from "@repo/core/domain/error";
 import {
+  type FieldErrors,
   isSerializableError,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
@@ -49,10 +50,14 @@ const SERIALIZED_ERROR_KINDS = {
   unknown: true,
 } as const satisfies Record<SerializedErrorKind, true>;
 
+function isSerializedErrorKind(kind: string): kind is SerializedErrorKind {
+  return Object.hasOwn(SERIALIZED_ERROR_KINDS, kind);
+}
+
 function isSerializedError(
   value: SerializedErrorBase & { kind: string },
 ): value is SerializedError {
-  return Object.hasOwn(SERIALIZED_ERROR_KINDS, value.kind);
+  return isSerializedErrorKind(value.kind);
 }
 
 const SYSTEM_ERROR_PUBLIC_MESSAGE = "System error";
@@ -75,6 +80,12 @@ export function serializeError(error: unknown): SerializedError {
   if (isSerializedError(serialized)) {
     return serialized;
   }
+  // Receiver for a `kind` outside the union. It cannot be closed by a type:
+  // this union is where each layer's variants are aggregated, so `lib/` — which
+  // every layer depends on — cannot name it back without inverting the
+  // dependency direction, and `CodedError.toSerialized()` is therefore typed
+  // only as `{ kind: string }`. `code` / `message` are carried over so a
+  // layerless error still reaches the logger with its own detail.
   return {
     kind: "unknown",
     code: serialized.code,
@@ -150,14 +161,84 @@ function hasSerializedRemnant(
   );
 }
 
-function asSerializedError(value: unknown): SerializedError | null {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as { kind?: unknown; message?: unknown };
-  if (typeof v.kind !== "string" || typeof v.message !== "string") return null;
-  return isSerializedError(v as SerializedErrorBase & { kind: string })
-    ? (v as SerializedError)
-    : null;
+function isFieldErrors(value: unknown): value is FieldErrors {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.values(value).every(
+    (messages) =>
+      Array.isArray(messages) &&
+      messages.every((message) => typeof message === "string"),
+  );
 }
+
+/**
+ * Validates an unverified payload against the `SerializedError` contract and
+ * **rebuilds it from the known keys only**, or answers `null`.
+ *
+ * Every field the union declares is checked, not just the discriminant: a
+ * payload that satisfies `kind` alone would otherwise be cast into a type it
+ * does not honour and reach `errorDisplay` / `errorField`, which branch on
+ * `code` and iterate `fieldErrors`. Rebuilding rather than returning the input
+ * closes the second half: `redactForClient` spreads the payload, so an unknown
+ * property riding along would survive redaction and cross to the client.
+ *
+ * Answering `null` is the fail-closed direction — callers land on
+ * {@link UNVERIFIED_SERIALIZED_ERROR} or on `serializeError`, both `unknown`.
+ *
+ * Exported because the serialization adapter needs it on the **inbound** leg:
+ * see `appServerErrorAdapter`. Under CLAUDE.md's "validate at exactly two
+ * points" this is the transport boundary, not a third point — it is the same
+ * shape check `serverAction`'s `inputValidator` performs, run one step earlier
+ * because Seroval reconstructs typed nodes before the validator sees them.
+ */
+export function asSerializedError(value: unknown): SerializedError | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as {
+    kind?: unknown;
+    code?: unknown;
+    message?: unknown;
+    retryable?: unknown;
+    fieldErrors?: unknown;
+  };
+
+  const { kind, code, message, retryable } = v;
+  if (typeof kind !== "string" || !isSerializedErrorKind(kind)) return null;
+  if (code !== null && typeof code !== "string") return null;
+  if (typeof message !== "string") return null;
+  if (retryable !== undefined && typeof retryable !== "boolean") return null;
+
+  const base = {
+    code,
+    message,
+    ...(retryable === undefined ? {} : { retryable }),
+  };
+
+  // `fieldErrors` exists on the `validation` variant only, so on every other
+  // kind it is an unknown key and is dropped with the rest.
+  if (kind === "validation") {
+    const { fieldErrors } = v;
+    if (fieldErrors === undefined) return { kind, ...base };
+    if (!isFieldErrors(fieldErrors)) return null;
+    return { kind, ...base, fieldErrors };
+  }
+
+  return { kind, ...base };
+}
+
+/**
+ * Where a payload that fails {@link asSerializedError} lands when the caller
+ * has to produce a `SerializedError` rather than answer `null`.
+ *
+ * Already carries the redacted `system` / `unknown` message, so it is safe on
+ * either side of the boundary: the value is identical whether or not
+ * `redactForClient` runs over it.
+ */
+export const UNVERIFIED_SERIALIZED_ERROR: SerializedError = Object.freeze({
+  kind: "unknown",
+  code: null,
+  message: SYSTEM_ERROR_PUBLIC_MESSAGE,
+});
 
 /**
  * Structural identity test for {@link AppServerError}.
@@ -176,6 +257,11 @@ function asSerializedError(value: unknown): SerializedError | null {
  * receiver for those values is the second stage of
  * {@link extractSerializedError}, which matches the surviving `serialized`
  * remnant structurally — never widen this guard with a `name` comparison.
+ *
+ * This is the one guard that still claims a concrete class rather than the
+ * contract the per-kind guards narrow to: `createSerializationAdapter` types
+ * its `test` as `(value: unknown) => value is TInput`, and this adapter binds
+ * `TInput` to `AppServerError`. See `.adr/016`.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
@@ -185,9 +271,37 @@ export function isAppServerError(value: unknown): value is AppServerError {
   );
 }
 
+/**
+ * Reads the `kind`-tagged payload out of a caught value: from the brand first,
+ * then from a `serialized` remnant that outlived a serialization boundary, and
+ * finally from `serializeError` for anything else.
+ *
+ * **Invariant this rests on: the shape of a thrown value never derives from
+ * external input.** The remnant stage matches structurally — any object with a
+ * `serialized` own property qualifies — and it no longer runs on the client
+ * only: `toClientError` classifies with it, so the `kind` it reads decides the
+ * HTTP status, and decides whether `redactForClient` and the `system` /
+ * `unknown` logging branch run at all. A payload that reached here from a
+ * request body could therefore choose its own status and suppress both
+ * redaction and the log. Nothing in this repository throws request-derived
+ * data — usecases and adapters throw `CodedError` subclasses, and
+ * `validateInput` builds its own {@link AppServerError} — which is what makes
+ * the stage safe. Re-throwing a value that came off the wire breaks it
+ * silently; translate such a value into an error class instead.
+ *
+ * The brand is not the defence here and cannot become one: it is forgeable by
+ * anyone who can call `Symbol.for`, and it does not survive the boundary this
+ * stage exists to cross. That is why **both** stages go through
+ * `asSerializedError` rather than handing `error.serialized` on as-is: a
+ * genuinely branded instance is not evidence its payload is ours — Seroval
+ * reconstructs one from any request body tagged `$TSR/t/AppServerError` (see
+ * `appServerErrorAdapter`) — and an unknown property riding along would
+ * survive `redactForClient`'s spread all the way to the client.
+ */
 export function extractSerializedError(error: unknown): SerializedError {
   if (isAppServerError(error)) {
-    return error.serialized;
+    const structural = asSerializedError(error.serialized);
+    if (structural !== null) return structural;
   }
   if (hasSerializedRemnant(error)) {
     const structural = asSerializedError(error.serialized);

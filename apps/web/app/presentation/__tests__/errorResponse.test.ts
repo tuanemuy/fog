@@ -8,16 +8,20 @@ import {
   ValidationError,
 } from "@repo/core/application/errors";
 import { BusinessRuleError } from "@repo/core/domain/error";
+import { CodedError } from "@repo/core/lib/error";
 import { describe, expect, it } from "vitest";
 import {
   AppServerError,
+  asSerializedError,
   extractSerializedError,
   httpStatusFor,
   isAppServerError,
   redactForClient,
   type SerializedError,
+  type SerializedErrorBase,
   type SerializedErrorKind,
   serializeError,
+  UNVERIFIED_SERIALIZED_ERROR,
 } from "../errorResponse";
 
 // Shaped like the strings that actually leak: a driver tag, a table name,
@@ -74,9 +78,137 @@ const PASSED_THROUGH_KINDS = KINDS.filter(
   (kind) => !REDACTED_KINDS.some((redacted) => redacted === kind),
 );
 
+// Where a payload that fails verification lands once it reaches
+// `extractSerializedError`: the value is not a `SerializableError`, so the last
+// stage falls through to `errorMessage()`, which has no message to read off a
+// plain object.
+const UNVERIFIED_FALLBACK = {
+  kind: "unknown",
+  code: null,
+  message: "Unexpected error",
+} as const satisfies SerializedError;
+
+// `AppServerError`'s constructor is typed against the verified union, but the
+// payloads it actually holds have only been through `asSerializedError`. The
+// cast stands in for that gap so the tests can build the shapes a client can
+// post.
+function fromTheWire(value: Record<string, unknown>): SerializedError {
+  return value as unknown as SerializedError;
+}
+
+function verified(value: unknown): SerializedError {
+  const result = asSerializedError(value);
+  if (result === null) throw new Error("expected the payload to verify");
+  return result;
+}
+
 describe("serializeError", () => {
   it.each(KINDS)("projects the %s sample onto that kind", (kind) => {
     expect(SAMPLES[kind].kind).toBe(kind);
+  });
+
+  type SerializedLayerlessError = SerializedErrorBase & { kind: "layerless" };
+
+  // A `CodedError` whose `kind` is outside the union assembled in
+  // `errorResponse.ts`. The branch that receives it cannot be closed by a type
+  // — the union aggregates each layer's variants, so `lib/` (which every layer
+  // depends on) cannot name it back — which is why it is pinned here instead.
+  class LayerlessError extends CodedError {
+    override readonly name = "LayerlessError";
+    readonly serializedKind: SerializedLayerlessError["kind"] = "layerless";
+
+    override toSerialized(): SerializedLayerlessError {
+      return {
+        kind: "layerless",
+        code: this.code,
+        message: this.message,
+        retryable: false,
+      };
+    }
+  }
+
+  // The distinction that matters: this must not collapse onto the
+  // `errorMessage()` fallback at the top of `serializeError`, which would
+  // report `code: null` and the raw `Error.message`. A layerless error still
+  // reaches the logger carrying the detail its own class chose.
+  it("carries code and message over for a kind outside the union", () => {
+    expect(serializeError(new LayerlessError("X", "boom"))).toEqual({
+      kind: "unknown",
+      code: "X",
+      message: "boom",
+    });
+  });
+});
+
+// Every assertion here is about the *rebuild*, not the validation: returning
+// the caller's object would satisfy a `toEqual` / `toMatchObject` on the known
+// keys just as well. `Object.keys` is what tells the two apart — and it is also
+// the only form that distinguishes an absent optional key from one present with
+// `undefined`, which is what `exactOptionalPropertyTypes` promises.
+describe("asSerializedError", () => {
+  it("drops a key the union does not declare", () => {
+    const forged = fromTheWire({
+      kind: "conflict",
+      code: "X",
+      message: "m",
+      evil: "pii",
+    });
+
+    const result = verified(forged);
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+    // `redactForClient` spreads its input, so a surviving unknown key would
+    // ride the spread all the way onto the wire.
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+    expect(JSON.stringify(redactForClient(result))).not.toContain("evil");
+  });
+
+  it("drops fieldErrors on a kind that does not declare it", () => {
+    expect(
+      verified({
+        kind: "conflict",
+        code: "X",
+        message: "m",
+        fieldErrors: { email: ["required"] },
+      }),
+    ).toEqual({ kind: "conflict", code: "X", message: "m" });
+  });
+
+  it("keeps fieldErrors on the validation kind", () => {
+    expect(
+      verified({
+        kind: "validation",
+        code: "X",
+        message: "m",
+        fieldErrors: { email: ["required"] },
+      }),
+    ).toEqual({
+      kind: "validation",
+      code: "X",
+      message: "m",
+      fieldErrors: { email: ["required"] },
+    });
+  });
+
+  it("leaves an absent retryable absent rather than present-and-undefined", () => {
+    const result = verified({ kind: "conflict", code: "X", message: "m" });
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+    expect("retryable" in result).toBe(false);
+  });
+
+  it("carries retryable through when the payload declares one", () => {
+    expect(
+      verified({ kind: "system", code: "X", message: "m", retryable: true }),
+    ).toEqual({ kind: "system", code: "X", message: "m", retryable: true });
+  });
+
+  it("accepts a null code, which is what the redacted form carries", () => {
+    expect(verified({ kind: "unknown", code: null, message: "m" })).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "m",
+    });
   });
 });
 
@@ -206,14 +338,74 @@ describe("isAppServerError", () => {
       "a payload whose kind is outside the union",
       { serialized: { kind: "not-a-kind", message: "x" } },
     ],
+    [
+      "a payload whose kind is not a string",
+      { serialized: { kind: 1, code: "X", message: "x" } },
+    ],
+    [
+      "a payload missing code",
+      { serialized: { kind: "conflict", message: "x" } },
+    ],
+    [
+      "a payload whose code is neither string nor null",
+      { serialized: { kind: "conflict", code: {}, message: "x" } },
+    ],
+    [
+      "a payload whose retryable is not a boolean",
+      {
+        serialized: {
+          kind: "conflict",
+          code: "X",
+          message: "x",
+          retryable: "yes",
+        },
+      },
+    ],
+    [
+      "a validation payload whose fieldErrors is a string",
+      {
+        serialized: {
+          kind: "validation",
+          code: "X",
+          message: "x",
+          fieldErrors: "boom",
+        },
+      },
+    ],
+    [
+      "a validation payload whose fieldErrors maps to a bare string",
+      {
+        serialized: {
+          kind: "validation",
+          code: "X",
+          message: "x",
+          fieldErrors: { email: "required" },
+        },
+      },
+    ],
+    [
+      "a validation payload whose fieldErrors is an array",
+      {
+        serialized: {
+          kind: "validation",
+          code: "X",
+          message: "x",
+          fieldErrors: [],
+        },
+      },
+    ],
   ];
 
   it.each(MALFORMED_PAYLOADS)(
     "returns false for a branded object with %s",
     (_label, shape) => {
-      expect(
-        isAppServerError({ [APP_SERVER_ERROR_BRAND]: true, ...shape }),
-      ).toBe(false);
+      const branded = { [APP_SERVER_ERROR_BRAND]: true, ...shape };
+
+      expect(isAppServerError(branded)).toBe(false);
+      // Answering `false` only matters if the value then lands somewhere safe:
+      // every caller reads it back through `extractSerializedError`, whose last
+      // stage fails closed onto the kind that maps to 500 and to redaction.
+      expect(extractSerializedError(branded)).toEqual(UNVERIFIED_FALLBACK);
     },
   );
 });
@@ -265,5 +457,44 @@ describe("extractSerializedError", () => {
   it("extracts from a plain object with a serialized remnant", () => {
     const result = extractSerializedError({ serialized });
     expect(result).toEqual(serialized);
+  });
+
+  // The *branded* stage, which the remnant stage below cannot stand in for.
+  // Holding the brand is not evidence the payload is ours: the serialization
+  // adapter builds a genuine `AppServerError` out of any request body tagged
+  // `$TSR/t/AppServerError`, so this stage has to rebuild the payload too.
+  // Handing `error.serialized` on as-is passes every `toEqual` on the known
+  // keys and still lets this one through.
+  it("rebuilds a branded instance's payload instead of trusting it", () => {
+    const forged = new AppServerError(
+      fromTheWire({
+        kind: "conflict",
+        code: "EMAIL_ALREADY_REGISTERED",
+        message: "Email already registered",
+        evil: "pii",
+      }),
+    );
+
+    expect(isAppServerError(forged)).toBe(true);
+
+    const result = extractSerializedError(forged);
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+  });
+});
+
+describe("UNVERIFIED_SERIALIZED_ERROR", () => {
+  it("is frozen, so a caller cannot mutate the shared fallback", () => {
+    expect(Object.isFrozen(UNVERIFIED_SERIALIZED_ERROR)).toBe(true);
+  });
+
+  // It is handed out on both sides of the transport boundary — the inbound leg
+  // of the serialization adapter never runs `redactForClient` — so the value
+  // has to already be redacted for that asymmetry to be harmless.
+  it("is already redacted, making redactForClient a no-op on it", () => {
+    expect(redactForClient(UNVERIFIED_SERIALIZED_ERROR)).toEqual(
+      UNVERIFIED_SERIALIZED_ERROR,
+    );
   });
 });

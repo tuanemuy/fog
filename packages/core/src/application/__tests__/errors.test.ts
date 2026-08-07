@@ -3,7 +3,6 @@ import {
   isBusinessRuleError,
 } from "@repo/core/domain/error";
 import {
-  CODED_ERROR_BRAND,
   CodedError,
   isCodedError,
   type SerializedErrorBase,
@@ -15,6 +14,11 @@ import * as errors from "../errors";
 import { ApplicationError, ConflictError } from "../errors";
 
 type ErrorsModule = typeof errors;
+
+// Re-derived instead of imported: the brand is module-private, and going
+// through the registry is exactly the lookup that makes it work across module
+// graphs — a test that imported it would not exercise that.
+const CODED_ERROR_BRAND = Symbol.for("@repo/core/CodedError");
 
 type GuardCase = {
   readonly kind: string;
@@ -138,14 +142,56 @@ describe("serializedKind", () => {
   );
 });
 
+// A `CodedError` from no layer of ours that nonetheless reports `"conflict"` —
+// the shape that makes `error is ConflictError` unsound for any kind, not just
+// the two-producer `validation`.
+class ForeignConflictError extends CodedError {
+  override readonly name = "ForeignConflictError";
+  readonly serializedKind = "conflict";
+
+  override toSerialized(): SerializedErrorBase & { kind: "conflict" } {
+    return {
+      kind: this.serializedKind,
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+    };
+  }
+}
+
+describe("per-kind guards narrow to the contract, not the class", () => {
+  it("matches any CodedError reporting the kind", () => {
+    const foreign = new ForeignConflictError("TEST", "test");
+
+    expect(errors.isConflictError(foreign)).toBe(true);
+    expect(errors.isApplicationError(foreign)).toBe(false);
+    // biome-ignore lint/plugin: negative control — the guard above matched something that is not this class, which is the point
+    expect(foreign instanceof ConflictError).toBe(false);
+  });
+
+  it("exposes the serialized payload through the narrowed type", () => {
+    const foreign: unknown = new ForeignConflictError("TEST", "test");
+
+    if (!errors.isConflictError(foreign)) throw new Error("unreachable");
+    expect(foreign.toSerialized()).toEqual({
+      kind: "conflict",
+      code: "TEST",
+      message: "test",
+      retryable: false,
+    });
+  });
+});
+
 describe("isApplicationError", () => {
   it.each(APPLICATION_CASES)("returns true for a $kind error", (testCase) => {
     expect(errors.isApplicationError(testCase.build(errors))).toBe(true);
   });
 
-  // The sole production caller is `mapDbError`, which rethrows whatever this
-  // rejects: a `BusinessRuleError` that escaped the callback must reach the
-  // usecase unwrapped rather than come back as `SystemError(DATABASE_ERROR)`.
+  // No production caller today — `mapDbError`, which used to be the one, asks
+  // `isCodedError` instead. The predicate stays published because it answers a
+  // different question (which *layer* raised this), so what these cases pin is
+  // exactly that difference: a `BusinessRuleError` is a `CodedError` and not an
+  // `ApplicationError`.
   it("returns false for a BusinessRuleError, which isCodedError still accepts", () => {
     const error = new BusinessRuleError("TEST", "test");
     expect(errors.isApplicationError(error)).toBe(false);
@@ -158,10 +204,19 @@ describe("isApplicationError", () => {
     expect(isCodedError(error)).toBe(true);
   });
 
-  it("returns false for an object carrying only the CodedError brand", () => {
+  // The brand is spoofable and `isCodedError` only closes the accidental
+  // shapes, so a deliberate forgery satisfying the whole contract still passes
+  // it. The layer brand is a separate property and is not forged here.
+  it("returns false for an object forging the CodedError contract", () => {
     const impostor = {
       [CODED_ERROR_BRAND]: true,
       serializedKind: "conflict",
+      toSerialized: () => ({
+        kind: "conflict",
+        code: "TEST",
+        message: "test",
+        retryable: false,
+      }),
     };
     expect(errors.isApplicationError(impostor)).toBe(false);
     expect(isCodedError(impostor)).toBe(true);

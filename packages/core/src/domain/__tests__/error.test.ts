@@ -24,6 +24,23 @@ class OtherCodedError extends CodedError {
   }
 }
 
+// A `CodedError` that is not a `BusinessRuleError` yet reports the same
+// `serializedKind` — the shape that makes `error is BusinessRuleError` unsound
+// and the reason the guard's return type is structural.
+class ForeignBusinessError extends CodedError {
+  override readonly name = "ForeignBusinessError";
+  readonly serializedKind = "business";
+
+  override toSerialized(): SerializedErrorBase & { kind: "business" } {
+    return {
+      kind: this.serializedKind,
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+    };
+  }
+}
+
 const NON_ERROR_VALUES: ReadonlyArray<readonly [string, unknown]> = [
   ["null", null],
   ["undefined", undefined],
@@ -51,6 +68,17 @@ describe("isBusinessRuleError", () => {
   it("returns false for a branded sibling carrying another serializedKind", () => {
     expect(isBusinessRuleError(new OtherCodedError("TEST", "test"))).toBe(
       false,
+    );
+  });
+
+  it("returns true for another CodedError reporting the same serializedKind", () => {
+    const foreign = new ForeignBusinessError("TEST", "test");
+
+    expect(isBusinessRuleError(foreign)).toBe(true);
+    // biome-ignore lint/plugin: negative control — the guard matched something that is not this class, which is why its return type is structural
+    expect(foreign instanceof BusinessRuleError).toBe(false);
+    expect(foreign.toSerialized().kind).toBe(
+      new BusinessRuleError("TEST", "test").toSerialized().kind,
     );
   });
 

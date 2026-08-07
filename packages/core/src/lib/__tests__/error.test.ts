@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  CODED_ERROR_BRAND,
   CodedError,
   hasSerializedKind,
   isCodedError,
   isSerializableError,
   type SerializedErrorBase,
 } from "../error";
+
+// The brand is module-private, so the test re-derives it through the registry
+// instead of importing it. That is the same lookup the implementation performs,
+// so this constant is only equal to the real brand while `Symbol.for` is what
+// mints it.
+const CODED_ERROR_BRAND: unique symbol = Symbol.for("@repo/core/CodedError");
 
 // Local stand-ins rather than `ConflictError` / `BusinessRuleError`: `lib/` sits
 // outside the layered tree and every layer depends on it, so its tests must not
@@ -37,6 +42,29 @@ class OtherCodedError extends CodedError {
       retryable: this.retryable,
     };
   }
+}
+
+// Compile-time fixture for the binding `CodedError` puts on `serializedKind`:
+// the base derives its type from this class's own `toSerialized()`, so the
+// disagreement below must stay a TS2416. If the binding is ever weakened back
+// to `string`, the suppression becomes unused and `tsgo` fails on it.
+class DriftingError extends CodedError {
+  override readonly name = "DriftingError";
+  // @ts-expect-error TS2416 — declares "test" while toSerialized() emits "other"
+  readonly serializedKind = "test";
+
+  override toSerialized(): SerializedErrorBase & { kind: "other" } {
+    return {
+      kind: "other",
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+    };
+  }
+}
+
+function brandedImpostor(props: Record<string, unknown>): unknown {
+  return { [CODED_ERROR_BRAND]: true, ...props };
 }
 
 const NON_ERROR_VALUES: ReadonlyArray<readonly [string, unknown]> = [
@@ -84,6 +112,45 @@ describe("isCodedError", () => {
     expect(isCodedError({ serializedKind: "test" })).toBe(false);
     expect(isCodedError({ name: "TestCodedError", code: "TEST" })).toBe(false);
   });
+
+  it("returns false for a branded value that cannot answer the contract", () => {
+    expect(isCodedError(brandedImpostor({ serializedKind: "test" }))).toBe(
+      false,
+    );
+    expect(
+      isCodedError(brandedImpostor({ toSerialized: () => ({ kind: "test" }) })),
+    ).toBe(false);
+    expect(
+      isCodedError(
+        brandedImpostor({
+          serializedKind: 1,
+          toSerialized: () => ({ kind: "test" }),
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isCodedError(
+        brandedImpostor({
+          serializedKind: "test",
+          toSerialized: "not-a-function",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  // The brand is reachable through `Symbol.for`, so a value that answers the
+  // whole contract is indistinguishable from a real one. This documents the
+  // limit rather than a property worth relying on.
+  it("returns true for a forgery that satisfies every checked condition", () => {
+    expect(
+      isCodedError(
+        brandedImpostor({
+          serializedKind: "test",
+          toSerialized: () => ({ kind: "test", code: null, message: "" }),
+        }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("hasSerializedKind", () => {
@@ -101,6 +168,20 @@ describe("hasSerializedKind", () => {
 
   it("returns false when the discriminator matches but the brand is absent", () => {
     expect(hasSerializedKind({ serializedKind: "test" }, "test")).toBe(false);
+  });
+
+  it("returns false when the brand and discriminator match but toSerialized is missing", () => {
+    expect(
+      hasSerializedKind(brandedImpostor({ serializedKind: "test" }), "test"),
+    ).toBe(false);
+  });
+
+  // `TKind extends string` accepts anything, so a mistyped kind cannot be a
+  // compile error — it silently degrades into a guard that never matches.
+  it("returns false for a kind no class declares", () => {
+    expect(hasSerializedKind(new TestCodedError("TEST", "test"), "tset")).toBe(
+      false,
+    );
   });
 
   it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {
@@ -137,16 +218,45 @@ describe("serializedKind", () => {
       expect(error.serializedKind).toBe(error.toSerialized().kind);
     }
   });
+
+  // Runtime cannot detect the drift the type binding rejects: `DriftingError`
+  // only exists because its declaration is suppressed, and it behaves exactly
+  // like a class that reports the wrong kind everywhere the guards look.
+  it("is what the guards read, so a drifting declaration misroutes silently", () => {
+    const error = new DriftingError("TEST", "test");
+
+    expect(hasSerializedKind(error, "test")).toBe(true);
+    expect(error.toSerialized().kind).toBe("other");
+  });
 });
 
 describe("across a duplicated module graph", () => {
-  it("resolves the brand to the same symbol from two module instances", async () => {
+  it("brands foreign instances with the symbol this graph resolves", async () => {
     const foreign = await loadForeignGraph();
 
     expect(foreign.CodedError).not.toBe(CodedError);
-    // `Symbol.for` goes through the realm-wide registry; swapping it for
-    // `Symbol()` breaks exactly this equality and nothing else.
-    expect(foreign.CODED_ERROR_BRAND).toBe(CODED_ERROR_BRAND);
+
+    class ForeignGraphError extends foreign.CodedError {
+      override readonly name = "ForeignGraphError";
+      readonly serializedKind = "test";
+
+      override toSerialized(): SerializedErrorBase & { kind: "test" } {
+        return {
+          kind: this.serializedKind,
+          code: this.code,
+          message: this.message,
+          retryable: this.retryable,
+        };
+      }
+    }
+
+    // The brand is module-private, so the two graphs can only be compared
+    // through an instance. `Symbol.for` goes through the realm-wide registry;
+    // swapping it for `Symbol()` gives the foreign copy a symbol this graph
+    // cannot name, and breaks exactly this membership test.
+    expect(CODED_ERROR_BRAND in new ForeignGraphError("TEST", "test")).toBe(
+      true,
+    );
   });
 
   it("recognises an error built on the foreign CodedError", async () => {

@@ -24,10 +24,22 @@ export class BusinessRuleError<
   }
 }
 
-export function isBusinessRuleError(
-  error: unknown,
-): error is BusinessRuleError<string> {
-  return hasSerializedKind(error, "business");
+const BUSINESS_KIND: SerializedBusinessError["kind"] = "business";
+
+/**
+ * Narrows to the shared error contract carrying `kind: "business"`, not to
+ * `BusinessRuleError` itself: nothing stops another `CodedError` from reporting
+ * the same `serializedKind`, and no runtime check could tell the two apart.
+ *
+ * Written out rather than generated the way the application layer generates its
+ * six guards — that factory lives in `application/errors.ts`, and the domain
+ * must not depend outward on it.
+ */
+export function isBusinessRuleError(error: unknown): error is CodedError & {
+  readonly serializedKind: SerializedBusinessError["kind"];
+  toSerialized(): SerializedBusinessError;
+} {
+  return hasSerializedKind(error, BUSINESS_KIND);
 }
 
 /**

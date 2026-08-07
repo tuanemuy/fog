@@ -17,10 +17,14 @@
  *   reachable by anyone who can call `Symbol.for` with the same key. A brand
  *   check answers "this was produced by our error classes", never "this value
  *   is trustworthy". Never use it as an authorization or input-validation step.
+ *
+ * Module-private on purpose: exporting it would publish a way to bypass
+ * {@link isCodedError} / {@link hasSerializedKind} and would sit oddly next to
+ * the forgeability warning above. Tests that need to build an impostor
+ * re-derive it with `Symbol.for("@repo/core/CodedError")`, which exercises the
+ * registry lookup that makes the brand work in the first place.
  */
-export const CODED_ERROR_BRAND: unique symbol = Symbol.for(
-  "@repo/core/CodedError",
-);
+const CODED_ERROR_BRAND: unique symbol = Symbol.for("@repo/core/CodedError");
 
 export type FieldErrors = Readonly<Record<string, readonly string[]>>;
 
@@ -51,12 +55,15 @@ export abstract class CodedError<TCode extends string = string> extends Error {
 
   /**
    * Discriminator the guards match on, declared here so a subclass that forgets
-   * it is a compile error. Bind it to the `kind` of the concrete
-   * `toSerialized()` return type — e.g.
-   * `readonly serializedKind: SerializedConflictError["kind"] = "conflict"` —
-   * so the two cannot drift apart.
+   * it is a compile error.
+   *
+   * The type is derived from the subclass's own `toSerialized()` return type,
+   * so a value that disagrees with the `kind` that method emits does not
+   * compile (TS2416) — with or without an explicit annotation on the subclass.
+   * Annotating it as `readonly serializedKind: SerializedConflictError["kind"]`
+   * is therefore optional, and documents intent rather than enforcing it.
    */
-  abstract readonly serializedKind: string;
+  abstract readonly serializedKind: ReturnType<this["toSerialized"]>["kind"];
 
   constructor(
     public readonly code: TCode,
@@ -77,10 +84,20 @@ export abstract class CodedError<TCode extends string = string> extends Error {
  * Structural counterpart of `error instanceof CodedError`. Answers only "this
  * came from the shared error contract" — use {@link hasSerializedKind} (or one
  * of the per-kind guards) when the concrete kind matters.
+ *
+ * The brand alone cannot make this predicate sound: anyone can call
+ * `Symbol.for` with the same key, so a forged value will always be able to
+ * satisfy it. Checking `toSerialized` and `serializedKind` on top closes the
+ * accidental shapes — a value that happens to carry the brand but cannot answer
+ * the contract — which is the most a structural guard can do here.
  */
 export function isCodedError(value: unknown): value is CodedError {
   return (
-    typeof value === "object" && value !== null && CODED_ERROR_BRAND in value
+    typeof value === "object" &&
+    value !== null &&
+    CODED_ERROR_BRAND in value &&
+    typeof (value as { toSerialized?: unknown }).toSerialized === "function" &&
+    typeof (value as { serializedKind?: unknown }).serializedKind === "string"
   );
 }
 
@@ -90,6 +107,13 @@ export function isCodedError(value: unknown): value is CodedError {
  * is intentionally many-to-one (`ValidationError` and the presentation layer's
  * `InputValidationError` both report `"validation"`), so a match narrows to the
  * contract, not to one class.
+ *
+ * Calling convention: call it from a layer's per-kind guard, and pass `kind` as
+ * `Serialized*Error["kind"]` rather than a bare literal. `TKind extends string`
+ * accepts any string, so a typo compiles into a guard that is always `false`.
+ * The full set of kinds is assembled in the presentation layer, so `lib/` — on
+ * which every layer depends — cannot name it without inverting the dependency
+ * direction; the convention is what stands in for that type.
  */
 export function hasSerializedKind<TKind extends string>(
   value: unknown,

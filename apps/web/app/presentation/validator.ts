@@ -16,7 +16,13 @@ import {
  * `isCodedError` / `isValidationError`, never `isApplicationError`.
  *
  * `validateInput` is the only producer in this repository; throw it directly
- * only from another transport-boundary validator.
+ * only from another transport-boundary validator. Note that `validateInput`
+ * does not throw this class as-is — it wraps `toSerialized()` in an
+ * `AppServerError` so `appServerErrorAdapter` recognises it on the way out. A
+ * bare throw is only equivalent behind a boundary carrying
+ * `errorResponseMiddleware`, which re-serializes it structurally; past a
+ * boundary without that middleware the payload is dropped and the client reads
+ * `kind: "unknown"`.
  */
 export class InputValidationError extends CodedError {
   override readonly name = "InputValidationError";
