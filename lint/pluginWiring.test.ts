@@ -24,18 +24,33 @@ const BIOME = createRequire(import.meta.url).resolve(
   "@biomejs/biome/bin/biome",
 );
 
-// The fixture must sit inside `biome.json`'s `linter.includes` or no rule runs
-// over it at all — a repo-root `*.ts` and `**/components/ui/**` both yield zero
-// diagnostics. `.tmp.ts` is `.gitignore`d so an abandoned fixture cannot reach a
-// commit, and `banList.test.ts` skips that suffix so a parallel worker cannot
-// read it mid-delete.
-const FIXTURE = join(REPO_ROOT, "lint", "pluginWiring.tmp.ts");
+// The fixture lives in the tree the ban is meant to protect, not beside this
+// test. The plugin only runs over `biome.json`'s `linter.includes`, so a wired
+// plugin whose includes no longer name `packages/**` / `apps/**` / `infra/**`
+// disarms the whole repository while a fixture under `lint/**` keeps reporting;
+// from here, dropping those roots turns this red. `.tmp.ts` is `.gitignore`d so
+// an abandoned fixture cannot reach a commit, and `banList.test.ts` skips that
+// suffix so a parallel worker cannot read it mid-delete. The pid keeps two
+// vitest runs in one worktree from deleting each other's fixture.
+const FIXTURE = join(
+  REPO_ROOT,
+  "packages",
+  "core",
+  "src",
+  `pluginWiring.${process.pid}.tmp.ts`,
+);
 
 // `ConflictError` is on the ban list. `declare` keeps the fixture free of a class
 // declaration, which `banList.test.ts`'s scan would otherwise have to reason about.
 const FIXTURE_SOURCE = `declare const ConflictError: new () => Error;
 export const isConflict = (e: unknown): boolean => e instanceof ConflictError;
 `;
+
+// Every GritQL plugin reports under `category: "plugin"`, so that alone would go
+// green off a second plugin's diagnostic once one is added. This fragment is the
+// `register_diagnostic(...)` message in `no-instanceof-error.grit`; rewording it
+// there means rewording it here.
+const DIAGNOSTIC_MESSAGE = "instead of instanceof";
 
 type Diagnostic = { category?: string; message?: string };
 
@@ -44,13 +59,23 @@ type Diagnostic = { category?: string; message?: string };
 // keeps Biome from skipping it over the `.gitignore` entry above. A diagnostic
 // makes Biome exit 1, so the status is not the assertion — the report is.
 const lintFixture = (): Diagnostic[] => {
-  const { stdout, error } = spawnSync(
+  const { stdout, stderr, status, error } = spawnSync(
     process.execPath,
     [BIOME, "lint", "--reporter=json", "--vcs-use-ignore-file=false", FIXTURE],
-    { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   if (error !== undefined) throw error;
-  return (JSON.parse(stdout) as { diagnostics: Diagnostic[] }).diagnostics;
+  try {
+    return (JSON.parse(stdout) as { diagnostics: Diagnostic[] }).diagnostics;
+  } catch (cause) {
+    // Biome writes configuration and GritQL parse failures to stderr and leaves
+    // stdout empty, which would otherwise surface only as "Unexpected end of
+    // JSON input".
+    throw new Error(
+      `Biome did not return a JSON report (exit ${status}).\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+      { cause },
+    );
+  }
 };
 
 describe("no-instanceof-error.grit wiring", () => {
@@ -58,8 +83,12 @@ describe("no-instanceof-error.grit wiring", () => {
     writeFileSync(FIXTURE, FIXTURE_SOURCE);
     try {
       expect(
-        lintFixture().filter((d) => d.category === "plugin"),
-        "Biome reported no plugin diagnostic. Check that `biome.json`'s `plugins` still lists lint/no-instanceof-error.grit and that the query still calls register_diagnostic().",
+        lintFixture().filter(
+          (d) =>
+            d.category === "plugin" &&
+            (d.message ?? "").includes(DIAGNOSTIC_MESSAGE),
+        ),
+        "Biome reported no no-instanceof-error diagnostic. Check that `biome.json` still lists lint/no-instanceof-error.grit under `plugins`, that its `linter.includes` still covers the fixture's directory, and that the query still calls register_diagnostic().",
       ).not.toEqual([]);
     } finally {
       rmSync(FIXTURE, { force: true });

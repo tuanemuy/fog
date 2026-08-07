@@ -97,15 +97,19 @@ export abstract class CodedError<TCode extends string = string> extends Error {
  * value that happens to carry the brand but cannot answer it — which is the
  * most a structural guard can do here.
  *
- * The four checked members are the ones callers read off the narrowed value:
- * `toSerialized` and `serializedKind` are the contract itself, and `code` /
- * `message` are what the per-kind guards, which are this check plus a
- * discriminator comparison, hand to production callers. What stays unchecked is
- * the rest of `CodedError`'s promise — being an `Error`, and with it `name`,
- * `stack` and `cause`. That residue rides on the brand rather than on a test of
- * its own; weakening the predicate to a structural type would not remove it,
- * only push it into the per-kind guards, which assert the same class-shaped
- * contract off this very function.
+ * The four checked members are the ones production callers read off the
+ * narrowed value: `toSerialized` and `serializedKind` are the contract itself,
+ * and `code` / `message` are what the per-kind guards, which are this check plus
+ * a discriminator comparison, hand on. What stays unchecked is the rest of
+ * `CodedError`'s promise — `retryable`, and being an `Error`, with it `name`,
+ * `stack` and `cause`. `retryable` goes unchecked despite being `CodedError`'s
+ * own getter rather than an `Error` member: it is readable off the narrowed
+ * value and answers `undefined` on a forgery, but nothing reads it there — the
+ * classes read `this.retryable` from inside their own `toSerialized()`. That
+ * residue rides on the brand rather than on a test of its own; weakening the
+ * predicate to a structural type would not remove it, only push it into the
+ * per-kind guards, which assert the same class-shaped contract off this very
+ * function.
  */
 export function isCodedError(value: unknown): value is CodedError {
   return (

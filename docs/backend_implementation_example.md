@@ -42,7 +42,7 @@ packages/core/src/
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
-│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, httpStatusFor
+│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, httpStatusFor
 │   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
@@ -458,4 +458,4 @@ Every error class in that table except `AppServerError` extends the abstract bas
 
 `BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. On the catch side `isBusinessRuleError(...)` narrows to the contract carrying `kind: "business"`, not to `BusinessRuleError` — read `code` off it as a `string`.
 
-Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). Only the `SerializedError` union and `SerializedErrorKind` need to be appended in the presentation layer.
+Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). In the presentation layer only the `SerializedError` union and `SerializedErrorKind` need to be appended; outside it the new class still has to enter the ban list and the per-class scan named above.

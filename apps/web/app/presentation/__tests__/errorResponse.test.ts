@@ -213,6 +213,48 @@ describe("asSerializedError", () => {
     });
   });
 
+  // `validation` rebuilds through its own return, so the conflict case above
+  // says nothing about it — and it is the variant where a surviving unknown key
+  // does the most damage: `redactForClient` passes `validation` through by
+  // spreading it, so the key would reach the client verbatim, and the inbound
+  // leg of the serialization adapter lets a client choose the payload.
+  it("drops a key the union does not declare on the validation kind", () => {
+    const result = verified({
+      kind: "validation",
+      code: "X",
+      message: "m",
+      fieldErrors: { email: ["required"] },
+      evil: "pii",
+    });
+
+    expect(Object.keys(result)).toEqual([
+      "kind",
+      "code",
+      "message",
+      "fieldErrors",
+    ]);
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+    expect(JSON.stringify(redactForClient(result))).not.toContain("evil");
+  });
+
+  // The absent-`fieldErrors` case leaves the branch through a second return
+  // that rebuilds independently of the one above, so it needs its own pin.
+  // `fieldErrors` must stay absent rather than present-and-undefined, for the
+  // same `exactOptionalPropertyTypes` reason as `retryable`.
+  it("drops a key the union does not declare on a validation payload carrying no fieldErrors", () => {
+    const result = verified({
+      kind: "validation",
+      code: "X",
+      message: "m",
+      evil: "pii",
+    });
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+    expect("fieldErrors" in result).toBe(false);
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+    expect(JSON.stringify(redactForClient(result))).not.toContain("evil");
+  });
+
   it("leaves an absent retryable absent rather than present-and-undefined", () => {
     const result = verified({ kind: "conflict", code: "X", message: "m" });
 
@@ -307,6 +349,17 @@ describe("httpStatusFor", () => {
   it("still answers 500 for a redacted system error", () => {
     expect(httpStatusFor(redactForClient(SAMPLES.system))).toBe(500);
     expect(httpStatusFor(redactForClient(SAMPLES.unknown))).toBe(500);
+  });
+});
+
+describe("AppServerError", () => {
+  // The constructor drops `.stack` because a transport that bypasses the
+  // serialization adapter falls back to seroval's default `Error` handling and
+  // puts whatever `.stack` holds — server paths, module layout — on the wire.
+  // `in` rather than a falsiness check: the property has to be absent, since
+  // seroval serializes a present-but-empty one just the same.
+  it("carries no stack for a default Error serialization to leak", () => {
+    expect("stack" in new AppServerError(SAMPLES.conflict)).toBe(false);
   });
 });
 

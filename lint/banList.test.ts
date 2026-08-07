@@ -49,8 +49,9 @@ const SKIPPED_DIRS = new Set([
 // them.
 const isScannedSource = (path: string): boolean => {
   if (path.endsWith(".d.ts")) return false;
-  // `pluginWiring.test.ts` writes a fixture into `lint/` and deletes it again;
-  // vitest may be running this scan in a parallel worker while it exists.
+  // `pluginWiring.test.ts` writes a fixture under `packages/core/src/` and
+  // deletes it again; vitest may be running this scan in a parallel worker while
+  // it exists. Matching on the suffix keeps this independent of where it lands.
   if (path.endsWith(".tmp.ts")) return false;
   if (/\.(test|spec)\.tsx?$/.test(path)) return false;
   if (path.split(sep).includes("__tests__")) return false;
@@ -221,7 +222,9 @@ describe("no-instanceof-error.grit ban list — what the scan reaches", () => {
         ),
       ),
     ).toBe(false);
-    expect(isScannedSource(p("lint", "pluginWiring.tmp.ts"))).toBe(false);
+    expect(
+      isScannedSource(p("packages", "core", "src", "pluginWiring.4242.tmp.ts")),
+    ).toBe(false);
     expect(
       isScannedSource(p("packages", "core", "src", "lib", "error.ts")),
     ).toBe(true);

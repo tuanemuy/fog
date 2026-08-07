@@ -14,9 +14,11 @@
 // its reach and that gap with direct cases.
 //
 // WIRING — `lint/pluginWiring.test.ts` lints a throwaway fixture and asserts a
-// `category: "plugin"` diagnostic comes back, so deleting `biome.json`'s
-// `plugins` line or dropping the `register_diagnostic(...)` call below turns
-// red instead of quietly disarming everything above.
+// `category: "plugin"` diagnostic carrying this file's message comes back, so
+// deleting `biome.json`'s `plugins` line, dropping the `register_diagnostic(...)`
+// call below, or narrowing `linter.includes` off the fixture's root turns red
+// instead of quietly disarming everything above. The fixture lives under
+// `packages/core/src/` for that last one — see Placement below.
 //
 // SUPPRESSION — `// biome-ignore lint/plugin: <reason>` on the preceding line
 // (the intended use is a negative control asserting that `instanceof` really
@@ -35,7 +37,10 @@
 //   `**/components/ui/**` (nor `**/styles/**` / `**/templates/**`, all
 //   subtracted there). `banList.test.ts` scans those paths regardless, so a
 //   class declared in one still lands on this list — it is the call sites there
-//   that go unchecked.
+//   that go unchecked. Dropping a root from `linter.includes` disarms the plugin
+//   there silently, which is why `pluginWiring.test.ts` puts its fixture under
+//   `packages/core/src/` rather than beside itself; that pins the three main
+//   roots as a set, not one at a time.
 // - Roster — the scan reads declarations textually, so a class reaches this list
 //   only if its own name ends in `Error` or the base it names does. Two forms
 //   therefore never arrive on their own: `export default class extends Error {}`
