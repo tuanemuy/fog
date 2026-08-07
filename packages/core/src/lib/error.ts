@@ -1,3 +1,7 @@
+export const CODED_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/core/CodedError",
+) as never;
+
 export type FieldErrors = Readonly<Record<string, readonly string[]>>;
 
 export type SerializedErrorBase = {
@@ -23,6 +27,7 @@ export function isSerializableError(
 
 export abstract class CodedError<TCode extends string = string> extends Error {
   override readonly name: string = "CodedError";
+  readonly [CODED_ERROR_BRAND] = true as const;
 
   constructor(
     public readonly code: TCode,

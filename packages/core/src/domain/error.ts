@@ -1,4 +1,8 @@
-import { CodedError, type SerializedErrorBase } from "@repo/core/lib/error";
+import {
+  CODED_ERROR_BRAND,
+  CodedError,
+  type SerializedErrorBase,
+} from "@repo/core/lib/error";
 
 export type SerializedBusinessError = SerializedErrorBase & {
   kind: "business";
@@ -8,6 +12,7 @@ export class BusinessRuleError<
   TCode extends string = never,
 > extends CodedError<TCode> {
   override readonly name = "BusinessRuleError";
+  readonly serializedKind = "business" as const;
 
   override toSerialized(): SerializedBusinessError {
     return {
@@ -22,7 +27,12 @@ export class BusinessRuleError<
 export function isBusinessRuleError(
   error: unknown,
 ): error is BusinessRuleError<string> {
-  return error instanceof BusinessRuleError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "business"
+  );
 }
 
 /**
@@ -44,8 +54,13 @@ export function isBusinessRuleError(
  * failed without the upper layers having to enumerate value-object
  * error codes.
  */
+const REHYDRATION_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/core/RehydrationError",
+) as never;
+
 export class RehydrationError extends Error {
   override readonly name = "RehydrationError";
+  readonly [REHYDRATION_ERROR_BRAND] = true as const;
 
   constructor(message: string, cause?: unknown) {
     super(message, cause !== undefined ? { cause } : undefined);
@@ -53,5 +68,9 @@ export class RehydrationError extends Error {
 }
 
 export function isRehydrationError(error: unknown): error is RehydrationError {
-  return error instanceof RehydrationError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    REHYDRATION_ERROR_BRAND in error
+  );
 }

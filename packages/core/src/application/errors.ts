@@ -1,4 +1,5 @@
 import {
+  CODED_ERROR_BRAND,
   CodedError,
   type FieldErrors,
   type SerializedErrorBase,
@@ -38,11 +39,14 @@ export abstract class ApplicationError<
 }
 
 export function isApplicationError(error: unknown): error is ApplicationError {
-  return error instanceof ApplicationError;
+  return (
+    typeof error === "object" && error !== null && CODED_ERROR_BRAND in error
+  );
 }
 
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
+  readonly serializedKind = "notFound" as const;
 
   override toSerialized(): SerializedNotFoundError {
     return {
@@ -55,11 +59,17 @@ export class NotFoundError extends ApplicationError {
 }
 
 export function isNotFoundError(error: unknown): error is NotFoundError {
-  return error instanceof NotFoundError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "notFound"
+  );
 }
 
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
+  readonly serializedKind = "conflict" as const;
 
   override toSerialized(): SerializedConflictError {
     return {
@@ -72,7 +82,12 @@ export class ConflictError extends ApplicationError {
 }
 
 export function isConflictError(error: unknown): error is ConflictError {
-  return error instanceof ConflictError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "conflict"
+  );
 }
 
 /**
@@ -92,6 +107,7 @@ export function isConflictError(error: unknown): error is ConflictError {
  */
 export class ValidationError extends ApplicationError {
   override readonly name = "ValidationError";
+  readonly serializedKind = "validation" as const;
 
   constructor(
     code: string,
@@ -116,7 +132,12 @@ export class ValidationError extends ApplicationError {
 }
 
 export function isValidationError(error: unknown): error is ValidationError {
-  return error instanceof ValidationError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "validation"
+  );
 }
 
 /**
@@ -133,6 +154,7 @@ export function isValidationError(error: unknown): error is ValidationError {
  */
 export class UnauthorizedError extends ApplicationError {
   override readonly name = "UnauthorizedError";
+  readonly serializedKind = "unauthorized" as const;
 
   override toSerialized(): SerializedUnauthorizedError {
     return {
@@ -147,11 +169,17 @@ export class UnauthorizedError extends ApplicationError {
 export function isUnauthorizedError(
   error: unknown,
 ): error is UnauthorizedError {
-  return error instanceof UnauthorizedError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "unauthorized"
+  );
 }
 
 export class ForbiddenError extends ApplicationError {
   override readonly name = "ForbiddenError";
+  readonly serializedKind = "forbidden" as const;
 
   override toSerialized(): SerializedForbiddenError {
     return {
@@ -164,7 +192,12 @@ export class ForbiddenError extends ApplicationError {
 }
 
 export function isForbiddenError(error: unknown): error is ForbiddenError {
-  return error instanceof ForbiddenError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "forbidden"
+  );
 }
 
 /**
@@ -211,6 +244,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
 
 export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
+  readonly serializedKind = "system" as const;
 
   override get retryable(): boolean {
     return RETRYABLE_SYSTEM_CODES.has(this.code);
@@ -227,5 +261,10 @@ export class SystemError extends ApplicationError<SystemErrorCode> {
 }
 
 export function isSystemError(error: unknown): error is SystemError {
-  return error instanceof SystemError;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    CODED_ERROR_BRAND in error &&
+    (error as { serializedKind?: string }).serializedKind === "system"
+  );
 }

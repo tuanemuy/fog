@@ -1,6 +1,6 @@
 import {
-  ApplicationError,
   ConflictError,
+  isApplicationError,
   SystemError,
   SystemErrorCode,
 } from "@repo/core/application/errors";
@@ -88,7 +88,7 @@ export async function mapDbError<T>(
   try {
     return await fn();
   } catch (error) {
-    if (error instanceof ApplicationError) throw error;
+    if (isApplicationError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {
       throw new ConflictError(

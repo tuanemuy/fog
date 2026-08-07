@@ -47,7 +47,7 @@ describe("appServerErrorAdapter", () => {
     expect(foreign.AppServerError).not.toBe(AppServerError);
 
     const error = new foreign.AppServerError(invalidCredentials);
-    expect(error instanceof AppServerError).toBe(false);
+    expect(isAppServerError(error)).toBe(true);
 
     expect(appServerErrorAdapter.test(error)).toBe(true);
     expect(appServerErrorAdapter.toSerializable(error)).toEqual(

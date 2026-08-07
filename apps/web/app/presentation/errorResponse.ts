@@ -113,10 +113,15 @@ export function httpStatusFor(serialized: SerializedError): number {
   return HTTP_STATUS_BY_KIND[serialized.kind];
 }
 
+const APP_SERVER_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/web/AppServerError",
+) as never;
+
 const APP_SERVER_ERROR_NAME = "AppServerError";
 
 export class AppServerError extends Error {
   override readonly name = APP_SERVER_ERROR_NAME;
+  readonly [APP_SERVER_ERROR_BRAND] = true as const;
 
   constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
@@ -166,8 +171,7 @@ function asSerializedError(value: unknown): SerializedError | null {
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
-  if ((value as { name?: unknown }).name !== APP_SERVER_ERROR_NAME)
-    return false;
+  if (!(APP_SERVER_ERROR_BRAND in value)) return false;
   return (
     hasSerializedRemnant(value) && asSerializedError(value.serialized) !== null
   );

@@ -10,7 +10,10 @@ import {
 import { BusinessRuleError } from "@repo/core/domain/error";
 import { describe, expect, it } from "vitest";
 import {
+  AppServerError,
+  extractSerializedError,
   httpStatusFor,
+  isAppServerError,
   redactForClient,
   type SerializedError,
   type SerializedErrorKind,
@@ -142,5 +145,47 @@ describe("httpStatusFor", () => {
   it("still answers 500 for a redacted system error", () => {
     expect(httpStatusFor(redactForClient(SAMPLES.system))).toBe(500);
     expect(httpStatusFor(redactForClient(SAMPLES.unknown))).toBe(500);
+  });
+});
+
+describe("isAppServerError", () => {
+  const serialized = serializeError(
+    new ConflictError("EMAIL_ALREADY_REGISTERED", "test"),
+  );
+
+  it("returns true for an AppServerError instance", () => {
+    expect(isAppServerError(new AppServerError(serialized))).toBe(true);
+  });
+
+  it("returns false for null", () => {
+    expect(isAppServerError(null)).toBe(false);
+  });
+
+  it("returns false for an empty object", () => {
+    expect(isAppServerError({})).toBe(false);
+  });
+
+  it("returns false for a plain Error", () => {
+    expect(isAppServerError(new Error("plain"))).toBe(false);
+  });
+
+  it("returns false for a plain object with a name property", () => {
+    expect(isAppServerError({ name: "AppServerError" })).toBe(false);
+  });
+});
+
+describe("extractSerializedError", () => {
+  const serialized = serializeError(
+    new ConflictError("EMAIL_ALREADY_REGISTERED", "test"),
+  );
+
+  it("extracts from an AppServerError", () => {
+    const result = extractSerializedError(new AppServerError(serialized));
+    expect(result).toEqual(serialized);
+  });
+
+  it("extracts from a plain object with a serialized remnant", () => {
+    const result = extractSerializedError({ serialized });
+    expect(result).toEqual(serialized);
   });
 });
