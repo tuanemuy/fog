@@ -301,9 +301,11 @@ export function isAppServerError(value: unknown): value is AppServerError {
  * the stage safe. Re-throwing a value that came off the wire breaks it
  * silently; translate such a value into an error class instead.
  *
- * The same invariant carries `errorResponseMiddleware`'s `isNotFound` /
- * `isRedirect` pass-through, which is structural for the same reason; both
- * consumers break together if it ever stops holding.
+ * The same invariant carries `errorResponseMiddleware`'s `isNotFound`
+ * pass-through, which is `obj?.isNotFound === true` and so rides on the shape of
+ * the thrown value just as this stage does. Its `isRedirect` neighbour does not:
+ * that one is `obj instanceof Response && !!obj.options`, which no decoded
+ * payload can satisfy.
  */
 export function extractSerializedError(error: unknown): SerializedError {
   if (hasSerializedRemnant(error)) {

@@ -104,8 +104,8 @@ export abstract class CodedError<TCode extends string = string> extends Error {
  * `CodedError`'s promise — `retryable`, and being an `Error`, with it `name`,
  * `stack` and `cause`. `retryable` goes unchecked despite being `CodedError`'s
  * own getter rather than an `Error` member: it is readable off the narrowed
- * value and answers `undefined` on a forgery, but nothing reads it there — the
- * classes read `this.retryable` from inside their own `toSerialized()`. That
+ * value and answers `undefined` on a forgery, but nothing reads it there — each
+ * class settles it inside its own `toSerialized()` instead. That
  * residue rides on the brand rather than on a test of its own; weakening the
  * predicate to a structural type would not remove it, only push it into the
  * per-kind guards, which assert the same class-shaped contract off this very

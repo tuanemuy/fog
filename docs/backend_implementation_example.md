@@ -42,7 +42,7 @@ packages/core/src/
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
-│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, httpStatusFor
+│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, redactForClient, httpStatusFor
 │   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
