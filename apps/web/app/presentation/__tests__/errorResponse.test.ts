@@ -257,6 +257,70 @@ describe("serializeError", () => {
     expect(result).not.toBe(canned);
     expect(result).toEqual(canned);
   });
+
+  // The next three pin the fail-closed guard around `toSerialized()`:
+  // `isSerializableError` only proves the method is callable, and this function
+  // runs inside the boundary catch, where a secondary throw would skip status,
+  // redaction and logging. Each hostile shape must degrade to the
+  // `errorMessage(error)` fallback — here the constructor's message — instead
+  // of throwing out.
+  it("fails closed to the unknown fallback when toSerialized() throws", () => {
+    class ThrowingSerializerError extends CodedError {
+      override readonly name = "ThrowingSerializerError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        throw new Error("serializer exploded");
+      }
+    }
+
+    expect(serializeError(new ThrowingSerializerError("X", "boom"))).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "boom",
+    });
+  });
+
+  it("fails closed to the unknown fallback when toSerialized() answers a non-object", () => {
+    class NullSerializerError extends CodedError {
+      override readonly name = "NullSerializerError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        return null as unknown as SerializedConflictError;
+      }
+    }
+
+    expect(serializeError(new NullSerializerError("X", "boom"))).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "boom",
+    });
+  });
+
+  it("fails closed to the unknown fallback when the payload's getter throws", () => {
+    class ThrowingGetterError extends CodedError {
+      override readonly name = "ThrowingGetterError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        return {
+          kind: "conflict",
+          get code(): string {
+            throw new Error("getter exploded");
+          },
+          message: this.message,
+          retryable: false,
+        };
+      }
+    }
+
+    expect(serializeError(new ThrowingGetterError("X", "boom"))).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "boom",
+    });
+  });
 });
 
 // Every assertion here is about the *rebuild*, not the validation: returning

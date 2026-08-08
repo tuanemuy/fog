@@ -8,6 +8,7 @@ import {
   httpStatusFor,
   redactForClient,
   type SerializedError,
+  UNVERIFIED_SERIALIZED_ERROR,
 } from "./errorResponse";
 
 // Wraps the entire server-function pipeline so throws from `inputValidator`
@@ -79,7 +80,19 @@ async function toClientError(error: unknown): Promise<AppServerError> {
   // Not `isAppServerError` + `serializeError`: the brand does not survive a
   // serialization boundary, so an error that already crossed one would lose its
   // `kind` here and a 409 / 422 would leave as a 500.
-  const rawSerialized = extractSerializedError(error);
+  //
+  // Last-resort backstop for the boundary catch: `serializeError` fails closed
+  // on its own, but `extractSerializedError`'s remnant stage still throws when
+  // the caught value's own getters throw (its JSDoc names this limit). A
+  // secondary throw from here would leave the middleware's `catch` and skip
+  // status, redaction and logging, so it lands on the pre-redacted unknown
+  // instead — the logger still gets the original value as `cause`.
+  let rawSerialized: SerializedError;
+  try {
+    rawSerialized = extractSerializedError(error);
+  } catch {
+    rawSerialized = UNVERIFIED_SERIALIZED_ERROR;
+  }
 
   if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
     await logServerError(error, rawSerialized);

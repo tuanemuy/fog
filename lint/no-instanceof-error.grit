@@ -27,8 +27,9 @@
 // adds plugins, so an empty array is a no-op.
 //
 // KNOWN LIMITS, accepted:
-// - Evasion — an aliased import (`import { ConflictError as CE }` →
-//   `e instanceof CE`), a namespace access (`import * as errs` →
+// - Evasion — a rebinding of any kind (an aliased import —
+//   `import { ConflictError as CE }` → `e instanceof CE` — or a local one,
+//   `const CE = ConflictError`), a namespace access (`import * as errs` →
 //   `e instanceof errs.ConflictError`) and a parenthesized right-hand side
 //   (`e instanceof (ConflictError)` — the snippet match does not see through
 //   `ParenthesizedExpression`) all slip through. The first two are conspicuous
@@ -56,14 +57,20 @@
 //   The type-parameter list is skipped with a depth counter before the header
 //   is read, so a `{` inside a constraint (`class X<T extends { a: string }>`)
 //   does not hide the heritage clause and a `T extends Error` constraint does
-//   not qualify a non-error class — both pinned in `banList.test.ts`. Two forms
-//   therefore never arrive on their own: `export default class extends Error {}`
-//   (anonymous), and a non-`*Error` name over an aliased base
-//   (`import { CodedError as Base }` → `class Weird extends Base`). The first is
+//   not qualify a non-error class — both pinned in `banList.test.ts`. Three
+//   forms therefore never arrive on their own:
+//   `export default class extends Error {}` (anonymous), a non-`*Error` name
+//   over an aliased base (`import { CodedError as Base }` →
+//   `class Weird extends Base`), and a class expression wrapped in a call
+//   (`export const X = mixin(class extends CodedError {})` — the scan requires
+//   `class` directly after the `=`, so the wrapper hides it). The first is
 //   beyond this plugin either way — an anonymous default export gives its call
 //   sites no stable identifier to match. The second is a real hole, of the same
-//   shape as the alias evasion above and equally conspicuous in review. Every
-//   other form is covered: `export class`, `export abstract class`,
+//   shape as the alias evasion above and equally conspicuous in review. The
+//   third is a hole of a different kind: call sites do hold the stable binding
+//   `X`, so the plugin can ban it — but only if the name is added to the list
+//   by hand, since the scan never surfaces it. All three are pinned as negative
+//   cases in `banList.test.ts`. Every other form is covered: `export class`, `export abstract class`,
 //   `export default class Named`, a bare `class X {}` re-exported by a later
 //   `export { X }`, and a class expression bound to a `const` / `let` / `var`
 //   (`export const X = class extends CodedError {}`).

@@ -139,6 +139,10 @@ const declaredErrorClasses = (source: string): string[] => {
   return found;
 };
 
+// `//` comments are stripped line by line before extraction: a commented-out
+// entry no longer bans anything in GritQL, so counting it here would keep
+// "bans every exported error class" green while the plugin is silently
+// disarmed for that name.
 const parseBanList = (grit: string): string[] => {
   const block = /\$type\s*<:\s*or\s*\{([^}]*)\}/.exec(grit);
   if (block === null) {
@@ -146,7 +150,13 @@ const parseBanList = (grit: string): string[] => {
       "Could not locate the `$type <: or { ... }` ban list in no-instanceof-error.grit",
     );
   }
-  return [...block[1].matchAll(/`([A-Za-z0-9_$]+)`/g)].map(([, name]) => name);
+  const uncommented = block[1]
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+  return [...uncommented.matchAll(/`([A-Za-z0-9_$]+)`/g)].map(
+    ([, name]) => name,
+  );
 };
 
 const scannedFiles = SCAN_ROOTS.flatMap((root) =>
@@ -213,6 +223,14 @@ describe("no-instanceof-error.grit ban list", () => {
       includeRoots.filter((root) => !SCAN_ROOTS.includes(root)),
       "linter.includes points the plugin at roots this scan does not walk; add them to SCAN_ROOTS (and a fixture root in lint/pluginWiring.test.ts)",
     ).toEqual([]);
+  });
+
+  it("does not count a commented-out ban-list entry", () => {
+    expect(
+      parseBanList(
+        "$type <: or {\n  `LiveError`,\n  // `DisarmedError`,\n  `OtherError` // trailing `InlineError`\n}",
+      ),
+    ).toEqual(["LiveError", "OtherError"]);
   });
 
   it("has no ban-list entry without a declaring class", () => {
@@ -294,6 +312,18 @@ describe("no-instanceof-error.grit ban list — what the scan reaches", () => {
     ).toEqual([]);
     expect(
       declaredErrorClasses("export default class extends Error {}"),
+    ).toEqual([]);
+  });
+
+  // The third KNOWN LIMITS(Roster) form. Unlike the two above, the binding is a
+  // stable identifier the plugin could ban — but CLASS_EXPR requires `class`
+  // directly after the `=`, so a call wrapper keeps the name off the list
+  // unless it is added by hand.
+  it("misses a class expression wrapped in a call", () => {
+    expect(
+      declaredErrorClasses(
+        "export const Mixed = mixin(class extends CodedError {});",
+      ),
     ).toEqual([]);
   });
 

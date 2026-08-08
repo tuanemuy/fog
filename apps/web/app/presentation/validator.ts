@@ -57,18 +57,32 @@ export function validateInput<T extends ZodType>(schema: T) {
   };
 }
 
+// Accumulates in a Map so a path key that collides with `Object.prototype`
+// (`"constructor"`, `"toString"`, …) reads back an own bucket, never an
+// inherited value — a plain-object accumulator would return `Object.prototype`
+// members for those keys and die on `bucket.push`. Unreachable through the
+// current fixed-key `z.object` schemas; a `z.record` / `catchAll` schema over a
+// `JSON.parse`d body is what would get here. The exact key `"__proto__"` is
+// dropped instead of emitted: `rebuildFieldErrors` on the consuming side
+// rejects any payload carrying it as an own key, so emitting it would degrade
+// the whole 422 to `unknown` — the cost is that this one path's message is
+// lost, leaving the generic `INVALID_INPUT` to speak for it. Zod's own parsers
+// never put a bare `__proto__` on `issue.path` (its record/object traversal
+// skips that input key), so the drop is reachable only through a schema that
+// writes the path itself, e.g. `superRefine`.
 function zodIssuesToFieldErrors(
   issues: ReadonlyArray<{
     readonly path: ReadonlyArray<PropertyKey>;
     readonly message: string;
   }>,
 ): FieldErrors {
-  const acc: Record<string, string[]> = {};
+  const acc = new Map<string, string[]>();
   for (const issue of issues) {
     const key = issue.path.map((segment) => String(segment)).join(".");
-    const bucket = acc[key] ?? [];
+    if (key === "__proto__") continue;
+    const bucket = acc.get(key) ?? [];
     bucket.push(issue.message);
-    acc[key] = bucket;
+    acc.set(key, bucket);
   }
-  return acc;
+  return Object.fromEntries(acc);
 }

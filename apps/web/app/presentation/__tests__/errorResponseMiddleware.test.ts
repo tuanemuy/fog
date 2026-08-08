@@ -3,12 +3,14 @@ import { installContainerStore } from "@repo/core/application/di/containerStore"
 import type { RequestContainer } from "@repo/core/application/di/types";
 import {
   ConflictError,
+  type SerializedConflictError,
   SystemError,
   SystemErrorCode,
   ValidationError,
 } from "@repo/core/application/errors";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { content } from "@repo/core/config";
+import { CodedError } from "@repo/core/lib/error";
 import {
   isNotFound,
   isRedirect,
@@ -98,6 +100,59 @@ function serializedOf(caught: unknown): SerializedError {
   expect(isAppServerError(caught)).toBe(true);
   return extractSerializedError(caught);
 }
+
+// The three hostile shapes a third-party `toSerialized` can take —
+// `isSerializableError` proves callability only. Each constructor message is
+// the internal detail, so the assertions can tell the raw logged form from the
+// redacted client-facing one.
+class ThrowingSerializerError extends CodedError {
+  override readonly name = "ThrowingSerializerError";
+  readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+  override toSerialized(): SerializedConflictError {
+    throw new Error("serializer exploded");
+  }
+}
+
+class NullSerializerError extends CodedError {
+  override readonly name = "NullSerializerError";
+  readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+  override toSerialized(): SerializedConflictError {
+    return null as unknown as SerializedConflictError;
+  }
+}
+
+class ThrowingGetterError extends CodedError {
+  override readonly name = "ThrowingGetterError";
+  readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+  override toSerialized(): SerializedConflictError {
+    return {
+      kind: "conflict",
+      get code(): string {
+        throw new Error("getter exploded");
+      },
+      message: this.message,
+      retryable: false,
+    };
+  }
+}
+
+const HOSTILE_SERIALIZERS = [
+  {
+    shape: "throws",
+    build: () => new ThrowingSerializerError("X", INTERNAL_DETAIL),
+  },
+  {
+    shape: "answers a non-object",
+    build: () => new NullSerializerError("X", INTERNAL_DETAIL),
+  },
+  {
+    shape: "answers a payload whose getter throws",
+    build: () => new ThrowingGetterError("X", INTERNAL_DETAIL),
+  },
+] as const;
 
 beforeEach(() => {
   mocks.statuses = [];
@@ -248,6 +303,55 @@ describe("errorResponseMiddleware", () => {
     expect(mocks.statuses).toEqual([500]);
   });
 
+  // The boundary catch itself must not throw: a secondary throw from
+  // classification would leave the middleware's `catch` and skip status,
+  // redaction and logging. `serializeError` fails closed on these, and this
+  // pins the whole path: 500, redacted client payload, raw detail logged.
+  it.each(HOSTILE_SERIALIZERS)(
+    "fails closed to a redacted 500 when toSerialized $shape",
+    async ({ build }) => {
+      const caught = await captureFrom(run, build());
+
+      expect(serializedOf(caught)).toEqual({
+        kind: "unknown",
+        code: null,
+        message: "System error",
+      });
+      expect(mocks.statuses).toEqual([500]);
+      expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+        kind: "unknown",
+        message: INTERNAL_DETAIL,
+      });
+    },
+  );
+
+  // `extractSerializedError`'s remnant stage runs the caught value's own
+  // getters, so classification itself can throw — the one path
+  // `serializeError`'s guard does not cover (its JSDoc names the limit).
+  // `toClientError`'s last-resort catch is what keeps it inside the boundary:
+  // pre-redacted unknown, 500, and the original value still logged as `cause`.
+  it("fails closed to a redacted 500 when the remnant's serialized accessor throws", async () => {
+    const hostile = {
+      get serialized(): unknown {
+        throw new Error("accessor exploded");
+      },
+    };
+
+    const caught = await captureFrom(run, hostile);
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "System error",
+    });
+    expect(mocks.statuses).toEqual([500]);
+    // `cause` is compared by identity: a `toMatchObject` containing the
+    // hostile value would run its throwing getter inside the matcher.
+    const meta = logger.byLevel("error")[0]?.meta as Record<string, unknown>;
+    expect(meta).toMatchObject({ kind: "unknown", message: "System error" });
+    expect(meta.cause).toBe(hostile);
+  });
+
   it("still answers when the logger itself is unreachable", async () => {
     installContainerStore({ getStore: () => undefined });
     const consoleError = vi
@@ -325,6 +429,29 @@ describe("guardStreamedRender", () => {
     });
     // The response is already committed by the time a streamed leaf throws,
     // so the status is the one thing this boundary must not pretend to fix.
+    expect(mocks.statuses).toEqual([]);
+  });
+
+  // The unknown row, mirroring the middleware's "redacts an error that reached
+  // the boundary unclassified": this suite's own stance is that sharing
+  // `toClientError` is no reason to believe the guard redacts and logs (see the
+  // brand-stripped cases below), so the unclassified path needs its own pin
+  // here too.
+  it("redacts a plain Error and logs it raw", async () => {
+    const caught = await captureFrom(
+      guardStreamedRender,
+      new Error(INTERNAL_DETAIL),
+    );
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "System error",
+    });
+    expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+      kind: "unknown",
+      message: INTERNAL_DETAIL,
+    });
     expect(mocks.statuses).toEqual([]);
   });
 

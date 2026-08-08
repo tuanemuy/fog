@@ -22,9 +22,12 @@ const schema = z.object({
 
 const validate = validateInput(schema);
 
-function captureFrom(input: unknown): unknown {
+function captureFrom(
+  input: unknown,
+  run: (input: unknown) => unknown = validate,
+): unknown {
   try {
-    validate(input);
+    run(input);
   } catch (error) {
     return error;
   }
@@ -97,6 +100,84 @@ describe("validateInput", () => {
 
     expect(Object.keys(serialized.fieldErrors ?? {})).toEqual([""]);
     expect(serialized.fieldErrors?.[""]).toHaveLength(1);
+  });
+
+  // Two constraints failing on one field must both reach the client — the
+  // accumulator's "append to the existing bucket" branch is otherwise dead in
+  // this suite, and a mutation that replaces the bucket (last message wins)
+  // would stay green without this pin.
+  it("accumulates every failed constraint's message under the same key", () => {
+    const twoConstraints = validateInput(
+      z.object({
+        password: z
+          .string()
+          .min(8, { message: "too short" })
+          .regex(/[0-9]/, { message: "needs a digit" }),
+      }),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom({ password: "abc" }, twoConstraints),
+    ) as SerializedValidationError;
+
+    expect(serialized.fieldErrors?.password).toEqual([
+      "too short",
+      "needs a digit",
+    ]);
+  });
+
+  // The auth schemas' fixed keys cannot produce these paths, but
+  // `validateInput` is a generic API: a `z.record` schema over a `JSON.parse`d
+  // body puts client-chosen keys on `issue.path`. Keys inherited from
+  // `Object.prototype` must come back as own buckets — a plain-object
+  // accumulator would read `Object.prototype.constructor` and TypeError on
+  // `push`, degrading the 422 to a 500. (`__proto__` is not in this input on
+  // purpose: zod's record traversal skips that key, so it never reaches the
+  // flatten by this route — the superRefine case below is what does.)
+  it("keeps prototype-colliding path keys as own buckets", () => {
+    const recordValidate = validateInput(
+      z.record(z.string(), z.string().min(1, { message: "required" })),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom(
+        JSON.parse('{"constructor": "", "toString": "", "hasOwnProperty": ""}'),
+        recordValidate,
+      ),
+    ) as SerializedValidationError;
+
+    expect(serialized.kind).toBe("validation");
+    expect(httpStatusFor(serialized)).toBe(422);
+    expect(serialized.fieldErrors).toEqual({
+      constructor: ["required"],
+      toString: ["required"],
+      hasOwnProperty: ["required"],
+    });
+  });
+
+  // An own `__proto__` key must not be emitted at all: `rebuildFieldErrors`
+  // on the consuming side rejects any payload carrying one, so emitting it
+  // would degrade the whole response to `unknown`. Its message is dropped and
+  // the generic INVALID_INPUT speaks for it. Zod's own parsers never put a
+  // bare `__proto__` on `issue.path`, so a schema that writes the path itself
+  // is the one route to this branch.
+  it("withholds a __proto__ path key instead of emitting it", () => {
+    const refineValidate = validateInput(
+      z.unknown().superRefine((_value, ctx) => {
+        ctx.addIssue({ code: "custom", message: "nope", path: ["__proto__"] });
+        ctx.addIssue({ code: "custom", message: "required", path: ["email"] });
+      }),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom({}, refineValidate),
+    ) as SerializedValidationError;
+
+    expect(serialized.kind).toBe("validation");
+    expect(httpStatusFor(serialized)).toBe(422);
+    const fieldErrors = serialized.fieldErrors ?? {};
+    expect(Object.hasOwn(fieldErrors, "__proto__")).toBe(false);
+    expect(fieldErrors).toEqual({ email: ["required"] });
   });
 
   // The thrown payload is what the client actually sees, so pinning that it

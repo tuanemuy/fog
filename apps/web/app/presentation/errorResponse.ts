@@ -62,47 +62,69 @@ function errorMessage(error: unknown): string {
   return "Unexpected error";
 }
 
+function unknownFrom(error: unknown): SerializedUnknownError {
+  return { kind: "unknown", code: null, message: errorMessage(error) };
+}
+
 // Raw structural projection. Kept un-redacted so server-side observers
 // (logger, tracing) can see the original `code` / `message`. The transport
 // boundary (`errorResponseMiddleware`) is responsible for running
 // `redactForClient` exactly once before the value crosses to the client.
+//
+// `isSerializableError` only proves `toSerialized` is callable, so the call,
+// the shape of its answer and every property read off that answer are all
+// unverified: a third-party error can carry a throwing `toSerialized`, answer
+// a non-object, or answer an object whose getters throw. This function runs
+// inside the boundary catch (`toClientError`), where a secondary throw would
+// skip status, redaction and logging — so each of those shapes fails closed
+// onto the `errorMessage(error)` fallback instead of escaping.
 export function serializeError(error: unknown): SerializedError {
   if (!isSerializableError(error)) {
-    return { kind: "unknown", code: null, message: errorMessage(error) };
+    return unknownFrom(error);
   }
-  const serialized = error.toSerialized();
-  // Rebuilt rather than returned by reference: `isSerializableError` only
-  // proves `toSerialized` is callable, so nothing pins the key set of the
-  // object it answered. Routing this path through `asSerializedError` makes
-  // "every `SerializedError` handed out was rebuilt from known keys" hold on
-  // both siblings, not just on `extractSerializedError`'s remnant stage.
-  const rebuilt = asSerializedError(serialized);
-  if (rebuilt !== null) {
-    return rebuilt;
+  try {
+    const serialized: unknown = error.toSerialized();
+    if (typeof serialized !== "object" || serialized === null) {
+      return unknownFrom(error);
+    }
+    // Rebuilt rather than returned by reference: nothing pins the key set of
+    // the object `toSerialized` answered. Routing this path through
+    // `asSerializedError` makes "every `SerializedError` handed out was
+    // rebuilt from known keys" hold on both siblings, not just on
+    // `extractSerializedError`'s remnant stage.
+    const rebuilt = asSerializedError(serialized);
+    if (rebuilt !== null) {
+      return rebuilt;
+    }
+    // Receiver for a `kind` outside the union (and for a union `kind` whose
+    // payload fails the rebuild). It cannot be closed by a type: this union is
+    // where each layer's variants are aggregated, so `lib/` — which every layer
+    // depends on — cannot name it back without inverting the dependency
+    // direction, and `CodedError.toSerialized()` is therefore typed only as
+    // `{ kind: string }`. `code` / `message` / `retryable` are carried over so a
+    // layerless error still reaches the logger with its own detail — but each
+    // one only after the same `typeof` checks `asSerializedError` runs: the
+    // second trigger means this branch fires precisely when the payload already
+    // failed those checks, so an ill-typed value falls back (`code` to null,
+    // `message` to `errorMessage`, `retryable` to absent) instead of riding a
+    // type it does not honour into `AppServerError.serialized`.
+    const source = serialized as Partial<
+      Record<"code" | "message" | "retryable", unknown>
+    >;
+    return {
+      kind: "unknown",
+      code: typeof source.code === "string" ? source.code : null,
+      message:
+        typeof source.message === "string"
+          ? source.message
+          : errorMessage(error),
+      ...(typeof source.retryable === "boolean"
+        ? { retryable: source.retryable }
+        : {}),
+    };
+  } catch {
+    return unknownFrom(error);
   }
-  // Receiver for a `kind` outside the union (and for a union `kind` whose
-  // payload fails the rebuild). It cannot be closed by a type: this union is
-  // where each layer's variants are aggregated, so `lib/` — which every layer
-  // depends on — cannot name it back without inverting the dependency
-  // direction, and `CodedError.toSerialized()` is therefore typed only as
-  // `{ kind: string }`. `code` / `message` / `retryable` are carried over so a
-  // layerless error still reaches the logger with its own detail — but each
-  // one only after the same `typeof` checks `asSerializedError` runs: the
-  // second trigger means this branch fires precisely when the payload already
-  // failed those checks, so an ill-typed value falls back (`code` to null,
-  // `message` to `errorMessage`, `retryable` to absent) instead of riding a
-  // type it does not honour into `AppServerError.serialized`.
-  return {
-    kind: "unknown",
-    code: typeof serialized.code === "string" ? serialized.code : null,
-    message:
-      typeof serialized.message === "string"
-        ? serialized.message
-        : errorMessage(error),
-    ...(typeof serialized.retryable === "boolean"
-      ? { retryable: serialized.retryable }
-      : {}),
-  };
 }
 
 // Strips server-internal detail before a `SerializedError` crosses the
@@ -211,7 +233,10 @@ type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 // The ledger of keys `asSerializedError` rebuilds from, pinned to the union:
 // adding a field to any `SerializedError` variant — even an optional one,
 // which the return type alone would let the rebuild silently strip — fails to
-// compile here until the function learns to carry it over.
+// compile here until this ledger names it. That is as far as the type's force
+// reaches: naming a key does not make the function carry it, so the carry-over
+// itself is pinned by the rebuild roundtrip cases in
+// `__tests__/errorResponse.test.ts`, not by this `satisfies`.
 const REBUILT_KEYS = {
   kind: true,
   code: true,
@@ -361,6 +386,12 @@ export function isAppServerError(value: unknown): value is AppServerError {
  * the thrown value just as this stage does. Its `isRedirect` neighbour does not:
  * that one is `obj instanceof Response && !!obj.options`, which no decoded
  * payload can satisfy.
+ *
+ * Limit: `serializeError` fails closed on its own, but the remnant stage does
+ * not — a caught value whose `serialized` accessor throws, or whose payload
+ * carries a throwing getter, still throws out of here. The last-resort catch
+ * for that lives in `toClientError`, which lands on
+ * {@link UNVERIFIED_SERIALIZED_ERROR}.
  */
 export function extractSerializedError(error: unknown): SerializedError {
   if (hasSerializedRemnant(error)) {
