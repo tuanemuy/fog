@@ -7,7 +7,7 @@
  * registry, so every copy of this module observes the same symbol and the
  * guards below keep answering correctly across graphs.
  *
- * Two limits are deliberate and must be understood before relying on it:
+ * Three limits are deliberate and must be understood before relying on it:
  *
  * - **Lifetime** — the brand is a symbol-keyed own property, so it does not
  *   survive `structuredClone`, `JSON` round-trips or the Worker ↔ Durable
