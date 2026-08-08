@@ -441,7 +441,7 @@ await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 d
 
 ## Error Design
 
-Representative classes, one per layer role — **not the roster**. The roster is the ban list of `lint/no-instanceof-error.grit`, which `lint/banList.test.ts` keeps in sync with the class declarations its scan reaches (the two declaration forms it cannot reach are listed under KNOWN LIMITS in the `.grit` header), so there is one place to look and no second ledger to drift.
+Representative classes, one per layer role — **not the roster**. The roster is the ban list of `lint/no-instanceof-error.grit`, which `lint/banList.test.ts` keeps in sync with the class declarations its scan reaches (the three declaration forms it cannot reach are listed under KNOWN LIMITS in the `.grit` header), so there is one place to look and no second ledger to drift.
 
 | Layer | Error type | Location |
 |---|---|---|

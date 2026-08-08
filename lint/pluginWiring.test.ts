@@ -133,9 +133,10 @@ describe("no-instanceof-error.grit wiring", () => {
   });
 
   // KNOWN LIMITS in no-instanceof-error.grit: the snippet match does not see
-  // through `ParenthesizedExpression`, and the pattern is deliberately not
-  // doubled with a wrapped twin per entry. This pins the documented limit so a
-  // future pattern change that closes it (or reopens it) shows up here.
+  // through a wrapper node on the right-hand side, and the pattern is
+  // deliberately not doubled with wrapped twins per entry. These pin the
+  // documented limit so a future pattern change that closes it (or reopens it)
+  // shows up here.
   it("does not fire on a parenthesized right-hand side (documented limit)", () => {
     const fixture = fixturePath(FIXTURE_ROOTS[0]);
     writeFileSync(
@@ -149,6 +150,25 @@ export const isConflict = (e: unknown): boolean =>
       expect(
         pluginDiagnostics(fixture),
         "The plugin now fires on `e instanceof (ConflictError)`. Update the KNOWN LIMITS Evasion entry in lint/no-instanceof-error.grit and flip this case.",
+      ).toEqual([]);
+    } finally {
+      rmSync(fixture, { force: true });
+    }
+  });
+
+  it("does not fire on a non-null-asserted right-hand side (documented limit)", () => {
+    const fixture = fixturePath(FIXTURE_ROOTS[0]);
+    writeFileSync(
+      fixture,
+      `declare const ConflictError: new () => Error;
+export const isConflict = (e: unknown): boolean =>
+  e instanceof ConflictError!;
+`,
+    );
+    try {
+      expect(
+        pluginDiagnostics(fixture),
+        "The plugin now fires on `e instanceof ConflictError!`. Update the KNOWN LIMITS Evasion entry in lint/no-instanceof-error.grit and flip this case.",
       ).toEqual([]);
     } finally {
       rmSync(fixture, { force: true });

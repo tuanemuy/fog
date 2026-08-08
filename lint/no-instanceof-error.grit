@@ -30,11 +30,14 @@
 // - Evasion — a rebinding of any kind (an aliased import —
 //   `import { ConflictError as CE }` → `e instanceof CE` — or a local one,
 //   `const CE = ConflictError`), a namespace access (`import * as errs` →
-//   `e instanceof errs.ConflictError`) and a parenthesized right-hand side
-//   (`e instanceof (ConflictError)` — the snippet match does not see through
-//   `ParenthesizedExpression`) all slip through. The first two are conspicuous
-//   in review; the third is not, so `pluginWiring.test.ts` pins it as a
-//   negative case rather than doubling every `or` entry with its wrapped twin.
+//   `e instanceof errs.ConflictError`) and any syntax that wraps the
+//   right-hand side in another node — parentheses (`e instanceof
+//   (ConflictError)`), a non-null assertion (`e instanceof ConflictError!`) or
+//   a type assertion (`e instanceof <new () => Error>ConflictError`; the
+//   snippet match does not see through the wrapper node) — all slip through.
+//   The rebindings are conspicuous in review; the wrappers are not, so
+//   `pluginWiring.test.ts` pins the parenthesized and non-null forms as
+//   negative cases rather than doubling every `or` entry with wrapped twins.
 // - Placement — the plugin only runs over `biome.json`'s `linter.includes`.
 //   Measured: the same `e instanceof ConflictError` yields a diagnostic under
 //   `packages/core/src/` but none in a repo-root `*.ts` or under
