@@ -732,6 +732,17 @@ describe("isAppServerError", () => {
     ).toBe(false);
   });
 
+  // The brand check is `Object.hasOwn`, not `in`: real instances always carry
+  // the brand as an own property (it is a class field), so the only values a
+  // prototype-chain walk would additionally accept are forgeries whose brand
+  // sits on a prototype instead of the object itself.
+  it("returns false when the brand lives on the prototype, not the object", () => {
+    const forged = Object.create({ [APP_SERVER_ERROR_BRAND]: true });
+    forged.message = "test";
+    forged.serialized = serialized;
+    expect(isAppServerError(forged)).toBe(false);
+  });
+
   // The brand alone is not enough: `AppServerError`'s only job is to carry a
   // payload the status mapping can read, so a branded value without one has to
   // fall through to the `unknown` / 500 path rather than be trusted.

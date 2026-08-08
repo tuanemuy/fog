@@ -347,7 +347,11 @@ export const UNVERIFIED_SERIALIZED_ERROR: SerializedError = Object.freeze({
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
-  if (!(APP_SERVER_ERROR_BRAND in value)) return false;
+  // `Object.hasOwn`, not `in`: the brand is a class field and therefore an own
+  // property on every real instance, so `in`'s prototype-chain walk buys
+  // nothing except accepting a brand planted on a prototype. This mirrors
+  // `isSerializedErrorKind`, whose test pins the same choice.
+  if (!Object.hasOwn(value, APP_SERVER_ERROR_BRAND)) return false;
   if (typeof (value as { message?: unknown }).message !== "string") {
     return false;
   }
