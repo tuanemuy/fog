@@ -114,12 +114,20 @@ describe("no-instanceof-error.grit wiring", () => {
       readFileSync(join(REPO_ROOT, "biome.json"), "utf8"),
     ) as { linter: { includes: string[] } };
     const fixtureRoots = new Set(FIXTURE_ROOTS.map((root) => root[0]));
+    const positiveGlobs = config.linter.includes.filter(
+      (glob) => !glob.startsWith("!"),
+    );
+    // Same shape guard as banList.test.ts's mirror: a positive glob whose first
+    // segment is a wildcard names no single root, so dropping it silently would
+    // leave its tree lintable but unpinned by any fixture.
     expect(
-      config.linter.includes
-        .filter((glob) => !glob.startsWith("!"))
+      positiveGlobs.filter((glob) => glob.split("/")[0].includes("*")),
+      "linter.includes has a positive glob whose first segment is a wildcard; this mirror can only derive roots from `root/**`-shaped globs — restructure the glob or extend the derivation here (and in lint/banList.test.ts)",
+    ).toEqual([]);
+    expect(
+      positiveGlobs
         .map((glob) => glob.split("/")[0])
-        .filter((root) => !root.includes("*") && root !== "lint")
-        .filter((root) => !fixtureRoots.has(root)),
+        .filter((root) => root !== "lint" && !fixtureRoots.has(root)),
       "linter.includes points the plugin at roots with no wiring fixture; add an entry to FIXTURE_ROOTS",
     ).toEqual([]);
   });

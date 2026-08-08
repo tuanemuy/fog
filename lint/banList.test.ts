@@ -196,10 +196,18 @@ describe("no-instanceof-error.grit ban list", () => {
     const config = JSON.parse(
       readFileSync(join(REPO_ROOT, "biome.json"), "utf8"),
     ) as { linter: { includes: string[] } };
-    const includeRoots = config.linter.includes
-      .filter((glob) => !glob.startsWith("!"))
-      .map((glob) => glob.split("/")[0])
-      .filter((root) => !root.includes("*"));
+    const positiveGlobs = config.linter.includes.filter(
+      (glob) => !glob.startsWith("!"),
+    );
+    // The root derivation below only works on `root/**`-shaped globs. A glob
+    // whose first segment is a wildcard (`**/tools/**`) names no single root and
+    // would be dropped silently, reopening the gap this mirror closes — so an
+    // unexpected shape is a failure, not a skip.
+    expect(
+      positiveGlobs.filter((glob) => glob.split("/")[0].includes("*")),
+      "linter.includes has a positive glob whose first segment is a wildcard; this mirror can only derive roots from `root/**`-shaped globs — restructure the glob or extend the derivation here (and in lint/pluginWiring.test.ts)",
+    ).toEqual([]);
+    const includeRoots = positiveGlobs.map((glob) => glob.split("/")[0]);
     expect(includeRoots.length).toBeGreaterThan(0);
     expect(
       includeRoots.filter((root) => !SCAN_ROOTS.includes(root)),

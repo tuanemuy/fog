@@ -367,6 +367,36 @@ describe("guardStreamedRender", () => {
     // committed by the time a streamed leaf throws.
     expect(mocks.statuses).toEqual([]);
   });
+
+  // The other half of that JSDoc claim — "redaction and the `system` /
+  // `unknown` logging branch see the kind the usecase earned" — needs its own
+  // pin here for the same reason: only the middleware's BRAND_STRIPPED_CASES
+  // exercised the `system` row before, and a change that made this guard read
+  // the remnant some other way would have left it untested.
+  it("logs a brand-stripped system failure raw and redacts it on the way out", async () => {
+    const serialized = serializeError(
+      new SystemError(SystemErrorCode.DatabaseError, INTERNAL_DETAIL),
+    );
+    const remnant = acrossSerializationBoundary(serialized);
+
+    expect(isAppServerError(remnant)).toBe(false);
+
+    const caught = await captureFrom(guardStreamedRender, remnant);
+
+    expect(serializedOf(caught)).toEqual({
+      kind: "system",
+      code: null,
+      message: "System error",
+      retryable: false,
+    });
+    expect(JSON.stringify(serializedOf(caught))).not.toContain("no such table");
+    expect(logger.byLevel("error")[0]?.meta).toMatchObject({
+      kind: "system",
+      code: SystemErrorCode.DatabaseError,
+      message: INTERNAL_DETAIL,
+    });
+    expect(mocks.statuses).toEqual([]);
+  });
 });
 
 // Spreading a real `AppServerError` keeps its `serialized` own property and

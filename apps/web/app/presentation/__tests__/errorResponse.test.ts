@@ -183,6 +183,34 @@ describe("serializeError", () => {
     expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
   });
 
+  // The fallback fires precisely when `asSerializedError` answered null — for
+  // a union kind, that can mean the payload's values failed the `typeof`
+  // checks. Carrying such a value over verbatim would put `code: {}` /
+  // `retryable: "yes"` into a value typed `SerializedError`; the fallback has
+  // to run the same checks its sibling does and degrade each field instead.
+  it("drops ill-typed code, message and retryable instead of carrying them into the fallback", () => {
+    class IllTypedError extends CodedError {
+      override readonly name = "IllTypedError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        return {
+          kind: "conflict",
+          code: {},
+          message: 5,
+          retryable: "yes",
+        } as unknown as SerializedConflictError;
+      }
+    }
+
+    const result = serializeError(new IllTypedError("X", "boom"));
+
+    // `message` degrades to `errorMessage()`'s Error arm — the message the
+    // constructor set — not to the ill-typed number.
+    expect(result).toEqual({ kind: "unknown", code: null, message: "boom" });
+    expect("retryable" in result).toBe(false);
+  });
+
   // The union-kind branch used to hand `toSerialized()`'s object back by
   // reference, so an extra key riding on it would survive into the value the
   // middleware spreads through `redactForClient`. These two pin the rebuild
@@ -370,6 +398,31 @@ describe("asSerializedError", () => {
     expect(result.fieldErrors).not.toBe(fieldErrors);
     expect(Object.getOwnPropertyNames(result.fieldErrors)).toEqual(["email"]);
     expect(Object.getOwnPropertySymbols(result.fieldErrors)).toEqual([]);
+  });
+
+  // The one own key the rebuild cannot copy over: `rebuilt[field] = copy`
+  // on an own `"__proto__"` key hits the `Object.prototype.__proto__` setter,
+  // which swaps the accumulator's prototype for the attacker-supplied array
+  // instead of adding a property. `JSON.parse` materialises the key as an own
+  // property, so the shape is wire-reachable through the adapter's inbound
+  // leg. Rejection, not a silent drop: the getter / symbol cases above prove
+  // what the rebuild strips, this one pins what it refuses outright.
+  it("rejects a fieldErrors record carrying an own __proto__ key", () => {
+    const fieldErrors: unknown = JSON.parse(
+      '{"__proto__": ["pii"], "email": ["required"]}',
+    );
+    // Precondition: the key really is an own property, not the inherited
+    // accessor — otherwise this case would collapse onto the happy path.
+    expect(Object.hasOwn(fieldErrors as object, "__proto__")).toBe(true);
+
+    expect(
+      asSerializedError({
+        kind: "validation",
+        code: "X",
+        message: "m",
+        fieldErrors,
+      }),
+    ).toBeNull();
   });
 
   // `Array.prototype.every` skips holes, so a sparse messages array would

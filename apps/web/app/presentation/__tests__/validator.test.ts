@@ -85,9 +85,11 @@ describe("validateInput", () => {
 
   // Pins current behaviour rather than endorsing it: a top-level type
   // mismatch has an empty `issue.path`, which the dotted-path join flattens
-  // to the `""` key. Form helpers that look up `fieldErrors` by field name
-  // will never read this key, so the failure surfaces through `kind` / status
-  // only — if the flatten ever changes, this is the test that says so.
+  // to the `""` key. `errorDisplay.formatFieldErrors` enumerates every entry
+  // via `Object.entries` — it does not look keys up by field name — so this
+  // key's raw English zod message is rendered to the UI as-is (only the
+  // `FIELD_LABELS` label is dropped). If the flatten or that rendering ever
+  // changes, this is the test that says so.
   it("files a top-level type mismatch under the empty-string key", () => {
     const serialized = extractSerializedError(
       captureFrom(null),

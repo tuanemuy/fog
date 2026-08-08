@@ -86,14 +86,22 @@ export function serializeError(error: unknown): SerializedError {
   // depends on — cannot name it back without inverting the dependency
   // direction, and `CodedError.toSerialized()` is therefore typed only as
   // `{ kind: string }`. `code` / `message` / `retryable` are carried over so a
-  // layerless error still reaches the logger with its own detail.
+  // layerless error still reaches the logger with its own detail — but each
+  // one only after the same `typeof` checks `asSerializedError` runs: the
+  // second trigger means this branch fires precisely when the payload already
+  // failed those checks, so an ill-typed value falls back (`code` to null,
+  // `message` to `errorMessage`, `retryable` to absent) instead of riding a
+  // type it does not honour into `AppServerError.serialized`.
   return {
     kind: "unknown",
-    code: serialized.code,
-    message: serialized.message,
-    ...(serialized.retryable === undefined
-      ? {}
-      : { retryable: serialized.retryable }),
+    code: typeof serialized.code === "string" ? serialized.code : null,
+    message:
+      typeof serialized.message === "string"
+        ? serialized.message
+        : errorMessage(error),
+    ...(typeof serialized.retryable === "boolean"
+      ? { retryable: serialized.retryable }
+      : {}),
   };
 }
 
@@ -174,12 +182,18 @@ function hasSerializedRemnant(
 // symbol-keyed properties and the spread copies index elements only, which is
 // what extends `asSerializedError`'s rebuild guarantee below the top level —
 // an extra own property grafted onto a messages array does not survive.
+// An own `"__proto__"` key (which `JSON.parse` materialises) is rejected
+// outright: `rebuilt[field] = copy` would hit the `Object.prototype.__proto__`
+// setter and swap the accumulator's prototype for the attacker-supplied array
+// instead of adding a property, and rejecting leaves no ambiguous half-result
+// the way a silently-dropped key would.
 function rebuildFieldErrors(value: unknown): FieldErrors | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }
   const rebuilt: Record<string, readonly string[]> = {};
   for (const [field, messages] of Object.entries(value)) {
+    if (field === "__proto__") return null;
     if (!Array.isArray(messages)) return null;
     const copy: unknown[] = [...messages];
     if (
