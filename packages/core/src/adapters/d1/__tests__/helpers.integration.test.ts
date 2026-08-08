@@ -6,6 +6,8 @@ import {
 import {
   BusinessRuleError,
   isBusinessRuleError,
+  isRehydrationError,
+  RehydrationError,
 } from "@repo/core/domain/error";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -173,5 +175,38 @@ describe("mapDbError contract pass-through (integration)", () => {
 
     expect(isBusinessRuleError(caught)).toBe(true);
     expect(isConflictError(caught)).toBe(false);
+  });
+
+  // The fail-safe half of the pass-through: `RehydrationError` is not a
+  // `CodedError`, so a repository that skips its own `reconstruct`-site
+  // translation lands in the driver branch and degrades to
+  // `SystemError(DATABASE_ERROR)` — still a 5xx, never a client-visible
+  // business error. Pins the "deliberately no `isRehydrationError` branch"
+  // comment in `mapDbError`: adding one that passes the error through turns
+  // this red.
+  it("degrades a RehydrationError to SystemError(DATABASE_ERROR) instead of passing it through", async () => {
+    const thrown = new RehydrationError(
+      "corrupt row",
+      new BusinessRuleError("IDENTITY_EMAIL_TOO_LONG", "Email is too long"),
+    );
+
+    let caught: unknown;
+    try {
+      await mapDbError("rehydration escape", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBe(thrown);
+    expect(isRehydrationError(caught)).toBe(false);
+    expect(isBusinessRuleError(caught)).toBe(false);
+    expect(isSystemError(caught)).toBe(true);
+    if (isSystemError(caught)) {
+      expect(caught.code).toBe("DATABASE_ERROR");
+      expect(caught.toSerialized().kind).toBe("system");
+    }
+    expect((caught as Error).cause).toBe(thrown);
   });
 });

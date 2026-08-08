@@ -1,6 +1,7 @@
 import {
   BusinessRuleError,
   isBusinessRuleError,
+  type SerializedBusinessError,
 } from "@repo/core/domain/error";
 import {
   CodedError,
@@ -15,6 +16,10 @@ import {
   ApplicationError,
   ConflictError,
   type SerializedConflictError,
+  type SerializedForbiddenError,
+  type SerializedNotFoundError,
+  type SerializedSystemError,
+  type SerializedUnauthorizedError,
   type SerializedValidationError,
 } from "../errors";
 
@@ -185,6 +190,33 @@ describe("kind discrimination matrix", () => {
     it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {
       expect(subject.guard(value)).toBe(false);
     });
+  });
+});
+
+// `NarrowedByKind` (and `isBusinessRuleError`'s hand-written counterpart)
+// stand on the premise that every `Serialized*Error` adds nothing but optional
+// properties to `SerializedErrorBase & { kind }` — the runtime checks only
+// `serializedKind === kind`, so a variant growing a required field would make
+// the narrowed `toSerialized(): TSerialized` a silent lie. These `satisfies`
+// clauses are the compile-time pin: the base contract plus `kind` alone must
+// stay assignable to each variant, so adding a required field is a type error
+// here before it becomes an unsound narrowing there.
+describe("every Serialized*Error variant adds only optional fields", () => {
+  it("accepts the base contract plus kind alone for each variant", () => {
+    const minimal: SerializedErrorBase = { code: null, message: "" };
+    const pinned = [
+      { ...minimal, kind: "notFound" } satisfies SerializedNotFoundError,
+      { ...minimal, kind: "validation" } satisfies SerializedValidationError,
+      { ...minimal, kind: "conflict" } satisfies SerializedConflictError,
+      {
+        ...minimal,
+        kind: "unauthorized",
+      } satisfies SerializedUnauthorizedError,
+      { ...minimal, kind: "forbidden" } satisfies SerializedForbiddenError,
+      { ...minimal, kind: "system" } satisfies SerializedSystemError,
+      { ...minimal, kind: "business" } satisfies SerializedBusinessError,
+    ];
+    expect(pinned).toHaveLength(ALL_CASES.length);
   });
 });
 

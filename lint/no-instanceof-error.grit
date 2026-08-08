@@ -38,16 +38,25 @@
 //   Measured: the same `e instanceof ConflictError` yields a diagnostic under
 //   `packages/core/src/` but none in a repo-root `*.ts` or under
 //   `**/components/ui/**` (nor `**/styles/**` / `**/templates/**`, all
-//   subtracted there). `banList.test.ts` scans those paths regardless, so a
-//   class declared in one still lands on this list — it is the call sites there
-//   that go unchecked. Dropping a root from `linter.includes` disarms the plugin
+//   subtracted there). Those two blind spots are not the same size: the
+//   subtracted paths sit inside roots `banList.test.ts` walks, so a class
+//   declared in one still lands on this list and only its call sites go
+//   unchecked — a repo-root `*.ts` sits outside those roots too, so a class
+//   declared there reaches neither the plugin nor this list. Today the root
+//   holds config files only, and `banList.test.ts` asserts that
+//   `linter.includes` names no directory root its scan skips, so the gap
+//   cannot widen silently. Dropping a root from `linter.includes` disarms the plugin
 //   there silently, which is why `pluginWiring.test.ts` lints a fixture under
 //   each of `packages/`, `apps/` and `infra/` rather than beside itself; that
 //   pins the three main roots one at a time, so any single root falling out of
 //   `linter.includes` turns it red.
 // - Roster — the scan reads class declarations and named class expressions
 //   (`const X = class …`) textually, so a class reaches this list only if the
-//   identifier a call site would hold ends in `Error` or the base it names does. Two forms
+//   identifier a call site would hold ends in `Error` or the base it names does.
+//   The type-parameter list is skipped with a depth counter before the header
+//   is read, so a `{` inside a constraint (`class X<T extends { a: string }>`)
+//   does not hide the heritage clause and a `T extends Error` constraint does
+//   not qualify a non-error class — both pinned in `banList.test.ts`. Two forms
 //   therefore never arrive on their own: `export default class extends Error {}`
 //   (anonymous), and a non-`*Error` name over an aliased base
 //   (`import { CodedError as Base }` → `class Weird extends Base`). The first is

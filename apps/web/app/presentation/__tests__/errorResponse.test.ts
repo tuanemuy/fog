@@ -2,6 +2,7 @@ import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
+  type SerializedConflictError,
   SystemError,
   SystemErrorCode,
   UnauthorizedError,
@@ -153,13 +154,80 @@ describe("serializeError", () => {
   // The distinction that matters: this must not collapse onto the
   // `errorMessage()` fallback at the top of `serializeError`, which would
   // report `code: null` and the raw `Error.message`. A layerless error still
-  // reaches the logger carrying the detail its own class chose.
-  it("carries code and message over for a kind outside the union", () => {
+  // reaches the logger carrying the detail its own class chose — `retryable`
+  // included, since the fallback claims to carry the base fields over.
+  it("carries code, message and retryable over for a kind outside the union", () => {
     expect(serializeError(new LayerlessError("X", "boom"))).toEqual({
       kind: "unknown",
       code: "X",
       message: "boom",
+      retryable: false,
     });
+  });
+
+  // A `SerializedLayerlessError` that never set `retryable`. The counterweight
+  // to the carry-over above: absent must stay absent rather than become
+  // present-and-undefined, per `exactOptionalPropertyTypes`.
+  class BareLayerlessError extends CodedError {
+    override readonly name = "BareLayerlessError";
+    readonly serializedKind: SerializedLayerlessError["kind"] = "layerless";
+
+    override toSerialized(): SerializedLayerlessError {
+      return { kind: "layerless", code: this.code, message: this.message };
+    }
+  }
+
+  it("leaves retryable absent when the layerless error declares none", () => {
+    const result = serializeError(new BareLayerlessError("X", "boom"));
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+  });
+
+  // The union-kind branch used to hand `toSerialized()`'s object back by
+  // reference, so an extra key riding on it would survive into the value the
+  // middleware spreads through `redactForClient`. These two pin the rebuild
+  // that replaced it: known keys only, and never the same object.
+  it("rebuilds a union-kind payload from known keys instead of trusting toSerialized()", () => {
+    class LeakyConflictError extends CodedError {
+      override readonly name = "LeakyConflictError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        return {
+          kind: "conflict",
+          code: this.code,
+          message: this.message,
+          evil: "pii",
+        } as SerializedConflictError;
+      }
+    }
+
+    const result = serializeError(new LeakyConflictError("X", "boom"));
+
+    expect(Object.keys(result)).toEqual(["kind", "code", "message"]);
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+  });
+
+  it("does not return toSerialized()'s value by reference for a union kind", () => {
+    const canned: SerializedConflictError = {
+      kind: "conflict",
+      code: "X",
+      message: "boom",
+      retryable: false,
+    };
+    class CannedConflictError extends CodedError {
+      override readonly name = "CannedConflictError";
+      readonly serializedKind: SerializedConflictError["kind"] = "conflict";
+
+      override toSerialized(): SerializedConflictError {
+        return canned;
+      }
+    }
+
+    const result = serializeError(new CannedConflictError("X", "boom"));
+
+    expect(result).not.toBe(canned);
+    expect(result).toEqual(canned);
   });
 });
 
@@ -304,6 +372,51 @@ describe("asSerializedError", () => {
     expect(Object.getOwnPropertySymbols(result.fieldErrors)).toEqual([]);
   });
 
+  // `Array.prototype.every` skips holes, so a sparse messages array would
+  // pass an in-place check while the rebuilt copy materialises each hole as an
+  // `undefined` element — a `readonly string[]` contract violation that
+  // `JSON.stringify` would put on the wire as `null`. Validating the copy is
+  // what makes the hole a rejection instead.
+  it("rejects a sparse messages array inside fieldErrors", () => {
+    const sparse = ["ok"];
+    sparse.length = 2;
+
+    expect(
+      asSerializedError({
+        kind: "validation",
+        code: null,
+        message: "m",
+        fieldErrors: { email: sparse },
+      }),
+    ).toBeNull();
+  });
+
+  // The old shape validated in one enumeration and rebuilt in another, so a
+  // getter could answer a well-formed array to the validator and a poisoned
+  // one to the rebuild. Reading each property exactly once and validating the
+  // copy closes that: the second reading never happens, so what was validated
+  // is what comes out.
+  it("reads each fieldErrors property once, keeping a two-faced getter's second reading out of the result", () => {
+    let reads = 0;
+    const fieldErrors = {
+      get email() {
+        reads += 1;
+        return reads === 1 ? ["ok"] : [{ evil: "pii" }];
+      },
+    };
+
+    const result = verified(
+      fromTheWire({ kind: "validation", code: "X", message: "m", fieldErrors }),
+    );
+
+    if (result.kind !== "validation" || result.fieldErrors === undefined) {
+      throw new Error("expected a validation payload carrying fieldErrors");
+    }
+    expect(reads).toBe(1);
+    expect(result.fieldErrors.email).toEqual(["ok"]);
+    expect(JSON.stringify(redactForClient(result))).not.toContain("pii");
+  });
+
   it("leaves an absent retryable absent rather than present-and-undefined", () => {
     const result = verified({ kind: "conflict", code: "X", message: "m" });
 
@@ -440,10 +553,23 @@ describe("isAppServerError", () => {
   // Positive control for the branded-but-malformed table below: without it a
   // drift in the brand key would make every one of those cases pass for the
   // wrong reason, leaving the payload check uncovered again.
-  it("returns true for a branded literal carrying a well-formed payload", () => {
+  it("returns true for a branded literal carrying a message and a well-formed payload", () => {
+    expect(
+      isAppServerError({
+        [APP_SERVER_ERROR_BRAND]: true,
+        message: "test",
+        serialized,
+      }),
+    ).toBe(true);
+  });
+
+  // The narrow target is an `Error` subclass, so the guard checks the minimal
+  // `Error` shape too: a branded literal with a valid payload but no `message`
+  // must not be narrowed into a type that promises `message: string`.
+  it("returns false for a branded literal missing the Error shape's message", () => {
     expect(
       isAppServerError({ [APP_SERVER_ERROR_BRAND]: true, serialized }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   // The brand alone is not enough: `AppServerError`'s only job is to carry a
@@ -524,7 +650,13 @@ describe("isAppServerError", () => {
   it.each(MALFORMED_PAYLOADS)(
     "returns false for a branded object with %s",
     (_label, shape) => {
-      const branded = { [APP_SERVER_ERROR_BRAND]: true, ...shape };
+      // `message` is present so every case here fails on the payload check
+      // itself, not on the Error-shape check pinned above.
+      const branded = {
+        [APP_SERVER_ERROR_BRAND]: true,
+        message: "x",
+        ...shape,
+      };
 
       expect(isAppServerError(branded)).toBe(false);
       // Answering `false` only matters if the value then lands somewhere safe:

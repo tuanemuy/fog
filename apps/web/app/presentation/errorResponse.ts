@@ -54,12 +54,6 @@ function isSerializedErrorKind(kind: string): kind is SerializedErrorKind {
   return Object.hasOwn(SERIALIZED_ERROR_KINDS, kind);
 }
 
-function isSerializedError(
-  value: SerializedErrorBase & { kind: string },
-): value is SerializedError {
-  return isSerializedErrorKind(value.kind);
-}
-
 const SYSTEM_ERROR_PUBLIC_MESSAGE = "System error";
 
 function errorMessage(error: unknown): string {
@@ -77,19 +71,29 @@ export function serializeError(error: unknown): SerializedError {
     return { kind: "unknown", code: null, message: errorMessage(error) };
   }
   const serialized = error.toSerialized();
-  if (isSerializedError(serialized)) {
-    return serialized;
+  // Rebuilt rather than returned by reference: `isSerializableError` only
+  // proves `toSerialized` is callable, so nothing pins the key set of the
+  // object it answered. Routing this path through `asSerializedError` makes
+  // "every `SerializedError` handed out was rebuilt from known keys" hold on
+  // both siblings, not just on `extractSerializedError`'s remnant stage.
+  const rebuilt = asSerializedError(serialized);
+  if (rebuilt !== null) {
+    return rebuilt;
   }
-  // Receiver for a `kind` outside the union. It cannot be closed by a type:
-  // this union is where each layer's variants are aggregated, so `lib/` — which
-  // every layer depends on — cannot name it back without inverting the
-  // dependency direction, and `CodedError.toSerialized()` is therefore typed
-  // only as `{ kind: string }`. `code` / `message` are carried over so a
+  // Receiver for a `kind` outside the union (and for a union `kind` whose
+  // payload fails the rebuild). It cannot be closed by a type: this union is
+  // where each layer's variants are aggregated, so `lib/` — which every layer
+  // depends on — cannot name it back without inverting the dependency
+  // direction, and `CodedError.toSerialized()` is therefore typed only as
+  // `{ kind: string }`. `code` / `message` / `retryable` are carried over so a
   // layerless error still reaches the logger with its own detail.
   return {
     kind: "unknown",
     code: serialized.code,
     message: serialized.message,
+    ...(serialized.retryable === undefined
+      ? {}
+      : { retryable: serialized.retryable }),
   };
 }
 
@@ -161,29 +165,31 @@ function hasSerializedRemnant(
   );
 }
 
-function isFieldErrors(value: unknown): value is FieldErrors {
+// Copy first, then validate the copy — one pass, each property read exactly
+// once. The ordering is load-bearing twice over: a sparse messages array
+// passes an in-place `every` (holes are skipped) but the spread materialises
+// each hole as an `undefined` element, so validating the copy rejects it; and
+// a getter / Proxy that answers differently per read never gets a second read,
+// so the value validated is the value returned. `Object.entries` also drops
+// symbol-keyed properties and the spread copies index elements only, which is
+// what extends `asSerializedError`'s rebuild guarantee below the top level —
+// an extra own property grafted onto a messages array does not survive.
+function rebuildFieldErrors(value: unknown): FieldErrors | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+    return null;
   }
-  return Object.values(value).every(
-    (messages) =>
-      Array.isArray(messages) &&
-      messages.every((message) => typeof message === "string"),
-  );
-}
-
-// `isFieldErrors` only inspects string-keyed enumerable values and array
-// elements, so a symbol-keyed property or an extra own property grafted onto a
-// messages array would survive validation by reference. `Object.entries` drops
-// the symbol keys and the array spread copies index elements only, which is
-// what extends `asSerializedError`'s rebuild guarantee below the top level.
-function rebuildFieldErrors(fieldErrors: FieldErrors): FieldErrors {
-  return Object.fromEntries(
-    Object.entries(fieldErrors).map(([field, messages]) => [
-      field,
-      [...messages],
-    ]),
-  );
+  const rebuilt: Record<string, readonly string[]> = {};
+  for (const [field, messages] of Object.entries(value)) {
+    if (!Array.isArray(messages)) return null;
+    const copy: unknown[] = [...messages];
+    if (
+      !copy.every((message): message is string => typeof message === "string")
+    ) {
+      return null;
+    }
+    rebuilt[field] = copy;
+  }
+  return rebuilt;
 }
 
 type KeysOfUnion<T> = T extends unknown ? keyof T : never;
@@ -244,8 +250,9 @@ export function asSerializedError(value: unknown): SerializedError | null {
   if (kind === "validation") {
     const { fieldErrors } = v;
     if (fieldErrors === undefined) return { kind, ...base };
-    if (!isFieldErrors(fieldErrors)) return null;
-    return { kind, ...base, fieldErrors: rebuildFieldErrors(fieldErrors) };
+    const rebuiltFieldErrors = rebuildFieldErrors(fieldErrors);
+    if (rebuiltFieldErrors === null) return null;
+    return { kind, ...base, fieldErrors: rebuiltFieldErrors };
   }
 
   return { kind, ...base };
@@ -287,10 +294,19 @@ export const UNVERIFIED_SERIALIZED_ERROR: SerializedError = Object.freeze({
  * contract the per-kind guards narrow to: `createSerializationAdapter` types
  * its `test` as `(value: unknown) => value is TInput`, and this adapter binds
  * `TInput` to `AppServerError`. See `.adr/016`.
+ *
+ * Because that class is an `Error` subclass, the guard also checks the minimal
+ * `Error` shape — `message` is a string — for the same reason
+ * `isRehydrationError` does: a bare branded object must not be narrowed into a
+ * type that promises `message: string`. `name` and `stack` stay unchecked;
+ * that residue rides on the brand.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
   if (!(APP_SERVER_ERROR_BRAND in value)) return false;
+  if (typeof (value as { message?: unknown }).message !== "string") {
+    return false;
+  }
   return (
     hasSerializedRemnant(value) && asSerializedError(value.serialized) !== null
   );

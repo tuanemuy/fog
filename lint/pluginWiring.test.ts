@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +102,27 @@ describe("no-instanceof-error.grit wiring", () => {
       }
     },
   );
+
+  // The per-root pinning above only holds while FIXTURE_ROOTS actually covers
+  // the trees `linter.includes` points the plugin at. This asserts that mirror,
+  // so a root added to `linter.includes` without a fixture under it turns red
+  // instead of going unverified. `lint/**` is the standing exemption: this test
+  // lives there, and a fixture beside it would prove nothing about the trees
+  // the ban protects (see the FIXTURE_ROOTS comment).
+  it("keeps a fixture root under every tree linter.includes points the plugin at", () => {
+    const config = JSON.parse(
+      readFileSync(join(REPO_ROOT, "biome.json"), "utf8"),
+    ) as { linter: { includes: string[] } };
+    const fixtureRoots = new Set(FIXTURE_ROOTS.map((root) => root[0]));
+    expect(
+      config.linter.includes
+        .filter((glob) => !glob.startsWith("!"))
+        .map((glob) => glob.split("/")[0])
+        .filter((root) => !root.includes("*") && root !== "lint")
+        .filter((root) => !fixtureRoots.has(root)),
+      "linter.includes points the plugin at roots with no wiring fixture; add an entry to FIXTURE_ROOTS",
+    ).toEqual([]);
+  });
 
   // KNOWN LIMITS in no-instanceof-error.grit: the snippet match does not see
   // through `ParenthesizedExpression`, and the pattern is deliberately not

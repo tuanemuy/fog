@@ -19,7 +19,9 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GRIT_FILE = join(REPO_ROOT, "lint", "no-instanceof-error.grit");
 
 // Scanned roots mirror `biome.json`'s `linter.includes` roots — the tree the
-// plugin is pointed at, `lint/` included. The paths `linter.includes` subtracts
+// plugin is pointed at, `lint/` included; the mirror is asserted below, so a
+// root added to `linter.includes` without a matching entry here turns red
+// instead of leaving its classes off the ban list. The paths `linter.includes` subtracts
 // from those roots (`components/ui/**`, `styles/**`, `templates/**`) are
 // deliberately NOT skipped here: a class declared there is still importable and
 // still `instanceof`-able from a linted file, so it still belongs on the ban list.
@@ -79,7 +81,7 @@ const walk = (dir: string, out: string[]): string[] => {
 // identifier no call site can hold anyway. (Measured on this repository: dropping
 // the `export` requirement adds zero names.)
 const CLASS_DECL =
-  /^[ \t]*(?:export[ \t]+(?:default[ \t]+)?)?(?:declare[ \t]+)?(?:abstract[ \t]+)?class[ \t]+([A-Za-z0-9_$]+)([\s\S]*?)\{/gm;
+  /^[ \t]*(?:export[ \t]+(?:default[ \t]+)?)?(?:declare[ \t]+)?(?:abstract[ \t]+)?class[ \t]+([A-Za-z0-9_$]+)/gm;
 
 // A named class expression (`const X = class extends CodedError {}`) binds the
 // same kind of stable identifier a declaration does, so a call site can hold it
@@ -87,7 +89,34 @@ const CLASS_DECL =
 // variable's — that is the identifier call sites import — and the header keeps
 // any inner name plus the `extends` clause for the base-name half below.
 const CLASS_EXPR =
-  /^[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z0-9_$]+)[^=\n]*=\s*class\b([\s\S]*?)\{/gm;
+  /^[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z0-9_$]+)[^=\n]*=\s*class\b/gm;
+
+// The rest of the header — everything between the regex match and the class
+// body's opening `{` — read with an angle-bracket depth counter rather than a
+// lazy regex: a `{` inside a type-parameter constraint
+// (`class X<T extends { a: string }> extends CodedError`) would otherwise
+// truncate the header before the heritage clause, and an `extends Error`
+// constraint (`class Retry<TError extends Error>`) would qualify a non-error
+// class. Everything inside `<...>` is dropped, so the returned header holds
+// only the heritage clause. A `>` preceded by `=` is an arrow
+// (`<T extends () => void>`), not a closer. Returns null when no depth-0 `{`
+// follows — then there is no class body and nothing to ban.
+const headerAfter = (source: string, from: number): string | null => {
+  let depth = 0;
+  let header = "";
+  for (let i = from; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "<") {
+      depth += 1;
+    } else if (ch === ">" && source[i - 1] !== "=") {
+      depth = Math.max(0, depth - 1);
+    } else if (depth === 0) {
+      if (ch === "{") return header;
+      header += ch;
+    }
+  }
+  return null;
+};
 
 // Either half is enough to qualify: a `*Error` name, or a base class whose name
 // ends in `Error` (so `class Foo extends CodedError` cannot dodge the check by
@@ -95,7 +124,10 @@ const CLASS_EXPR =
 const declaredErrorClasses = (source: string): string[] => {
   const found: string[] = [];
   for (const pattern of [CLASS_DECL, CLASS_EXPR]) {
-    for (const [, name, header] of source.matchAll(pattern)) {
+    for (const match of source.matchAll(pattern)) {
+      const name = match[1];
+      const header = headerAfter(source, match.index + match[0].length);
+      if (header === null) continue;
       if (
         name.endsWith("Error") ||
         /extends\s+[A-Za-z0-9_$.]*Error\b/.test(header)
@@ -156,6 +188,25 @@ describe("no-instanceof-error.grit ban list", () => {
     ).toEqual([]);
   });
 
+  // The forward half of the mirror the SCAN_ROOTS comment claims. A root added
+  // to `linter.includes` but not walked here is the silent direction: classes
+  // declared under it would be lintable yet never reach the ban list. Roots the
+  // scan walks beyond `linter.includes` are fine — extra coverage, not drift.
+  it("walks every directory root biome.json's linter.includes points the plugin at", () => {
+    const config = JSON.parse(
+      readFileSync(join(REPO_ROOT, "biome.json"), "utf8"),
+    ) as { linter: { includes: string[] } };
+    const includeRoots = config.linter.includes
+      .filter((glob) => !glob.startsWith("!"))
+      .map((glob) => glob.split("/")[0])
+      .filter((root) => !root.includes("*"));
+    expect(includeRoots.length).toBeGreaterThan(0);
+    expect(
+      includeRoots.filter((root) => !SCAN_ROOTS.includes(root)),
+      "linter.includes points the plugin at roots this scan does not walk; add them to SCAN_ROOTS (and a fixture root in lint/pluginWiring.test.ts)",
+    ).toEqual([]);
+  });
+
   it("has no ban-list entry without a declaring class", () => {
     const stale = banList.filter((name) => !declared.has(name));
     expect(
@@ -203,6 +254,25 @@ describe("no-instanceof-error.grit ban list — what the scan reaches", () => {
     expect(
       declaredErrorClasses("const Hidden = class extends CodedError {};"),
     ).toEqual(["Hidden"]);
+  });
+
+  it("reads past a type-parameter list to the heritage clause behind it", () => {
+    expect(
+      declaredErrorClasses(
+        "export class Weird<T extends { a: string }> extends CodedError {",
+      ),
+    ).toEqual(["Weird"]);
+    expect(
+      declaredErrorClasses(
+        "export class Arrow<T extends () => void> extends CodedError {",
+      ),
+    ).toEqual(["Arrow"]);
+  });
+
+  it("does not qualify a class by an extends constraint inside its type parameters", () => {
+    expect(
+      declaredErrorClasses("export class Retry<TError extends Error> {"),
+    ).toEqual([]);
   });
 
   // KNOWN LIMITS, restated in no-instanceof-error.grit's header. Both are
