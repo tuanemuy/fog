@@ -42,7 +42,7 @@ packages/core/src/
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
-│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, httpStatusFor
+│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, redactForClient, httpStatusFor
 │   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
@@ -59,7 +59,7 @@ packages/core/src/
         └── migrations/            SQL migrations read by wrangler
 
 packages/core/src/lib/
-└── error.ts                       CodedError base + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
+└── error.ts                       CodedError base (identity brand + isCodedError / hasSerializedKind) + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
 ```
 
 ## Domain Layer
@@ -441,16 +441,28 @@ await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 d
 
 ## Error Design
 
+Representative classes, one per layer role — **not the roster**. The roster is the ban list of `lint/no-instanceof-error.grit`, kept in sync by `lint/banList.test.ts` so there is one place to look and no second ledger to drift. That sync covers the class declarations the scan reaches; the three forms it cannot reach are listed under KNOWN LIMITS in the `.grit` header.
+
 | Layer | Error type | Location |
 |---|---|---|
 | Domain | `BusinessRuleError<FooErrorCode>` | `packages/core/src/domain/error.ts` |
 | Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors.ts` |
-| Presentation | `AppServerError` | `apps/web/app/presentation/errorResponse.ts` |
+| Presentation | `InputValidationError` | `apps/web/app/presentation/validator.ts` |
+| Presentation | `AppServerError` (transport envelope, extends `Error`) | `apps/web/app/presentation/errorResponse.ts` |
 
-Every error class extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+Every error class in that table except `AppServerError` extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, the `Symbol.for("@repo/core/CodedError")` identity brand, and two abstract members: `serializedKind` and `toSerialized()`. The latter's base return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+
+`serializedKind` is what the guards match on. Identity is tested structurally, never with `instanceof` — which is false across the SSR / RSC module-graph split and is rejected by `lint/no-instanceof-error.grit`.
+
+- **Declaring it.** The base declares `abstract readonly serializedKind: ReturnType<this["toSerialized"]>["kind"]`, so a value disagreeing with the `kind` its own override emits fails to compile (TS2416) — **but only where that override narrows its return type down to its own `kind` literal**. Leave the return type off, or annotate it in the base's own shape (`{ kind: string; … }`), and the binding degrades to `string` and the drift compiles.
+- **What actually catches drift.** A runtime check per class, `serializedKind === toSerialized().kind`, scanned in `packages/core/src/application/__tests__/errors.test.ts`, `packages/core/src/domain/__tests__/error.test.ts` and `apps/web/app/presentation/__tests__/validator.test.ts`. Add an error class, add it to that scan. Writing `readonly serializedKind: SerializedConflictError["kind"] = "conflict"` on the subclass changes neither, and documents intent.
+- **Checking it.** `isCodedError(error)` for the brand plus the shape the contract needs; `hasSerializedKind(error, kind)` for brand + discriminator, which is the one line every per-kind guard is. Pass that `kind` as `Serialized*Error["kind"]` rather than a bare literal — a typo would otherwise compile into a guard that is always `false`. The application layer's `kindGuard` factory enforces it by construction.
+- **What a guard returns.** The structural `Omit<CodedError, "toSerialized"> & { serializedKind; toSerialized() }`, never a concrete class. `Omit` rather than an intersection, which would keep both method signatures and leave `toSerialized()` at the base's wide return type.
+
+`.adr/016-symbol-for-error-brands.md` records the reasoning, including why a `serializedKind` match narrows to the contract rather than to a class.
 
 `code` is a plain string. The per-class enums are deliberately collapsed (the domain enum plus the `SerializedErrorKind` assembled in presentation cover the classification we need). `SystemErrorCode` is kept because it is used for the runtime `retryable` decision.
 
-`BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. `isBusinessRuleError(...)` narrows to `BusinessRuleError<string>`.
+`BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. On the catch side `isBusinessRuleError(...)` narrows to the contract carrying `kind: "business"`, not to `BusinessRuleError` — read `code` off it as a `string`.
 
-Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). Only the `SerializedError` union and `SerializedErrorKind` need to be appended in the presentation layer.
+Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). In the presentation layer only the `SerializedError` union and `SerializedErrorKind` need to be appended; outside it the new class still has to enter the ban list and the per-class scan named above.

@@ -1,0 +1,109 @@
+// Bans `instanceof` against this repository's error classes. Each SSR / RSC
+// module graph holds its own copy of the constructor, so `instanceof` silently
+// evaluates to false across that split. Use the `Symbol.for()` brand +
+// `serializedKind` guard functions (`isConflictError`, `isAppServerError`, …).
+//
+// MAINTENANCE — this matches the identifier as written, so a new error class is
+// NOT covered until its name is added below. Nobody has to remember that:
+// `lint/banList.test.ts` scans `apps/`, `packages/`, `infra/` and `lint/` for
+// class declarations named `*Error` or visibly extending one, and fails naming
+// any this list is missing (and any entry here whose class is gone), so the
+// omission is loud rather than silent. That makes this list the roster of every
+// error class that scan can see — which is not quite every error class; the
+// third limit below says which ones it misses, and `banList.test.ts` pins both
+// its reach and that gap with direct cases.
+//
+// WIRING — `lint/pluginWiring.test.ts` lints a throwaway fixture and asserts a
+// `category: "plugin"` diagnostic carrying this file's message comes back, so
+// deleting `biome.json`'s `plugins` line, dropping the `register_diagnostic(...)`
+// call below, or narrowing `linter.includes` off the fixture's root turns red
+// instead of quietly disarming everything above. The fixture lives under
+// `packages/core/src/` for that last one — see Placement below.
+//
+// SUPPRESSION — `// biome-ignore lint/plugin: <reason>` on the preceding line
+// (the intended use is a negative control asserting that `instanceof` really
+// does return false across a duplicated module graph). `// biome-ignore plugin:`
+// does not work, and neither does `overrides[].plugins: []` — `overrides` only
+// adds plugins, so an empty array is a no-op.
+//
+// KNOWN LIMITS, accepted:
+// - Evasion — a rebinding of any kind (an aliased import —
+//   `import { ConflictError as CE }` → `e instanceof CE` — or a local one,
+//   `const CE = ConflictError`), a namespace access (`import * as errs` →
+//   `e instanceof errs.ConflictError`) and any syntax that wraps the
+//   right-hand side in another node — parentheses (`e instanceof
+//   (ConflictError)`), a non-null assertion (`e instanceof ConflictError!`) or
+//   a type assertion (`e instanceof <new () => Error>ConflictError`; the
+//   snippet match does not see through the wrapper node) — all slip through.
+//   The rebindings are conspicuous in review; the wrappers are not, so
+//   `pluginWiring.test.ts` pins the parenthesized and non-null forms as
+//   negative cases rather than doubling every `or` entry with wrapped twins.
+// - Placement — the plugin only runs over `biome.json`'s `linter.includes`.
+//   Measured: the same `e instanceof ConflictError` yields a diagnostic under
+//   `packages/core/src/` but none in a repo-root `*.ts` or under
+//   `**/components/ui/**` (nor `**/styles/**` / `**/templates/**`, all
+//   subtracted there). Those two blind spots are not the same size: the
+//   subtracted paths sit inside roots `banList.test.ts` walks, so a class
+//   declared in one still lands on this list and only its call sites go
+//   unchecked — a repo-root `*.ts` sits outside those roots too, so a class
+//   declared there reaches neither the plugin nor this list. Today the root
+//   holds config files only, and `banList.test.ts` asserts that
+//   `linter.includes` names no directory root its scan skips, so the gap
+//   cannot widen silently. Dropping a root from `linter.includes` disarms the plugin
+//   there silently, which is why `pluginWiring.test.ts` lints a fixture under
+//   each of `packages/`, `apps/` and `infra/` rather than beside itself; that
+//   pins the three main roots one at a time, so any single root falling out of
+//   `linter.includes` turns it red.
+// - Roster — the scan reads class declarations and named class expressions
+//   (`const X = class …`) textually, so a class reaches this list only if the
+//   identifier a call site would hold ends in `Error` or the base it names does.
+//   The type-parameter list is skipped with a depth counter before the header
+//   is read, so a `{` inside a constraint (`class X<T extends { a: string }>`)
+//   does not hide the heritage clause and a `T extends Error` constraint does
+//   not qualify a non-error class — both pinned in `banList.test.ts`. Three
+//   forms therefore never arrive on their own:
+//   `export default class extends Error {}` (anonymous), a non-`*Error` name
+//   over an aliased base (`import { CodedError as Base }` →
+//   `class Weird extends Base`), and a class expression wrapped in a call
+//   (`export const X = mixin(class extends CodedError {})` — the scan requires
+//   `class` directly after the `=`, so the wrapper hides it). The first is
+//   beyond this plugin either way — an anonymous default export gives its call
+//   sites no stable identifier to match. The second is a real hole, of the same
+//   shape as the alias evasion above and equally conspicuous in review. The
+//   third is a hole of a different kind: call sites do hold the stable binding
+//   `X`, so the plugin can ban it — but only if the name is added to the list
+//   by hand, since the scan never surfaces it. All three are pinned as negative
+//   cases in `banList.test.ts`. Every other form is covered: `export class`, `export abstract class`,
+//   `export default class Named`, a bare `class X {}` re-exported by a later
+//   `export { X }`, and a class expression bound to a `const` / `let` / `var`
+//   (`export const X = class extends CodedError {}`) — the last only in its
+//   plain shape, where neither a type annotation nor a comment sits between the
+//   binding and the `class` keyword.
+//
+// Why not widen to a regex such as `r"^[A-Za-z0-9_.]*Error$"` plus an allow-list
+// (measured to work in Biome's GritQL, and it does close the namespace evasion):
+// the allow-list is only `Error` today, but it grows with every builtin or
+// third-party `*Error` the repo starts using, and the alias evasion survives the
+// switch either way. The one real advantage — that a regex needs no maintenance
+// when a class is added — is what `banList.test.ts` already buys.
+`$value instanceof $type` where {
+  $type <: or {
+    // packages/core/src/lib/error.ts
+    `CodedError`,
+    // packages/core/src/domain/error.ts
+    `BusinessRuleError`,
+    `RehydrationError`,
+    // packages/core/src/application/errors.ts
+    `ApplicationError`,
+    `NotFoundError`,
+    `ConflictError`,
+    `ValidationError`,
+    `UnauthorizedError`,
+    `ForbiddenError`,
+    `SystemError`,
+    // apps/web/app/presentation/
+    `AppServerError`,
+    `InputValidationError`
+  },
+  register_diagnostic(span=$type, message="Use the guard function (isXxxError) instead of instanceof for error type checks.")
+}

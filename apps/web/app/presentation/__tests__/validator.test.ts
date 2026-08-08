@@ -1,0 +1,239 @@
+import {
+  isApplicationError,
+  isValidationError,
+  ValidationError,
+} from "@repo/core/application/errors";
+import { isCodedError } from "@repo/core/lib/error";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import {
+  extractSerializedError,
+  httpStatusFor,
+  isAppServerError,
+  type SerializedValidationError,
+} from "../errorResponse";
+import { InputValidationError, validateInput } from "../validator";
+
+// Nested so the dotted-path flattening is exercised alongside a top-level key.
+const schema = z.object({
+  email: z.string().min(1, { message: "required" }),
+  profile: z.object({ name: z.string().min(1, { message: "required" }) }),
+});
+
+const validate = validateInput(schema);
+
+function captureFrom(
+  input: unknown,
+  run: (input: unknown) => unknown = validate,
+): unknown {
+  try {
+    run(input);
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected validateInput to throw");
+}
+
+describe("validateInput", () => {
+  it("returns the parsed value when the shape matches", () => {
+    expect(
+      validate({ email: "a@example.com", profile: { name: "A" } }),
+    ).toEqual({ email: "a@example.com", profile: { name: "A" } });
+  });
+
+  // The transport boundary is the only place a shape failure is allowed to be
+  // reported from, and it has to arrive as the same `validation` kind the
+  // application layer uses — the auth forms read their wording off `code` and
+  // the status mapping off `kind`.
+  it("reports a shape failure as the validation kind and a 422", () => {
+    const caught = captureFrom({ email: "", profile: { name: "" } });
+
+    expect(isAppServerError(caught)).toBe(true);
+
+    const serialized = extractSerializedError(caught);
+
+    expect(serialized).toMatchObject({
+      kind: "validation",
+      code: "INVALID_INPUT",
+      fieldErrors: {
+        email: ["required"],
+        "profile.name": ["required"],
+      },
+    });
+    expect(httpStatusFor(serialized)).toBe(422);
+  });
+
+  // A client can POST `null`, a bare string or an array just as easily as a
+  // malformed object, and this boundary is the only guard in front of the
+  // usecase — so the top-level type mismatch has to arrive as the same
+  // `validation` / 422 shape a field failure does, not escape as a zod throw.
+  it.each([
+    { label: "null", input: null },
+    { label: "undefined", input: undefined },
+    { label: "a string", input: "boom" },
+    { label: "an array", input: [] },
+  ])("rejects $label as a validation failure", ({ input }) => {
+    const caught = captureFrom(input);
+
+    expect(isAppServerError(caught)).toBe(true);
+
+    const serialized = extractSerializedError(caught);
+
+    expect(serialized).toMatchObject({
+      kind: "validation",
+      code: "INVALID_INPUT",
+    });
+    expect(httpStatusFor(serialized)).toBe(422);
+  });
+
+  // Pins current behaviour rather than endorsing it: a top-level type
+  // mismatch has an empty `issue.path`, which the dotted-path join flattens
+  // to the `""` key. `errorDisplay.formatFieldErrors` enumerates every entry
+  // via `Object.entries` — it does not look keys up by field name — so this
+  // key's raw English zod message is rendered to the UI as-is (only the
+  // `FIELD_LABELS` label is dropped). If the flatten or that rendering ever
+  // changes, this is the test that says so.
+  it("files a top-level type mismatch under the empty-string key", () => {
+    const serialized = extractSerializedError(
+      captureFrom(null),
+    ) as SerializedValidationError;
+
+    expect(Object.keys(serialized.fieldErrors ?? {})).toEqual([""]);
+    expect(serialized.fieldErrors?.[""]).toHaveLength(1);
+  });
+
+  // Two constraints failing on one field must both reach the client — the
+  // accumulator's "append to the existing bucket" branch is otherwise dead in
+  // this suite, and a mutation that replaces the bucket (last message wins)
+  // would stay green without this pin.
+  it("accumulates every failed constraint's message under the same key", () => {
+    const twoConstraints = validateInput(
+      z.object({
+        password: z
+          .string()
+          .min(8, { message: "too short" })
+          .regex(/[0-9]/, { message: "needs a digit" }),
+      }),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom({ password: "abc" }, twoConstraints),
+    ) as SerializedValidationError;
+
+    expect(serialized.fieldErrors?.password).toEqual([
+      "too short",
+      "needs a digit",
+    ]);
+  });
+
+  // The auth schemas' fixed keys cannot produce these paths, but
+  // `validateInput` is a generic API: a `z.record` schema over a `JSON.parse`d
+  // body puts client-chosen keys on `issue.path`. Keys inherited from
+  // `Object.prototype` must come back as own buckets — a plain-object
+  // accumulator would read `Object.prototype.constructor` and TypeError on
+  // `push`, degrading the 422 to a 500. (`__proto__` is not in this input on
+  // purpose: zod's record traversal skips that key, so it never reaches the
+  // flatten by this route — the superRefine case below is what does.)
+  it("keeps prototype-colliding path keys as own buckets", () => {
+    const recordValidate = validateInput(
+      z.record(z.string(), z.string().min(1, { message: "required" })),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom(
+        JSON.parse('{"constructor": "", "toString": "", "hasOwnProperty": ""}'),
+        recordValidate,
+      ),
+    ) as SerializedValidationError;
+
+    expect(serialized.kind).toBe("validation");
+    expect(httpStatusFor(serialized)).toBe(422);
+    expect(serialized.fieldErrors).toEqual({
+      constructor: ["required"],
+      toString: ["required"],
+      hasOwnProperty: ["required"],
+    });
+  });
+
+  // An own `__proto__` key must not be emitted at all: `rebuildFieldErrors`
+  // on the consuming side rejects any payload carrying one, so emitting it
+  // would degrade the whole response to `unknown`. Its message is dropped and
+  // the generic INVALID_INPUT speaks for it. Zod's own parsers never put a
+  // bare `__proto__` on `issue.path`, so a schema that writes the path itself
+  // is the one route to this branch.
+  it("withholds a __proto__ path key instead of emitting it", () => {
+    const refineValidate = validateInput(
+      z.unknown().superRefine((_value, ctx) => {
+        ctx.addIssue({ code: "custom", message: "nope", path: ["__proto__"] });
+        ctx.addIssue({ code: "custom", message: "required", path: ["email"] });
+      }),
+    );
+
+    const serialized = extractSerializedError(
+      captureFrom({}, refineValidate),
+    ) as SerializedValidationError;
+
+    expect(serialized.kind).toBe("validation");
+    expect(httpStatusFor(serialized)).toBe(422);
+    const fieldErrors = serialized.fieldErrors ?? {};
+    expect(Object.hasOwn(fieldErrors, "__proto__")).toBe(false);
+    expect(fieldErrors).toEqual({ email: ["required"] });
+  });
+
+  // The thrown payload is what the client actually sees, so pinning that it
+  // carries the same `kind` an application-layer `ValidationError` reports is
+  // what keeps the two producers of `validation` interchangeable downstream.
+  it("shares the discriminator isValidationError matches on", () => {
+    const applicationFailure = new ValidationError("TEST", "test");
+
+    expect(isValidationError(applicationFailure)).toBe(true);
+    expect(extractSerializedError(captureFrom({})).kind).toBe(
+      applicationFailure.serializedKind,
+    );
+  });
+});
+
+describe("InputValidationError", () => {
+  // The guard match itself, not the thrown payload: a transport-shape failure
+  // that reports `kind: "validation"` on the wire (HTTP 422) but misses
+  // `isValidationError` is the regression this pins.
+  it("is matched by isValidationError", () => {
+    const error = new InputValidationError({ email: ["required"] });
+
+    expect(isValidationError(error)).toBe(true);
+    // Reached through the guard so its structural return type — not the
+    // concrete class — is what supplies `toSerialized`. The annotation is the
+    // assertion: narrowing that hands back the base `{ kind: string }` payload
+    // still satisfies every `toEqual` below, so only a compile error catches
+    // it.
+    if (!isValidationError(error)) throw new Error("unreachable");
+    const serialized: SerializedValidationError = error.toSerialized();
+    expect(serialized).toEqual({
+      kind: "validation",
+      code: "INVALID_INPUT",
+      message: "Invalid input",
+      retryable: false,
+      fieldErrors: { email: ["required"] },
+    });
+  });
+
+  // The counterweight: sharing a `serializedKind` with the application layer
+  // must not make a presentation-layer error an `ApplicationError`. That guard
+  // matches a brand of its own, which `CodedError` subclasses outside the
+  // application layer do not carry.
+  it("is a CodedError but not an ApplicationError", () => {
+    const error = new InputValidationError({});
+
+    expect(isCodedError(error)).toBe(true);
+    expect(isApplicationError(error)).toBe(false);
+  });
+
+  // `serializedKind` and `toSerialized().kind` are written independently, so a
+  // drift between them would make the guard and the HTTP status disagree.
+  it("reports a serializedKind that matches its serialized payload", () => {
+    const error = new InputValidationError({});
+
+    expect(error.serializedKind).toBe(error.toSerialized().kind);
+    expect(httpStatusFor(error.toSerialized())).toBe(422);
+  });
+});

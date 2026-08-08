@@ -4,11 +4,11 @@ import { createMiddleware } from "@tanstack/react-start";
 import { setResponseStatus } from "@tanstack/react-start/server";
 import {
   AppServerError,
+  extractSerializedError,
   httpStatusFor,
-  isAppServerError,
   redactForClient,
   type SerializedError,
-  serializeError,
+  UNVERIFIED_SERIALIZED_ERROR,
 } from "./errorResponse";
 
 // Wraps the entire server-function pipeline so throws from `inputValidator`
@@ -26,6 +26,10 @@ export const errorResponseMiddleware = createMiddleware({
   try {
     return await next();
   } catch (error) {
+    // `isNotFound` is `obj?.isNotFound === true`, so it rides the invariant
+    // `extractSerializedError`'s JSDoc states — breaking it lets a decoded
+    // payload skip classification entirely. `isRedirect` does not: it tests
+    // `instanceof Response`, which no plain object can satisfy.
     if (isRedirect(error) || isNotFound(error)) throw error;
     const appError = await toClientError(error);
     setResponseStatus(httpStatusFor(appError.serialized));
@@ -41,10 +45,16 @@ export const errorResponseMiddleware = createMiddleware({
  * never reach the middleware's `catch`. Leaves that read protected data
  * wrap their loading in this so redaction and logging still happen.
  *
- * It cannot restore the HTTP status (the response is already committed) or
- * the serialized `kind` (the RSC boundary does not run
- * `appServerErrorAdapter`), so every streamed failure reaches the client as
- * `kind: "unknown"` — both failing towards less information.
+ * It classifies the failure the same way the middleware does — including a
+ * failure that already crossed a serialization boundary, whose `kind` is read
+ * back from its surviving payload — so redaction and the `system` / `unknown`
+ * logging branch see the kind the usecase earned.
+ *
+ * What it cannot do is put that classification back on the wire. The HTTP
+ * status is already committed, and the RSC boundary does not run
+ * `appServerErrorAdapter`, so unless the `serialized` payload survives that
+ * boundary the client reads the failure as `kind: "unknown"` — both failing
+ * towards less information.
  */
 export async function guardStreamedRender<T>(
   load: () => Promise<T>,
@@ -59,10 +69,25 @@ export async function guardStreamedRender<T>(
 
 // The single redaction point: the raw serialized form goes to the injected
 // `Logger` for ops triage, the client only ever sees `redactForClient(...)`.
+//
+// Classifying here is what put `extractSerializedError`'s structural stage on
+// the server side, so this function is the reason its invariant — a thrown
+// value's shape never derives from external input — has to hold. Read the
+// JSDoc there before routing a new kind of value into this catch.
 async function toClientError(error: unknown): Promise<AppServerError> {
-  const rawSerialized = isAppServerError(error)
-    ? error.serialized
-    : serializeError(error);
+  // Not `isAppServerError` + `serializeError`: the brand does not survive a
+  // serialization boundary, so an error that already crossed one would lose its
+  // `kind` here and a 409 / 422 would leave as a 500.
+  //
+  // Last-resort backstop for the boundary catch, since the remnant stage can
+  // still throw on a hostile accessor. A secondary throw would leave the
+  // middleware's `catch` and skip status, redaction and logging.
+  let rawSerialized: SerializedError;
+  try {
+    rawSerialized = extractSerializedError(error);
+  } catch {
+    rawSerialized = UNVERIFIED_SERIALIZED_ERROR;
+  }
 
   if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
     await logServerError(error, rawSerialized);

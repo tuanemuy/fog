@@ -33,3 +33,9 @@ wrangler.*.production.toml
 
 # Test run evidence / reports written by the verification scripts.
 .artifacts/
+
+# Fixture written by `lint/pluginWiring.test.ts` and removed in its `finally`.
+# It has to sit under a linted root (`packages/**`) for the test to mean
+# anything, hence the repo-wide pattern; the test passes
+# `--vcs-use-ignore-file=false` so Biome still lints it.
+**/*.tmp.ts

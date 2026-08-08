@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -11,6 +11,7 @@
       "apps/**",
       "packages/**",
       "infra/**",
+      "lint/**",
       "*.ts",
       "*.json",
       "!**/routeTree.gen.ts",
@@ -28,12 +29,13 @@
       "apps/**",
       "packages/**",
       "infra/**",
+      "lint/**",
       "!**/components/ui/**",
       "!**/styles/**",
       "!**/templates/**"
     ],
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "nursery": {},
       "style": {
         "noParameterAssign": "error",
@@ -52,6 +54,7 @@
       }
     }
   },
+  "plugins": ["lint/no-instanceof-error.grit"],
   "javascript": {
     "formatter": {
       "quoteStyle": "double"

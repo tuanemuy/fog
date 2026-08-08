@@ -10,6 +10,7 @@ Guidance for Claude Code working in this repository.
 - Default to no comments. Add one only when the WHY is non-obvious — a hidden constraint, an invariant, a workaround. Library-level JSDoc on exported APIs is welcome.
 - Validate at the boundaries (transport in, value-object construction); trust the static type in between.
 - Keep cross-cutting concerns (clock, id generation, logging) behind ports so domain and application code stays deterministic and testable.
+- Any guarantee written in `CLAUDE.md`, an ADR or `docs/` needs either a test or a type that fails when it breaks, or its limit stated alongside it. Prose that restates what the code does, with nothing holding the two together, drifts. Give the limit its own sentence or bullet — folding it into the guarantee's clause is what makes these documents unreadable, and the rationale for a rejected alternative belongs in an ADR, not in the JSDoc of the thing it was rejected for.
 
 ## Workspace layout
 
@@ -18,7 +19,7 @@ pnpm monorepo. One lockfile at the root; packages resolve each other via package
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
 - `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, the Cloudflare server entry and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle).
 - `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering.
-- Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
+- Root — shared tooling only: Biome (with the GritQL lint plugin in `lint/`), vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
 A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@repo/core": "workspace:*"` and owns its DI wiring or reuses one from `packages/core/src/application/di/`. No tsconfig `paths` mirror is needed.
 
@@ -85,8 +86,10 @@ Every effect an operation produces beyond its own business write obeys this cont
 
 ## Error handling
 
-- Errors are class hierarchies that each carry their own `kind`-tagged serialized form (`toSerialized()`). The presentation layer serializes structurally — no `instanceof` enumeration of concrete classes.
+- Errors are class hierarchies that each carry their own `kind`-tagged serialized form (`toSerialized()`). Identity is answered structurally — a per-kind guard checks a `Symbol.for()` brand plus a `serializedKind` comparison; other guards verify different subsets — because `instanceof` fails across SSR/RSC module graphs, where each graph holds a separate copy of the constructor. `serializedKind` is many-to-one on purpose (the application layer's `ValidationError` and the presentation layer's `InputValidationError` both report `"validation"`), so a per-kind guard narrows to the contract it matched, never to a class. Guard shapes, and what each one does and does not verify, live in library-level JSDoc — `packages/core/src/lib/error.ts` and the per-layer guards built on it; `.adr/016` records why.
+- `instanceof` against those classes is rejected by `lint/no-instanceof-error.grit`, a GritQL plugin the root `biome.json` loads; `lint/pluginWiring.test.ts` turns red if that wiring is removed. The plugin matches class names literally, so `lint/banList.test.ts` scans `apps` / `packages` / `infra` / `lint` for class declarations and fails naming any the ban list is missing, and any entry whose class is gone. That makes the ban list the repository's error-class roster. Its limit: the roster covers the declaration forms the scan reaches, and the three it cannot reach are listed under KNOWN LIMITS in the `.grit` header. A deliberate use (a negative control asserting `instanceof` really does fail) is suppressed with `// biome-ignore lint/plugin: <reason>`.
 - HTTP status mapping is presentation-only, driven by the serialized `kind`. Errors themselves do not carry transport concerns.
+- Never re-throw a value that came off the wire (a request body, an RPC payload) as-is — translate it into an error class first. The server-side classification in `extractSerializedError` rests on the invariant that no thrown value's shape derives from external input; its JSDoc in `apps/web/app/presentation/errorResponse.ts` and `.adr/016` spell out what breaks when it fails, and prose is the only thing holding it — no type or lint can.
 - Avoid broad `try / catch` in ordinary application logic. Use it only at explicit boundaries (server-function serialization, the Durable Object's RPC entry points, per-job tolerance in the job runner, per-row tolerance in the Outbox relay, the fail-closed migration gate inside `alarm()`, and the queue consumers — the mail consumer and the DLQ handler — which turn a failure into a queue retry rather than letting it escape the `queue()` handler).
 - Errors cross the request Worker ↔ Durable Object boundary as a value envelope (`{ ok: true, value } | { ok: false, error: SerializedError }`), never as a thrown custom class — RPC does not preserve the structural serialization contract. The DO's RPC entry catches and returns `toSerialized()`; the calling adapter additionally translates platform failures raised by the stub call itself (the DO was unreachable or died), since those never enter the envelope. Both are folded into the same `SerializedError` before reaching the error-response middleware.
 

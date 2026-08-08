@@ -63,7 +63,7 @@
     "deploy:production:all:dry": "pnpm --filter @repo/web deploy:production:all:dry"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
+    "@biomejs/biome": "^2.5.5",
     "@cloudflare/vitest-pool-workers": "^0.16.4",
     "@types/node": "^25.7.0",
     "@typescript/native-preview": "7.0.0-dev.20260513.1",

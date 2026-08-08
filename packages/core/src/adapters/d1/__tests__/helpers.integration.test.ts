@@ -1,4 +1,14 @@
-import { isConflictError, isSystemError } from "@repo/core/application/errors";
+import {
+  ConflictError,
+  isConflictError,
+  isSystemError,
+} from "@repo/core/application/errors";
+import {
+  BusinessRuleError,
+  isBusinessRuleError,
+  isRehydrationError,
+  RehydrationError,
+} from "@repo/core/domain/error";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { mapDbError } from "../repositories/helpers";
@@ -109,5 +119,94 @@ describe("mapDbError SQLITE_CONSTRAINT_* classification (integration)", () => {
     if (isSystemError(caught)) {
       expect(caught.code).toBe("DATABASE_ERROR");
     }
+  });
+});
+
+// The pass-through is the intent, not a side effect of the guard being wide.
+// `mapDbError` translates driver-native failures only, so an error already
+// speaking the shared contract is re-thrown by identity — flattening it into
+// `SystemError(DATABASE_ERROR)` would erase a classification another layer
+// deliberately chose. The two cases straddle the layer boundary on purpose:
+// `isCodedError` spans both, where the `isApplicationError` it replaced would
+// have flattened the domain one.
+describe("mapDbError contract pass-through (integration)", () => {
+  const PASSED_THROUGH = [
+    {
+      label: "a domain-layer BusinessRuleError",
+      build: () =>
+        new BusinessRuleError("IDENTITY_EMAIL_TOO_LONG", "Email is too long"),
+    },
+    {
+      label: "an application-layer ConflictError",
+      build: () => new ConflictError("OPTIMISTIC_LOCK_FAILURE", "stale write"),
+    },
+  ];
+
+  it.each(PASSED_THROUGH)("rethrows $label by identity", async (testCase) => {
+    const thrown = testCase.build();
+
+    let caught: unknown;
+    try {
+      await mapDbError("pass-through", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(thrown);
+    expect(isSystemError(caught)).toBe(false);
+  });
+
+  it("leaves a BusinessRuleError answering the domain guard, not an application one", async () => {
+    const thrown = new BusinessRuleError(
+      "IDENTITY_EMAIL_TOO_LONG",
+      "Email is too long",
+    );
+
+    let caught: unknown;
+    try {
+      await mapDbError("pass-through", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isBusinessRuleError(caught)).toBe(true);
+    expect(isConflictError(caught)).toBe(false);
+  });
+
+  // The fail-safe half of the pass-through: `RehydrationError` is not a
+  // `CodedError`, so a repository that skips its own `reconstruct`-site
+  // translation lands in the driver branch and degrades to
+  // `SystemError(DATABASE_ERROR)` — still a 5xx, never a client-visible
+  // business error. Pins the "deliberately no `isRehydrationError` branch"
+  // comment in `mapDbError`: adding one that passes the error through turns
+  // this red.
+  it("degrades a RehydrationError to SystemError(DATABASE_ERROR) instead of passing it through", async () => {
+    const thrown = new RehydrationError(
+      "corrupt row",
+      new BusinessRuleError("IDENTITY_EMAIL_TOO_LONG", "Email is too long"),
+    );
+
+    let caught: unknown;
+    try {
+      await mapDbError("rehydration escape", async () => {
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBe(thrown);
+    expect(isRehydrationError(caught)).toBe(false);
+    expect(isBusinessRuleError(caught)).toBe(false);
+    expect(isSystemError(caught)).toBe(true);
+    if (isSystemError(caught)) {
+      expect(caught.code).toBe("DATABASE_ERROR");
+      expect(caught.toSerialized().kind).toBe("system");
+    }
+    expect((caught as Error).cause).toBe(thrown);
   });
 });

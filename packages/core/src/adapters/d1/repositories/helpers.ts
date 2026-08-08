@@ -1,9 +1,9 @@
 import {
-  ApplicationError,
   ConflictError,
   SystemError,
   SystemErrorCode,
 } from "@repo/core/application/errors";
+import { isCodedError } from "@repo/core/lib/error";
 import { OCC_GUARD_CHECK_NAME } from "../schema";
 
 // Walks the `cause` chain because driver errors (D1's `Error_` from
@@ -88,7 +88,22 @@ export async function mapDbError<T>(
   try {
     return await fn();
   } catch (error) {
-    if (error instanceof ApplicationError) throw error;
+    // Only driver-native failures are ours to translate; anything already
+    // speaking the shared contract is re-thrown by identity, because flattening
+    // it into `SystemError(DATABASE_ERROR)` would erase a classification
+    // another layer deliberately chose.
+    //
+    // Deliberately no `isRehydrationError` branch: translating one needs the
+    // aggregate that failed, so each repository does it at its own
+    // `reconstruct` call site. Skipping that step lands here and degrades to
+    // `DATABASE_ERROR` — still a 5xx.
+    //
+    // `isCodedError` passes `BusinessRuleError` through, so a `reconstruct`
+    // that lets a value object's error escape unwrapped surfaces an integrity
+    // failure as a client-visible 422. Nothing here can detect that, so each
+    // repository owes a corrupt-row conformance test — see `.adr/017`;
+    // `userRepository.integration.test.ts` is the reference.
+    if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {
       throw new ConflictError(
