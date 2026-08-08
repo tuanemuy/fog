@@ -6,6 +6,7 @@ import {
   extractSerializedError,
   isAppServerError,
   type SerializedError,
+  type SerializedErrorKind,
   UNVERIFIED_SERIALIZED_ERROR,
 } from "../errorResponse";
 
@@ -68,54 +69,66 @@ describe("appServerErrorAdapter", () => {
 
   // The counterweight to the two `fromSerializable` tables below: verification
   // that rejects too much is a silent outage on the outbound leg, where every
-  // one of these is a payload a usecase legitimately produced. Each variant of
-  // the union appears once, including the two that carry an optional key.
-  const ROUNDTRIP_SAMPLES = [
-    {
+  // one of these is a payload a usecase legitimately produced. Typed as a
+  // total record so a new member of the union fails to compile here until it
+  // gets a roundtrip sample — including the ones that carry an optional key.
+  const ROUNDTRIP_SAMPLES_BY_KIND = {
+    business: {
       kind: "business",
       code: "IDENTITY_EMAIL_TOO_LONG",
       message: "Email is too long",
       retryable: false,
     },
-    {
+    notFound: {
       kind: "notFound",
       code: "USER_NOT_FOUND",
       message: "No such user",
       retryable: false,
     },
-    {
+    conflict: {
       kind: "conflict",
       code: "EMAIL_ALREADY_REGISTERED",
       message: "Email already registered",
       retryable: false,
     },
-    {
+    unauthorized: {
       kind: "unauthorized",
       code: "SESSION_REQUIRED",
       message: "Sign in required",
       retryable: false,
     },
-    {
+    forbidden: {
       kind: "forbidden",
       code: "NOT_RESOURCE_OWNER",
       message: "Not the owner",
       retryable: false,
     },
-    {
+    validation: {
       kind: "validation",
       code: "INVALID_CREDENTIALS",
       message: "Invalid email or password",
       retryable: false,
       fieldErrors: { email: ["Invalid email or password"] },
     },
-    {
+    system: {
       kind: "system",
       code: "DATABASE_ERROR",
       message: "Database unavailable",
       retryable: true,
     },
-    { kind: "unknown", code: null, message: "Unexpected error" },
-  ] as const satisfies ReadonlyArray<SerializedError>;
+    unknown: { kind: "unknown", code: null, message: "Unexpected error" },
+  } as const satisfies Record<SerializedErrorKind, SerializedError>;
+
+  const ROUNDTRIP_SAMPLES = Object.values(ROUNDTRIP_SAMPLES_BY_KIND);
+
+  // The half the `satisfies` cannot hold: the record type ties the key set to
+  // the union but not each sample to its key, so a sample filed under the
+  // wrong kind would silently shrink the roundtrip coverage.
+  it("keys each roundtrip sample by its own kind", () => {
+    for (const [kind, sample] of Object.entries(ROUNDTRIP_SAMPLES_BY_KIND)) {
+      expect(sample.kind).toBe(kind);
+    }
+  });
 
   it.each(ROUNDTRIP_SAMPLES)(
     "carries a $kind payload through the roundtrip unchanged",

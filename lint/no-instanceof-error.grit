@@ -76,7 +76,9 @@
 //   cases in `banList.test.ts`. Every other form is covered: `export class`, `export abstract class`,
 //   `export default class Named`, a bare `class X {}` re-exported by a later
 //   `export { X }`, and a class expression bound to a `const` / `let` / `var`
-//   (`export const X = class extends CodedError {}`).
+//   (`export const X = class extends CodedError {}`) — the last only in its
+//   plain shape, where neither a type annotation nor a comment sits between the
+//   binding and the `class` keyword.
 //
 // Why not widen to a regex such as `r"^[A-Za-z0-9_.]*Error$"` plus an allow-list
 // (measured to work in Biome's GritQL, and it does close the namespace evasion):

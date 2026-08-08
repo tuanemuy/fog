@@ -103,14 +103,26 @@ type NarrowedByKind<
  * Taking the kind as `TSerialized["kind"]` is also what enforces
  * `hasSerializedKind`'s calling convention: its own `TKind extends string`
  * accepts any string, so a typo would compile into a guard that is always
- * `false`. Here it is a compile error.
+ * `false`. Here it is a compile error. The `= never` default is what closes
+ * the loophole: TypeScript cannot infer `TSerialized` from the indexed-access
+ * position `TSerialized["kind"]`, so an explicit-argument-free call would
+ * otherwise fall back to the constraint and accept any string — with the
+ * default it degrades to `never` and no argument can be passed at all.
  */
-function kindGuard<TSerialized extends SerializedErrorBase & { kind: string }>(
+function kindGuard<
+  TSerialized extends SerializedErrorBase & { kind: string } = never,
+>(
   kind: TSerialized["kind"],
 ): (error: unknown) => error is NarrowedByKind<TSerialized> {
   return (error): error is NarrowedByKind<TSerialized> =>
     hasSerializedKind(error, kind);
 }
+
+// Type pin for the claim above; lives here because `kindGuard` is
+// module-private. Omitting the type argument must not compile.
+// @ts-expect-error -- without an explicit type argument, `kind` is `never`
+const _kindGuardRequiresTypeArgument = () => kindGuard("notFound");
+void _kindGuardRequiresTypeArgument;
 
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";

@@ -107,20 +107,18 @@ export function serializeError(error: unknown): SerializedError {
     // second trigger means this branch fires precisely when the payload already
     // failed those checks, so an ill-typed value falls back (`code` to null,
     // `message` to `errorMessage`, `retryable` to absent) instead of riding a
-    // type it does not honour into `AppServerError.serialized`.
-    const source = serialized as Partial<
+    // type it does not honour into `AppServerError.serialized`. Destructured
+    // once, like `asSerializedError`'s own read: a check-read followed by a
+    // value-read would hand a two-faced getter's second answer — one the
+    // checks never saw — into the result.
+    const { code, message, retryable } = serialized as Partial<
       Record<"code" | "message" | "retryable", unknown>
     >;
     return {
       kind: "unknown",
-      code: typeof source.code === "string" ? source.code : null,
-      message:
-        typeof source.message === "string"
-          ? source.message
-          : errorMessage(error),
-      ...(typeof source.retryable === "boolean"
-        ? { retryable: source.retryable }
-        : {}),
+      code: typeof code === "string" ? code : null,
+      message: typeof message === "string" ? message : errorMessage(error),
+      ...(typeof retryable === "boolean" ? { retryable } : {}),
     };
   } catch {
     return unknownFrom(error);

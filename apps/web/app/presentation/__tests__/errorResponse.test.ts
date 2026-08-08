@@ -211,6 +211,49 @@ describe("serializeError", () => {
     expect("retryable" in result).toBe(false);
   });
 
+  // The fallback destructures the payload once, so its `typeof` checks and the
+  // value it carries over come from the same reading — a check-read followed by
+  // a value-read would hand a two-faced getter's later answer into the result.
+  // Each property is read exactly twice in total: once by `asSerializedError`'s
+  // own destructure (whose answer is discarded when the kind falls outside the
+  // union) and once by the fallback's.
+  it("reads each fallback property once, keeping a two-faced getter's later readings out of the result", () => {
+    const reads = { code: 0, message: 0, retryable: 0 };
+    class TwoFacedError extends CodedError {
+      override readonly name = "TwoFacedError";
+      readonly serializedKind: SerializedLayerlessError["kind"] = "layerless";
+
+      override toSerialized(): SerializedLayerlessError {
+        return {
+          kind: "layerless",
+          get code() {
+            reads.code += 1;
+            return reads.code <= 2 ? "X" : { evil: "pii" };
+          },
+          get message() {
+            reads.message += 1;
+            return reads.message <= 2 ? "boom" : { evil: "pii" };
+          },
+          get retryable() {
+            reads.retryable += 1;
+            return reads.retryable <= 2 ? true : "yes";
+          },
+        } as unknown as SerializedLayerlessError;
+      }
+    }
+
+    const result = serializeError(new TwoFacedError("X", "boom"));
+
+    expect(reads).toEqual({ code: 2, message: 2, retryable: 2 });
+    expect(result).toEqual({
+      kind: "unknown",
+      code: "X",
+      message: "boom",
+      retryable: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("pii");
+  });
+
   // The union-kind branch used to hand `toSerialized()`'s object back by
   // reference, so an extra key riding on it would survive into the value the
   // middleware spreads through `redactForClient`. These two pin the rebuild

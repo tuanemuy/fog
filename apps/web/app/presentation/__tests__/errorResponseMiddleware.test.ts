@@ -216,6 +216,31 @@ describe("errorResponseMiddleware", () => {
     expect(logger.entries).toEqual([]);
   });
 
+  // The counterpart pin for `isRedirect`, which the middleware's comment says
+  // does NOT ride that invariant: it is `obj instanceof Response &&
+  // !!obj.options`, which no plain object — and so no decoded payload — can
+  // satisfy. A redirect-shaped plain object must therefore be classified like
+  // any other thrown value: wrapped, redacted, 500, logged. If a router
+  // upgrade makes `isRedirect` structural, the external-input bypass doubles
+  // silently — this test is what goes red instead.
+  it("classifies a redirect-shaped plain object instead of passing it through", async () => {
+    const shaped = { isRedirect: true, options: { to: "/login" } };
+
+    expect(isRedirect(shaped)).toBe(false);
+
+    const caught = await captureFrom(run, shaped);
+
+    expect(caught).not.toBe(shaped);
+    expect(isAppServerError(caught)).toBe(true);
+    expect(extractSerializedError(caught)).toEqual({
+      kind: "unknown",
+      code: null,
+      message: "System error",
+    });
+    expect(mocks.statuses).toEqual([500]);
+    expect(logger.byLevel("error")).toHaveLength(1);
+  });
+
   // The login form reads its wording off `code`, so the
   // boundary has to carry the usecase's code and field errors through
   // untouched — and must not treat an expected credential failure as an
