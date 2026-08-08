@@ -33,13 +33,8 @@ const BUSINESS_KIND: SerializedBusinessError["kind"] = "business";
  *
  * Written out rather than generated the way the application layer generates its
  * six guards — that factory lives in `application/errors.ts`, and the domain
- * must not depend outward on it.
- *
- * `toSerialized` is removed from `CodedError` rather than intersected over it,
- * matching what that factory's `NarrowedByKind` does and for the same reason:
- * an intersection keeps both method signatures and overload resolution picks
- * the base one, leaving `toSerialized()` at the wide
- * `SerializedErrorBase & { kind: string }`.
+ * must not depend outward on it. The `Omit` mirrors that factory's
+ * `NarrowedByKind` for the same reason; see `.adr/016`.
  */
 export function isBusinessRuleError(error: unknown): error is Omit<
   CodedError,
@@ -54,8 +49,7 @@ export function isBusinessRuleError(error: unknown): error is Omit<
 /**
  * Identity brand for {@link RehydrationError}, which does not extend
  * `CodedError` and therefore needs one of its own. Same registry mechanics and
- * the same two limits as `CODED_ERROR_BRAND` — it does not survive a
- * serialization boundary, and it is spoofable, so it is not a trust signal.
+ * the same two limits as `CODED_ERROR_BRAND`.
  */
 const REHYDRATION_ERROR_BRAND: unique symbol = Symbol.for(
   "@repo/core/RehydrationError",
@@ -91,11 +85,9 @@ export class RehydrationError extends Error {
 
 /**
  * Brand plus the minimal shape the narrowed type promises. `RehydrationError`
- * is not a `CodedError`, so `isCodedError` cannot supply the shape half the
- * way `isApplicationError` does; the `message` check stands in for it and is
- * what keeps a bare `{ [brand]: true }` object from passing. Same limit as
- * every registry brand — a forgery satisfying both is indistinguishable from
- * the real thing.
+ * is not a `CodedError`, so `isCodedError` cannot supply the shape half the way
+ * `isApplicationError` does; the `message` check stands in for it and is what
+ * keeps a bare `{ [brand]: true }` object from passing.
  */
 export function isRehydrationError(error: unknown): error is RehydrationError {
   return (

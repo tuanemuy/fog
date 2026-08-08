@@ -14,26 +14,20 @@ import {
 // see `isAppServerError` for the two-module-graph reason.
 //
 // This adapter is symmetric and therefore runs on **incoming** requests too:
-// `getDefaultSerovalPlugins` builds it with `makeSerovalPlugin`, whose
-// `deserialize` calls `fromSerializable`, and `handleServerAction` parses the
-// request body with that plugin list — so a client-posted node tagged
-// `$TSR/t/AppServerError` reaches `fromSerializable` before `inputValidator`
-// runs. `asSerializedError` is what keeps that node from choosing its own
-// payload: this is the transport boundary CLAUDE.md names, not a third
-// validation point.
+// `handleServerAction` parses the request body with this plugin, so a
+// client-posted node tagged `$TSR/t/AppServerError` reaches `fromSerializable`
+// before `inputValidator` runs. `asSerializedError` is what keeps that node
+// from choosing its own payload — the transport boundary CLAUDE.md names, not
+// a third validation point.
 //
-// Both legs run the same structural rebuild. Inbound there is no `test`, so the
-// check has to sit in `fromSerializable`. Outbound, `test` already rejects a
-// value whose payload fails `asSerializedError` (sending it to Seroval's
-// default `Error` handling instead of this tag) — but valid is not minimal: a
-// hand-built `AppServerError` carrying an undeclared key passes `test`, so
-// `toSerializable` rebuilds too rather than trusting every `AppServerError`
-// construction site to hand it a clean payload. Its `??` arm is unreachable
-// while `test` gates this leg; it exists so the guarantee stays structural
-// instead of an invariant spanning two functions. Rejecting fails closed to
-// `unknown` rather than throwing, because throwing here aborts the whole
-// payload parse — on the outbound leg that would turn one unrepresentable
-// error into a client-side parse failure.
+// Both legs rebuild. Inbound there is no `test`, so the check sits in
+// `fromSerializable`. Outbound `test` has already run, but it proves the
+// payload valid, not minimal — a hand-built `AppServerError` carrying an
+// undeclared key passes it — so `toSerializable` rebuilds rather than trusting
+// every construction site. Its `??` arm is unreachable while `test` gates the
+// leg; it keeps the guarantee structural instead of spanning two functions.
+// Both fail closed to `unknown` rather than throwing, which would abort the
+// whole payload parse. See `.adr/016`.
 export const appServerErrorAdapter = createSerializationAdapter<
   AppServerError,
   SerializedError

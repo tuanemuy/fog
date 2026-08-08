@@ -26,12 +26,10 @@ export const errorResponseMiddleware = createMiddleware({
   try {
     return await next();
   } catch (error) {
-    // Only `isNotFound` rides the invariant `extractSerializedError`'s JSDoc
-    // states — a thrown value's shape never derives from external input: it is
-    // `obj?.isNotFound === true`, so breaking that invariant lets a decoded
-    // payload skip classification entirely, not just the remnant stage.
-    // `isRedirect` is `obj instanceof Response && !!obj.options`, which no
-    // plain object can satisfy.
+    // `isNotFound` is `obj?.isNotFound === true`, so it rides the invariant
+    // `extractSerializedError`'s JSDoc states — breaking it lets a decoded
+    // payload skip classification entirely. `isRedirect` does not: it tests
+    // `instanceof Response`, which no plain object can satisfy.
     if (isRedirect(error) || isNotFound(error)) throw error;
     const appError = await toClientError(error);
     setResponseStatus(httpStatusFor(appError.serialized));
@@ -81,12 +79,9 @@ async function toClientError(error: unknown): Promise<AppServerError> {
   // serialization boundary, so an error that already crossed one would lose its
   // `kind` here and a 409 / 422 would leave as a 500.
   //
-  // Last-resort backstop for the boundary catch: `serializeError` fails closed
-  // on its own, but `extractSerializedError`'s remnant stage still throws when
-  // the caught value's own getters throw (its JSDoc names this limit). A
-  // secondary throw from here would leave the middleware's `catch` and skip
-  // status, redaction and logging, so it lands on the pre-redacted unknown
-  // instead — the logger still gets the original value as `cause`.
+  // Last-resort backstop for the boundary catch, since the remnant stage can
+  // still throw on a hostile accessor. A secondary throw would leave the
+  // middleware's `catch` and skip status, redaction and logging.
   let rawSerialized: SerializedError;
   try {
     rawSerialized = extractSerializedError(error);

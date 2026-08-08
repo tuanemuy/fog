@@ -89,30 +89,20 @@ export async function mapDbError<T>(
     return await fn();
   } catch (error) {
     // Only driver-native failures are ours to translate; anything already
-    // speaking the shared contract is re-thrown by identity, because
-    // flattening it into `SystemError(DATABASE_ERROR)` would erase a
-    // classification another layer deliberately chose. Two producers sit
-    // inside `fn` today: the row-integrity checks the read callbacks run
-    // (`SystemError(DataIntegrityError)`) and the unit of work's OCC
-    // conflict handler (`ConflictError(OPTIMISTIC_LOCK_FAILURE)`).
+    // speaking the shared contract is re-thrown by identity, because flattening
+    // it into `SystemError(DATABASE_ERROR)` would erase a classification
+    // another layer deliberately chose.
     //
-    // Deliberately no `isRehydrationError` branch: `RehydrationError` is not
-    // a `CodedError`, and translating it needs the aggregate that failed to
-    // rehydrate, so each repository does it at its own `reconstruct` call
-    // site (`D1UserRepository.toUser`). A repository that skips that step
-    // lands here and degrades to `DATABASE_ERROR` — still a 5xx, never a
-    // client-visible business error.
+    // Deliberately no `isRehydrationError` branch: translating one needs the
+    // aggregate that failed, so each repository does it at its own
+    // `reconstruct` call site. Skipping that step lands here and degrades to
+    // `DATABASE_ERROR` — still a 5xx.
     //
-    // The wrapping itself has no such fallback: `isCodedError` passes
-    // `BusinessRuleError` through, so a `reconstruct` that lets a value
-    // object's error escape unwrapped surfaces an integrity failure as a
-    // client-visible 422 — `errorResponseMiddleware` logs `system` /
-    // `unknown` only, and `redactForClient` is a no-op on `business`.
-    // Nothing here can detect that escape, so each repository must pin
-    // its own translation with a conformance test asserting a corrupt
-    // row raises `SystemError(DataIntegrityError)` and never answers
-    // `isBusinessRuleError` — `userRepository.integration.test.ts` is
-    // the reference.
+    // `isCodedError` passes `BusinessRuleError` through, so a `reconstruct`
+    // that lets a value object's error escape unwrapped surfaces an integrity
+    // failure as a client-visible 422. Nothing here can detect that, so each
+    // repository owes a corrupt-row conformance test — see `.adr/017`;
+    // `userRepository.integration.test.ts` is the reference.
     if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {

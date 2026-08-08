@@ -58,8 +58,7 @@ export abstract class ApplicationError<
  * `isCodedError` plus the layer brand, not the brand alone: the brand answers
  * only which layer minted the value, while the narrowed type promises the whole
  * `CodedError` contract, and the contract check is what keeps a bare
- * `{ [brand]: true }` object from passing. Same limit as every registry brand —
- * a forgery satisfying both is indistinguishable from the real thing.
+ * `{ [brand]: true }` object from passing.
  */
 export function isApplicationError(error: unknown): error is ApplicationError {
   return isCodedError(error) && APPLICATION_ERROR_BRAND in error;
@@ -67,27 +66,16 @@ export function isApplicationError(error: unknown): error is ApplicationError {
 
 /**
  * What a per-kind guard narrows to: the shared error contract plus the one
- * `serializedKind` that was matched. Deliberately not a concrete class —
- * `serializedKind` is many-to-one (`ValidationError` and the presentation
- * layer's `InputValidationError` both report `"validation"`), so class identity
- * cannot be derived from it for any kind. Today only `validation` has two
- * classes, but nothing in the type system, the linter or the tests keeps the
- * others at one, and the failure mode of that changing is a silent unsound
- * narrowing.
+ * `serializedKind` that was matched, never a concrete class — `serializedKind`
+ * is many-to-one, so class identity cannot be derived from it.
  *
- * `toSerialized` is removed from `CodedError` rather than intersected over it:
- * an intersection keeps both method signatures and overload resolution picks
- * the base one, so `toSerialized()` would still return the wide
- * `SerializedErrorBase & { kind: string }` and this half of the narrowing would
- * be inert. Everything else `CodedError` carries — including its symbol-keyed
- * brand, which is what stops an outside object literal from claiming this type
- * — survives the `Omit`.
+ * `toSerialized` is `Omit`ted from `CodedError` rather than intersected over
+ * it: an intersection keeps both signatures and overload resolution picks the
+ * base one, leaving this half of the narrowing inert.
  *
- * The runtime behind this type checks `serializedKind === kind` and nothing
- * more; that `toSerialized()` really returns `TSerialized` is unverified. It
- * holds today only because every `Serialized*Error` adds nothing but optional
- * properties to `SerializedErrorBase & { kind }`. Give any variant a required
- * field and this type starts lying with no compile error to show for it.
+ * This type claims more than the runtime checks — `serializedKind === kind` is
+ * all that is verified, and it holds only while every `Serialized*Error` adds
+ * nothing but optional properties to the base. See `.adr/016`.
  */
 type NarrowedByKind<
   TSerialized extends SerializedErrorBase & { kind: string },
@@ -101,13 +89,10 @@ type NarrowedByKind<
  * shape rather than hand-written.
  *
  * Taking the kind as `TSerialized["kind"]` is also what enforces
- * `hasSerializedKind`'s calling convention: its own `TKind extends string`
- * accepts any string, so a typo would compile into a guard that is always
- * `false`. Here it is a compile error. The `= never` default is what closes
- * the loophole: TypeScript cannot infer `TSerialized` from the indexed-access
- * position `TSerialized["kind"]`, so an explicit-argument-free call would
- * otherwise fall back to the constraint and accept any string — with the
- * default it degrades to `never` and no argument can be passed at all.
+ * `hasSerializedKind`'s calling convention, where a typo would otherwise
+ * compile into a guard that is always `false`. The `= never` default is what
+ * closes the loophole: `TSerialized` is not inferable from an indexed-access
+ * position, so without it a bare call falls back to the `string` constraint.
  */
 function kindGuard<
   TSerialized extends SerializedErrorBase & { kind: string } = never,
