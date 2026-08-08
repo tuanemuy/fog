@@ -28,9 +28,12 @@
 //
 // KNOWN LIMITS, accepted:
 // - Evasion — an aliased import (`import { ConflictError as CE }` →
-//   `e instanceof CE`) and a namespace access (`import * as errs` →
-//   `e instanceof errs.ConflictError`) both slip through. Both are conspicuous
-//   in review.
+//   `e instanceof CE`), a namespace access (`import * as errs` →
+//   `e instanceof errs.ConflictError`) and a parenthesized right-hand side
+//   (`e instanceof (ConflictError)` — the snippet match does not see through
+//   `ParenthesizedExpression`) all slip through. The first two are conspicuous
+//   in review; the third is not, so `pluginWiring.test.ts` pins it as a
+//   negative case rather than doubling every `or` entry with its wrapped twin.
 // - Placement — the plugin only runs over `biome.json`'s `linter.includes`.
 //   Measured: the same `e instanceof ConflictError` yields a diagnostic under
 //   `packages/core/src/` but none in a repo-root `*.ts` or under
@@ -38,20 +41,23 @@
 //   subtracted there). `banList.test.ts` scans those paths regardless, so a
 //   class declared in one still lands on this list — it is the call sites there
 //   that go unchecked. Dropping a root from `linter.includes` disarms the plugin
-//   there silently, which is why `pluginWiring.test.ts` puts its fixture under
-//   `packages/core/src/` rather than beside itself; that pins the three main
-//   roots as a set, not one at a time.
-// - Roster — the scan reads declarations textually, so a class reaches this list
-//   only if its own name ends in `Error` or the base it names does. Two forms
+//   there silently, which is why `pluginWiring.test.ts` lints a fixture under
+//   each of `packages/`, `apps/` and `infra/` rather than beside itself; that
+//   pins the three main roots one at a time, so any single root falling out of
+//   `linter.includes` turns it red.
+// - Roster — the scan reads class declarations and named class expressions
+//   (`const X = class …`) textually, so a class reaches this list only if the
+//   identifier a call site would hold ends in `Error` or the base it names does. Two forms
 //   therefore never arrive on their own: `export default class extends Error {}`
 //   (anonymous), and a non-`*Error` name over an aliased base
 //   (`import { CodedError as Base }` → `class Weird extends Base`). The first is
 //   beyond this plugin either way — an anonymous default export gives its call
 //   sites no stable identifier to match. The second is a real hole, of the same
 //   shape as the alias evasion above and equally conspicuous in review. Every
-//   other declaration form is covered: `export class`, `export abstract class`,
-//   `export default class Named`, and a bare `class X {}` re-exported by a later
-//   `export { X }`.
+//   other form is covered: `export class`, `export abstract class`,
+//   `export default class Named`, a bare `class X {}` re-exported by a later
+//   `export { X }`, and a class expression bound to a `const` / `let` / `var`
+//   (`export const X = class extends CodedError {}`).
 //
 // Why not widen to a regex such as `r"^[A-Za-z0-9_.]*Error$"` plus an allow-list
 // (measured to work in Biome's GritQL, and it does close the namespace evasion):

@@ -133,6 +133,44 @@ describe("appServerErrorAdapter", () => {
     },
   );
 
+  // `test` validates the payload but does not minimize it: a hand-built
+  // `AppServerError` carrying an undeclared key passes `test`, so the outbound
+  // leg must rebuild rather than rely on every construction site handing it a
+  // clean payload. Handing `value.serialized` on as-is satisfies every
+  // `toEqual` above and still fails this.
+  it("rebuilds an outbound payload from the known keys only", () => {
+    const error = new AppServerError(
+      fromTheWire({
+        kind: "conflict",
+        code: "EMAIL_ALREADY_REGISTERED",
+        message: "Email already registered",
+        evil: "pii",
+      }),
+    );
+
+    expect(appServerErrorAdapter.test(error)).toBe(true);
+
+    const wire = appServerErrorAdapter.toSerializable(error);
+
+    expect(Object.keys(wire)).toEqual(["kind", "code", "message"]);
+    expect(JSON.stringify(wire)).not.toContain("pii");
+  });
+
+  // Unreachable while `test` gates the outbound leg — it rejects a payload that
+  // fails `asSerializedError` — but the fallback is what keeps the guarantee
+  // structural rather than an invariant spanning two functions, so it is
+  // pinned here.
+  it("falls closed on the outbound leg for a payload test would reject", () => {
+    const error = new AppServerError(
+      fromTheWire({ kind: "not-a-kind", message: "x" }),
+    );
+
+    expect(appServerErrorAdapter.test(error)).toBe(false);
+    expect(appServerErrorAdapter.toSerializable(error)).toBe(
+      UNVERIFIED_SERIALIZED_ERROR,
+    );
+  });
+
   // The inbound leg has no `test` to lean on, so `fromSerializable` is the only
   // place a client-posted node is checked. Rebuilding — not merely accepting —
   // is what this pins: returning the node as-is satisfies a `toEqual` on the

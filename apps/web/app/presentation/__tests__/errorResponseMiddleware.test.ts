@@ -139,6 +139,26 @@ describe("errorResponseMiddleware", () => {
     expect(caught).toBe(thrown);
     expect(isNotFound(caught)).toBe(true);
     expect(mocks.statuses).toEqual([]);
+    expect(logger.entries).toEqual([]);
+  });
+
+  // Pins the invariant the middleware's comment names: `isNotFound` is the
+  // structural match `obj?.isNotFound === true`, so any value carrying that
+  // shape — sentinel or not — skips classification entirely, by identity,
+  // with no status set and nothing logged. This is why a thrown value's shape
+  // must never derive from external input; if `isNotFound` stops being
+  // structural (or the rethrow is removed), this test says so.
+  it("passes any value shaped like the notFound sentinel through by identity", async () => {
+    const shaped = { isNotFound: true };
+
+    expect(isNotFound(shaped)).toBe(true);
+
+    const caught = await captureFrom(run, shaped);
+
+    expect(caught).toBe(shaped);
+    expect(isAppServerError(caught)).toBe(false);
+    expect(mocks.statuses).toEqual([]);
+    expect(logger.entries).toEqual([]);
   });
 
   // The login form reads its wording off `code`, so the
@@ -282,6 +302,7 @@ describe("guardStreamedRender", () => {
 
     expect(caught).toBe(thrown);
     expect(isNotFound(caught)).toBe(true);
+    expect(logger.entries).toEqual([]);
   });
 
   it("redacts a system failure and logs it raw", async () => {

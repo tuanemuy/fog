@@ -2,6 +2,7 @@ import {
   CodedError,
   type FieldErrors,
   hasSerializedKind,
+  isCodedError,
   type SerializedErrorBase,
 } from "@repo/core/lib/error";
 
@@ -53,13 +54,15 @@ export abstract class ApplicationError<
  * `CodedError` but not an `ApplicationError`, so it answers `false` here; use
  * `isCodedError` when the question is "already translated into the shared error
  * contract" regardless of layer.
+ *
+ * `isCodedError` plus the layer brand, not the brand alone: the brand answers
+ * only which layer minted the value, while the narrowed type promises the whole
+ * `CodedError` contract, and the contract check is what keeps a bare
+ * `{ [brand]: true }` object from passing. Same limit as every registry brand —
+ * a forgery satisfying both is indistinguishable from the real thing.
  */
 export function isApplicationError(error: unknown): error is ApplicationError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    APPLICATION_ERROR_BRAND in error
-  );
+  return isCodedError(error) && APPLICATION_ERROR_BRAND in error;
 }
 
 /**

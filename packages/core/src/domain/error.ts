@@ -89,10 +89,19 @@ export class RehydrationError extends Error {
   }
 }
 
+/**
+ * Brand plus the minimal shape the narrowed type promises. `RehydrationError`
+ * is not a `CodedError`, so `isCodedError` cannot supply the shape half the
+ * way `isApplicationError` does; the `message` check stands in for it and is
+ * what keeps a bare `{ [brand]: true }` object from passing. Same limit as
+ * every registry brand — a forgery satisfying both is indistinguishable from
+ * the real thing.
+ */
 export function isRehydrationError(error: unknown): error is RehydrationError {
   return (
     typeof error === "object" &&
     error !== null &&
-    REHYDRATION_ERROR_BRAND in error
+    REHYDRATION_ERROR_BRAND in error &&
+    typeof (error as { message?: unknown }).message === "string"
   );
 }

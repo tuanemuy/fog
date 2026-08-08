@@ -176,16 +176,33 @@ describe("isRehydrationError", () => {
     expect(isRehydrationError(namedError)).toBe(false);
   });
 
-  // Its own brand, not the shared one: a `CodedError` must not answer true here.
+  // Its own brand, not the shared one — `message` is present so the wrong
+  // brand is the only reason this answers false.
   it("returns false for a value carrying only the CodedError brand", () => {
-    expect(isRehydrationError({ [CODED_ERROR_BRAND]: true })).toBe(false);
+    expect(
+      isRehydrationError({ [CODED_ERROR_BRAND]: true, message: "test" }),
+    ).toBe(false);
   });
 
-  // The brand is the whole of this guard, so this pins the registry key itself.
-  // Nothing else does: a typo in `error.ts` leaves both module graphs agreeing
-  // on the same wrong symbol, and the foreign-graph case stays green.
-  it("returns true for a bare object carrying the brand", () => {
-    expect(isRehydrationError({ [REHYDRATION_ERROR_BRAND]: true })).toBe(true);
+  // Positive control for the two one-piece-short cases below. It is also what
+  // pins the registry key itself: a typo in `error.ts` leaves both module
+  // graphs agreeing on the same wrong symbol, and the foreign-graph case stays
+  // green — only this forgery, which re-derives the key, goes red.
+  it("returns true for a forgery carrying the brand and a string message", () => {
+    expect(
+      isRehydrationError({ [REHYDRATION_ERROR_BRAND]: true, message: "test" }),
+    ).toBe(true);
+  });
+
+  // That forgery minus the message: the shape check is what rejects it, so a
+  // bare branded object cannot claim the narrowed type's `Error` promise.
+  it("returns false for a bare object carrying only the brand", () => {
+    expect(isRehydrationError({ [REHYDRATION_ERROR_BRAND]: true })).toBe(false);
+  });
+
+  // That forgery minus the brand: the message alone is any `Error`'s shape.
+  it("returns false for an unbranded object carrying only a message", () => {
+    expect(isRehydrationError({ message: "test" })).toBe(false);
   });
 
   it.each(NON_ERROR_VALUES)("returns false for %s", (_label, value) => {
@@ -198,6 +215,46 @@ describe("serializedKind", () => {
     const error = new BusinessRuleError("TEST", "test");
     expect(error.serializedKind).toBe(error.toSerialized().kind);
   });
+});
+
+describe("across a serialization boundary", () => {
+  // The remnant a real error leaves once it crosses the boundaries the brands'
+  // JSDoc names: both drop symbol-keyed properties, so past them the
+  // `SerializedError` envelope is the contract and the guards must answer
+  // false. `structuredClone` keeps `message` on the clone (Error serialization
+  // preserves it), so for `isRehydrationError` that row isolates the brand.
+  const BUSINESS_REMNANTS: ReadonlyArray<readonly [string, unknown]> = [
+    [
+      "structuredClone",
+      structuredClone({ ...new BusinessRuleError("TEST", "test") }),
+    ],
+    [
+      "a JSON round-trip",
+      JSON.parse(JSON.stringify({ ...new BusinessRuleError("TEST", "test") })),
+    ],
+  ];
+
+  const REHYDRATION_REMNANTS: ReadonlyArray<readonly [string, unknown]> = [
+    ["structuredClone", structuredClone(new RehydrationError("test"))],
+    [
+      "a JSON round-trip",
+      JSON.parse(JSON.stringify(new RehydrationError("test"))),
+    ],
+  ];
+
+  it.each(BUSINESS_REMNANTS)(
+    "isBusinessRuleError returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(isBusinessRuleError(value)).toBe(false);
+    },
+  );
+
+  it.each(REHYDRATION_REMNANTS)(
+    "isRehydrationError returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(isRehydrationError(value)).toBe(false);
+    },
+  );
 });
 
 describe("across a duplicated module graph", () => {

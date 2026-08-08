@@ -255,6 +255,55 @@ describe("asSerializedError", () => {
     expect(JSON.stringify(redactForClient(result))).not.toContain("evil");
   });
 
+  // The nested half of the rebuild claim. `isFieldErrors` sees only
+  // string-keyed enumerable values and array elements, so what these fixtures
+  // smuggle — an extra own property grafted onto the messages array, a
+  // symbol-keyed entry — survives validation and dies only in the rebuild.
+  // Neither shows up in `JSON.stringify`, so the assertions have to read the
+  // own properties directly.
+  it("rebuilds the messages arrays inside fieldErrors, dropping grafted own properties", () => {
+    const messages = Object.assign(["required"], {
+      evil: "pii",
+      [Symbol.for("evil")]: "pii",
+    });
+
+    const result = verified(
+      fromTheWire({
+        kind: "validation",
+        code: "X",
+        message: "m",
+        fieldErrors: { email: messages },
+      }),
+    );
+
+    if (result.kind !== "validation" || result.fieldErrors === undefined) {
+      throw new Error("expected a validation payload carrying fieldErrors");
+    }
+    const rebuilt = result.fieldErrors.email;
+    expect(rebuilt).not.toBe(messages);
+    expect(rebuilt).toEqual(["required"]);
+    expect(Object.getOwnPropertyNames(rebuilt)).toEqual(["0", "length"]);
+    expect(Object.getOwnPropertySymbols(rebuilt)).toEqual([]);
+  });
+
+  it("rebuilds the fieldErrors record itself, dropping symbol-keyed entries", () => {
+    const fieldErrors = {
+      email: ["required"],
+      [Symbol.for("evil")]: "pii",
+    };
+
+    const result = verified(
+      fromTheWire({ kind: "validation", code: "X", message: "m", fieldErrors }),
+    );
+
+    if (result.kind !== "validation" || result.fieldErrors === undefined) {
+      throw new Error("expected a validation payload carrying fieldErrors");
+    }
+    expect(result.fieldErrors).not.toBe(fieldErrors);
+    expect(Object.getOwnPropertyNames(result.fieldErrors)).toEqual(["email"]);
+    expect(Object.getOwnPropertySymbols(result.fieldErrors)).toEqual([]);
+  });
+
   it("leaves an absent retryable absent rather than present-and-undefined", () => {
     const result = verified({ kind: "conflict", code: "X", message: "m" });
 

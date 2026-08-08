@@ -24,21 +24,23 @@ const BIOME = createRequire(import.meta.url).resolve(
   "@biomejs/biome/bin/biome",
 );
 
-// The fixture lives in the tree the ban is meant to protect, not beside this
+// The fixtures live in the trees the ban is meant to protect, not beside this
 // test. The plugin only runs over `biome.json`'s `linter.includes`, so a wired
-// plugin whose includes no longer name `packages/**` / `apps/**` / `infra/**`
-// disarms the whole repository while a fixture under `lint/**` keeps reporting;
-// from here, dropping those roots turns this red. `.tmp.ts` is `.gitignore`d so
-// an abandoned fixture cannot reach a commit, and `banList.test.ts` skips that
-// suffix so a parallel worker cannot read it mid-delete. The pid keeps two
-// vitest runs in one worktree from deleting each other's fixture.
-const FIXTURE = join(
-  REPO_ROOT,
-  "packages",
-  "core",
-  "src",
-  `pluginWiring.${process.pid}.tmp.ts`,
-);
+// plugin whose includes no longer name `packages/**`, `apps/**` or `infra/**`
+// disarms that root silently while a fixture under `lint/**` keeps reporting;
+// one fixture per root means dropping any single root turns this red, not just
+// all three at once. `.tmp.ts` is `.gitignore`d so an abandoned fixture cannot
+// reach a commit, and `banList.test.ts` skips that suffix so a parallel worker
+// cannot read it mid-delete. The pid keeps two vitest runs in one worktree from
+// deleting each other's fixture.
+const FIXTURE_ROOTS: ReadonlyArray<readonly string[]> = [
+  ["packages", "core", "src"],
+  ["apps", "web", "app"],
+  ["infra", "cloudflare", "pulumi"],
+];
+
+const fixturePath = (root: readonly string[]): string =>
+  join(REPO_ROOT, ...root, `pluginWiring.${process.pid}.tmp.ts`);
 
 // `ConflictError` is on the ban list. `declare` keeps the fixture free of a class
 // declaration, which `banList.test.ts`'s scan would otherwise have to reason about.
@@ -58,10 +60,10 @@ type Diagnostic = { category?: string; message?: string };
 // fixture has to be a real file on disk. `--vcs-use-ignore-file=false` is what
 // keeps Biome from skipping it over the `.gitignore` entry above. A diagnostic
 // makes Biome exit 1, so the status is not the assertion — the report is.
-const lintFixture = (): Diagnostic[] => {
+const lintFixture = (fixture: string): Diagnostic[] => {
   const { stdout, stderr, status, error } = spawnSync(
     process.execPath,
-    [BIOME, "lint", "--reporter=json", "--vcs-use-ignore-file=false", FIXTURE],
+    [BIOME, "lint", "--reporter=json", "--vcs-use-ignore-file=false", fixture],
     { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   if (error !== undefined) throw error;
@@ -78,20 +80,49 @@ const lintFixture = (): Diagnostic[] => {
   }
 };
 
+const pluginDiagnostics = (fixture: string): Diagnostic[] =>
+  lintFixture(fixture).filter(
+    (d) =>
+      d.category === "plugin" && (d.message ?? "").includes(DIAGNOSTIC_MESSAGE),
+  );
+
 describe("no-instanceof-error.grit wiring", () => {
-  it("reports a plugin diagnostic for an instanceof against a banned class", () => {
-    writeFileSync(FIXTURE, FIXTURE_SOURCE);
+  it.each(FIXTURE_ROOTS.map((root) => [join(...root), root] as const))(
+    "reports a plugin diagnostic for an instanceof against a banned class under %s",
+    (label, root) => {
+      const fixture = fixturePath(root);
+      writeFileSync(fixture, FIXTURE_SOURCE);
+      try {
+        expect(
+          pluginDiagnostics(fixture),
+          `Biome reported no no-instanceof-error diagnostic for a fixture under ${label}. Check that \`biome.json\` still lists lint/no-instanceof-error.grit under \`plugins\`, that its \`linter.includes\` still covers that root, and that the query still calls register_diagnostic().`,
+        ).not.toEqual([]);
+      } finally {
+        rmSync(fixture, { force: true });
+      }
+    },
+  );
+
+  // KNOWN LIMITS in no-instanceof-error.grit: the snippet match does not see
+  // through `ParenthesizedExpression`, and the pattern is deliberately not
+  // doubled with a wrapped twin per entry. This pins the documented limit so a
+  // future pattern change that closes it (or reopens it) shows up here.
+  it("does not fire on a parenthesized right-hand side (documented limit)", () => {
+    const fixture = fixturePath(FIXTURE_ROOTS[0]);
+    writeFileSync(
+      fixture,
+      `declare const ConflictError: new () => Error;
+export const isConflict = (e: unknown): boolean =>
+  e instanceof (ConflictError);
+`,
+    );
     try {
       expect(
-        lintFixture().filter(
-          (d) =>
-            d.category === "plugin" &&
-            (d.message ?? "").includes(DIAGNOSTIC_MESSAGE),
-        ),
-        "Biome reported no no-instanceof-error diagnostic. Check that `biome.json` still lists lint/no-instanceof-error.grit under `plugins`, that its `linter.includes` still covers the fixture's directory, and that the query still calls register_diagnostic().",
-      ).not.toEqual([]);
+        pluginDiagnostics(fixture),
+        "The plugin now fires on `e instanceof (ConflictError)`. Update the KNOWN LIMITS Evasion entry in lint/no-instanceof-error.grit and flip this case.",
+      ).toEqual([]);
     } finally {
-      rmSync(FIXTURE, { force: true });
+      rmSync(fixture, { force: true });
     }
   });
 });

@@ -22,20 +22,26 @@ import {
 // payload: this is the transport boundary CLAUDE.md names, not a third
 // validation point.
 //
-// The two legs stay guarded by different halves of the adapter rather than by
-// the same call: outbound, `test` already rejects a value whose payload fails
-// `asSerializedError`, which sends it to Seroval's default `Error` handling
-// instead of this tag; inbound there is no `test`, so the check has to sit in
-// `fromSerializable`. Rejecting fails closed to `unknown` rather than throwing,
-// because throwing here aborts the whole payload parse — on the outbound leg
-// that would turn one unrepresentable error into a client-side parse failure.
+// Both legs run the same structural rebuild. Inbound there is no `test`, so the
+// check has to sit in `fromSerializable`. Outbound, `test` already rejects a
+// value whose payload fails `asSerializedError` (sending it to Seroval's
+// default `Error` handling instead of this tag) — but valid is not minimal: a
+// hand-built `AppServerError` carrying an undeclared key passes `test`, so
+// `toSerializable` rebuilds too rather than trusting every `AppServerError`
+// construction site to hand it a clean payload. Its `??` arm is unreachable
+// while `test` gates this leg; it exists so the guarantee stays structural
+// instead of an invariant spanning two functions. Rejecting fails closed to
+// `unknown` rather than throwing, because throwing here aborts the whole
+// payload parse — on the outbound leg that would turn one unrepresentable
+// error into a client-side parse failure.
 export const appServerErrorAdapter = createSerializationAdapter<
   AppServerError,
   SerializedError
 >({
   key: "AppServerError",
   test: isAppServerError,
-  toSerializable: (value) => value.serialized,
+  toSerializable: (value) =>
+    asSerializedError(value.serialized) ?? UNVERIFIED_SERIALIZED_ERROR,
   fromSerializable: (value) =>
     new AppServerError(asSerializedError(value) ?? UNVERIFIED_SERIALIZED_ERROR),
 });

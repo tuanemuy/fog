@@ -313,6 +313,40 @@ describe("serializedKind", () => {
   });
 });
 
+describe("across a serialization boundary", () => {
+  // The remnant a real error leaves once it crosses the boundaries the brand's
+  // JSDoc names as its Lifetime limit: `structuredClone` and JSON both drop
+  // symbol-keyed properties, and `toSerialized` lives on the prototype, so
+  // neither survives — past these boundaries the `SerializedError` envelope is
+  // the contract and the guards must answer false. Spreading first keeps the
+  // enumerable own members (`code` / `serializedKind`) in play, mirroring the
+  // presentation layer's remnant fixtures.
+  const REMNANTS: ReadonlyArray<readonly [string, unknown]> = [
+    [
+      "structuredClone",
+      structuredClone({ ...new TestCodedError("TEST", "test") }),
+    ],
+    [
+      "a JSON round-trip",
+      JSON.parse(JSON.stringify({ ...new TestCodedError("TEST", "test") })),
+    ],
+  ];
+
+  it.each(REMNANTS)(
+    "isCodedError returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(isCodedError(value)).toBe(false);
+    },
+  );
+
+  it.each(REMNANTS)(
+    "hasSerializedKind returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(hasSerializedKind(value, "test")).toBe(false);
+    },
+  );
+});
+
 describe("across a duplicated module graph", () => {
   it("brands foreign instances with the symbol this graph resolves", async () => {
     const foreign = await loadForeignGraph();

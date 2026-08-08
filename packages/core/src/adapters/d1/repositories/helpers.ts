@@ -108,6 +108,11 @@ export async function mapDbError<T>(
     // object's error escape unwrapped surfaces an integrity failure as a
     // client-visible 422 — `errorResponseMiddleware` logs `system` /
     // `unknown` only, and `redactForClient` is a no-op on `business`.
+    // Nothing here can detect that escape, so each repository must pin
+    // its own translation with a conformance test asserting a corrupt
+    // row raises `SystemError(DataIntegrityError)` and never answers
+    // `isBusinessRuleError` — `userRepository.integration.test.ts` is
+    // the reference.
     if (isCodedError(error)) throw error;
     const sqliteCode = findSqliteCode(error);
     if (sqliteCode?.startsWith("SQLITE_CONSTRAINT")) {

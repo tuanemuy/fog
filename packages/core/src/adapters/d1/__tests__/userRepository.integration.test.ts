@@ -1,4 +1,5 @@
 import { isConflictError, isSystemError } from "@repo/core/application/errors";
+import { isBusinessRuleError } from "@repo/core/domain/error";
 import { type SsoUser, User } from "@repo/core/domain/identity/entity";
 import {
   Email,
@@ -334,5 +335,10 @@ describe("D1UserRepository (integration)", () => {
 
     expect(isSystemError(error)).toBe(true);
     expect(isSystemError(error) && error.code).toBe("DATA_INTEGRITY_ERROR");
+    // The value object's BusinessRuleError must not escape `reconstruct`
+    // unwrapped: `mapDbError` passes any CodedError through, so an escape
+    // would surface this integrity failure as a client-visible 422 with no
+    // server log. Every repository owes this conformance case.
+    expect(isBusinessRuleError(error)).toBe(false);
   });
 });

@@ -172,6 +172,34 @@ function isFieldErrors(value: unknown): value is FieldErrors {
   );
 }
 
+// `isFieldErrors` only inspects string-keyed enumerable values and array
+// elements, so a symbol-keyed property or an extra own property grafted onto a
+// messages array would survive validation by reference. `Object.entries` drops
+// the symbol keys and the array spread copies index elements only, which is
+// what extends `asSerializedError`'s rebuild guarantee below the top level.
+function rebuildFieldErrors(fieldErrors: FieldErrors): FieldErrors {
+  return Object.fromEntries(
+    Object.entries(fieldErrors).map(([field, messages]) => [
+      field,
+      [...messages],
+    ]),
+  );
+}
+
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+// The ledger of keys `asSerializedError` rebuilds from, pinned to the union:
+// adding a field to any `SerializedError` variant — even an optional one,
+// which the return type alone would let the rebuild silently strip — fails to
+// compile here until the function learns to carry it over.
+const REBUILT_KEYS = {
+  kind: true,
+  code: true,
+  message: true,
+  retryable: true,
+  fieldErrors: true,
+} as const satisfies Record<KeysOfUnion<SerializedError>, true>;
+
 /**
  * Validates an unverified payload against the `SerializedError` contract and
  * **rebuilds it from the known keys only**, or answers `null`.
@@ -181,7 +209,10 @@ function isFieldErrors(value: unknown): value is FieldErrors {
  * does not honour and reach `errorDisplay` / `errorField`, which branch on
  * `code` and iterate `fieldErrors`. Rebuilding rather than returning the input
  * closes the second half: `redactForClient` spreads the payload, so an unknown
- * property riding along would survive redaction and cross to the client.
+ * property riding along would survive redaction and cross to the client. The
+ * rebuild reaches inside `fieldErrors` too — see `rebuildFieldErrors` — so the
+ * known-keys claim holds below the top level, not just on it, and the ledger of
+ * keys it rebuilds from is pinned to the union by `REBUILT_KEYS`.
  *
  * Answering `null` is the fail-closed direction — callers land on
  * {@link UNVERIFIED_SERIALIZED_ERROR} or on `serializeError`, both `unknown`.
@@ -194,13 +225,7 @@ function isFieldErrors(value: unknown): value is FieldErrors {
  */
 export function asSerializedError(value: unknown): SerializedError | null {
   if (typeof value !== "object" || value === null) return null;
-  const v = value as {
-    kind?: unknown;
-    code?: unknown;
-    message?: unknown;
-    retryable?: unknown;
-    fieldErrors?: unknown;
-  };
+  const v = value as Partial<Record<keyof typeof REBUILT_KEYS, unknown>>;
 
   const { kind, code, message, retryable } = v;
   if (typeof kind !== "string" || !isSerializedErrorKind(kind)) return null;
@@ -220,7 +245,7 @@ export function asSerializedError(value: unknown): SerializedError | null {
     const { fieldErrors } = v;
     if (fieldErrors === undefined) return { kind, ...base };
     if (!isFieldErrors(fieldErrors)) return null;
-    return { kind, ...base, fieldErrors };
+    return { kind, ...base, fieldErrors: rebuildFieldErrors(fieldErrors) };
   }
 
   return { kind, ...base };

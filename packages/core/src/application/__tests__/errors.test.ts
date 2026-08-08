@@ -130,6 +130,17 @@ function brandedContract(kind: string): unknown {
   return { [CODED_ERROR_BRAND]: true, ...unbrandedContract(kind) };
 }
 
+// The complete forgery `isApplicationError` accepts: the whole `CodedError`
+// contract, its brand, and the layer brand on top. The negative cases each
+// drop exactly one of those pieces off this shape.
+function applicationForgery(kind: string): unknown {
+  return {
+    [APPLICATION_ERROR_BRAND]: true,
+    [CODED_ERROR_BRAND]: true,
+    ...unbrandedContract(kind),
+  };
+}
+
 // The `?dup` query hands Vite a second instance of the same source file, which
 // reproduces the SSR / RSC module-graph split that makes `instanceof` unusable.
 async function loadForeignGraph(): Promise<ErrorsModule> {
@@ -281,21 +292,31 @@ describe("isApplicationError", () => {
     expect(isCodedError(error)).toBe(true);
   });
 
-  // The brand is spoofable and `isCodedError` only closes the accidental
-  // shapes, so a deliberate forgery satisfying the whole contract still passes
-  // it. The layer brand is a separate property and is not forged here.
-  it("returns false for an object forging the CodedError contract", () => {
+  // Positive control the two one-piece-short cases below are measured against.
+  // It is also what pins the registry key itself: a typo in `errors.ts` leaves
+  // both module graphs agreeing on the same wrong symbol, and every
+  // foreign-graph case stays green — only this forgery, which re-derives the
+  // key, goes red.
+  it("returns true for a forgery carrying the contract and the layer brand", () => {
+    expect(errors.isApplicationError(applicationForgery("conflict"))).toBe(
+      true,
+    );
+  });
+
+  // That forgery minus the layer brand: still a complete `CodedError` forgery,
+  // so the rejection isolates the layer brand.
+  it("returns false for an object forging only the CodedError contract", () => {
     const impostor = brandedContract("conflict");
     expect(errors.isApplicationError(impostor)).toBe(false);
     expect(isCodedError(impostor)).toBe(true);
   });
 
-  // The layer brand is the whole of this guard, so this pins the registry key
-  // itself. Nothing else does: a typo in `errors.ts` leaves both module graphs
-  // agreeing on the same wrong symbol, and every foreign-graph case stays green.
-  it("returns true for a bare object carrying the layer brand", () => {
+  // That forgery minus everything but the layer brand: the contract check is
+  // what rejects it, so a bare branded object cannot claim the abstract
+  // class's `toSerialized()` / `code` / `message` promise.
+  it("returns false for a bare object carrying only the layer brand", () => {
     expect(errors.isApplicationError({ [APPLICATION_ERROR_BRAND]: true })).toBe(
-      true,
+      false,
     );
   });
 
@@ -315,6 +336,39 @@ describe("SystemError", () => {
         .retryable,
     ).toBe(true);
   });
+});
+
+describe("across a serialization boundary", () => {
+  // The remnant a real error leaves once it crosses the boundaries the brand's
+  // JSDoc names: both drop the symbol-keyed brands, so past them the
+  // `SerializedError` envelope is the contract and every guard here must
+  // answer false. Spreading first keeps the enumerable own members
+  // (`code` / `serializedKind`) in play, mirroring the presentation layer's
+  // remnant fixtures.
+  const REMNANTS: ReadonlyArray<readonly [string, unknown]> = [
+    [
+      "structuredClone",
+      structuredClone({ ...new ConflictError("TEST", "test") }),
+    ],
+    [
+      "a JSON round-trip",
+      JSON.parse(JSON.stringify({ ...new ConflictError("TEST", "test") })),
+    ],
+  ];
+
+  it.each(REMNANTS)(
+    "isApplicationError returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(errors.isApplicationError(value)).toBe(false);
+    },
+  );
+
+  it.each(REMNANTS)(
+    "isConflictError returns false for the remnant left by %s",
+    (_label, value) => {
+      expect(errors.isConflictError(value)).toBe(false);
+    },
+  );
 });
 
 describe("across a duplicated module graph", () => {

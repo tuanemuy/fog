@@ -81,17 +81,27 @@ const walk = (dir: string, out: string[]): string[] => {
 const CLASS_DECL =
   /^[ \t]*(?:export[ \t]+(?:default[ \t]+)?)?(?:declare[ \t]+)?(?:abstract[ \t]+)?class[ \t]+([A-Za-z0-9_$]+)([\s\S]*?)\{/gm;
 
+// A named class expression (`const X = class extends CodedError {}`) binds the
+// same kind of stable identifier a declaration does, so a call site can hold it
+// for a cross-module `instanceof` just as well. The captured name is the
+// variable's — that is the identifier call sites import — and the header keeps
+// any inner name plus the `extends` clause for the base-name half below.
+const CLASS_EXPR =
+  /^[ \t]*(?:export[ \t]+)?(?:declare[ \t]+)?(?:const|let|var)[ \t]+([A-Za-z0-9_$]+)[^=\n]*=\s*class\b([\s\S]*?)\{/gm;
+
 // Either half is enough to qualify: a `*Error` name, or a base class whose name
 // ends in `Error` (so `class Foo extends CodedError` cannot dodge the check by
 // being named something else).
 const declaredErrorClasses = (source: string): string[] => {
   const found: string[] = [];
-  for (const [, name, header] of source.matchAll(CLASS_DECL)) {
-    if (
-      name.endsWith("Error") ||
-      /extends\s+[A-Za-z0-9_$.]*Error\b/.test(header)
-    ) {
-      found.push(name);
+  for (const pattern of [CLASS_DECL, CLASS_EXPR]) {
+    for (const [, name, header] of source.matchAll(pattern)) {
+      if (
+        name.endsWith("Error") ||
+        /extends\s+[A-Za-z0-9_$.]*Error\b/.test(header)
+      ) {
+        found.push(name);
+      }
     }
   }
   return found;
@@ -182,6 +192,17 @@ describe("no-instanceof-error.grit ban list — what the scan reaches", () => {
         "class DeferredError extends Error {}\nexport { DeferredError };",
       ),
     ).toEqual(["DeferredError"]);
+  });
+
+  it("finds a named class expression by its binding, qualified by either half", () => {
+    expect(
+      declaredErrorClasses(
+        "export const ExprError = class extends SomethingElse {};",
+      ),
+    ).toEqual(["ExprError"]);
+    expect(
+      declaredErrorClasses("const Hidden = class extends CodedError {};"),
+    ).toEqual(["Hidden"]);
   });
 
   // KNOWN LIMITS, restated in no-instanceof-error.grit's header. Both are

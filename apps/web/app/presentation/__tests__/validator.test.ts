@@ -60,6 +60,43 @@ describe("validateInput", () => {
     expect(httpStatusFor(serialized)).toBe(422);
   });
 
+  // A client can POST `null`, a bare string or an array just as easily as a
+  // malformed object, and this boundary is the only guard in front of the
+  // usecase — so the top-level type mismatch has to arrive as the same
+  // `validation` / 422 shape a field failure does, not escape as a zod throw.
+  it.each([
+    { label: "null", input: null },
+    { label: "undefined", input: undefined },
+    { label: "a string", input: "boom" },
+    { label: "an array", input: [] },
+  ])("rejects $label as a validation failure", ({ input }) => {
+    const caught = captureFrom(input);
+
+    expect(isAppServerError(caught)).toBe(true);
+
+    const serialized = extractSerializedError(caught);
+
+    expect(serialized).toMatchObject({
+      kind: "validation",
+      code: "INVALID_INPUT",
+    });
+    expect(httpStatusFor(serialized)).toBe(422);
+  });
+
+  // Pins current behaviour rather than endorsing it: a top-level type
+  // mismatch has an empty `issue.path`, which the dotted-path join flattens
+  // to the `""` key. Form helpers that look up `fieldErrors` by field name
+  // will never read this key, so the failure surfaces through `kind` / status
+  // only — if the flatten ever changes, this is the test that says so.
+  it("files a top-level type mismatch under the empty-string key", () => {
+    const serialized = extractSerializedError(
+      captureFrom(null),
+    ) as SerializedValidationError;
+
+    expect(Object.keys(serialized.fieldErrors ?? {})).toEqual([""]);
+    expect(serialized.fieldErrors?.[""]).toHaveLength(1);
+  });
+
   // The thrown payload is what the client actually sees, so pinning that it
   // carries the same `kind` an application-layer `ValidationError` reports is
   // what keeps the two producers of `validation` interchangeable downstream.
