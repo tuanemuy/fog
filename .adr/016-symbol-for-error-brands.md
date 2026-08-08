@@ -43,6 +43,8 @@ SSR / RSC は module graph を分割するため、同一のソースファイ�
 
 **`instanceof` の禁止をドキュメントだけで宣言する** — 実効性がない。`lint/no-instanceof-error.grit`（ルートの `biome.json` が読む GritQL プラグイン）で lint 時に落とす。
 
+**Biome の `style/useThrowOnlyError` を有効化して非 `Error` 値の throw を禁止する** — 検討し不採用。ワイヤ由来のプレーンオブジェクトを re-throw する形の破れは落とせるが、`Error` サブクラスに外部ペイロードを載せ替える偽装形は防げず、既存 throw サイト全域への波及（違反の洗い出しと書き換え）が得られる便益に勝るためである。
+
 ## 影響
 
 - module graph をまたいでも全ガードが正しく判定する。

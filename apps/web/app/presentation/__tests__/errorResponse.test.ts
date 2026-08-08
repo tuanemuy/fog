@@ -710,6 +710,14 @@ describe("isAppServerError", () => {
       "a payload whose kind is not a string",
       { serialized: { kind: 1, code: "X", message: "x" } },
     ],
+    // Pins `isSerializedErrorKind` to `Object.hasOwn`: a regression to
+    // `kind in SERIALIZED_ERROR_KINDS` would accept prototype-chain keys
+    // (`"toString" in {}` is true), and the `"not-a-kind"` row above cannot
+    // catch that — `in` answers false for it too.
+    [
+      "a payload whose kind is a prototype-chain key",
+      { serialized: { kind: "toString", code: null, message: "x" } },
+    ],
     [
       "a payload missing code",
       { serialized: { kind: "conflict", message: "x" } },

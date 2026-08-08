@@ -66,8 +66,10 @@ export abstract class CodedError<TCode extends string = string> extends Error {
    * That derivation only bites where the subclass narrows its `toSerialized()`
    * return type to its own variant: leave the return type off, or annotate it
    * in this base's shape, and the constraint degrades to `string` and drift
-   * compiles. The effective net is the runtime scan asserting
-   * `serializedKind === toSerialized().kind` over every concrete class.
+   * compiles. The effective net is the per-suite agreement tests asserting
+   * `serializedKind === toSerialized().kind` — each suite (lib / domain /
+   * application / presentation) enumerates its concrete classes by hand, so a
+   * new subclass left out of its suite's enumeration is not detected.
    */
   abstract readonly serializedKind: ReturnType<this["toSerialized"]>["kind"];
 

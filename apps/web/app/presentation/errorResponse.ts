@@ -339,6 +339,13 @@ export const UNVERIFIED_SERIALIZED_ERROR: SerializedError = Object.freeze({
  * `isRehydrationError` does: a bare branded object must not be narrowed into a
  * type that promises `message: string`. `name` and `stack` stay unchecked;
  * that residue rides on the brand.
+ *
+ * Limit: the payload is validated but **not rebuilt**, so the `serialized` the
+ * narrowed type exposes is valid-but-not-minimal — undeclared keys may still
+ * ride on it. Never read `.serialized` off a narrowed value directly (handing
+ * it to `redactForClient` would reopen the unknown-key path its spread
+ * closes); read it through {@link extractSerializedError} or
+ * {@link asSerializedError}, which rebuild from known keys.
  */
 export function isAppServerError(value: unknown): value is AppServerError {
   if (typeof value !== "object" || value === null) return false;
@@ -390,8 +397,11 @@ export function isAppServerError(value: unknown): value is AppServerError {
  * Limit: `serializeError` fails closed on its own, but the remnant stage does
  * not — a caught value whose `serialized` accessor throws, or whose payload
  * carries a throwing getter, still throws out of here. The last-resort catch
- * for that lives in `toClientError`, which lands on
- * {@link UNVERIFIED_SERIALIZED_ERROR}.
+ * for that exists only on the server-side classification path: `toClientError`
+ * catches and lands on {@link UNVERIFIED_SERIALIZED_ERROR}. The client-side
+ * callers (`errorDisplay`, the form-action catches) have no such backstop —
+ * they rest on the values they catch being transport-decoded plain data,
+ * which cannot carry a hostile accessor.
  */
 export function extractSerializedError(error: unknown): SerializedError {
   if (hasSerializedRemnant(error)) {
