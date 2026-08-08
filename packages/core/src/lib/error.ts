@@ -17,6 +17,15 @@
  *   reachable by anyone who can call `Symbol.for` with the same key. A brand
  *   check answers "this was produced by our error classes", never "this value
  *   is trustworthy". Never use it as an authorization or input-validation step.
+ * - **Membership** — the guards here (and the application / domain guards
+ *   built the same way) test the brand with `in`, which walks the prototype
+ *   chain; real instances pass either idiom, since a class field is an own
+ *   property, and narrowing to `Object.hasOwn` would close nothing — a forgery
+ *   that plants the brand on a prototype still has to carry the full checked
+ *   contract (`toSerialized` / `serializedKind` / `code` / `message`) to pass.
+ *   The presentation layer's `isAppServerError` uses `Object.hasOwn` instead,
+ *   for consistency with its `isSerializedErrorKind` lookup — an idiom
+ *   difference, not a soundness one.
  *
  * Module-private on purpose: exporting it would publish a way to bypass
  * {@link isCodedError} / {@link hasSerializedKind} and would sit oddly next to

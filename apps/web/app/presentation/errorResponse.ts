@@ -77,7 +77,12 @@ function unknownFrom(error: unknown): SerializedUnknownError {
 // a non-object, or answer an object whose getters throw. This function runs
 // inside the boundary catch (`toClientError`), where a secondary throw would
 // skip status, redaction and logging — so each of those shapes fails closed
-// onto the `errorMessage(error)` fallback instead of escaping.
+// onto the `errorMessage(error)` fallback instead of escaping. That claim's
+// reach: the not-serializable early return and the final `catch` both route
+// through `errorMessage(error)`, which reads `error.message` off an `Error`
+// instance — an own throwing `message` getter can still throw out of those two
+// paths; on the server `toClientError`'s backstop absorbs it, and the
+// client-side callers rest on catching transport-decoded plain data.
 export function serializeError(error: unknown): SerializedError {
   if (!isSerializableError(error)) {
     return unknownFrom(error);
@@ -396,9 +401,11 @@ export function isAppServerError(value: unknown): value is AppServerError {
  * that one is `obj instanceof Response && !!obj.options`, which no decoded
  * payload can satisfy.
  *
- * Limit: `serializeError` fails closed on its own, but the remnant stage does
- * not — a caught value whose `serialized` accessor throws, or whose payload
- * carries a throwing getter, still throws out of here. The last-resort catch
+ * Limit: `serializeError` fails closed on its own (save for the
+ * `errorMessage` reads noted on it, which a throwing own `message` getter can
+ * still break), but the remnant stage does not — a caught value whose
+ * `serialized` accessor throws, or whose payload carries a throwing getter,
+ * still throws out of here. The last-resort catch
  * for that exists only on the server-side classification path: `toClientError`
  * catches and lands on {@link UNVERIFIED_SERIALIZED_ERROR}. The client-side
  * callers (`errorDisplay`, the form-action catches) have no such backstop —
