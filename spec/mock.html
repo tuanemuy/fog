@@ -1,0 +1,1174 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>モック</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #e9e9ed;
+        --card: #ffffff;
+        --ink: #191a1d;
+        --sub: #9b9da4;
+        --line: #eeeef1;
+        --gray: #d6d7dc;
+        --purple: #8f7ee0;
+        --orange: #e8590c;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #dfdfe4;
+        font-family: "Inter", "Noto Sans JP", sans-serif;
+        color: var(--ink);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 28px 0;
+      }
+      .phone {
+        width: min(408px, 100vw);
+        height: min(860px, 100vh);
+        background: linear-gradient(180deg, #f0f0f3 0%, var(--bg) 100%);
+        border-radius: 34px;
+        box-shadow: 0 30px 70px rgba(25, 26, 29, 0.18);
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+      @media (max-width: 440px) {
+        body {
+          padding: 0;
+        }
+        .phone {
+          border-radius: 0;
+          height: 100vh;
+          box-shadow: none;
+        }
+      }
+
+      /* ---- 共通ヘッダー ---- */
+      header {
+        padding: 46px 30px 18px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex: none;
+      }
+      .h-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--ink);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .h-title .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--orange);
+      }
+      button.h-title.as-link {
+        border: none;
+        background: none;
+        cursor: pointer;
+        padding: 0;
+      }
+      button.h-title.as-link:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
+      .icon-btn {
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: #7c7e85;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+      }
+      .icon-btn:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+      .menu {
+        width: 30px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+        padding: 4px 0;
+      }
+      .menu span {
+        display: block;
+        height: 2.5px;
+        border-radius: 3px;
+        background: #7c7e85;
+      }
+      .menu span:nth-child(1) {
+        width: 24px;
+      }
+      .menu span:nth-child(2) {
+        width: 15px;
+      }
+
+      /* ---- 共通カード ---- */
+      .screen {
+        display: none;
+        flex-direction: column;
+        height: 100%;
+      }
+      .screen.active {
+        display: flex;
+      }
+      .sheet {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--card);
+        margin: 0 14px;
+        border-radius: 26px 26px 0 0;
+        box-shadow: 0 2px 24px rgba(25, 26, 29, 0.05);
+        scrollbar-width: none;
+      }
+      .sheet::-webkit-scrollbar {
+        display: none;
+      }
+      .inner {
+        padding: 30px 24px 140px;
+      }
+
+      .day-head {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--ink);
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+        padding: 26px 0 16px;
+      }
+      .day-head:first-child {
+        padding-top: 0;
+      }
+      .day-head .sub {
+        font-weight: 400;
+        color: var(--sub);
+        margin-left: 8px;
+        font-size: 0.72rem;
+      }
+      .time-label {
+        display: block;
+        font-size: 0.74rem;
+        font-weight: 500;
+        color: var(--sub);
+        letter-spacing: 0.03em;
+      }
+      .memo-text {
+        font-size: 0.95rem;
+        line-height: 1.85;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .memo-text + .memo-text {
+        margin-top: 1.4em;
+      }
+      .entry {
+        margin-bottom: 2px;
+      }
+      .entry .items {
+        padding: 14px 2px 26px;
+      }
+
+      .row {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 14px 0;
+      }
+      .row:first-child {
+        padding-top: 2px;
+      }
+      .row + .row {
+        border-top: 1px solid var(--line);
+      }
+      .row .grow {
+        flex: 1;
+        min-width: 0;
+      }
+      .row .title {
+        font-size: 0.95rem;
+        font-weight: 400;
+        line-height: 1.85;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .tags {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 9px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        font-size: 0.7rem;
+        font-weight: 500;
+        border-radius: 999px;
+        padding: 5px 11px;
+      }
+      .pill.outline {
+        border: 1.3px solid var(--gray);
+        color: #6e7076;
+        background: var(--card);
+      }
+      .jump {
+        flex: none;
+        border: none;
+        background: none;
+        cursor: pointer;
+        color: var(--purple);
+        padding: 4px;
+        margin-top: 2px;
+      }
+      .jump:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      /* ---- タイムライン: 入力 ---- */
+      .composer {
+        position: absolute;
+        left: 50%;
+        bottom: 30px;
+        transform: translateX(-50%);
+        width: calc(100% - 96px);
+        max-width: 300px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: rgba(244, 244, 246, 0.88);
+        backdrop-filter: blur(16px);
+        border-radius: 999px;
+        padding: 14px 20px;
+        box-shadow: 0 12px 36px rgba(25, 26, 29, 0.18);
+        z-index: 10;
+      }
+      .composer .icon {
+        color: #7c7e85;
+        flex: none;
+        display: flex;
+      }
+      .composer input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        background: none;
+        outline: none;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+        font-size: 0.92rem;
+        color: var(--ink);
+      }
+      .composer input::placeholder {
+        color: #9b9da3;
+      }
+
+      /* ---- トピック一覧 ---- */
+      .topic-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 0;
+        cursor: pointer;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+      }
+      .topic-row + .topic-row {
+        border-top: 1px solid var(--line);
+      }
+      .topic-row .t-name {
+        font-size: 0.98rem;
+        font-weight: 500;
+        color: var(--ink);
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .topic-row .t-desc {
+        font-size: 0.78rem;
+        color: var(--sub);
+        margin-top: 4px;
+        line-height: 1.6;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .t-name .n {
+        font-size: 0.74rem;
+        font-weight: 500;
+        color: var(--sub);
+        margin-left: 8px;
+      }
+      .topic-row:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: -2px;
+        border-radius: 10px;
+      }
+      .section-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 0.76rem;
+        font-weight: 500;
+        color: var(--sub);
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+        padding: 26px 0 10px;
+        width: 100%;
+      }
+      .section-toggle svg {
+        transition: transform 0.15s ease;
+      }
+      .section-toggle.open svg {
+        transform: rotate(90deg);
+      }
+      .collapsed {
+        display: none;
+      }
+      .collapsed.show {
+        display: block;
+      }
+      .archived .t-name {
+        color: #6e7076;
+        font-weight: 400;
+      }
+
+      /* ---- ドキュメント ---- */
+      .doc-title {
+        font-size: 1.35rem;
+        font-weight: 700;
+        line-height: 1.5;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+      }
+      .doc-meta .m {
+        font-size: 0.74rem;
+        color: var(--sub);
+      }
+      .doc-meta .hist {
+        margin-left: auto;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 0.74rem;
+        font-weight: 500;
+        color: #6e7076;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-body {
+        padding: 24px 0 8px;
+      }
+      .doc-body p {
+        font-size: 0.95rem;
+        line-height: 2;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-body p + p {
+        margin-top: 1.3em;
+      }
+      .doc-body h2 {
+        font-size: 1.02rem;
+        font-weight: 700;
+        margin: 2em 0 0.8em;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-body ul {
+        margin: 0.8em 0 0 0.2em;
+        list-style: none;
+      }
+      .doc-body li {
+        font-size: 0.95rem;
+        line-height: 2;
+        padding-left: 18px;
+        position: relative;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-body li::before {
+        content: "–";
+        position: absolute;
+        left: 0;
+        color: var(--sub);
+      }
+
+      .origin {
+        margin-top: 36px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+      }
+      .origin .o-label {
+        font-size: 0.76rem;
+        font-weight: 500;
+        color: var(--sub);
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .origin-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 0;
+        cursor: pointer;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+      }
+      .origin-row + .origin-row {
+        border-top: 1px solid var(--line);
+      }
+      .origin-row .grow {
+        flex: 1;
+        min-width: 0;
+        display: block;
+      }
+      .origin-row .o-text {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        margin-top: 8px;
+        font-size: 0.9rem;
+        line-height: 1.8;
+        color: #45464b;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .origin-row.deleted .o-text {
+        color: var(--sub);
+      }
+      .origin-row .o-jump {
+        flex: none;
+        color: var(--purple);
+        margin-top: 3px;
+        margin-left: auto;
+        display: flex;
+      }
+      .origin-row:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: -2px;
+        border-radius: 10px;
+      }
+
+      .doc-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 15px 0;
+        cursor: pointer;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+      }
+      .doc-row + .doc-row {
+        border-top: 1px solid var(--line);
+      }
+      .doc-row .grow {
+        flex: 1;
+        min-width: 0;
+        display: block;
+      }
+      .doc-row .d-name {
+        display: block;
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: var(--ink);
+        line-height: 1.6;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+      }
+      .doc-row .d-meta {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--sub);
+        margin-top: 5px;
+      }
+      .doc-row:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: -2px;
+        border-radius: 10px;
+      }
+
+      /* ---- ゴミ箱 ---- */
+      .trash-note {
+        font-size: 0.78rem;
+        color: var(--sub);
+        line-height: 1.7;
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .meta {
+        font-size: 0.72rem;
+        color: var(--sub);
+      }
+
+      /* ---- ナビゲーションシート ---- */
+      .nav-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        background: rgba(25, 26, 29, 0.28);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+      }
+      .nav-overlay.show {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .nav-sheet {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 0;
+        z-index: 21;
+        background: var(--card);
+        border-radius: 26px 26px 0 0;
+        padding: 14px 24px 40px;
+        transform: translateY(105%);
+        transition: transform 0.22s ease;
+        box-shadow: 0 -8px 40px rgba(25, 26, 29, 0.2);
+      }
+      .nav-sheet.show {
+        transform: translateY(0);
+      }
+      .nav-sheet .handle {
+        width: 36px;
+        height: 4px;
+        border-radius: 4px;
+        background: var(--gray);
+        margin: 0 auto 14px;
+      }
+      .nav-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 0.98rem;
+        font-weight: 500;
+        color: var(--ink);
+        font-family: "Noto Sans JP", "Inter", sans-serif;
+        padding: 16px 2px;
+      }
+      .nav-item + .nav-item {
+        border-top: 1px solid var(--line);
+      }
+      .nav-item:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: -2px;
+        border-radius: 10px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="phone">
+      <!-- ============ タイムライン ============ -->
+      <section class="screen active" id="scr-timeline">
+        <header>
+          <div class="h-title">
+            <span>タイムライン</span><span class="dot"></span>
+          </div>
+          <button class="menu" aria-label="メニュー" onclick="openNav()">
+            <span></span><span></span>
+          </button>
+        </header>
+        <main class="sheet">
+          <div class="inner">
+            <div class="day-head">7月20日<span class="sub">今日</span></div>
+
+            <div class="entry">
+              <span class="time-label">10:30 AM</span>
+              <div class="items">
+                <p class="memo-text">
+                  今日は仕事が捗った。プロジェクトが前に進んで、チームからも良い反応をもらえた。ブランドの見せ方のヒントになりそう。
+                </p>
+              </div>
+            </div>
+
+            <div class="entry">
+              <span class="time-label">12:30 PM</span>
+              <div class="items">
+                <div class="row">
+                  <div class="grow">
+                    <div class="title">
+                      ワイヤーフレームの構成、先週の議論を整理して固めた。
+                    </div>
+                    <div class="tags">
+                      <span class="pill outline">ブランド刷新</span>
+                    </div>
+                  </div>
+                  <button
+                    class="jump"
+                    aria-label="関連ドキュメントを開く"
+                    onclick="show('scr-doc')"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                      <path
+                        d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="row">
+                  <div class="grow">
+                    <div class="title">
+                      ジョネルにキャッシュバックの件を確認する。
+                    </div>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="grow">
+                    <div class="title">
+                      帰りに郵便受けを見る。来週月曜までに返送が必要なはず。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="entry">
+              <span class="time-label">01:30 PM</span>
+              <div class="items">
+                <p class="memo-text">
+                  午後の打ち合わせの控え。論点は三つで、価格の見直し、対象範囲、スケジュール。先方は範囲を広げたい意向が強そうなので、こちらは優先順位を先に握っておきたい。
+                </p>
+                <p class="memo-text">
+                  前回の議事録も読み返しておくこと。数字の前提が変わっている可能性がある。
+                </p>
+              </div>
+            </div>
+
+            <div class="entry">
+              <span class="time-label">10:15 PM</span>
+              <div class="items">
+                <p class="memo-text">
+                  寝る前に少しだけ。本の続きを読んだ。明日は早めに起きて走る。
+                </p>
+              </div>
+            </div>
+
+            <div class="day-head">7月19日<span class="sub">昨日</span></div>
+
+            <div class="entry">
+              <span class="time-label">09:12 AM</span>
+              <div class="items">
+                <p class="memo-text">
+                  事例ページは数を並べるより一件を深く。経緯を書くと選ばれる理由が伝わる、と昨日の打ち合わせで。
+                </p>
+              </div>
+            </div>
+
+            <div class="entry">
+              <span class="time-label">08:40 PM</span>
+              <div class="items">
+                <p class="memo-text">
+                  頼まれていた資料を送付済み。返事は水曜まで待つ。
+                </p>
+              </div>
+            </div>
+          </div>
+        </main>
+        <div class="composer">
+          <span class="icon"
+            ><svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path
+                d="M9 3.5V14.5M3.5 9H14.5"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+              /></svg
+          ></span>
+          <input
+            type="text"
+            placeholder="メモを入力…"
+            aria-label="メモを入力"
+          />
+          <span class="icon"
+            ><svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <rect
+                x="6.7"
+                y="2.5"
+                width="4.6"
+                height="8.4"
+                rx="2.3"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <path
+                d="M4 9.2c0 2.8 2.2 5 5 5s5-2.2 5-5M9 14.2v1.8"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              /></svg
+          ></span>
+        </div>
+      </section>
+
+      <!-- ============ トピック一覧 ============ -->
+      <section class="screen" id="scr-topics">
+        <header>
+          <div class="h-title">
+            <span>トピック</span><span class="dot"></span>
+          </div>
+          <button class="menu" aria-label="メニュー" onclick="openNav()">
+            <span></span><span></span>
+          </button>
+        </header>
+        <main class="sheet">
+          <div class="inner">
+            <button class="topic-row" onclick="show('scr-topic')">
+              <div class="grow">
+                <div class="t-name">ブランド刷新<span class="n">4</span></div>
+                <div class="t-desc">サイトとロゴの見直し。秋の展示会まで</div>
+              </div>
+            </button>
+            <button class="topic-row">
+              <div class="grow">
+                <div class="t-name">引っ越し<span class="n">2</span></div>
+                <div class="t-desc">候補エリアの比較と手続きのまとめ</div>
+              </div>
+            </button>
+            <button class="topic-row">
+              <div class="grow">
+                <div class="t-name">読書メモ<span class="n">7</span></div>
+              </div>
+            </button>
+
+            <button
+              class="section-toggle"
+              id="arch-toggle"
+              onclick="toggleArch()"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path
+                  d="M3.5 2L7 5L3.5 8"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              完了済み（2）
+            </button>
+            <div class="collapsed" id="arch-list">
+              <button class="topic-row archived">
+                <div class="grow">
+                  <div class="t-name">
+                    確定申告 2025<span class="n">3</span>
+                  </div>
+                </div>
+              </button>
+              <button class="topic-row archived">
+                <div class="grow">
+                  <div class="t-name">沖縄旅行<span class="n">5</span></div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <!-- ============ ドキュメント ============ -->
+      <section class="screen" id="scr-doc">
+        <header>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <button class="icon-btn" aria-label="戻る" onclick="back()">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M12.5 4L6.5 10L12.5 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button class="h-title as-link" onclick="show('scr-topic')">
+              <span>ブランド刷新</span><span class="dot"></span>
+            </button>
+          </div>
+          <button class="menu" aria-label="メニュー" onclick="openNav()">
+            <span></span><span></span>
+          </button>
+        </header>
+        <main class="sheet">
+          <div class="inner">
+            <h1 class="doc-title">サイト構成の方針</h1>
+            <div class="doc-meta">
+              <span class="m">7月20日 12:42 更新</span>
+              <button class="hist">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle
+                    cx="6"
+                    cy="6"
+                    r="4.6"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                  />
+                  <path
+                    d="M6 3.6V6l1.7 1"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                履歴
+              </button>
+            </div>
+
+            <div class="doc-body">
+              <p>
+                トップは製品ではなく制作の姿勢を見せる。写真は現場のものだけを使い、素材集は使わない。
+              </p>
+              <h2>構成</h2>
+              <ul>
+                <li>トップ：姿勢を伝える一枚と最小限の導線</li>
+                <li>制作事例：件数を絞り、一件ごとに経緯まで書く</li>
+                <li>会社概要：地図と沿革のみ</li>
+              </ul>
+              <h2>決めたこと</h2>
+              <p>
+                色は現行の紺を残す。書体は本文と見出しの二種に絞り、多言語対応は今回のスコープに含めない。
+              </p>
+              <p>展示会の案内はトップに常設せず、期間中だけ掲載する。</p>
+            </div>
+
+            <div class="origin">
+              <div class="o-label">元になったメモ</div>
+              <button class="origin-row" onclick="show('scr-timeline')">
+                <span class="grow">
+                  <span class="time-label">7月20日 12:30 PM</span>
+                  <span class="o-text"
+                    >ワイヤーフレームの構成、先週の議論を整理して固めた。</span
+                  >
+                </span>
+                <span class="o-jump"
+                  ><svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+              </button>
+              <button class="origin-row" onclick="show('scr-timeline')">
+                <span class="grow">
+                  <span class="time-label">7月14日 09:12 AM</span>
+                  <span class="o-text"
+                    >事例ページは数を並べるより一件を深く。経緯を書くと選ばれる理由が伝わる、と昨日の打ち合わせで。</span
+                  >
+                </span>
+                <span class="o-jump"
+                  ><svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+              </button>
+              <button class="origin-row deleted" disabled>
+                <span class="grow">
+                  <span class="time-label">7月12日</span>
+                  <span class="o-text">削除されたメモ</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <!-- ============ トピック詳細 ============ -->
+      <section class="screen" id="scr-topic">
+        <header>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <button class="icon-btn" aria-label="戻る" onclick="back()">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M12.5 4L6.5 10L12.5 16"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div class="h-title">
+              <span>ブランド刷新</span><span class="dot"></span>
+            </div>
+          </div>
+          <button class="menu" aria-label="メニュー" onclick="openNav()">
+            <span></span><span></span>
+          </button>
+        </header>
+        <main class="sheet">
+          <div class="inner">
+            <p class="t-desc" style="font-size: 0.85rem; line-height: 1.8">
+              サイトとロゴの見直し。秋の展示会まで
+            </p>
+
+            <button
+              class="doc-row"
+              onclick="show('scr-doc')"
+              style="margin-top: 14px"
+            >
+              <span class="grow">
+                <span class="d-name">サイト構成の方針</span>
+                <span class="d-meta">7月20日 更新</span>
+              </span>
+            </button>
+            <button class="doc-row">
+              <span class="grow">
+                <span class="d-name">ロゴ検討の経緯</span>
+                <span class="d-meta">7月16日 更新</span>
+              </span>
+            </button>
+            <button class="doc-row">
+              <span class="grow">
+                <span class="d-name">展示会の準備</span>
+                <span class="d-meta">7月11日 更新</span>
+              </span>
+            </button>
+            <button class="doc-row">
+              <span class="grow">
+                <span class="d-name">取材メモの整理</span>
+                <span class="d-meta">7月2日 更新</span>
+              </span>
+            </button>
+
+            <div class="origin">
+              <div class="o-label">関連メモ</div>
+              <button class="origin-row" onclick="show('scr-timeline')">
+                <span class="grow">
+                  <span class="time-label">7月20日 12:30 PM</span>
+                  <span class="o-text"
+                    >ワイヤーフレームの構成、先週の議論を整理して固めた。</span
+                  >
+                </span>
+                <span class="o-jump"
+                  ><svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+              </button>
+              <button class="origin-row" onclick="show('scr-timeline')">
+                <span class="grow">
+                  <span class="time-label">7月14日 09:12 AM</span>
+                  <span class="o-text"
+                    >事例ページは数を並べるより一件を深く。経緯を書くと選ばれる理由が伝わる、と昨日の打ち合わせで。</span
+                  >
+                </span>
+                <span class="o-jump"
+                  ><svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+              </button>
+              <button class="origin-row" onclick="show('scr-timeline')">
+                <span class="grow">
+                  <span class="time-label">7月8日 07:55 PM</span>
+                  <span class="o-text"
+                    >紺は残す。刷新といっても全部変えることではない。</span
+                  >
+                </span>
+                <span class="o-jump"
+                  ><svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M5 15L15 5M15 5H7.5M15 5V12.5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+              </button>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <!-- ============ ゴミ箱 ============ -->
+      <section class="screen" id="scr-trash">
+        <header>
+          <div class="h-title">
+            <span>ゴミ箱</span><span class="dot"></span>
+          </div>
+          <button class="menu" aria-label="メニュー" onclick="openNav()">
+            <span></span><span></span>
+          </button>
+        </header>
+        <main class="sheet">
+          <div class="inner">
+            <p class="trash-note">
+              ここにある項目は30日後に完全に削除されます。
+            </p>
+
+            <div class="row">
+              <div class="grow">
+                <div class="title">
+                  昼に食べた店、名前なんだったか。駅の北側。
+                </div>
+                <div class="tags">
+                  <span class="pill outline">メモ</span
+                  ><span class="meta">残り12日</span>
+                </div>
+              </div>
+              <button class="jump" aria-label="復元">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="row">
+              <div class="grow">
+                <div class="title">打ち合わせ前の走り書き。</div>
+                <div class="tags">
+                  <span class="pill outline">メモ</span
+                  ><span class="meta">残り22日</span>
+                </div>
+              </div>
+              <button class="jump" aria-label="復元">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="row">
+              <div class="grow">
+                <div class="title">旧サイト運用</div>
+                <div class="tags">
+                  <span class="pill outline">トピック</span
+                  ><span class="meta">ドキュメント2件・残り28日</span>
+                </div>
+              </div>
+              <button class="jump" aria-label="復元">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <!-- ============ ナビゲーション ============ -->
+      <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
+      <div class="nav-sheet" id="nav-sh">
+        <div class="handle"></div>
+        <button class="nav-item" onclick="go('scr-timeline')">
+          タイムライン
+        </button>
+        <button class="nav-item" onclick="go('scr-topics')">トピック</button>
+        <button class="nav-item" onclick="go('scr-trash')">ゴミ箱</button>
+      </div>
+    </div>
+    <script>
+      let stack = [];
+      function show(id, push = true) {
+        const cur = document.querySelector(".screen.active");
+        if (push && cur && cur.id !== id) stack.push(cur.id);
+        document
+          .querySelectorAll(".screen")
+          .forEach((s) => s.classList.remove("active"));
+        document.getElementById(id).classList.add("active");
+        document.querySelector("#" + id + " .sheet").scrollTop = 0;
+      }
+      function back() {
+        const prev = stack.pop() || "scr-timeline";
+        show(prev, false);
+      }
+      function openNav() {
+        document.getElementById("nav-ov").classList.add("show");
+        document.getElementById("nav-sh").classList.add("show");
+      }
+      function closeNav() {
+        document.getElementById("nav-ov").classList.remove("show");
+        document.getElementById("nav-sh").classList.remove("show");
+      }
+      function go(id) {
+        closeNav();
+        stack = [];
+        show(id, false);
+      }
+      function toggleArch() {
+        document.getElementById("arch-toggle").classList.toggle("open");
+        document.getElementById("arch-list").classList.toggle("show");
+      }
+    </script>
+  </body>
+</html>

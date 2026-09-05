@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>アカウント登録 — fog</title>
+    <style>
+      :root {
+        /* spec/design/tokens.md */
+        --color-primary-lighter: oklch(0.93 0.04 292);
+        --color-primary-light: oklch(0.78 0.09 292);
+        --color-primary: oklch(0.63 0.13 292);
+        --color-primary-dark: oklch(0.54 0.15 292);
+        --color-primary-darker: oklch(0.45 0.15 292);
+        --color-accent: oklch(0.62 0.19 40);
+        --color-neutral-50: oklch(0.97 0.002 286);
+        --color-neutral-100: oklch(0.945 0.004 286);
+        --color-neutral-200: oklch(0.93 0.004 286);
+        --color-neutral-300: oklch(0.875 0.006 278);
+        --color-neutral-400: oklch(0.69 0.01 275);
+        --color-neutral-500: oklch(0.58 0.01 275);
+        --color-neutral-600: oklch(0.52 0.01 275);
+        --color-neutral-700: oklch(0.38 0.008 275);
+        --color-neutral-900: oklch(0.21 0.006 270);
+        --color-success: oklch(0.55 0.13 155);
+        --color-success-dark: oklch(0.42 0.11 155);
+        --color-success-bg: oklch(0.95 0.03 155);
+        --color-warning: oklch(0.6 0.13 75);
+        --color-warning-dark: oklch(0.45 0.1 75);
+        --color-warning-bg: oklch(0.96 0.04 90);
+        --color-error: oklch(0.55 0.19 27);
+        --color-error-bg: oklch(0.95 0.025 20);
+        --color-error-dark: oklch(0.45 0.19 27);
+        --color-info: var(--color-primary);
+        --color-info-bg: var(--color-primary-lighter);
+        --color-bg-page: oklch(0.93 0.004 286);
+        --color-bg-page-top: oklch(0.955 0.003 286);
+        --color-bg-card: oklch(1 0 0);
+        --color-bg-hover: oklch(1 0 0 / 0.55);
+        --color-overlay: oklch(0.21 0.006 270 / 0.28);
+        --font-base: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
+          "Hiragino Sans", "Noto Sans JP", sans-serif;
+        --text-xs: 0.72rem;
+        --text-sm: 0.78rem;
+        --text-base: 0.95rem;
+        --text-lg: 1.05rem;
+        --text-xl: clamp(1.2rem, 1.1rem + 0.5vw, 1.45rem);
+        --text-2xl: clamp(1.45rem, 1.3rem + 0.8vw, 1.8rem);
+        --weight-regular: 400;
+        --weight-medium: 500;
+        --weight-semibold: 600;
+        --weight-bold: 700;
+        --leading-tight: 1.5;
+        --leading-normal: 1.85;
+        --leading-loose: 2;
+        --tracking-label: 0.03em;
+        --space-xs: 0.25rem;
+        --space-sm: 0.5rem;
+        --space-md: 0.875rem;
+        --space-lg: 1.5rem;
+        --space-xl: 1.875rem;
+        --space-2xl: 2.5rem;
+        --space-section: 2.25rem;
+        --radius-sm: 0.375rem;
+        --radius-md: 0.625rem;
+        --radius-lg: 1.625rem;
+        --radius-full: 9999px;
+        --pad-btn: 12px 24px; /* フォームの主ボタン（認証系 .btn-primary） */
+        --border-input: 1.3px solid var(--color-neutral-300); /* 入力枠線 */
+        --color-text-inverse: oklch(1 0 0); /* 塗りボタン・トースト上の白文字 */
+        --color-focus: var(--color-primary); /* 通常フォーカスリング */
+        --icon-md: 19px; /* ヘッダー操作・行末操作（ジャンプ/復元/削除） */
+        --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);
+        --transition-fast: 0.15s ease;
+        --transition-default: 0.22s ease;
+        --content-max: 50rem;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: linear-gradient(
+          180deg,
+          var(--color-bg-page-top) 0%,
+          var(--color-bg-page) 240px
+        );
+        font-family: var(--font-base);
+        color: var(--color-neutral-900);
+        font-size: var(--text-base);
+      }
+
+      /* ===== 認証画面レイアウト ===== */
+      .auth-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100dvh;
+        padding: var(--space-xl) var(--space-md);
+      }
+
+      .auth-sheet {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-lg);
+        max-width: 26rem;
+        width: 100%;
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-2xl) var(--space-lg);
+      }
+
+      @media (min-width: 640px) {
+        .auth-sheet {
+          padding: var(--space-2xl);
+        }
+      }
+
+      /* ---- ブランド ---- */
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: var(--text-lg);
+        font-weight: var(--weight-semibold);
+        justify-content: center;
+      }
+
+
+      /* ---- 見出し ---- */
+      .page-title {
+        font-size: var(--text-2xl);
+        font-weight: var(--weight-bold);
+        margin-top: var(--space-section);
+        text-align: center;
+        line-height: var(--leading-tight);
+      }
+
+      /* ---- フォーム ---- */
+      .auth-form {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-lg);
+        margin-top: var(--space-section);
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+      }
+
+      .form-label {
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        color: var(--color-neutral-900);
+      }
+
+      .form-label-helper {
+        display: block;
+        font-size: var(--text-sm);
+        font-weight: var(--weight-regular);
+        color: var(--color-neutral-600);
+        margin-top: var(--space-xs);
+      }
+
+      .form-input {
+        padding: 12px 16px;
+        border: var(--border-input);
+        border-radius: var(--radius-md);
+        font-family: inherit;
+        font-size: var(--text-base);
+        color: var(--color-neutral-900);
+        background: var(--color-bg-card);
+        transition: border-color var(--transition-fast);
+      }
+
+      .form-input::placeholder {
+        color: var(--color-neutral-400);
+      }
+
+      .form-input:focus {
+        outline: none;
+        border-color: var(--color-primary);
+      }
+
+      .form-input:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      .form-input.error {
+        border-color: var(--color-error);
+      }
+
+      /* ---- エラーメッセージ ---- */
+      .field-error {
+        font-size: var(--text-sm);
+        color: var(--color-error);
+      }
+
+      /* ---- ボタン ---- */
+      .btn {
+        padding: var(--pad-btn);
+        border: none;
+        border-radius: var(--radius-full);
+        font-family: inherit;
+        font-size: var(--text-base);
+        font-weight: var(--weight-medium);
+        cursor: pointer;
+        transition: background var(--transition-fast),
+          color var(--transition-fast),
+          border-color var(--transition-fast);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .btn-primary {
+        background: var(--color-primary-dark);
+        color: var(--color-text-inverse);
+      }
+
+      @media (hover: hover) {
+        .btn-primary:hover:not(:disabled) {
+          background: var(--color-primary-darker);
+        }
+      }
+
+      .btn-primary:active:not(:disabled) {
+        background: var(--color-primary-darker);
+      }
+
+      .btn-primary:disabled {
+        background: var(--color-neutral-200);
+        color: var(--color-neutral-400);
+        cursor: default;
+      }
+
+      .btn-primary:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      .btn-outline {
+        background: transparent;
+        color: var(--color-neutral-900);
+        border: var(--border-input);
+      }
+
+      @media (hover: hover) {
+        .btn-outline:hover {
+          border-color: var(--color-neutral-600);
+          color: var(--color-neutral-900);
+        }
+      }
+
+      .btn-outline:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      .btn-icon {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .btn-icon svg {
+        width: var(--icon-md);
+        height: var(--icon-md);
+      }
+
+      /* ---- SSO エリア ---- */
+      .sso-group {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        margin-top: var(--space-lg);
+      }
+
+      .divider-text {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        margin-top: var(--space-lg);
+        color: var(--color-neutral-600);
+        font-size: var(--text-sm);
+      }
+
+      .divider-text::before,
+      .divider-text::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--color-neutral-100);
+      }
+
+      /* ---- リンク ---- */
+      .form-links {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        margin-top: var(--space-section);
+        text-align: center;
+        font-size: var(--text-sm);
+        color: var(--color-neutral-600);
+      }
+
+      .form-link {
+        color: var(--color-primary-dark);
+        text-decoration: none;
+        transition: color var(--transition-fast);
+      }
+
+      @media (hover: hover) {
+        .form-link:hover {
+          color: var(--color-primary-darker);
+        }
+      }
+
+      .form-link:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+        border-radius: var(--radius-sm);
+      }
+
+      /* ---- 状態の例 ---- */
+      .state-examples {
+        max-width: var(--content-max);
+        margin: var(--space-2xl) auto 0;
+        padding: 0 var(--space-lg) var(--space-2xl);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+      }
+
+      .state-examples h2 {
+        font-size: var(--text-sm);
+        font-weight: var(--weight-semibold);
+        color: var(--color-neutral-600);
+        letter-spacing: var(--tracking-label);
+      }
+
+      .state-examples .example {
+        background: var(--color-bg-card);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+      }
+
+      .state-examples .example-label {
+        font-size: var(--text-xs);
+        color: var(--color-neutral-400);
+      }
+
+      .state-examples .example-label + * {
+        margin-top: var(--space-sm);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="auth-container">
+      <div class="auth-sheet">
+        <div class="brand">
+          <svg viewBox="0 0 64.7 26" width="64.7" height="26" role="img" aria-label="fog">
+            <g transform="scale(1.0833)">
+              <path d="M4.5 12 H19.5 M7 16 H15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <circle cx="16.5" cy="7" r="1.8" fill="var(--color-accent)"/>
+            </g>
+            <g transform="translate(36 19.02) scale(0.019 -0.019)" fill="currentColor">
+              <path d="M304 397L194 397L194 0L100 0L100 397L6 397L6 474L100 474L100 573Q100 615 109.5 650.5Q119 686 140.5 712Q162 738 195.5 753Q229 768 277 768Q311 768 336 761L325 680Q314 683 303 685Q292 687 278 687Q251 687 234.5 677.5Q218 668 209 652Q200 636 197 615.5Q194 595 194 573L194 474L304 474Z"/>
+              <path transform="translate(288 0)" d="M561 238Q561 183 541.5 137Q522 91 487.5 57.5Q453 24 406 5.5Q359 -13 305 -13Q251 -13 204 5.5Q157 24 123 57.5Q89 91 69.5 137Q50 183 50 238Q50 293 69.5 338.5Q89 384 123 417Q157 450 204 468.5Q251 487 305 487Q359 487 406 468.5Q453 450 487.5 417Q522 384 541.5 338.5Q561 293 561 238ZM463 238Q463 272 452.5 303Q442 334 422 357.5Q402 381 372.5 395Q343 409 305 409Q267 409 237.5 395Q208 381 188 357.5Q168 334 157.5 303Q147 272 147 238Q147 204 157.5 173Q168 142 188 118Q208 94 237.5 80Q267 66 305 66Q343 66 372.5 80Q402 94 422 118Q442 142 452.5 173Q463 204 463 238Z"/>
+              <path transform="translate(876 0)" d="M118 -81Q149 -116 195.5 -137Q242 -158 291 -158Q338 -158 370 -144.5Q402 -131 421.5 -107.5Q441 -84 449.5 -52Q458 -20 458 17L458 78L456 78Q430 38 385 17Q340 -4 289 -4Q235 -4 190.5 15Q146 34 115 67Q84 100 67 144.5Q50 189 50 240Q50 291 67 336Q84 381 115 414.5Q146 448 190 467.5Q234 487 288 487Q339 487 385.5 465Q432 443 459 398L461 398L461 474L552 474L552 24Q552 -28 539 -75.5Q526 -123 495 -159.5Q464 -196 414 -218Q364 -240 290 -240Q228 -240 165.5 -217.5Q103 -195 58 -154ZM147 242Q147 209 157.5 179Q168 149 188.5 126Q209 103 238 89Q267 75 304 75Q340 75 370 88Q400 101 421 123.5Q442 146 453.5 176.5Q465 207 465 242Q465 276 453.5 306Q442 336 420.5 359Q399 382 369.5 395.5Q340 409 304 409Q267 409 238 395.5Q209 382 188.5 359.5Q168 337 157.5 306.5Q147 276 147 242Z"/>
+            </g>
+          </svg>
+        </div>
+
+        <h1 class="page-title">アカウント登録</h1>
+
+        <!-- 登録フォーム -->
+        <form class="auth-form">
+          <div class="form-group">
+            <label class="form-label" for="signup-email">メールアドレス</label>
+            <input
+              type="email"
+              id="signup-email"
+              class="form-input"
+              autocomplete="email"
+              placeholder="you@example.com"
+            />
+          </div>
+
+          <div class="form-group">
+            <div>
+              <label class="form-label" for="signup-password">パスワード</label>
+              <span class="form-label-helper" id="signup-password-helper"
+                >8文字以上。大文字・小文字・数字を含む</span
+              >
+            </div>
+            <input
+              type="password"
+              id="signup-password"
+              class="form-input"
+              autocomplete="new-password"
+              aria-describedby="signup-password-helper"
+              placeholder="パスワード"
+            />
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="width: 100%">
+            登録する
+          </button>
+        </form>
+
+        <!-- SSO -->
+        <div class="divider-text">または</div>
+
+        <div class="sso-group">
+          <button type="button" class="btn btn-outline" style="width: 100%">
+            <span class="btn-icon">
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+              >
+                <path
+                  d="M20.5 12a8.5 8.5 0 1 1-2.5-6"
+                  stroke-linecap="round"
+                />
+                <path d="M12 12h8.5" stroke-linecap="round" />
+              </svg>
+              Google で登録
+            </span>
+          </button>
+
+          <button type="button" class="btn btn-outline" style="width: 100%">
+            <span class="btn-icon">
+              <svg
+                aria-hidden="true"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+              >
+                <path
+                  d="M16.2 8c2.1.3 3.8 2.2 3.8 4.7 0 3.4-2.4 7.5-4.9 7.5-.9 0-1.5-.6-2.6-.6s-1.8.6-2.7.6C7.3 20.2 5 16.1 5 12.7 5 9.6 7.1 7.8 9.5 7.8c1 0 2 .6 2.6.6.6 0 1.8-.5 3-.4Z"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M14.8 3.2c-.4 1.2-1.5 2.1-2.7 2.2 0-1.3 1.1-2.6 2.7-2.8 0 .2 0 .4 0 .6Z"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              Apple で登録
+            </span>
+          </button>
+        </div>
+
+        <!-- リンク -->
+        <div class="form-links">
+          <a href="#" class="form-link">ログイン</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状態の例（通常フロー外） -->
+    <section class="state-examples" aria-label="状態の例">
+      <h2>状態の例</h2>
+      <div class="example">
+        <p class="example-label">パスワード入力エラー（項目直下に表示）</p>
+        <div class="form-group">
+          <label class="form-label" for="example-password">パスワード</label>
+          <input
+            type="password"
+            id="example-password"
+            class="form-input error"
+            autocomplete="new-password"
+            aria-invalid="true"
+            aria-describedby="example-password-error"
+            placeholder="パスワード"
+          />
+          <div class="field-error" id="example-password-error">
+            パスワードが要件を満たしていません
+          </div>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>
