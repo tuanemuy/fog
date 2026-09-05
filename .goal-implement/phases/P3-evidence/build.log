@@ -1,0 +1,198 @@
+$ pnpm --filter @repo/web build
+$ pnpm build:node
+$ vite build --config vite.config.node.ts
+[1/5] analyze client references...
+vite v8.0.12 building rsc environment for production...
+[2Ktransforming...✓ 16 modules transformed.
+rendering chunks...
+✓ built in 36ms
+[2/5] analyze server references...
+vite v8.0.12 building ssr environment for production...
+[2Ktransforming...✓ 492 modules transformed.
+rendering chunks...
+✓ built in 398ms
+[3/5] build rsc environment...
+vite v8.0.12 building rsc environment for production...
+[2Ktransforming...✓ 420 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/server/rsc/assets/index-DnaXS4Ns.css                     34.06 kB │ gzip:   7.25 kB
+dist/server/rsc/assets/fogDataSchema-CSzz2wjM.js               0.39 kB │ gzip:   0.25 kB
+dist/server/rsc/assets/runtime-DQL7zYtq.js                     0.40 kB │ gzip:   0.24 kB
+dist/server/rsc/assets/createServerRpc-iUEX9qx7.js             0.45 kB │ gzip:   0.30 kB
+dist/server/rsc/assets/__root-CZ3OVtDm.js                      0.86 kB │ gzip:   0.47 kB
+dist/server/rsc/assets/fogSecurity-Cz26JU1H.js                 0.91 kB │ gzip:   0.49 kB
+dist/server/rsc/assets/TopicsContent-DGVR2DGz.js               0.93 kB │ gzip:   0.47 kB
+dist/server/rsc/assets/TopicContent-Cs2xn3yq.js                0.94 kB │ gzip:   0.47 kB
+dist/server/rsc/assets/SettingsContent-DDCThC_A.js             0.95 kB │ gzip:   0.46 kB
+dist/server/rsc/assets/serverAction-BIN5AnQl.js                0.95 kB │ gzip:   0.54 kB
+dist/server/rsc/assets/MemoHistoryContent-BFWooTNm.js          1.00 kB │ gzip:   0.48 kB
+dist/server/rsc/assets/TrashContent-bfhyOsCQ.js                1.03 kB │ gzip:   0.51 kB
+dist/server/rsc/assets/TimelineContent-C1q2mBWv.js             1.05 kB │ gzip:   0.52 kB
+dist/server/rsc/assets/fogTimelineSchema-CLlPXbhe.js           1.18 kB │ gzip:   0.56 kB
+dist/server/rsc/assets/SearchContent-CB6rTCw3.js               1.24 kB │ gzip:   0.61 kB
+dist/server/rsc/assets/containerStore-Bhm_X8xo.js              1.53 kB │ gzip:   0.73 kB
+dist/server/rsc/assets/jsx-runtime.react-server-BhATj4yc.js    1.90 kB │ gzip:   0.86 kB
+dist/server/rsc/assets/link-C_lcrkeZ.js                        2.95 kB │ gzip:   1.24 kB
+dist/server/rsc/assets/fogAuth-Bh10u1t_.js                     3.82 kB │ gzip:   1.79 kB
+dist/server/rsc/assets/fogMemoActions-B0E9iK-E.js              5.76 kB │ gzip:   1.65 kB
+dist/server/rsc/assets/fogActions-CstW7G21.js                  6.23 kB │ gzip:   1.76 kB
+dist/server/rsc/assets/index.rsc-CZ8ROoMa.js                   7.20 kB │ gzip:   2.32 kB
+dist/server/rsc/assets/fogMemoActions-9zoV9LNP.js              9.71 kB │ gzip:   2.71 kB
+dist/server/rsc/index.js                                       9.91 kB │ gzip:   2.87 kB
+dist/server/rsc/assets/fogDataActions-Bj5fd11Q.js             10.59 kB │ gzip:   2.38 kB
+dist/server/rsc/assets/fogDocumentActions-COHGpNL4.js         11.41 kB │ gzip:   2.41 kB
+dist/server/rsc/assets/error-Ckv9MtbU.js                      13.20 kB │ gzip:   4.09 kB
+dist/server/rsc/assets/validator-DXmh6OXC.js                  19.47 kB │ gzip:   5.52 kB
+dist/server/rsc/assets/rsc-BaaugNvh.js                       134.36 kB │ gzip:  28.58 kB
+dist/server/rsc/assets/router-DFFzcmIx.js                    179.10 kB │ gzip:  41.04 kB
+dist/server/rsc/assets/DocumentContent-BMft9NfC.js           461.24 kB │ gzip: 101.96 kB
+
+✓ built in 526ms
+[4/5] build client environment...
+vite v8.0.12 building client environment for production...
+[2Ktransforming...✓ 590 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/client/assets/index-DnaXS4Ns.css                           34.06 kB │ gzip:  7.25 kB
+dist/client/assets/index-DnaXS4Ns.css                           34.06 kB │ gzip:  7.25 kB
+dist/client/assets/link-BYIXsUyW.js                              0.08 kB │ gzip:  0.09 kB
+dist/client/assets/Brand-ShKVru-A.js                             0.16 kB │ gzip:  0.16 kB
+dist/client/assets/useRouter-CNW7yLLS.js                         0.23 kB │ gzip:  0.18 kB
+dist/client/assets/login-DcAINiKZ.js                             0.25 kB │ gzip:  0.19 kB
+dist/client/assets/signup-DrsU_hwg.js                            0.25 kB │ gzip:  0.20 kB
+dist/client/assets/ClientSlot-CBTqwy7m.js                        0.25 kB │ gzip:  0.19 kB
+dist/client/assets/timeline-BPR0FCrJ.js                          0.42 kB │ gzip:  0.30 kB
+dist/client/assets/memos._memoId.history-Dr04J8G5.js             0.43 kB │ gzip:  0.32 kB
+dist/client/assets/useServerFn-Bu4TXCJJ.js                       0.45 kB │ gzip:  0.31 kB
+dist/client/assets/timeline-BzXqBCMt.js                          0.46 kB │ gzip:  0.30 kB
+dist/client/assets/search-BZtDl5e7.js                            0.48 kB │ gzip:  0.32 kB
+dist/client/assets/settings-CZ2XVwqR.js                          0.48 kB │ gzip:  0.32 kB
+dist/client/assets/TimelineSkeleton-GvOEhiLs.js                  0.48 kB │ gzip:  0.29 kB
+dist/client/assets/trash-MxPPsk9b.js                             0.48 kB │ gzip:  0.33 kB
+dist/client/assets/topics.index-CohTevb1.js                      0.48 kB │ gzip:  0.33 kB
+dist/client/assets/memos._memoId.history-BO4g_390.js             0.49 kB │ gzip:  0.34 kB
+dist/client/assets/topics._topicId-BOJWPQ4t.js                   0.50 kB │ gzip:  0.34 kB
+dist/client/assets/documents._documentId-D8sepnWQ.js             0.50 kB │ gzip:  0.35 kB
+dist/client/assets/ConfirmDialog-CwViVXtn.js                     0.55 kB │ gzip:  0.38 kB
+dist/client/assets/topics._topicId_.new-vFuyFUuJ.js              0.57 kB │ gzip:  0.39 kB
+dist/client/assets/documents._documentId_.edit-C-kAdpSH.js       0.58 kB │ gzip:  0.40 kB
+dist/client/assets/documents._documentId_.history-CGZqJ-yb.js    0.58 kB │ gzip:  0.39 kB
+dist/client/assets/router-BaWI8Ybj.js                            0.61 kB │ gzip:  0.38 kB
+dist/client/assets/MemoHistoryContent-OQ1hVAhO.js                0.64 kB │ gzip:  0.41 kB
+dist/client/assets/fogMemoActions-Ccm74vgG.js                    0.69 kB │ gzip:  0.39 kB
+dist/client/assets/fogActions-BPmDDuKt.js                        0.82 kB │ gzip:  0.43 kB
+dist/client/assets/jsx-runtime-BE_tW6Ee.js                       1.06 kB │ gzip:  0.60 kB
+dist/client/assets/fogSecurity-CZqNXQ_u.js                       1.20 kB │ gzip:  0.68 kB
+dist/client/assets/fogDataActions-DlWLXtLe.js                    1.30 kB │ gzip:  0.60 kB
+dist/client/assets/ContentDeletion-CdloQOUd.js                   1.35 kB │ gzip:  0.77 kB
+dist/client/assets/fogDocumentActions-Wj285HZM.js                1.42 kB │ gzip:  0.65 kB
+dist/client/assets/AuthForm-uRVtKLuV.js                          2.59 kB │ gzip:  1.25 kB
+dist/client/assets/TopicsContent-Dfnw-xo5.js                     3.06 kB │ gzip:  1.37 kB
+dist/client/assets/SettingsContent-CzVlViyO.js                   3.12 kB │ gzip:  1.60 kB
+dist/client/assets/SearchContent--KA6WR1_.js                     3.43 kB │ gzip:  1.61 kB
+dist/client/assets/react-dom-Dz4GVZtn.js                         3.57 kB │ gzip:  1.35 kB
+dist/client/assets/Deferred-C__8HNA4.js                          3.82 kB │ gzip:  1.38 kB
+dist/client/assets/TopicContent-BExk7wCp.js                      5.17 kB │ gzip:  1.98 kB
+dist/client/assets/preload-helper-B63hINr9.js                    5.26 kB │ gzip:  1.98 kB
+dist/client/assets/TrashContent-BoNEfG7K.js                      5.91 kB │ gzip:  2.31 kB
+dist/client/assets/DocumentContent-Ms3SR_tR.js                   7.33 kB │ gzip:  2.88 kB
+dist/client/assets/react-BL2tfwYF.js                             7.52 kB │ gzip:  2.88 kB
+dist/client/assets/TimelineContent-CXykyVRF.js                  10.11 kB │ gzip:  3.93 kB
+dist/client/assets/RevisionHistory-_UNgu0Kq.js                  12.36 kB │ gzip:  4.68 kB
+dist/client/assets/link-BGq6raoC.js                             23.11 kB │ gzip:  8.62 kB
+dist/client/assets/errorResponseMiddleware-C-UAScGB.js          36.55 kB │ gzip: 11.90 kB
+dist/client/assets/schemas-C1Z_pWX1.js                          64.13 kB │ gzip: 17.27 kB
+dist/client/assets/Markdown-DpUU4wxf.js                        154.27 kB │ gzip: 46.04 kB
+dist/client/assets/index-sFSeUJj5.js                           286.12 kB │ gzip: 89.93 kB
+
+[33m[FILE_NAME_CONFLICT] Warning:[0m The emitted file assets/index-DnaXS4Ns.css overwrites a previously emitted file of the same name.
+
+✓ built in 475ms
+[5/5] build ssr environment...
+vite v8.0.12 building ssr environment for production...
+[2Ktransforming...✓ 798 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/server/assets/link-B0SXWkRk.js                                  0.34 kB │ gzip:   0.24 kB
+dist/server/assets/Brand-oycWvyjX.js                                 0.34 kB │ gzip:   0.25 kB
+dist/server/assets/login-A4xy9uNZ.js                                 0.47 kB │ gzip:   0.29 kB
+dist/server/assets/signup-Dozi8FpY.js                                0.47 kB │ gzip:   0.29 kB
+dist/server/assets/login-C1Vwrq2J.js                                 0.80 kB │ gzip:   0.47 kB
+dist/server/assets/createMiddleware-y01H2mH8.js                      0.80 kB │ gzip:   0.32 kB
+dist/server/assets/signup-IxhhtZQM.js                                0.81 kB │ gzip:   0.48 kB
+dist/server/assets/matchContext-Dwbhq4tW.js                          0.84 kB │ gzip:   0.43 kB
+dist/server/assets/async-local-storage-TeB2-LsW.js                   0.89 kB │ gzip:   0.45 kB
+dist/server/assets/timeline-xgE9h_Ys.js                              0.89 kB │ gzip:   0.44 kB
+dist/server/assets/memos._memoId.history-DNokGVse.js                 0.91 kB │ gzip:   0.47 kB
+dist/server/assets/trash-CHL5EQ4I.js                                 0.94 kB │ gzip:   0.53 kB
+dist/server/assets/settings-Dc1SO6bK.js                              0.95 kB │ gzip:   0.53 kB
+dist/server/assets/topics.index-b0IYEwLD.js                          0.97 kB │ gzip:   0.54 kB
+dist/server/assets/useServerFn-ShqRMlg5.js                           0.98 kB │ gzip:   0.54 kB
+dist/server/assets/topics._topicId-COXVFZhm.js                       1.01 kB │ gzip:   0.56 kB
+dist/server/assets/TimelineSkeleton-kIv07Nuo.js                      1.01 kB │ gzip:   0.43 kB
+dist/server/assets/ClientSlot-H6GtKNkr.js                            1.01 kB │ gzip:   0.45 kB
+dist/server/assets/timeline-DcWGWYzE.js                              1.02 kB │ gzip:   0.45 kB
+dist/server/assets/search-CM8jueft.js                                1.03 kB │ gzip:   0.48 kB
+dist/server/assets/router-CdnugFv7.js                                1.03 kB │ gzip:   0.46 kB
+dist/server/assets/trash-cDDQyjIn.js                                 1.03 kB │ gzip:   0.49 kB
+dist/server/assets/settings-CM0n4lhN.js                              1.04 kB │ gzip:   0.48 kB
+dist/server/assets/useRouter-C37EtBhe.js                             1.05 kB │ gzip:   0.49 kB
+dist/server/assets/topics.index-Cm00-Iok.js                          1.05 kB │ gzip:   0.49 kB
+dist/server/assets/documents._documentId-Bc6w0i9U.js                 1.06 kB │ gzip:   0.58 kB
+dist/server/assets/topics._topicId_.new-BsUAuATa.js                  1.06 kB │ gzip:   0.60 kB
+dist/server/assets/search-BLRfha0o.js                                1.07 kB │ gzip:   0.57 kB
+dist/server/assets/memos._memoId.history-BEeO-kbb.js                 1.07 kB │ gzip:   0.51 kB
+dist/server/assets/topics._topicId-DZo22O-t.js                       1.08 kB │ gzip:   0.51 kB
+dist/server/assets/documents._documentId_.edit-BqZobbmf.js           1.09 kB │ gzip:   0.61 kB
+dist/server/assets/documents._documentId-CK6aph7X.js                 1.10 kB │ gzip:   0.52 kB
+dist/server/assets/documents._documentId_.history-rooVuShb.js        1.10 kB │ gzip:   0.61 kB
+dist/server/assets/ConfirmDialog-DNaYxp0j.js                         1.14 kB │ gzip:   0.57 kB
+dist/server/assets/topics._topicId_.new-BwzSZ4Vf.js                  1.17 kB │ gzip:   0.56 kB
+dist/server/assets/documents._documentId_.edit-C2Uo-Ri5.js           1.20 kB │ gzip:   0.57 kB
+dist/server/assets/documents._documentId_.history-BN2OJvnT.js        1.20 kB │ gzip:   0.57 kB
+dist/server/assets/memos._memoId.history-C9bHghCI.js                 1.21 kB │ gzip:   0.61 kB
+dist/server/assets/fogTimelineSchema-Dcdc2lxP.js                     1.22 kB │ gzip:   0.58 kB
+dist/server/assets/MemoHistoryContent-BYYA9IpS.js                    1.24 kB │ gzip:   0.60 kB
+dist/server/assets/timeline-D3vg8P5U.js                              1.27 kB │ gzip:   0.63 kB
+dist/server/assets/ServerComponentTypes-Ba7VIZRy.js                  1.45 kB │ gzip:   0.63 kB
+dist/server/assets/jsx-runtime-Bw0_LrD1.js                           1.47 kB │ gzip:   0.66 kB
+dist/server/assets/start-C6w6m8EG.js                                 1.53 kB │ gzip:   0.61 kB
+dist/server/assets/errorDisplay--Of7hplD.js                          1.79 kB │ gzip:   0.87 kB
+dist/server/assets/fogMemoActions-DadUThlW.js                        1.87 kB │ gzip:   0.74 kB
+dist/server/assets/fogActions-DzUbvOfu.js                            1.98 kB │ gzip:   0.77 kB
+dist/server/assets/ContentDeletion-BTEETjTJ.js                       2.54 kB │ gzip:   1.05 kB
+dist/server/assets/validator-440wxKtc.js                             3.00 kB │ gzip:   1.22 kB
+dist/server/assets/errorResponse-D1w_nlic.js                         3.05 kB │ gzip:   1.04 kB
+dist/server/assets/fogSecurity-FZGnSejK.js                           3.45 kB │ gzip:   1.39 kB
+dist/server/assets/fogDataActions-B6QypuUi.js                        3.68 kB │ gzip:   1.26 kB
+dist/server/assets/fogDocumentActions-B-1QE0ks.js                    3.82 kB │ gzip:   1.25 kB
+dist/server/assets/AuthForm-h9qgrUrS.js                              4.82 kB │ gzip:   1.63 kB
+dist/server/assets/_tanstack-start-manifest_v-CPcXpwht.js            5.08 kB │ gzip:   0.98 kB
+dist/server/assets/SettingsContent-B-N7iri1.js                       5.92 kB │ gzip:   2.08 kB
+dist/server/assets/TopicsContent-CgOZmWEl.js                         5.98 kB │ gzip:   1.86 kB
+dist/server/assets/SearchContent-DXwn3MiQ.js                         6.53 kB │ gzip:   2.14 kB
+dist/server/assets/react-dom-C0iH7i_O.js                             6.66 kB │ gzip:   1.95 kB
+dist/server/assets/RawStream-DPvRtsJR.js                             8.40 kB │ gzip:   2.54 kB
+dist/server/assets/Deferred-jt2rmkSm.js                              8.46 kB │ gzip:   2.48 kB
+dist/server/assets/HeadContent-QcCrinkN.js                           8.56 kB │ gzip:   2.63 kB
+dist/server/assets/atom-DrRyAssu.js                                  9.66 kB │ gzip:   2.51 kB
+dist/server/assets/TopicContent-D9zjHusR.js                         10.05 kB │ gzip:   2.63 kB
+dist/server/assets/TrashContent-8krutheS.js                         10.48 kB │ gzip:   3.03 kB
+dist/server/assets/lazyRouteComponent-EUFPkOXu.js                   13.57 kB │ gzip:   3.42 kB
+dist/server/assets/DocumentContent-DoZzWiV1.js                      13.95 kB │ gzip:   3.74 kB
+dist/server/assets/router-BFLdzobE.js                               14.13 kB │ gzip:   4.51 kB
+dist/server/assets/react-BUxqtidY.js                                15.66 kB │ gzip:   4.29 kB
+dist/server/assets/link-KF0Uwi3q.js                                 16.10 kB │ gzip:   4.45 kB
+dist/server/assets/TimelineContent-CVJkro5f.js                      19.74 kB │ gzip:   5.20 kB
+dist/server/assets/RevisionHistory-BA-Ydq44.js                      28.23 kB │ gzip:   7.33 kB
+dist/server/assets/request-response-DGJS9yGw.js                     35.23 kB │ gzip:   9.75 kB
+dist/server/assets/transformer-BexHjXwU.js                          48.59 kB │ gzip:  12.54 kB
+dist/server/assets/useStore-CbguOR1r.js                             52.13 kB │ gzip:  14.04 kB
+dist/server/assets/__23tanstack-start-plugin-adapters-CKRVe9_o.js   77.77 kB │ gzip:  17.77 kB
+dist/server/assets/Match-BGzBKt6A.js                               107.69 kB │ gzip:  25.46 kB
+dist/server/server.node.js                                         365.66 kB │ gzip:  76.81 kB
+dist/server/assets/server-BTyn5E4e.js                              527.27 kB │ gzip: 107.08 kB
+dist/server/assets/Markdown-DxilUGdk.js                            584.32 kB │ gzip: 124.32 kB
+
+✓ built in 594ms

@@ -1,0 +1,17 @@
+{
+  "time": "2026-09-05T14:24:19.273787+00:00",
+  "health": 200,
+  "login": 200,
+  "asset": {
+    "status": 200,
+    "type": "text/css; charset=utf-8",
+    "cache": "public, max-age=31536000, immutable"
+  },
+  "export": {
+    "memos": 1,
+    "topics": 1,
+    "documents": 1,
+    "latestHumanRollback": true,
+    "sha256": "2bd22168152eeca245b8dd440a295192d454d5d57f8010c0a1c3411e25f4289d"
+  }
+}

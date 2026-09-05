@@ -1,0 +1,32 @@
+[
+  {
+    "status": 200,
+    "data": {
+      "kind": "receipt",
+      "operation": "content.delete",
+      "requestId": "01a07179-1257-70ee-a527-08085fb01712",
+      "replayed": true,
+      "resource": null
+    }
+  },
+  {
+    "status": 200,
+    "data": {
+      "kind": "read",
+      "operation": "memos.get",
+      "data": {
+        "id": "01a07177-7201-7044-8126-f4ec674af862",
+        "createdAt": "2026-09-05T12:07:28.513Z",
+        "updatedAt": "2026-09-05T12:07:28.550Z",
+        "version": 2,
+        "body": "P4 AIの記録 雲と霧の設計に更新。",
+        "sourceDocuments": [
+          {
+            "id": "01a07177-7231-77ca-be58-0f9cc157127e",
+            "title": "P4 AIの設計文書"
+          }
+        ]
+      }
+    }
+  }
+]

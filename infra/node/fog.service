@@ -1,0 +1,25 @@
+[Unit]
+Description=fog Node application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fog
+Group=fog
+WorkingDirectory=/opt/fog/apps/web
+EnvironmentFile=/etc/fog/fog.env
+ExecStart=/usr/bin/node /opt/fog/apps/web/scripts/listen.node.mjs
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fog
+
+[Install]
+WantedBy=multi-user.target

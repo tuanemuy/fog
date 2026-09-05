@@ -1,0 +1,3 @@
+Open this URL in your browser:
+http://localhost:3000/oauth/authorize?response_type=code&client_id=fog-local-client&redirect_uri=http%3A%2F%2F127.0.0.1%3A3456%2Fcallback&state=su5ftRyRWnMMC45sH8cu-fzV6cRLIqRm4N3qxe9Ub0E&code_challenge=3I3E2arPgIr137iJLTlz7MUdGwlWdf1022XS60CV3cg&code_challenge_method=S256
+Connected. Credential saved to /tmp/fog-ai-local-token.json

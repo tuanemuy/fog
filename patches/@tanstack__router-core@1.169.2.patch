@@ -1,0 +1,195 @@
+diff --git a/dist/cjs/ssr/ssr-server.cjs b/dist/cjs/ssr/ssr-server.cjs
+index 20bb25f53b284252466a747de25f36ee172ec272..35db5d1ee8e068210d17a73b62653ee38de18117 100644
+--- a/dist/cjs/ssr/ssr-server.cjs
++++ b/dist/cjs/ssr/ssr-server.cjs
+@@ -49,6 +49,9 @@ var ScriptBuffer = class {
+ 			});
+ 		}
+ 	}
++	hasPending() {
++		return this._queue.length > 0;
++	}
+ 	liftBarrier() {
+ 		if (this._scriptBarrierLifted || this._cleanedUp) return;
+ 		this._scriptBarrierLifted = true;
+@@ -282,6 +285,9 @@ function attachRouterServerSsrUtils({ router, manifest, getRequestAssets, includ
+ 		isDehydrated() {
+ 			return _dehydrated;
+ 		},
++		hasPendingScripts() {
++			return scriptBuffer.hasPending();
++		},
+ 		isSerializationFinished() {
+ 			return _serializationFinished;
+ 		},
+@@ -296,6 +302,7 @@ function attachRouterServerSsrUtils({ router, manifest, getRequestAssets, includ
+ 				renderFinishedListeners.length = 0;
+ 			}
+ 			scriptBuffer.liftBarrier();
++			if (_serializationFinished) scriptBuffer.flush();
+ 		},
+ 		takeBufferedScripts() {
+ 			const scripts = scriptBuffer.takeAll();
+diff --git a/dist/cjs/ssr/ssr-server.d.cts b/dist/cjs/ssr/ssr-server.d.cts
+index 260362b01b91c5ac5029093a991463f5bea09c91..4c9519b3e9e9d9e4bd32411ace2d53332dc2ddf5 100644
+--- a/dist/cjs/ssr/ssr-server.d.cts
++++ b/dist/cjs/ssr/ssr-server.d.cts
+@@ -5,6 +5,7 @@ import { Manifest, RouterManagedTag } from '../manifest.cjs';
+ declare module '../router' {
+     interface ServerSsr {
+         setRenderFinished: () => void;
++        hasPendingScripts: () => boolean;
+         cleanup: () => void;
+     }
+     interface RouterEvents {
+diff --git a/dist/cjs/ssr/transformStreamWithRouter.cjs b/dist/cjs/ssr/transformStreamWithRouter.cjs
+index 0dd3b576e162a59d5bdb57a717af6cb9ea4ba32d..a02341c216a5aa882880e6f8cfe2c0a0a47cedfe 100644
+--- a/dist/cjs/ssr/transformStreamWithRouter.cjs
++++ b/dist/cjs/ssr/transformStreamWithRouter.cjs
+@@ -49,7 +49,7 @@ function findLastClosingTagEnd(str) {
+ function transformStreamWithRouter(router, appStream, opts) {
+ 	const serializationAlreadyFinished = router.serverSsr?.isSerializationFinished() ?? false;
+ 	const initialBufferedHtml = router.serverSsr?.takeBufferedHtml();
+-	if (serializationAlreadyFinished && !initialBufferedHtml) {
++	if (serializationAlreadyFinished && !initialBufferedHtml && !router.serverSsr?.hasPendingScripts()) {
+ 		let cleanedUp = false;
+ 		let controller;
+ 		let isStreamClosed = false;
+@@ -227,7 +227,7 @@ function transformStreamWithRouter(router, appStream, opts) {
+ 			cleanup();
+ 		}
+ 	}, lifetimeMs);
+-	if (!serializationAlreadyFinished) {
++	{
+ 		stopListeningToInjectedHtml = router.subscribe("onInjectedHtml", () => {
+ 			if (cleanedUp || isStreamClosed) return;
+ 			const html = router.serverSsr?.takeBufferedHtml();
+diff --git a/dist/esm/ssr/ssr-server.d.ts b/dist/esm/ssr/ssr-server.d.ts
+index 2597527383b853e4afe0c39c55de4b563c4474f3..656945dd2d300e64da31e3eae20ecc0e56fc11a2 100644
+--- a/dist/esm/ssr/ssr-server.d.ts
++++ b/dist/esm/ssr/ssr-server.d.ts
+@@ -5,6 +5,7 @@ import { Manifest, RouterManagedTag } from '../manifest.js';
+ declare module '../router' {
+     interface ServerSsr {
+         setRenderFinished: () => void;
++        hasPendingScripts: () => boolean;
+         cleanup: () => void;
+     }
+     interface RouterEvents {
+diff --git a/dist/esm/ssr/ssr-server.js b/dist/esm/ssr/ssr-server.js
+index 45fa8ab9547bee1d25e48a3c80ce6dae58e580e6..bc0f56863aa43dc315ee25286c79bed99e111d1a 100644
+--- a/dist/esm/ssr/ssr-server.js
++++ b/dist/esm/ssr/ssr-server.js
+@@ -49,6 +49,9 @@ var ScriptBuffer = class {
+ 			});
+ 		}
+ 	}
++	hasPending() {
++		return this._queue.length > 0;
++	}
+ 	liftBarrier() {
+ 		if (this._scriptBarrierLifted || this._cleanedUp) return;
+ 		this._scriptBarrierLifted = true;
+@@ -282,6 +285,9 @@ function attachRouterServerSsrUtils({ router, manifest, getRequestAssets, includ
+ 		isDehydrated() {
+ 			return _dehydrated;
+ 		},
++		hasPendingScripts() {
++			return scriptBuffer.hasPending();
++		},
+ 		isSerializationFinished() {
+ 			return _serializationFinished;
+ 		},
+@@ -296,6 +302,7 @@ function attachRouterServerSsrUtils({ router, manifest, getRequestAssets, includ
+ 				renderFinishedListeners.length = 0;
+ 			}
+ 			scriptBuffer.liftBarrier();
++			if (_serializationFinished) scriptBuffer.flush();
+ 		},
+ 		takeBufferedScripts() {
+ 			const scripts = scriptBuffer.takeAll();
+diff --git a/dist/esm/ssr/transformStreamWithRouter.js b/dist/esm/ssr/transformStreamWithRouter.js
+index 11a5a0ae97e355330f714a17b5898fa4322a4d21..ac2e4b97f3d3b6085ff7c658adf74ba68fdf5057 100644
+--- a/dist/esm/ssr/transformStreamWithRouter.js
++++ b/dist/esm/ssr/transformStreamWithRouter.js
+@@ -49,7 +49,7 @@ function findLastClosingTagEnd(str) {
+ function transformStreamWithRouter(router, appStream, opts) {
+ 	const serializationAlreadyFinished = router.serverSsr?.isSerializationFinished() ?? false;
+ 	const initialBufferedHtml = router.serverSsr?.takeBufferedHtml();
+-	if (serializationAlreadyFinished && !initialBufferedHtml) {
++	if (serializationAlreadyFinished && !initialBufferedHtml && !router.serverSsr?.hasPendingScripts()) {
+ 		let cleanedUp = false;
+ 		let controller;
+ 		let isStreamClosed = false;
+@@ -227,7 +227,7 @@ function transformStreamWithRouter(router, appStream, opts) {
+ 			cleanup();
+ 		}
+ 	}, lifetimeMs);
+-	if (!serializationAlreadyFinished) {
++	{
+ 		stopListeningToInjectedHtml = router.subscribe("onInjectedHtml", () => {
+ 			if (cleanedUp || isStreamClosed) return;
+ 			const html = router.serverSsr?.takeBufferedHtml();
+diff --git a/src/ssr/ssr-server.ts b/src/ssr/ssr-server.ts
+index 2bca7009d9eb05ba50a0ee9b2a5e087a3f1709c4..e620992f92605843b445c3301d7c30bfb3930377 100644
+--- a/src/ssr/ssr-server.ts
++++ b/src/ssr/ssr-server.ts
+@@ -24,6 +24,7 @@ import type { Manifest, RouterManagedTag } from '../manifest'
+ declare module '../router' {
+   interface ServerSsr {
+     setRenderFinished: () => void
++    hasPendingScripts: () => boolean
+     cleanup: () => void
+   }
+   interface RouterEvents {
+@@ -98,6 +99,10 @@ class ScriptBuffer {
+     }
+   }
+ 
++  hasPending() {
++    return this._queue.length > 0
++  }
++
+   liftBarrier() {
+     if (this._scriptBarrierLifted || this._cleanedUp) return
+     this._scriptBarrierLifted = true
+@@ -478,6 +483,9 @@ export function attachRouterServerSsrUtils({
+     isDehydrated() {
+       return _dehydrated
+     },
++    hasPendingScripts() {
++      return scriptBuffer.hasPending()
++    },
+     isSerializationFinished() {
+       return _serializationFinished
+     },
+@@ -495,6 +503,7 @@ export function attachRouterServerSsrUtils({
+         renderFinishedListeners.length = 0
+       }
+       scriptBuffer.liftBarrier()
++      if (_serializationFinished) scriptBuffer.flush()
+     },
+     takeBufferedScripts() {
+       const scripts = scriptBuffer.takeAll()
+diff --git a/src/ssr/transformStreamWithRouter.ts b/src/ssr/transformStreamWithRouter.ts
+index 753a1809acd07d2d64060f6212a60a73e9632d97..36710f1fa32cc89ef8955b2d442053d5039ab41a 100644
+--- a/src/ssr/transformStreamWithRouter.ts
++++ b/src/ssr/transformStreamWithRouter.ts
+@@ -117,7 +117,7 @@ export function transformStreamWithRouter(
+ 
+   // True passthrough: if serialization already finished and nothing buffered,
+   // we can avoid any decoding/scanning while still honoring cleanup + setRenderFinished.
+-  if (serializationAlreadyFinished && !initialBufferedHtml) {
++  if (serializationAlreadyFinished && !initialBufferedHtml && !router.serverSsr?.hasPendingScripts()) {
+     let cleanedUp = false
+     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+     let isStreamClosed = false
+@@ -355,7 +355,7 @@ export function transformStreamWithRouter(
+     }
+   }, lifetimeMs)
+ 
+-  if (!serializationAlreadyFinished) {
++  {
+     stopListeningToInjectedHtml = router.subscribe('onInjectedHtml', () => {
+       if (cleanedUp || isStreamClosed) return
+       const html = router.serverSsr?.takeBufferedHtml()

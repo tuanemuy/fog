@@ -1,0 +1,574 @@
+{
+  "time": "2026-09-05T21:02:59.403539+09:00",
+  "head": "6ab8e05510a7bdbd1480a8e5c3ec91ff2fbdad48",
+  "paths": [
+    {
+      "path": "apps/web/.env.example",
+      "sha256": "410590272dd16baa546d6b8961a3037d99c4eb4532d0e4581397ec73b88c2761"
+    },
+    {
+      "path": "apps/web/app/components/fog/AiConnectionsPanel.tsx",
+      "sha256": "b3b6eee67113be7dc6aede0101d48eda55cf8d4dc3910fc5c030ae443f949932"
+    },
+    {
+      "path": "apps/web/app/components/fog/AiConsentContent.tsx",
+      "sha256": "b3484108453186a63a51453a5d61cef376200d6d260e28234008d91020db8e35"
+    },
+    {
+      "path": "apps/web/app/components/fog/AiConsentPanel.tsx",
+      "sha256": "f36db49f959db4d6cc364689b4f45933e2b74f6be89c043e0cd93a18f2a99a89"
+    },
+    {
+      "path": "apps/web/app/components/fog/AuthForm.tsx",
+      "sha256": "41369ac8f2ed85c653dbe7e1ba5d837203b39df0bef8da8096f4bd0abfee5f59"
+    },
+    {
+      "path": "apps/web/app/components/fog/Brand.tsx",
+      "sha256": "90612a20a84b0207dd22524cd5133272ab6d8c75e2650a9c1bd246e03d1c4895"
+    },
+    {
+      "path": "apps/web/app/components/fog/ConfirmDialog.tsx",
+      "sha256": "6bd0674000da11f6b7d59e6cfe408f900f87788fcf0ff162e7b8e3a282fad7f1"
+    },
+    {
+      "path": "apps/web/app/components/fog/ContentDeletion.tsx",
+      "sha256": "acc29ff6a15168557fe1298a59fa6a70878b248e2452389d7d53e47897c6c247"
+    },
+    {
+      "path": "apps/web/app/components/fog/DocumentContent.tsx",
+      "sha256": "b64380c46ba1b99e6ae128aefe3334757bcf081799b0548920bb96ce5d908331"
+    },
+    {
+      "path": "apps/web/app/components/fog/DocumentEditor.tsx",
+      "sha256": "56f933b0b33dc6e34a3429f24d213349f956fdb7da9f8b32a01f33b451c7d939"
+    },
+    {
+      "path": "apps/web/app/components/fog/DocumentHistoryContent.tsx",
+      "sha256": "38879765f54c332942b728d77834eb728a8f37b136c6abff2f65ba56cf48edd0"
+    },
+    {
+      "path": "apps/web/app/components/fog/DocumentSourcePicker.tsx",
+      "sha256": "9e72c2f512e633e864ab05ddc647590591c0a2e45c946c369615ee76d74cc343"
+    },
+    {
+      "path": "apps/web/app/components/fog/DocumentView.tsx",
+      "sha256": "ce150598aa255f92deb6687ac44bf4492b61f57bcc023846dc792ff349d47bd0"
+    },
+    {
+      "path": "apps/web/app/components/fog/FogShell.tsx",
+      "sha256": "5401fc5f5eb59a1fa9c240bb040f513149a2385a863578ee3f8ca080d0041db9"
+    },
+    {
+      "path": "apps/web/app/components/fog/Markdown.test.tsx",
+      "sha256": "8735be5d2a6ecbf596cf69f5dfc6e8d173c7c9a3cb29d4c4387ad88e8c46e345"
+    },
+    {
+      "path": "apps/web/app/components/fog/Markdown.tsx",
+      "sha256": "1e70533ceb592e6471019a7f5d4ebc6fc2473fbcf556dd32fb1e6550f73569c0"
+    },
+    {
+      "path": "apps/web/app/components/fog/MemoHistoryClient.tsx",
+      "sha256": "da94d8f87d7b2796853322a5a16c99eab5e38caace698216b5f7a3ca678d5106"
+    },
+    {
+      "path": "apps/web/app/components/fog/MemoHistoryContent.tsx",
+      "sha256": "7a68d20db68fbed050b9fe9c2745c61e8ea86345919e4d800602143de178b6ec"
+    },
+    {
+      "path": "apps/web/app/components/fog/MemoItem.tsx",
+      "sha256": "c1165c507fe14ede153461cade2e18c3ed899756fcf3e9c1e7530cb8f5d05a31"
+    },
+    {
+      "path": "apps/web/app/components/fog/RevisionHistory.tsx",
+      "sha256": "796e47e31ba399ff5010b846bd336e1b4b30569abfcf7f267ef406c3ce5b8c34"
+    },
+    {
+      "path": "apps/web/app/components/fog/SearchBoard.tsx",
+      "sha256": "81d2458478ae947c7cf0086550a25002ee87ef9af2ad4e4701e89139cea9a105"
+    },
+    {
+      "path": "apps/web/app/components/fog/SearchContent.tsx",
+      "sha256": "0e800d003b3e2c06ac6b7cdd8ba710723ebff699ae8b072b15168351ad1c5710"
+    },
+    {
+      "path": "apps/web/app/components/fog/SettingsContent.tsx",
+      "sha256": "9b6d59ecdb8825af58f10ce6d4789bde6d11c458bd51c681a4b6468adf455951"
+    },
+    {
+      "path": "apps/web/app/components/fog/SettingsPanel.tsx",
+      "sha256": "5cff8cb844e7db636cc8efb6902cb024b61c41512b642d174e6ce080bf1c122e"
+    },
+    {
+      "path": "apps/web/app/components/fog/TimelineBoard.tsx",
+      "sha256": "6b40e4934615880f5b4c721b3fad643b9f6f9929b3555ce0a0f01500fbed6eb5"
+    },
+    {
+      "path": "apps/web/app/components/fog/TimelineContent.tsx",
+      "sha256": "1379592943c62baffe22b656a48caf36d4571ea8c990d74407b6c802b7882c23"
+    },
+    {
+      "path": "apps/web/app/components/fog/TimelineFilters.tsx",
+      "sha256": "2cea6a4303991c9fff78f4d098c1a3920e782b4c395c4788493765674e95c44d"
+    },
+    {
+      "path": "apps/web/app/components/fog/TimelineSkeleton.tsx",
+      "sha256": "f43e1c7a0c3f25cb0c947232c469b94abb2135384c3916836d64850309e7f1de"
+    },
+    {
+      "path": "apps/web/app/components/fog/TopicContent.tsx",
+      "sha256": "77732d64af2dd81322cde331585d1441ddf8aafced7f62700b82104cbf8f9b12"
+    },
+    {
+      "path": "apps/web/app/components/fog/TopicDetail.tsx",
+      "sha256": "0c495d37e141a1b6c8d159f18432fb96ae5bc88f4cb550ff71b8c62f6a432794"
+    },
+    {
+      "path": "apps/web/app/components/fog/TopicsBoard.tsx",
+      "sha256": "954fde9a6c8c77029365a3021d22d8c4b43edd06f0866d76e3f2ca18484d8cf5"
+    },
+    {
+      "path": "apps/web/app/components/fog/TopicsContent.tsx",
+      "sha256": "ba89fc23244f70fafcc89bd07c5eed32c35763bdbc389758cd9d4d4977f42547"
+    },
+    {
+      "path": "apps/web/app/components/fog/TrashBoard.tsx",
+      "sha256": "635bb1735505f0711249de620d99c1c6811829b4989d125d73a14b69be5d6fb7"
+    },
+    {
+      "path": "apps/web/app/components/fog/TrashContent.tsx",
+      "sha256": "067f04f99a18a317f677ed5a1d6f2ed25f2a07e12f8a336a55494b05547e041a"
+    },
+    {
+      "path": "apps/web/app/components/todo/CreateTodoForm/action.ts",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/CreateTodoForm/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoBoard/action.ts",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoBoard/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoItem/action.ts",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoItem/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoList/action.ts",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoList/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoListSkeleton/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/TodoShell/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/components/todo/schema.ts",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/presentation/appServerErrorAdapter.ts",
+      "sha256": "a490fed43bcec46643750df3d9482c9a213f00e1af354746efeae8232fb73f1c"
+    },
+    {
+      "path": "apps/web/app/presentation/errorResponse.ts",
+      "sha256": "422c95673c3f865602c99c1c9adb7c79e8e21b77c09e4788329757ad711200ba"
+    },
+    {
+      "path": "apps/web/app/presentation/errorResponseMiddleware.ts",
+      "sha256": "567d043a8e7ead39b528e14a88e6ba7b2d9a893691deff96930a0126e9d40a72"
+    },
+    {
+      "path": "apps/web/app/presentation/fogActions.tsx",
+      "sha256": "39521681ff971814459584bebad93a17b861223b01d1fca102548083978e40b6"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAiActions.tsx",
+      "sha256": "58a26407eca609cb010619a2d6d1f76082e7c968bae97c2ce26c201e2a8bf01f"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAiConfig.ts",
+      "sha256": "7176aad6b2e58ec34872ca6da33b0c80b3f0fe164e5b49cc6b51bdec71afabe8"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAiHttp.test.ts",
+      "sha256": "a35606fc461dac33cbebd186d35a1a60820ef70e3cefbaaf8d5f39ac11f19c26"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAiHttp.ts",
+      "sha256": "ba6db4c2169022a235373bcb9f6f53cf32f6723ff7d6d1e2eb10233872f31016"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAiSchema.ts",
+      "sha256": "a0e36b6eb18f21916b4cd41be31cfa2126bb2a794f3c5564ebc6fc260c1823ee"
+    },
+    {
+      "path": "apps/web/app/presentation/fogAuth.ts",
+      "sha256": "1aa556d009493685d13926ae59916a15496a81f2f7c64709cede3c53c7e4b607"
+    },
+    {
+      "path": "apps/web/app/presentation/fogDataActions.tsx",
+      "sha256": "c8203d98b37df27aa4e40e3b6986cec2fadb964eb9be21111ed7b6f0dd4b1c2c"
+    },
+    {
+      "path": "apps/web/app/presentation/fogDataSchema.ts",
+      "sha256": "d39253c820784a92ac0191f48e6816f393d513daa0581bc5ca63a26e41c86496"
+    },
+    {
+      "path": "apps/web/app/presentation/fogDocumentActions.tsx",
+      "sha256": "e9edd674f8a503c62d4b6c9f21660b5d9fdc57cce5aded2999b18a34f7f104ff"
+    },
+    {
+      "path": "apps/web/app/presentation/fogErrorTransport.test.ts",
+      "sha256": "08ed8e3ba3fb16db6c0f58bfea33337cad38e09e983fac1dec5c61a56a69d2e9"
+    },
+    {
+      "path": "apps/web/app/presentation/fogMemoActions.tsx",
+      "sha256": "a28c9271277ac9d9ed055b59ecdbcdb31add3e2441e390ad4ecae4f567c208f9"
+    },
+    {
+      "path": "apps/web/app/presentation/fogSecurity.test.ts",
+      "sha256": "0a286c8e3017f284365a1d5fc782c7309fcbd4791e72300e813d0c2302c0fb89"
+    },
+    {
+      "path": "apps/web/app/presentation/fogSecurity.ts",
+      "sha256": "3936936e493242ed73742a928d1b38627ab4f0767181da6a2c7ac803404664fe"
+    },
+    {
+      "path": "apps/web/app/presentation/fogSsrStreaming.test.ts",
+      "sha256": "5249c2fb7e8d563ae64db71da35a3682fe8e10017708eb5b37ed1cf888ae6c9f"
+    },
+    {
+      "path": "apps/web/app/presentation/fogTimelineSchema.test.ts",
+      "sha256": "4493397387ee09c178b8590ffb26a2fa5ba3b1dbb36a5c658b3542b75ee65b4c"
+    },
+    {
+      "path": "apps/web/app/presentation/fogTimelineSchema.ts",
+      "sha256": "eb19d5cfd94ca0d822488178021416095b46eb7196c73a74024d61e318183ee9"
+    },
+    {
+      "path": "apps/web/app/routeTree.gen.ts",
+      "sha256": "2b4cf96bb870015a3378edd2a2cb72974be8fa5d69e380e019010777b89fa771"
+    },
+    {
+      "path": "apps/web/app/routes/__root.tsx",
+      "sha256": "93500488ea1cdfe45c9a324c0f7fe70f6a6636f31c8eecc23c7edc7146b6a5ba"
+    },
+    {
+      "path": "apps/web/app/routes/ai.authorize.tsx",
+      "sha256": "7512a9fe0a55e6748ac9e3b083948941606f97f5a3e7d652e27cdef01d1ecb05"
+    },
+    {
+      "path": "apps/web/app/routes/documents.$documentId.tsx",
+      "sha256": "744a95119b3d98cce885e62adfa469c5769fa58b4aa94a083f0f4b326fec1e71"
+    },
+    {
+      "path": "apps/web/app/routes/documents.$documentId_.edit.tsx",
+      "sha256": "1e239986f5f9d9170ed1f322c64877aae33e7d8e62bb8d514be3bf92d736c1bd"
+    },
+    {
+      "path": "apps/web/app/routes/documents.$documentId_.history.tsx",
+      "sha256": "cbc11349caf4e199ad9797382c533d0f513401838744dc6fd3770ef43197786b"
+    },
+    {
+      "path": "apps/web/app/routes/index.tsx",
+      "sha256": "f9ac6e842114312f2b1abbdd1ddd6e18c62ed1ba88342950f70eea6da847caef"
+    },
+    {
+      "path": "apps/web/app/routes/login.tsx",
+      "sha256": "bc8694992ab70fa2c0238012451fee5e0ddc488b294c5cf9ef42bc3797e2fe76"
+    },
+    {
+      "path": "apps/web/app/routes/memos.$memoId.history.tsx",
+      "sha256": "a9612d84bef5defa657fbd95a054d1732c44c30c6a62778abc4b748615ca9170"
+    },
+    {
+      "path": "apps/web/app/routes/search.tsx",
+      "sha256": "ed73f9670c7123ec74c0c8b3dff1ea4fbce098b3d2ffabefcb6c132176099e6c"
+    },
+    {
+      "path": "apps/web/app/routes/settings.tsx",
+      "sha256": "b41ba74f5caf80ef3858f3f3efbbd0fbf29c8fd6b08d46e3c2ec7e9caa3e8b77"
+    },
+    {
+      "path": "apps/web/app/routes/signup.tsx",
+      "sha256": "46605ecff35d109d8a24f45732e7219979f9bfcfc1f28394eb1037db71d20350"
+    },
+    {
+      "path": "apps/web/app/routes/timeline.tsx",
+      "sha256": "5560528dcf0c7ae2d0f3c64aa015d818e714df86e489de4919e99a1b99599e22"
+    },
+    {
+      "path": "apps/web/app/routes/todo/-action.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/routes/todo/about.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/routes/todo/index.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/routes/todo/route.tsx",
+      "sha256": null
+    },
+    {
+      "path": "apps/web/app/routes/topics.$topicId.tsx",
+      "sha256": "c1a2eb5463823b5dd4af9ff3b08841c392faca39ce7b947756488c5e18d26581"
+    },
+    {
+      "path": "apps/web/app/routes/topics.$topicId_.new.tsx",
+      "sha256": "61f01e5125a35d01481aac91d60112d55588e878306664d0400712768a5e9628"
+    },
+    {
+      "path": "apps/web/app/routes/topics.index.tsx",
+      "sha256": "6bfc17c6dee2282745576b2d0370166184eb45152c31877b2b1052ce203c90b5"
+    },
+    {
+      "path": "apps/web/app/routes/trash.tsx",
+      "sha256": "30d883b37ebac370e3d3a3ee3505fe95592b50cb10cd0fdb65f1eee2a1027cf7"
+    },
+    {
+      "path": "apps/web/app/server.node.ts",
+      "sha256": "f730308f0a46be54132c663cd54825a681a908eb3b0a198370ed0c9666d44b4e"
+    },
+    {
+      "path": "apps/web/app/styles/fog-content.css",
+      "sha256": "76dcb6c53ff11199aad1c8aab491e9a86800e812b73a782fb5205b81ca17c85a"
+    },
+    {
+      "path": "apps/web/app/styles/fog-data.css",
+      "sha256": "a38981ab2b68fd68ac5365a291478305d6f9d6ee1d0c1b946a006e493cf264a2"
+    },
+    {
+      "path": "apps/web/app/styles/fog.css",
+      "sha256": "6f8350dc2d4d6c0d15cd73a02648501b2faf6c09b706f13e6b709731eb08c90c"
+    },
+    {
+      "path": "apps/web/app/styles/index.css",
+      "sha256": "5eca64ff37604f2205d2b66a4bec450a4b75b09e0ba70b7bbb4d8f2bdfecb54f"
+    },
+    {
+      "path": "apps/web/app/styles/tokens.css",
+      "sha256": "4c2bca2d1d30df362b0d3adbdf2d27b5d1fda3c59289a5140c5cf6cb4d113813"
+    },
+    {
+      "path": "apps/web/app/worker/node/fogRetentionRunner.test.ts",
+      "sha256": "71ba7fdb16153e4dff2f62392e18b9a39c11c15a1b62e4618eb2ac7db6a1435f"
+    },
+    {
+      "path": "apps/web/app/worker/node/fogRetentionRunner.ts",
+      "sha256": "62a8d513b339b370d44b4c2ee1d3d218e25429775762659e4c6abca184de8a1f"
+    },
+    {
+      "path": "apps/web/package.json",
+      "sha256": "7a1bfb0a9a62304e8e0640896757013ed1d99f6ce69a00724cba040c6cbece55"
+    },
+    {
+      "path": "apps/web/public/favicon.svg",
+      "sha256": "33b6f323029c9f5f84c9a42424f12496b0deb2ab7d873c46b21c444f7152989c"
+    },
+    {
+      "path": "apps/web/public/fog-logo.svg",
+      "sha256": "7f0293522c7c30502e1f7900688384a9435f0084b22af3e156c7fe9967b0227f"
+    },
+    {
+      "path": "apps/web/scripts/fog-ai-client.ts",
+      "sha256": "6a256f454a977acc07f5ee717a2d1c95b1783286163f528fecbb784d67ae5502"
+    },
+    {
+      "path": "apps/web/scripts/migrate.node.ts",
+      "sha256": "b6a5dc911311484c54926a18a35f2fdf9d16849c9ea65e1739ec46dbf2c3566f"
+    },
+    {
+      "path": "docs/ai_client.md",
+      "sha256": "7e3a061e43cceb5ec8f007f9c06002f103f9d98a12bfc69f3a47500e2a7255b1"
+    },
+    {
+      "path": "docs/fog_operations.md",
+      "sha256": "cf42d65a8dcddc0bf3603ad4c84489d05a382fb07fc4f6389ea279223a821421"
+    },
+    {
+      "path": "docs/ssr_streaming_patch.md",
+      "sha256": "ae9fdf4fab548c4c11dd9066f665c4809b8edf4813dc5b2191adaeb29e2d743d"
+    },
+    {
+      "path": "packages/core/src/adapters/d1/migrations/0000_dazzling_demogoblin.sql",
+      "sha256": "e3585b4a0931eadb69ae372e062286bb4d1614ceffa4c4f1f041500869f4d42c"
+    },
+    {
+      "path": "packages/core/src/adapters/d1/migrations/meta/0000_snapshot.json",
+      "sha256": "9fec7053bd805b4ca421224380174edbde058d64ee0c9a0ae930635db96ece86"
+    },
+    {
+      "path": "packages/core/src/adapters/d1/migrations/meta/_journal.json",
+      "sha256": "7006135caaf7d0a8f9af6d93868a61358531a5caf7e85fda76e3b44392d54f47"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/__tests__/ai.integration.test.ts",
+      "sha256": "e162cb7d15a36c4329947f41d0305c702ec24c47cc7c98f9d2836a71bab05925"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/__tests__/content.integration.test.ts",
+      "sha256": "8bcc832ce9ef8237dc4245d97ea3e3d71c21e204af3f5adcd34e67603c8bb3b0"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/__tests__/data.integration.test.ts",
+      "sha256": "84be18bd96beda3b8afa33a2ae2e79c1750cde9f245a9b1a0ebd66650f8ff179"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/__tests__/services.integration.test.ts",
+      "sha256": "7d0596b459f471e134c91267dede92d29fb9e9209c5d43dc7fd8950b7ac4a66c"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/aiRepository.ts",
+      "sha256": "36a8155b75375f3beb16d97ba4d4cbb9cee5ce5b67814daf9f2f6ff4cdaa6c6e"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/contentRepositories.ts",
+      "sha256": "e5373f477573dfef39a0f1afb6913c61ae5a3cd1c63b532cbf2336029db330f4"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/crypto.ts",
+      "sha256": "f6abc4fdd250d62b7bf6ed06b74b746ea8916049c4c13c7b0e8047735c36cb0e"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/dataRepository.ts",
+      "sha256": "554dbcb9ed3a1d3f99df9786fb9d0f97234702d783b82bc346430d43d7258f76"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/schema.ts",
+      "sha256": "5f6d1fb49ad788fa36d6fdc44802e12b3bc615297e677842e438dd8f38957620"
+    },
+    {
+      "path": "packages/core/src/adapters/fog/unitOfWork.ts",
+      "sha256": "4de6937a60acd2f5a84c9aef0b2724931eb88ec138cbbb332c99a13fff13a3e4"
+    },
+    {
+      "path": "packages/core/src/adapters/libsql/migrations/0000_smiling_kree.sql",
+      "sha256": "e3585b4a0931eadb69ae372e062286bb4d1614ceffa4c4f1f041500869f4d42c"
+    },
+    {
+      "path": "packages/core/src/adapters/libsql/migrations/meta/0000_snapshot.json",
+      "sha256": "c077a39ac960030e215407532379753bbbe227213846a1283b40cef271bf7ee3"
+    },
+    {
+      "path": "packages/core/src/adapters/libsql/migrations/meta/_journal.json",
+      "sha256": "63d460b9fca7ba3e7f5089af1f6af4853a07b2bf5826ae64fa0ef11dd469420c"
+    },
+    {
+      "path": "packages/core/src/application/fog/aiOperations.ts",
+      "sha256": "7132c25f3f5bc3c0aea06406d016d7e95ea76604333314fa63ca198709f689bd"
+    },
+    {
+      "path": "packages/core/src/application/fog/aiPorts.ts",
+      "sha256": "ea5aa2f1f3fbe91868626db7f5dd729d2c62d61504d7cb5a05f8db5da18f769c"
+    },
+    {
+      "path": "packages/core/src/application/fog/aiServices.ts",
+      "sha256": "f267dc21afb0c2158d447a93a24a91cb4b999dee3733b6fe3b4bf1ac8643a013"
+    },
+    {
+      "path": "packages/core/src/application/fog/aiTypes.ts",
+      "sha256": "d0b65ba1fb0f25cb720fa00e1e3c0ba25d3c23452e4e0b1592c4dc56e8416669"
+    },
+    {
+      "path": "packages/core/src/application/fog/contentSupport.ts",
+      "sha256": "395e8c276eb90d92f568dc65dd29530f8c185b33c9e9ef5fcdca344e646e2778"
+    },
+    {
+      "path": "packages/core/src/application/fog/dataTypes.ts",
+      "sha256": "bd44cbae41797b5fd20fcdbceaea763d2443e8593057ae2f046b77771247d21b"
+    },
+    {
+      "path": "packages/core/src/application/fog/documentServices.ts",
+      "sha256": "a2bc85cd42e7b191002d5f6e946a884419dd0fa893551f7a31e62dc28e4d75b7"
+    },
+    {
+      "path": "packages/core/src/application/fog/memoServices.ts",
+      "sha256": "a05352388ad763831839fe16b8d0222cbeba13545e9a3722471477e785b8235e"
+    },
+    {
+      "path": "packages/core/src/application/fog/ports.ts",
+      "sha256": "151eda8454f901ac8eab33d5bd00c0c27fcd93ce19efd6e5afbb97de9062988b"
+    },
+    {
+      "path": "packages/core/src/application/fog/runtime.ts",
+      "sha256": "bbedf8c7f96349030f6c0a73eba4c4274e99caad26578adfc7e561813275de04"
+    },
+    {
+      "path": "packages/core/src/application/fog/searchServices.ts",
+      "sha256": "c6d861077d40d0497a671ef2d0b9c7c1ac4512484b10414c87536893930f937a"
+    },
+    {
+      "path": "packages/core/src/application/fog/services.ts",
+      "sha256": "49b3c11706a19c66562cb30cc423a9169c692a40e5f0d25589ffe762c11c1803"
+    },
+    {
+      "path": "packages/core/src/application/fog/topicServices.ts",
+      "sha256": "d8eff69707b0233f8ac4f3c821867263c9a0b57e00efb546114a95322078d2df"
+    },
+    {
+      "path": "packages/core/src/application/fog/trashServices.ts",
+      "sha256": "7a2341bb1b986abaebd3fdfb53ed52982d165ffc2ee32a7c3ddf754758f392f3"
+    },
+    {
+      "path": "packages/core/src/application/fog/types.ts",
+      "sha256": "c75de81b8c07c74dacbbc9629bc98df16ae5dd7c259d997772d4ba21e05ca185"
+    },
+    {
+      "path": "packages/core/src/config.ts",
+      "sha256": "0aeb748950d86b10fc211b1cf63c62b4fbd3143e71a680e52036e18fec0c9b23"
+    },
+    {
+      "path": "packages/core/src/domain/fog/ai.ts",
+      "sha256": "ff912914ced62d97d78bd902994207e02b77d84d2f2702e0fd88342d6cf2f4c8"
+    },
+    {
+      "path": "packages/core/src/domain/fog/content.ts",
+      "sha256": "f8d402bb3aab8e0a77d08c956c452a51998796a7b2a5f205186bff5f78526c39"
+    },
+    {
+      "path": "packages/core/src/domain/fog/data.ts",
+      "sha256": "5d46967e30fb15b3e202c6232939066a15ef6a71c619fec589f3f685b21d329c"
+    },
+    {
+      "path": "patches/@tanstack__router-core@1.169.2.patch",
+      "sha256": "c05f4c5732d24cb5648c2498e0254c377b31c0c0f854302fac2c88c5abdfb59d"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "a291a807c8bcf760234b7303abb672a2a11c536f313362e0fae621d046915634"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "91a0efd231c962cf5730e0842bf255386ba4f16e4e7886cd5985418ec38afa42"
+    },
+    {
+      "path": "vitest.config.integration.node.ts",
+      "sha256": "ac92ea2abf24cf1bd2d1f8b605c22966f0c29522ae49de71e5fb6e6bef0cbb4c"
+    },
+    {
+      "path": "vitest.config.ts",
+      "sha256": "72b703e490ec77bcf5eb561728131eff4752729a329a270ed218c8a12dba8d0a"
+    }
+  ]
+}

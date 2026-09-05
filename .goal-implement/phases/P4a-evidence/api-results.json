@@ -1,0 +1,535 @@
+{
+  "stamp": 1788608837309,
+  "memoId": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+  "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+  "documentId": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+  "memoRequest": {
+    "body": "P4 AIの記録 雲の設計を覚えておく。"
+  },
+  "memoKey": "p4-memo-1788608837309",
+  "log": [
+    {
+      "time": "2026-09-05T11:47:17.340Z",
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4 AIの記録 雲の設計を覚えておく。"
+        },
+        "idempotencyKey": "p4-memo-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07164-f6d7-74e0-a298-f18af66ac254",
+        "replayed": false,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+          "version": 1
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.344Z",
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4 AIの記録 雲の設計を覚えておく。"
+        },
+        "idempotencyKey": "p4-memo-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07164-f6d7-74e0-a298-f18af66ac254",
+        "replayed": true,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+          "version": 1
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.347Z",
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "payload改変"
+        },
+        "idempotencyKey": "p4-memo-1788608837309"
+      },
+      "status": 409,
+      "result": {
+        "error": {
+          "kind": "conflict",
+          "code": "IDEMPOTENCY_PAYLOAD_MISMATCH",
+          "message": "同じ冪等性キーで異なる要求を送信できません。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.355Z",
+      "payload": {
+        "operation": "memos.replace",
+        "input": {
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+          "body": "P4 AIの記録 雲と霧の設計に更新。",
+          "expectedVersion": 1
+        },
+        "idempotencyKey": "p4-memo-edit-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.replace",
+        "requestId": "01a07164-f6ea-7215-9692-ab3028bea256",
+        "replayed": false,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+          "version": 2
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.359Z",
+      "payload": {
+        "operation": "topics.create",
+        "input": {
+          "title": "P4 AIと考える設計",
+          "description": "APIから作成したトピック"
+        },
+        "idempotencyKey": "p4-topic-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "topics.create",
+        "requestId": "01a07164-f6ed-73fb-84fc-c16261fc75c2",
+        "replayed": false,
+        "resource": {
+          "kind": "topic",
+          "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "version": 1
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.363Z",
+      "payload": {
+        "operation": "topics.update",
+        "input": {
+          "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "title": "P4 AIと考える設計",
+          "description": "完了済みもAI検索する",
+          "completed": true,
+          "expectedVersion": 1
+        },
+        "idempotencyKey": "p4-topic-edit-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "topics.update",
+        "requestId": "01a07164-f6f2-751b-a105-32d1e5e1a8a8",
+        "replayed": false,
+        "resource": {
+          "kind": "topic",
+          "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "version": 2
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.368Z",
+      "payload": {
+        "operation": "documents.create",
+        "input": {
+          "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "title": "P4 AIの設計文書",
+          "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+          "sourceMemoIds": [
+            "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82"
+          ],
+          "reason": "対話の内容を文書化"
+        },
+        "idempotencyKey": "p4-doc-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "documents.create",
+        "requestId": "01a07164-f6f7-768e-8ca9-d471b43b2b38",
+        "replayed": false,
+        "resource": {
+          "kind": "document",
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "version": 1
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.371Z",
+      "payload": {
+        "operation": "documents.patch",
+        "input": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "expectedVersion": 1,
+          "find": "存在しない",
+          "replace": "変更",
+          "reason": "一致しない場合"
+        },
+        "idempotencyKey": "p4-no-match-1788608837309"
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "business",
+          "code": "PATCH_MATCH_FAILURE",
+          "message": "変更対象が一意に一致しません。最新の本文を取得してください。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.376Z",
+      "payload": {
+        "operation": "documents.patch",
+        "input": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "expectedVersion": 1,
+          "find": "設計は小さく始める。",
+          "replace": "設計は小さく始め、確認を重ねる。",
+          "reason": "確認の手順を補足"
+        },
+        "idempotencyKey": "p4-patch-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "documents.patch",
+        "requestId": "01a07164-f6fe-7766-acc0-b4423088a633",
+        "replayed": false,
+        "resource": {
+          "kind": "document",
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "version": 2
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.378Z",
+      "payload": {
+        "operation": "documents.patch",
+        "input": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "expectedVersion": 1,
+          "find": "検証して進める。",
+          "replace": "検証する。",
+          "reason": "古い版"
+        },
+        "idempotencyKey": "p4-conflict-1788608837309"
+      },
+      "status": 409,
+      "result": {
+        "error": {
+          "kind": "conflict",
+          "code": "OPTIMISTIC_LOCK_FAILURE",
+          "message": "編集中に内容が更新されました。最新の内容を確認してください。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.381Z",
+      "payload": {
+        "operation": "documents.rewrite",
+        "input": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "expectedVersion": 2,
+          "title": "P4 AIの設計文書",
+          "body": "# 全面改稿\n\n利用者が依頼した新しい構成。",
+          "reason": "利用者から全面書き直しの明示依頼",
+          "confirmRewrite": true
+        },
+        "idempotencyKey": "p4-rewrite-1788608837309"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "documents.rewrite",
+        "requestId": "01a07164-f704-7728-bc41-9f299c4f6755",
+        "replayed": false,
+        "resource": {
+          "kind": "document",
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "version": 3
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.383Z",
+      "payload": {
+        "operation": "documents.get",
+        "input": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "documents.get",
+        "data": {
+          "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+          "createdAt": "2026-09-05T11:47:17.365Z",
+          "updatedAt": "2026-09-05T11:47:17.380Z",
+          "version": 3,
+          "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "title": "P4 AIの設計文書",
+          "body": "# 全面改稿\n\n利用者が依頼した新しい構成。",
+          "sourceMemos": [
+            {
+              "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+              "body": "P4 AIの記録 雲と霧の設計に更新。",
+              "createdAt": "2026-09-05T11:47:17.333Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.386Z",
+      "payload": {
+        "operation": "search",
+        "input": {
+          "query": "P4",
+          "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "search",
+        "data": {
+          "items": [
+            {
+              "kind": "document",
+              "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+              "title": "P4 AIの設計文書",
+              "createdAt": "2026-09-05T11:47:17.365Z",
+              "updatedAt": "2026-09-05T11:47:17.380Z",
+              "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+              "topicTitle": "P4 AIと考える設計",
+              "snippet": "# 全面改稿\n\n利用者が依頼した新しい構成。",
+              "sourceIds": [
+                "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82"
+              ]
+            },
+            {
+              "kind": "memo",
+              "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+              "title": null,
+              "createdAt": "2026-09-05T11:47:17.333Z",
+              "updatedAt": "2026-09-05T11:47:17.354Z",
+              "topicId": null,
+              "topicTitle": null,
+              "snippet": "P4 AIの記録 雲と霧の設計に更新。",
+              "sourceIds": [
+                "01a07164-f6f5-7054-9f68-6222079a1b4e"
+              ]
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.389Z",
+      "payload": {
+        "operation": "memos.recent",
+        "input": {
+          "limit": 10
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "memos.recent",
+        "data": {
+          "memos": [
+            {
+              "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+              "createdAt": "2026-09-05T11:47:17.333Z",
+              "updatedAt": "2026-09-05T11:47:17.354Z",
+              "version": 2,
+              "body": "P4 AIの記録 雲と霧の設計に更新。",
+              "sourceDocuments": [
+                {
+                  "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+                  "title": "P4 AIの設計文書"
+                }
+              ]
+            }
+          ],
+          "nextCursor": null,
+          "focusId": null
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.391Z",
+      "payload": {
+        "operation": "memos.get",
+        "input": {
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "memos.get",
+        "data": {
+          "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+          "createdAt": "2026-09-05T11:47:17.333Z",
+          "updatedAt": "2026-09-05T11:47:17.354Z",
+          "version": 2,
+          "body": "P4 AIの記録 雲と霧の設計に更新。",
+          "sourceDocuments": [
+            {
+              "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+              "title": "P4 AIの設計文書"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.392Z",
+      "payload": {
+        "operation": "topics.list",
+        "input": {}
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "topics.list",
+        "data": [
+          {
+            "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+            "createdAt": "2026-09-05T11:47:17.357Z",
+            "updatedAt": "2026-09-05T11:47:17.362Z",
+            "version": 2,
+            "title": "P4 AIと考える設計",
+            "description": "完了済みもAI検索する",
+            "completed": true
+          }
+        ]
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.395Z",
+      "payload": {
+        "operation": "topics.get",
+        "input": {
+          "id": "01a07164-f6ed-73fb-84fc-bef478c2288e"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "topics.get",
+        "data": {
+          "topic": {
+            "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+            "createdAt": "2026-09-05T11:47:17.357Z",
+            "updatedAt": "2026-09-05T11:47:17.362Z",
+            "version": 2,
+            "title": "P4 AIと考える設計",
+            "description": "完了済みもAI検索する",
+            "completed": true
+          },
+          "documents": [
+            {
+              "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+              "createdAt": "2026-09-05T11:47:17.365Z",
+              "updatedAt": "2026-09-05T11:47:17.380Z",
+              "version": 3,
+              "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+              "title": "P4 AIの設計文書",
+              "body": "# 全面改稿\n\n利用者が依頼した新しい構成。",
+              "sourceMemos": [
+                {
+                  "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+                  "body": "P4 AIの記録 雲と霧の設計に更新。",
+                  "createdAt": "2026-09-05T11:47:17.333Z"
+                }
+              ]
+            }
+          ],
+          "relatedMemos": [
+            {
+              "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+              "createdAt": "2026-09-05T11:47:17.333Z",
+              "updatedAt": "2026-09-05T11:47:17.354Z",
+              "version": 2,
+              "body": "P4 AIの記録 雲と霧の設計に更新。",
+              "sourceDocuments": [
+                {
+                  "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+                  "title": "P4 AIの設計文書"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.397Z",
+      "payload": {
+        "operation": "memos.get",
+        "input": {
+          "id": "01a07135-949f-762d-9c22-f751e5369d1b"
+        }
+      },
+      "status": 404,
+      "result": {
+        "error": {
+          "kind": "notFound",
+          "code": "MEMO_NOT_FOUND",
+          "message": "対象のデータが見つかりません。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "time": "2026-09-05T11:47:17.399Z",
+      "payload": {
+        "operation": "documents.create",
+        "input": {
+          "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "title": "壊れた文書",
+          "body": "invalid source",
+          "sourceMemoIds": [
+            "missing"
+          ],
+          "reason": "出典不在"
+        },
+        "idempotencyKey": "p4-bad-source-1788608837309"
+      },
+      "status": 404,
+      "result": {
+        "error": {
+          "kind": "notFound",
+          "code": "MEMO_NOT_FOUND",
+          "message": "対象のデータが見つかりません。",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

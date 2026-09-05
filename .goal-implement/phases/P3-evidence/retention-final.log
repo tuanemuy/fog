@@ -1,0 +1,7 @@
+$ pnpm --filter @repo/web start
+$ pnpm start:node
+$ tsx --env-file-if-exists=.env scripts/listen.node.ts
+[fog.retention] expired trash deleted { deletedCount: 1 }
+[listen.node] listening on http://0.0.0.0:3011
+[fog.retention] expired trash deleted { deletedCount: 1 }
+[listen.node] received SIGINT, draining

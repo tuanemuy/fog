@@ -1,0 +1,9 @@
+$ pnpm --filter @repo/web db:backup --help
+$ tsx --env-file-if-exists=.env scripts/backup.node.ts --help
+backup.node.ts --source /absolute/app.db --directory /absolute/backups
+$ pnpm --filter @repo/web db:restore --help
+$ tsx --env-file-if-exists=.env scripts/restore.node.ts --help
+restore.node.ts --backup /absolute/backups/fog-backup-... --destination /absolute/new.db [--preserve-access]
+$ pnpm --filter @repo/web db:prune-backups --help
+$ tsx --env-file-if-exists=.env scripts/prune-backups.node.ts --help
+prune-backups.node.ts --directory /absolute/backups --keep-days 30 [--apply]

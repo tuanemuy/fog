@@ -1,0 +1,16 @@
+{
+  "start": "2026-09-05T23:43:25.881618+09:00",
+  "end": "2026-09-05T23:50:05.988951+09:00",
+  "targetCount": 368,
+  "startMismatches": [],
+  "endMismatches": [],
+  "docsOnlyFollowup": {
+    "checkedAt": "2026-09-05T23:52:41.694008+09:00",
+    "targetCount": 368,
+    "mismatches": [],
+    "path": "docs/backup_restore.md",
+    "oldSha256": "952d8ac21f0e9bd44e42a973449462ff1dcae78f656ab11fa588abc52eded653",
+    "newSha256": "edb94286e0fbeb33421bad8523dd824154d8c32645d068347a804df686015924",
+    "exactReconstructedPriorDocument": true
+  }
+}

@@ -1,0 +1,3 @@
+Open this URL in your browser:
+http://localhost:3000/oauth/authorize?response_type=code&client_id=fog-local-client&redirect_uri=http%3A%2F%2F127.0.0.1%3A3456%2Fcallback&state=lzBI-_uzdycP9v2kCSexa_-PJJZf2jSvrbhUje-hRc8&code_challenge=q8XTcyCtZHqz6O2H6qBVys6tLHR8vunLIwhBfP_yjxs&code_challenge_method=S256
+Authorization denied; no credential was saved.

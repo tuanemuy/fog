@@ -1,0 +1,35 @@
+[
+  {
+    "payload": {
+      "operation": "guidance",
+      "input": {}
+    },
+    "status": 401,
+    "data": {
+      "error": {
+        "kind": "unauthorized",
+        "code": "AI_CONNECTION_UNAUTHORIZED",
+        "message": "AI接続が無効または失効しています。再接続してください。",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "payload": {
+      "operation": "memos.create",
+      "input": {
+        "body": "P4 AIの記録 雲の設計を覚えておく。"
+      },
+      "idempotencyKey": "p4-memo-1788608837309"
+    },
+    "status": 401,
+    "data": {
+      "error": {
+        "kind": "unauthorized",
+        "code": "AI_CONNECTION_UNAUTHORIZED",
+        "message": "AI接続が無効または失効しています。再接続してください。",
+        "retryable": false
+      }
+    }
+  }
+]

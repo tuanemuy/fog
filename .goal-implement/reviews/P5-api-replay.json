@@ -1,0 +1,14 @@
+{
+  "time": "2026-09-05T14:45:48.238Z",
+  "log": [
+    {
+      "operation": "documents.patch",
+      "status": 200,
+      "replayed": true
+    },
+    {
+      "operation": "documents.get",
+      "status": 200
+    }
+  ]
+}

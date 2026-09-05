@@ -1,0 +1,17 @@
+[
+  {
+    "operation": "guidance",
+    "status": 401,
+    "code": "AI_CONNECTION_UNAUTHORIZED"
+  },
+  {
+    "operation": "memos.create",
+    "status": 401,
+    "code": "AI_CONNECTION_UNAUTHORIZED"
+  },
+  {
+    "operation": "memos.create",
+    "status": 401,
+    "code": "AI_CONNECTION_UNAUTHORIZED"
+  }
+]

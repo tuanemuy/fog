@@ -1,0 +1,60 @@
+$ pnpm --filter @repo/web start
+$ pnpm start:node
+$ tsx --env-file-if-exists=.env scripts/listen.node.ts
+[runner.node] relay tick threw {
+  cause: SystemError: Failed to claim pending outbox events
+      at mapDbError (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9407:9)
+      at async processOutboxBatch (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:10908:18)
+      at async processOutboxEvents (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:10893:25)
+      at async runRelayTick (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:11048:4) {
+    code: 'DATABASE_ERROR',
+    [cause]: DrizzleQueryError: Failed query: update "outbox_events" set "claimed_at" = ?, "claimed_by" = ? where "outbox_events"."id" in (select "id" from "outbox_events" where ("outbox_events"."processed_at" is null and "outbox_events"."failed_at" is null and ("outbox_events"."next_attempt_at" is null or "outbox_events"."next_attempt_at" <= ?) and ("outbox_events"."claimed_at" is null or "outbox_events"."claimed_at" <= ?)) order by "outbox_events"."created_at" asc, "outbox_events"."id" asc limit ?) returning "id", "event_type", "aggregate_id", "payload", "occurred_at", "created_at", "attempts"
+    params: 1788606464277,b35c7ac2-6690-472d-a910-4612cc74adfe,1788606464277,1788606164277,100
+        at LibSQLPreparedQuery.queryWithCache (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:8904:10)
+        at async LibSQLPreparedQuery.values (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9185:10)
+        at async LibSQLPreparedQuery.all (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9147:16)
+        at async <anonymous> (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9465:15)
+        at async mapDbError (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9402:10)
+        at async processOutboxBatch (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:10908:18)
+        at async processOutboxEvents (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:10893:25)
+        at async runRelayTick (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:11048:4) {
+      query: 'update "outbox_events" set "claimed_at" = ?, "claimed_by" = ? where "outbox_events"."id" in (select "id" from "outbox_events" where ("outbox_events"."processed_at" is null and "outbox_events"."failed_at" is null and ("outbox_events"."next_attempt_at" is null or "outbox_events"."next_attempt_at" <= ?) and ("outbox_events"."claimed_at" is null or "outbox_events"."claimed_at" <= ?)) order by "outbox_events"."created_at" asc, "outbox_events"."id" asc limit ?) returning "id", "event_type", "aggregate_id", "payload", "occurred_at", "created_at", "attempts"',
+      params: [
+        1788606464277,
+        'b35c7ac2-6690-472d-a910-4612cc74adfe',
+        1788606464277,
+        1788606164277,
+        100
+      ],
+      cause: LibsqlError: SQLITE_BUSY: database is locked
+          at mapSqliteError (file:///Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:434:16)
+          at executeStmt (file:///Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:337:15)
+          at Sqlite3Client.execute (file:///Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:82:16)
+          ... 4 lines matching cause stack trace ...
+          at QueryPromise.all (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:8413:26)
+          at QueryPromise.execute (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:8422:39)
+          at QueryPromise.then (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:6204:15) {
+        code: 'SQLITE_BUSY',
+        extendedCode: 'SQLITE_BUSY',
+        rawCode: 5,
+        [cause]: SqliteError: database is locked
+            at convertError (/Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/index.js:59:12)
+            at Object.next (/Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/index.js:385:17)
+            at Statement.all (/Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/libsql@0.5.29/node_modules/libsql/index.js:403:18)
+            at executeStmt (file:///Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:321:34)
+            at Sqlite3Client.execute (file:///Users/hikaru/github.com/tuanemuy/fog/node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:82:16)
+            at <anonymous> (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9190:58)
+            at LibSQLPreparedQuery.queryWithCache (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:8902:17)
+            at LibSQLPreparedQuery.values (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9185:21)
+            at LibSQLPreparedQuery.all (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:9147:27)
+            at QueryPromise.all (/Users/hikaru/github.com/tuanemuy/fog/apps/web/dist/server/server.node.js:8413:26) {
+          code: 'SQLITE_BUSY',
+          rawCode: 5
+        }
+      }
+    }
+  }
+}
+[listen.node] listening on http://0.0.0.0:3011
+[runner.node] received SIGINT, shutting down
+[listen.node] received SIGINT, draining

@@ -1,0 +1,27 @@
+$ biome check --write
+apps/web/scripts/staticAssets.test.ts:42:46 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    40 │   const serve = createStaticAssets(join(root, "public"));
+    41 │   for (const url of ["/.env", "/%2e%2e%2fsecret", "/escape", "/%5csecret"]) {
+  > 42 │     const response = await serve(new Request("http://localhost" + url));
+       │                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+    43 │     if (!response) throw new Error("Expected blocked response");
+    44 │     expect(response.status).toBe(404);
+  
+  i Unsafe fix: Use a template literal.
+  
+    40 40 │     const serve = createStaticAssets(join(root, "public"));
+    41 41 │     for (const url of ["/.env", "/%2e%2e%2fsecret", "/escape", "/%5csecret"]) {
+    42    │ - ····const·response·=·await·serve(new·Request("http://localhost"·+·url));
+       42 │ + ····const·response·=·await·serve(new·Request(`http://localhost${url}`));
+    43 43 │       if (!response) throw new Error("Expected blocked response");
+    44 44 │       expect(response.status).toBe(404);
+  
+
+Skipped 1 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+Checked 197 files in 199ms. Fixed 1 file.
+Found 1 info.

@@ -1,0 +1,334 @@
+.fog-markdown {
+  overflow-wrap: anywhere;
+  line-height: var(--leading-normal);
+}
+.fog-markdown p {
+  white-space: pre-wrap;
+  margin: var(--space-md) 0;
+}
+.fog-markdown > :first-child {
+  margin-top: 0;
+}
+.fog-markdown > :last-child {
+  margin-bottom: 0;
+}
+.fog-markdown h1 {
+  font-size: var(--text-2xl);
+}
+.fog-markdown h2 {
+  font-size: var(--text-xl);
+}
+.fog-markdown h3 {
+  font-size: var(--text-lg);
+}
+.fog-markdown h1,
+.fog-markdown h2,
+.fog-markdown h3 {
+  margin: var(--space-lg) 0 var(--space-sm);
+  border: 0;
+  padding: 0;
+}
+.fog-markdown ul,
+.fog-markdown ol {
+  padding-left: var(--space-xl);
+  margin: var(--space-sm) 0;
+}
+.fog-markdown li {
+  margin: var(--space-xs) 0;
+}
+.fog-markdown pre {
+  overflow-x: auto;
+  background: var(--color-neutral-50);
+  padding: var(--space-md);
+  border-radius: var(--radius-sm);
+  white-space: pre;
+}
+.fog-markdown code {
+  font-size: 0.9em;
+  background: var(--color-neutral-50);
+  border-radius: var(--radius-sm);
+}
+.fog-markdown blockquote {
+  margin: var(--space-md) 0;
+  border-left: 3px solid var(--color-primary-light);
+  padding-left: var(--space-md);
+  color: var(--color-neutral-700);
+}
+.fog-markdown table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.fog-markdown th,
+.fog-markdown td {
+  border: 1px solid var(--color-neutral-100);
+  padding: var(--space-sm);
+  text-align: left;
+}
+.fog-markdown-compact {
+  margin-top: var(--space-sm);
+}
+.fog-markdown-compact h1,
+.fog-markdown-compact h2,
+.fog-markdown-compact h3 {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+.fog-image-alt {
+  color: var(--color-neutral-600);
+}
+.fog-timeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xl);
+}
+.fog-timeline-filters label:first-child {
+  flex: 1;
+  min-width: 10rem;
+}
+.fog-timeline-filters input {
+  width: 100%;
+  max-width: 100%;
+  border: var(--border-input);
+  border-radius: var(--radius-full);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-card);
+  font-size: var(--text-sm);
+}
+.fog-timeline-filters input[type="date"] {
+  width: 10rem;
+}
+.fog-secondary {
+  border: var(--border-input);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-card);
+  padding: var(--space-sm) var(--space-lg);
+  color: var(--color-primary-dark);
+  font-size: var(--text-sm);
+}
+.fog-secondary:hover:not(:disabled) {
+  background: var(--color-primary-lighter);
+}
+.fog-load-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-xl) 0;
+}
+.fog-memo-meta {
+  align-items: center;
+}
+.fog-item-menu {
+  margin-left: auto;
+  position: relative;
+}
+.fog-item-menu summary {
+  list-style: none;
+  font-size: var(--text-base);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+}
+.fog-item-menu summary::-webkit-details-marker {
+  display: none;
+}
+.fog-item-menu[open] summary {
+  background: var(--color-primary-lighter);
+}
+.fog-item-menu > div {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  display: grid;
+  min-width: 8rem;
+  z-index: 4;
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-sm);
+}
+.fog-item-menu button,
+.fog-item-menu a {
+  border: 0;
+  background: none;
+  text-align: left;
+  text-decoration: none;
+  color: var(--color-neutral-700);
+  padding: var(--space-sm);
+  font-size: var(--text-sm);
+}
+.fog-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-md);
+  font-size: var(--text-sm);
+}
+.fog-editor-dialog {
+  width: min(42rem, calc(100vw - 2 * var(--space-lg)));
+  border: 0;
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  background: var(--color-bg-card);
+  color: var(--color-neutral-900);
+  max-height: calc(100dvh - 2 * var(--space-lg));
+}
+.fog-editor-dialog::backdrop {
+  background: var(--color-overlay);
+}
+.fog-editor-dialog form {
+  display: grid;
+  gap: var(--space-lg);
+}
+.fog-editor-dialog textarea {
+  width: 100%;
+  min-height: 12rem;
+  padding: var(--space-md);
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+.fog-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  align-items: center;
+  justify-content: flex-end;
+}
+.fog-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.fog-section-heading h2 {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+.fog-conflict {
+  border: 1px solid var(--color-warning);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  font-size: var(--text-sm);
+}
+.fog-conflict h3 {
+  font-size: var(--text-base);
+  margin-top: 0;
+}
+.fog-conflict p {
+  margin: var(--space-sm) 0;
+}
+.fog-history {
+  padding: var(--space-xl) var(--space-lg) var(--space-2xl);
+}
+.fog-history .fog-section-heading {
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-revision-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-sm);
+}
+.fog-revision-list button {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-neutral-100);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-card);
+  color: var(--color-neutral-700);
+  text-align: left;
+  font-size: var(--text-sm);
+}
+.fog-revision-list button.fog-revision-selected {
+  background: var(--color-primary-lighter);
+  border-color: var(--color-primary-light);
+  color: var(--color-primary-darker);
+}
+.fog-revision-list button strong {
+  min-width: 5rem;
+}
+.fog-revision-list time {
+  font-variant-numeric: tabular-nums;
+}
+.fog-history-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-md);
+  padding: var(--space-xl) 0;
+}
+.fog-history-compare label {
+  display: grid;
+  gap: var(--space-xs);
+  font-size: var(--text-sm);
+}
+.fog-history-compare select {
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  font: inherit;
+  background: var(--color-bg-card);
+}
+.fog-revision-preview,
+.fog-diff {
+  padding: var(--space-lg) 0;
+  border-top: 1px solid var(--color-neutral-100);
+  margin-top: var(--space-lg);
+}
+.fog-revision-preview h2,
+.fog-diff h2 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-lg);
+}
+.fog-diff pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.8;
+}
+.fog-diff ins,
+.fog-diff del,
+.fog-diff pre > span {
+  display: block;
+  padding: var(--space-xs) var(--space-sm);
+}
+.fog-diff ins {
+  background: var(--color-success-bg);
+  color: var(--color-success-dark);
+  text-decoration: none;
+}
+.fog-diff del {
+  background: var(--color-error-bg);
+  color: var(--color-error-dark);
+}
+.fog-rollback {
+  border-top: 1px solid var(--color-neutral-100);
+  padding-top: var(--space-lg);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  align-items: center;
+}
+.fog-rollback p {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+}
+@media (min-width: 640px) {
+  .fog-history {
+    padding: var(--space-xl) var(--space-2xl) var(--space-2xl);
+  }
+}

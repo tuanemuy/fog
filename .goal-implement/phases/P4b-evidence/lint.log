@@ -1,0 +1,419 @@
+$ biome check --write
+apps/web/app/server.aws.ts:55:38 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    53 │   // before the libSQL client is constructed.
+    54 │   const secretBindings: Array<{ secretId: string; envVar: string }> = [];
+  > 55 │   const tokenSecretArn = process.env["DATABASE_AUTH_TOKEN_SECRET_ARN"];
+       │                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    56 │   if (tokenSecretArn !== undefined && tokenSecretArn !== "") {
+    57 │     secretBindings.push({
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     53  53 │     // before the libSQL client is constructed.
+     54  54 │     const secretBindings: Array<{ secretId: string; envVar: string }> = [];
+     55     │ - ··const·tokenSecretArn·=·process.env["DATABASE_AUTH_TOKEN_SECRET_ARN"];
+         55 │ + ··const·tokenSecretArn·=·process.env.DATABASE_AUTH_TOKEN_SECRET_ARN;
+     56  56 │     if (tokenSecretArn !== undefined && tokenSecretArn !== "") {
+     57  57 │       secretBindings.push({
+  
+
+apps/web/app/server.aws.ts:141:19 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    139 │   const search = event.rawQueryString ? `?${event.rawQueryString}` : "";
+    140 │   const host =
+  > 141 │     event.headers["host"] ??
+        │                   ^^^^^^
+    142 │     event.headers["Host"] ??
+    143 │     event.requestContext.domainName;
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    139 139 │     const search = event.rawQueryString ? `?${event.rawQueryString}` : "";
+    140 140 │     const host =
+    141     │ - ····event.headers["host"]·??
+        141 │ + ····event.headers.host·??
+    142 142 │       event.headers["Host"] ??
+    143 143 │       event.requestContext.domainName;
+  
+
+apps/web/app/server.aws.ts:142:19 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    140 │   const host =
+    141 │     event.headers["host"] ??
+  > 142 │     event.headers["Host"] ??
+        │                   ^^^^^^
+    143 │     event.requestContext.domainName;
+    144 │   const protocol = event.headers["x-forwarded-proto"] ?? "https";
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    140 140 │     const host =
+    141 141 │       event.headers["host"] ??
+    142     │ - ····event.headers["Host"]·??
+        142 │ + ····event.headers.Host·??
+    143 143 │       event.requestContext.domainName;
+    144 144 │     const protocol = event.headers["x-forwarded-proto"] ?? "https";
+  
+
+apps/web/app/server.gcp.ts:58:27 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    57 │ function resolveWorkerRole(): WorkerRole {
+  > 58 │   const raw = process.env["WORKER_ROLE"];
+       │                           ^^^^^^^^^^^^^
+    59 │   if (raw === undefined || raw === "") return "app";
+    60 │   if (!workerRoles.has(raw as WorkerRole)) {
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     56  56 │   
+     57  57 │   function resolveWorkerRole(): WorkerRole {
+     58     │ - ··const·raw·=·process.env["WORKER_ROLE"];
+         58 │ + ··const·raw·=·process.env.WORKER_ROLE;
+     59  59 │     if (raw === undefined || raw === "") return "app";
+     60  60 │     if (!workerRoles.has(raw as WorkerRole)) {
+  
+
+apps/web/app/server.gcp.ts:77:34 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    76 │ async function bootAppRole(): Promise<GcpServerBoot> {
+  > 77 │   const secretName = process.env["DATABASE_AUTH_TOKEN_SECRET_NAME"];
+       │                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    78 │   if (secretName !== undefined && secretName !== "") {
+    79 │     await loadSecretsIntoEnv({
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     75  75 │   
+     76  76 │   async function bootAppRole(): Promise<GcpServerBoot> {
+     77     │ - ··const·secretName·=·process.env["DATABASE_AUTH_TOKEN_SECRET_NAME"];
+         77 │ + ··const·secretName·=·process.env.DATABASE_AUTH_TOKEN_SECRET_NAME;
+     78  78 │     if (secretName !== undefined && secretName !== "") {
+     79  79 │       await loadSecretsIntoEnv({
+  
+
+apps/web/app/server.gcp.ts:126:44 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    124 │   };
+    125 │ 
+  > 126 │   const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+        │                                            ^^^^^^
+    127 │   const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+    128 │ 
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    124 124 │     };
+    125 125 │   
+    126     │ - ··const·port·=·Number.parseInt(process.env["PORT"]·??·"8080",·10);
+        126 │ + ··const·port·=·Number.parseInt(process.env.PORT·??·"8080",·10);
+    127 127 │     const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+    128 128 │   
+  
+
+apps/web/app/server.gcp.ts:127:32 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    126 │   const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+  > 127 │   const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+        │                                ^^^^^^^^^^
+    128 │ 
+    129 │   let shuttingDown: Promise<void> | null = null;
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    125 125 │   
+    126 126 │     const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+    127     │ - ··const·hostname·=·process.env["HOSTNAME"]·??·"0.0.0.0";
+        127 │ + ··const·hostname·=·process.env.HOSTNAME·??·"0.0.0.0";
+    128 128 │   
+    129 129 │     let shuttingDown: Promise<void> | null = null;
+  
+
+apps/web/app/server.gcp.ts:154:44 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    152 │           ? prunerFetch
+    153 │           : dlqFetch;
+  > 154 │   const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+        │                                            ^^^^^^
+    155 │   const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+    156 │   return { role, fetch, port, hostname, shutdown: async () => {} };
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    152 152 │             ? prunerFetch
+    153 153 │             : dlqFetch;
+    154     │ - ··const·port·=·Number.parseInt(process.env["PORT"]·??·"8080",·10);
+        154 │ + ··const·port·=·Number.parseInt(process.env.PORT·??·"8080",·10);
+    155 155 │     const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+    156 156 │     return { role, fetch, port, hostname, shutdown: async () => {} };
+  
+
+apps/web/app/server.gcp.ts:155:32 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    153 │           : dlqFetch;
+    154 │   const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+  > 155 │   const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
+        │                                ^^^^^^^^^^
+    156 │   return { role, fetch, port, hostname, shutdown: async () => {} };
+    157 │ }
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    153 153 │             : dlqFetch;
+    154 154 │     const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
+    155     │ - ··const·hostname·=·process.env["HOSTNAME"]·??·"0.0.0.0";
+        155 │ + ··const·hostname·=·process.env.HOSTNAME·??·"0.0.0.0";
+    156 156 │     return { role, fetch, port, hostname, shutdown: async () => {} };
+    157 157 │   }
+  
+
+apps/web/app/worker/aws/handlers.ts:62:38 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    61 │ async function bootWorker(): Promise<WorkerBoot> {
+  > 62 │   const tokenSecretArn = process.env["DATABASE_AUTH_TOKEN_SECRET_ARN"];
+       │                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    63 │   if (tokenSecretArn !== undefined && tokenSecretArn !== "") {
+    64 │     await loadSecretsIntoEnv({
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     60  60 │   
+     61  61 │   async function bootWorker(): Promise<WorkerBoot> {
+     62     │ - ··const·tokenSecretArn·=·process.env["DATABASE_AUTH_TOKEN_SECRET_ARN"];
+         62 │ + ··const·tokenSecretArn·=·process.env.DATABASE_AUTH_TOKEN_SECRET_ARN;
+     63  63 │     if (tokenSecretArn !== undefined && tokenSecretArn !== "") {
+     64  64 │       await loadSecretsIntoEnv({
+  
+
+apps/web/app/worker/gcp/handlers.ts:51:34 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    50 │ async function bootWorker(): Promise<WorkerBoot> {
+  > 51 │   const secretName = process.env["DATABASE_AUTH_TOKEN_SECRET_NAME"];
+       │                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    52 │   if (secretName !== undefined && secretName !== "") {
+    53 │     await loadSecretsIntoEnv({
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     49  49 │   
+     50  50 │   async function bootWorker(): Promise<WorkerBoot> {
+     51     │ - ··const·secretName·=·process.env["DATABASE_AUTH_TOKEN_SECRET_NAME"];
+         51 │ + ··const·secretName·=·process.env.DATABASE_AUTH_TOKEN_SECRET_NAME;
+     52  52 │     if (secretName !== undefined && secretName !== "") {
+     53  53 │       await loadSecretsIntoEnv({
+  
+
+apps/web/app/worker/gcp/handlers.ts:326:37 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    324 │         eventType: parsed.type,
+    325 │         messageId,
+  > 326 │         deliveryAttempt: attributes["googclient_deliveryattempt"],
+        │                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    327 │         event: parsed,
+    328 │       },
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    324 324 │           eventType: parsed.type,
+    325 325 │           messageId,
+    326     │ - ········deliveryAttempt:·attributes["googclient_deliveryattempt"],
+        326 │ + ········deliveryAttempt:·attributes.googclient_deliveryattempt,
+    327 327 │           event: parsed,
+    328 328 │         },
+  
+
+apps/web/scripts/migrate.aws.ts:15:27 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    14 │ async function main(): Promise<void> {
+  > 15 │   const url = process.env["DATABASE_URL"];
+       │                           ^^^^^^^^^^^^^^
+    16 │   if (url === undefined || url === "") {
+    17 │     throw new Error("[migrate.aws] DATABASE_URL is required");
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    13 13 │   
+    14 14 │   async function main(): Promise<void> {
+    15    │ - ··const·url·=·process.env["DATABASE_URL"];
+       15 │ + ··const·url·=·process.env.DATABASE_URL;
+    16 16 │     if (url === undefined || url === "") {
+    17 17 │       throw new Error("[migrate.aws] DATABASE_URL is required");
+  
+
+apps/web/scripts/migrate.aws.ts:19:33 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    17 │     throw new Error("[migrate.aws] DATABASE_URL is required");
+    18 │   }
+  > 19 │   const authToken = process.env["DATABASE_AUTH_TOKEN"];
+       │                                 ^^^^^^^^^^^^^^^^^^^^^
+    20 │ 
+    21 │   const client = createLibsqlClient({
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    17 17 │       throw new Error("[migrate.aws] DATABASE_URL is required");
+    18 18 │     }
+    19    │ - ··const·authToken·=·process.env["DATABASE_AUTH_TOKEN"];
+       19 │ + ··const·authToken·=·process.env.DATABASE_AUTH_TOKEN;
+    20 20 │   
+    21 21 │     const client = createLibsqlClient({
+  
+
+apps/web/scripts/migrate.gcp.ts:18:27 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    17 │ async function main(): Promise<void> {
+  > 18 │   const url = process.env["DATABASE_URL"];
+       │                           ^^^^^^^^^^^^^^
+    19 │   const authToken = process.env["DATABASE_AUTH_TOKEN"];
+    20 │ 
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    16 16 │   
+    17 17 │   async function main(): Promise<void> {
+    18    │ - ··const·url·=·process.env["DATABASE_URL"];
+       18 │ + ··const·url·=·process.env.DATABASE_URL;
+    19 19 │     const authToken = process.env["DATABASE_AUTH_TOKEN"];
+    20 20 │   
+  
+
+apps/web/scripts/migrate.gcp.ts:19:33 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    17 │ async function main(): Promise<void> {
+    18 │   const url = process.env["DATABASE_URL"];
+  > 19 │   const authToken = process.env["DATABASE_AUTH_TOKEN"];
+       │                                 ^^^^^^^^^^^^^^^^^^^^^
+    20 │ 
+    21 │   if (url === undefined || url === "") {
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    17 17 │   async function main(): Promise<void> {
+    18 18 │     const url = process.env["DATABASE_URL"];
+    19    │ - ··const·authToken·=·process.env["DATABASE_AUTH_TOKEN"];
+       19 │ + ··const·authToken·=·process.env.DATABASE_AUTH_TOKEN;
+    20 20 │   
+    21 21 │     if (url === undefined || url === "") {
+  
+
+apps/web/scripts/migrate.node.ts:18:27 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    17 │ async function main(): Promise<void> {
+  > 18 │   const url = process.env["DATABASE_URL"] ?? DEFAULT_DATABASE_URL;
+       │                           ^^^^^^^^^^^^^^
+    19 │   const authToken = process.env["DATABASE_AUTH_TOKEN"];
+    20 │   const encryptionKey = process.env["DATABASE_ENCRYPTION_KEY"];
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    16 16 │   
+    17 17 │   async function main(): Promise<void> {
+    18    │ - ··const·url·=·process.env["DATABASE_URL"]·??·DEFAULT_DATABASE_URL;
+       18 │ + ··const·url·=·process.env.DATABASE_URL·??·DEFAULT_DATABASE_URL;
+    19 19 │     const authToken = process.env["DATABASE_AUTH_TOKEN"];
+    20 20 │     const encryptionKey = process.env["DATABASE_ENCRYPTION_KEY"];
+  
+
+apps/web/scripts/migrate.node.ts:19:33 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    17 │ async function main(): Promise<void> {
+    18 │   const url = process.env["DATABASE_URL"] ?? DEFAULT_DATABASE_URL;
+  > 19 │   const authToken = process.env["DATABASE_AUTH_TOKEN"];
+       │                                 ^^^^^^^^^^^^^^^^^^^^^
+    20 │   const encryptionKey = process.env["DATABASE_ENCRYPTION_KEY"];
+    21 │ 
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    17 17 │   async function main(): Promise<void> {
+    18 18 │     const url = process.env["DATABASE_URL"] ?? DEFAULT_DATABASE_URL;
+    19    │ - ··const·authToken·=·process.env["DATABASE_AUTH_TOKEN"];
+       19 │ + ··const·authToken·=·process.env.DATABASE_AUTH_TOKEN;
+    20 20 │     const encryptionKey = process.env["DATABASE_ENCRYPTION_KEY"];
+    21 21 │   
+  
+
+infra/aws/bin/app.ts:7:29 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    5 │ const app = new App();
+    6 │ 
+  > 7 │ const account = process.env["CDK_DEFAULT_ACCOUNT"];
+      │                             ^^^^^^^^^^^^^^^^^^^^^
+    8 │ const region = process.env["CDK_DEFAULT_REGION"] ?? "us-east-1";
+    9 │ 
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     5  5 │   const app = new App();
+     6  6 │   
+     7    │ - const·account·=·process.env["CDK_DEFAULT_ACCOUNT"];
+        7 │ + const·account·=·process.env.CDK_DEFAULT_ACCOUNT;
+     8  8 │   const region = process.env["CDK_DEFAULT_REGION"] ?? "us-east-1";
+     9  9 │   
+  
+
+infra/aws/bin/app.ts:8:28 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+     7 │ const account = process.env["CDK_DEFAULT_ACCOUNT"];
+   > 8 │ const region = process.env["CDK_DEFAULT_REGION"] ?? "us-east-1";
+       │                            ^^^^^^^^^^^^^^^^^^^^
+     9 │ 
+    10 │ const stages = ["staging", "production"] as const;
+  
+  i Unsafe fix: Use a literal key instead.
+  
+     6  6 │   
+     7  7 │   const account = process.env["CDK_DEFAULT_ACCOUNT"];
+     8    │ - const·region·=·process.env["CDK_DEFAULT_REGION"]·??·"us-east-1";
+        8 │ + const·region·=·process.env.CDK_DEFAULT_REGION·??·"us-east-1";
+     9  9 │   
+    10 10 │   const stages = ["staging", "production"] as const;
+  
+
+Skipped 21 suggested fixes.
+If you wish to apply the suggested (unsafe) fixes, use the command biome check --write --unsafe
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 1.
+Checked 316 files in 317ms. Fixed 2 files.
+Found 21 infos.

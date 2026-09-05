@@ -1,0 +1,51 @@
+$ pnpm test:integration:node && pnpm test:integration:cf
+$ pnpm db:generate:node && vitest run --config vitest.config.integration.node.ts
+$ pnpm --filter @repo/web db:generate:node
+$ drizzle-kit generate --config=./drizzle.libsql.config.ts
+Reading config file '/Users/hikaru/github.com/tuanemuy/fog/apps/web/drizzle.libsql.config.ts'
+4 tables
+_occ_guard 1 columns 0 indexes 0 fks
+outbox_events 13 columns 1 indexes 0 fks
+processed_events 2 columns 0 indexes 0 fks
+todos 6 columns 1 indexes 0 fks
+
+No schema changes, nothing to migrate 😴
+
+ RUN  v4.1.6 /Users/hikaru/github.com/tuanemuy/fog
+
+
+ Test Files  11 passed (11)
+      Tests  105 passed (105)
+   Start at  21:47:13
+   Duration  21.27s (transform 1.79s, setup 0ms, import 8.45s, tests 69.85s, environment 1ms)
+
+$ pnpm db:generate:cf && vitest run --config vitest.config.integration.ts
+$ pnpm --filter @repo/web db:generate:cf
+$ drizzle-kit generate --config=./drizzle.config.ts
+Reading config file '/Users/hikaru/github.com/tuanemuy/fog/apps/web/drizzle.config.ts'
+4 tables
+_occ_guard 1 columns 0 indexes 0 fks
+outbox_events 13 columns 1 indexes 0 fks
+processed_events 2 columns 0 indexes 0 fks
+todos 6 columns 1 indexes 0 fks
+
+No schema changes, nothing to migrate 😴
+
+ RUN  v4.1.6 /Users/hikaru/github.com/tuanemuy/fog
+
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected
+
+ Test Files  10 passed (10)
+      Tests  70 passed (70)
+   Start at  21:47:36
+   Duration  5.64s (transform 5.85s, setup 12.63s, import 9.66s, tests 933ms, environment 0ms)
+
+exception = workerd/api/web-socket.c++:828: disconnected: WebSocket peer disconnected

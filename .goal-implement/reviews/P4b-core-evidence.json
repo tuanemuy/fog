@@ -1,0 +1,12 @@
+{
+  "time": "2026-09-05T13:30:56.806723+00:00",
+  "head": "6ab8e05510a7bdbd1480a8e5c3ec91ff2fbdad48",
+  "target_count": 177,
+  "mismatches": [],
+  "artifacts": {
+    "P4b-core-independent.test.ts": "fa46be2cf4f7e0594bd173ef58f7d973e0ca04f169410674a1e9504a8c0a9eec",
+    "P4b-core-existing.log": "2a4f57dd325a39f73612a067b60c642316a2d7188fbe74fb2440d7ea2542575e",
+    "P4b-core-independent.config.ts": "78cc73486a48d2ec33f66ccf112f9b2def75c385e55d23699c35e7d674ec32de",
+    "P4b-core-independent.log": "20bd5e1ec6b3a6342e4988f4bbeca7bb61c8434c14a199e37ce95e083e12e132"
+  }
+}

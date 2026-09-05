@@ -1,0 +1,7 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';
+const {accessToken}=JSON.parse(fs.readFileSync('/tmp/fog-p5-review-ai.json'));const log=[];
+async function call(p,status=200){const r=await fetch('http://localhost:3000/api/ai',{method:'POST',headers:{authorization:'Bearer '+accessToken,'content-type':'application/json'},body:JSON.stringify(p)});assert.equal(r.status,status);const b=await r.json();log.push({operation:p.operation,status:r.status,replayed:b.replayed});return b;}
+const patch={operation:'documents.patch',input:{id:'01a071e8-2fc4-71bf-8b5b-fc8f7849837c',expectedVersion:3,find:'履歴と検索に反映する。',replace:'独立検証で履歴と検索への反映を確かめる。',reason:'P5 production 独立検証'},idempotencyKey:'p5-review-patch-20260905'};
+if(process.argv[2]==='replay'){const r=await call(patch);assert.ok(r.replayed);const d=await call({operation:'documents.get',input:{id:patch.input.id}});assert.equal(d.data.version,5);assert.ok(d.data.body.includes('履歴と検索に反映する。'));}
+else{await call({operation:'guidance',input:{}});await call(patch);await call({operation:'documents.patch',input:{...patch.input,expectedVersion:3},idempotencyKey:'p5-review-stale'},409);await call({operation:'memos.get',input:{id:'01a07135-949f-762d-9c22-f751e5369d1b'}},404);await call({operation:'content.restore',input:{}},422);}
+fs.writeFileSync('.goal-implement/reviews/P5-api-'+(process.argv[2]??'initial')+'.json',JSON.stringify({time:new Date().toISOString(),log},null,2));console.log(log);

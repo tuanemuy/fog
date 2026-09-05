@@ -1,0 +1,115 @@
+[
+  {
+    "payload": {
+      "operation": "content.delete",
+      "input": {
+        "kind": "memo",
+        "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82",
+        "expectedVersion": 2
+      },
+      "idempotencyKey": "p4-delete-1788608837309"
+    },
+    "status": 200,
+    "data": {
+      "kind": "receipt",
+      "operation": "content.delete",
+      "requestId": "01a07169-4a94-7208-bad6-88428c657047",
+      "replayed": false,
+      "resource": null
+    }
+  },
+  {
+    "payload": {
+      "operation": "memos.create",
+      "input": {
+        "body": "P4 AIの記録 雲の設計を覚えておく。"
+      },
+      "idempotencyKey": "p4-memo-1788608837309"
+    },
+    "status": 200,
+    "data": {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a07164-f6d7-74e0-a298-f18af66ac254",
+      "replayed": true,
+      "resource": null
+    }
+  },
+  {
+    "payload": {
+      "operation": "documents.get",
+      "input": {
+        "id": "01a07164-f6f5-7054-9f68-6222079a1b4e"
+      }
+    },
+    "status": 200,
+    "data": {
+      "kind": "read",
+      "operation": "documents.get",
+      "data": {
+        "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+        "createdAt": "2026-09-05T11:47:17.365Z",
+        "updatedAt": "2026-09-05T11:49:01.182Z",
+        "version": 4,
+        "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+        "title": "P4 AIの設計文書",
+        "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+        "sourceMemos": []
+      }
+    }
+  },
+  {
+    "payload": {
+      "operation": "memos.get",
+      "input": {
+        "id": "01a07164-f6d5-77f3-a80b-fe2d3ff9cc82"
+      }
+    },
+    "status": 404,
+    "data": {
+      "error": {
+        "kind": "notFound",
+        "code": "MEMO_NOT_FOUND",
+        "message": "対象のデータが見つかりません。",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "payload": {
+      "operation": "topics.get",
+      "input": {
+        "id": "01a07164-f6ed-73fb-84fc-bef478c2288e"
+      }
+    },
+    "status": 200,
+    "data": {
+      "kind": "read",
+      "operation": "topics.get",
+      "data": {
+        "topic": {
+          "id": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+          "createdAt": "2026-09-05T11:47:17.357Z",
+          "updatedAt": "2026-09-05T11:47:17.362Z",
+          "version": 2,
+          "title": "P4 AIと考える設計",
+          "description": "完了済みもAI検索する",
+          "completed": true
+        },
+        "documents": [
+          {
+            "id": "01a07164-f6f5-7054-9f68-6222079a1b4e",
+            "createdAt": "2026-09-05T11:47:17.365Z",
+            "updatedAt": "2026-09-05T11:49:01.182Z",
+            "version": 4,
+            "topicId": "01a07164-f6ed-73fb-84fc-bef478c2288e",
+            "title": "P4 AIの設計文書",
+            "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+            "sourceMemos": []
+          }
+        ],
+        "relatedMemos": []
+      }
+    }
+  }
+]

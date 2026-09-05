@@ -1,0 +1,42 @@
+{
+  "format": "fog-export",
+  "version": 1,
+  "exportedAt": "2026-09-05T14:46:37.260Z",
+  "memos": [
+    {
+      "id": "01a07206-b17c-70f9-a61e-3af6dd59ec00",
+      "createdAt": "2026-09-05T14:43:56.412Z",
+      "updatedAt": "2026-09-05T14:43:56.412Z",
+      "body": "P5独立検証 永続メモ 20260905"
+    },
+    {
+      "id": "01a071e0-de81-761e-904e-9ebf738e529e",
+      "createdAt": "2026-09-05T14:02:37.569Z",
+      "updatedAt": "2026-09-05T14:05:06.125Z",
+      "body": "P5本番メモ 日本語の検索と出典を確認する。"
+    }
+  ],
+  "topics": [
+    {
+      "id": "01a071e5-151d-72b9-b59e-2059f132c893",
+      "createdAt": "2026-09-05T14:07:13.693Z",
+      "updatedAt": "2026-09-05T14:07:13.693Z",
+      "title": "P5本番トピック",
+      "description": "production配信と復元の統合確認",
+      "completed": false
+    }
+  ],
+  "documents": [
+    {
+      "id": "01a071e8-2fc4-71bf-8b5b-fc8f7849837c",
+      "createdAt": "2026-09-05T14:10:37.124Z",
+      "updatedAt": "2026-09-05T14:45:47.677Z",
+      "topicId": "01a071e5-151d-72b9-b59e-2059f132c893",
+      "title": "P5本番ドキュメント",
+      "body": "# 永続化の確認\n\nメモから出典を付け、履歴と検索に反映する。",
+      "sourceMemoIds": [
+        "01a071e0-de81-761e-904e-9ebf738e529e"
+      ]
+    }
+  ]
+}

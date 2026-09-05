@@ -1,0 +1,6 @@
+$ tsgo && pnpm -r typecheck
+Scope: 2 of 3 workspace projects
+packages/core typecheck$ tsgo
+packages/core typecheck: Done
+apps/web typecheck$ tsgo
+apps/web typecheck: Done

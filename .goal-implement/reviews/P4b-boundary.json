@@ -1,0 +1,125 @@
+[
+  {
+    "time": "2026-09-05T13:37:12.308Z",
+    "name": "beginFogGoogle",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.325Z",
+    "name": "beginFogGoogle",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.329Z",
+    "name": "unlinkFogGoogle",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.332Z",
+    "name": "unlinkFogGoogle",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.337Z",
+    "name": "changeFogPassword",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.339Z",
+    "name": "changeFogPassword",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.344Z",
+    "name": "requestFogPasswordReset",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.347Z",
+    "name": "requestFogPasswordReset",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.353Z",
+    "name": "completeFogPasswordReset",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.357Z",
+    "name": "completeFogPasswordReset",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.359Z",
+    "name": "revokeAllFogAiConnections",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T13:37:12.361Z",
+    "name": "revokeAllFogAiConnections",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T13:37:12.363Z",
+    "name": "beginFogGoogle",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "name": "old session after password change",
+    "status": 307,
+    "redirectLogin": true
+  },
+  {
+    "time": "2026-09-05T13:37:12.378Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "time": "2026-09-05T13:37:12.381Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "time": "2026-09-05T13:37:12.383Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "time": "2026-09-05T13:37:12.386Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "time": "2026-09-05T13:37:12.388Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "time": "2026-09-05T13:37:12.391Z",
+    "name": "requestFogPasswordReset",
+    "status": 200,
+    "marker": "message"
+  },
+  {
+    "name": "registered absent SSO-only throttled",
+    "identical": true
+  }
+]

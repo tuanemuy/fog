@@ -1,5 +1,3 @@
-// Same as `vite.config.cloudflare.ts` minus `@cloudflare/vite-plugin`,
-// so the SSR environment falls back to Node's runnable default.
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -14,8 +12,7 @@ export default defineConfig({
     tailwindcss(),
     tanstackStart({
       srcDirectory: "app",
-      // Path is resolved relative to `srcDirectory`; an `app/` prefix
-      // makes the plugin silently fall back to the default CF entry.
+      // This path is relative to srcDirectory.
       server: { entry: "server.node.ts" },
       rsc: { enabled: true },
     }),

@@ -7,15 +7,6 @@ node_modules/
 .nitro/
 dist/
 
-# Cloudflare Wrangler
-.wrangler/
-worker-configuration.d.ts
-.dev.vars
-# Rendered from `wrangler.<stage>.toml.tpl` by scripts/render-wrangler.ts.
-# Edit the `.tpl` instead — these are regenerated on every deploy.
-wrangler.staging.toml
-wrangler.production.toml
-
 # Node runtime
 data/
 .env
@@ -29,3 +20,10 @@ data/
 *.db
 *.db-shm
 *.db-wal
+
+# Backup artifacts contain private data
+backups/
+
+# Retained local caches and private files from earlier tooling
+.wrangler/
+.dev.vars

@@ -1,0 +1,9 @@
+
+ RUN  v4.1.6 /Users/hikaru/github.com/tuanemuy/fog
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  21:05:30
+   Duration  16.30s (transform 572ms, setup 0ms, import 1.61s, tests 42.34s, environment 1ms)
+

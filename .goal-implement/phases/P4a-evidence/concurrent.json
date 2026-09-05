@@ -1,0 +1,77 @@
+{
+  "payload": {
+    "operation": "memos.create",
+    "input": {
+      "body": "P4 並行再試行は一件だけ"
+    },
+    "idempotencyKey": "p4-concurrent-1788608837309"
+  },
+  "result": [
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": false,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    },
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    },
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    },
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    },
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    },
+    {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    }
+  ]
+}

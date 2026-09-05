@@ -1,0 +1,3 @@
+$ pnpm --filter @repo/web db:prune-backups --directory /tmp/fog-p5-backups --keep-days 30
+$ tsx --env-file-if-exists=.env scripts/prune-backups.node.ts --directory /tmp/fog-p5-backups --keep-days 30
+{"dryRun":true,"deleted":[],"kept":["fog-backup-20260905T140113146Z-01a071df-94bb-7633-ba4a-a8039de17f69"],"skipped":[]}

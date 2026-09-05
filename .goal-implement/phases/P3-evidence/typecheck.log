@@ -1,0 +1,10 @@
+$ tsgo && pnpm -r typecheck
+Scope: 4 of 5 workspace projects
+packages/core typecheck$ tsgo
+infra/cloudflare/pulumi typecheck$ tsc --noEmit
+packages/core typecheck: Done
+infra/cloudflare/pulumi typecheck: Done
+apps/web typecheck$ tsgo
+apps/web typecheck: Done
+infra/aws typecheck$ tsgo --noEmit
+infra/aws typecheck: Done

@@ -1,0 +1,20 @@
+import {readFile,writeFile} from "node:fs/promises";
+import assert from "node:assert/strict";
+const {accessToken}=JSON.parse(await readFile("/tmp/fog-ai-review-token.json","utf8"));
+const fixture=JSON.parse(await readFile("/tmp/fog-p4a-review-api-results.json","utf8"));
+const logs=[];const base="http://localhost:3000";
+async function api(payload,status=200,headers={}) { const r=await fetch(base+"/api/ai",{method:"POST",headers:{Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json",...headers},body:JSON.stringify(payload)});const result=await r.json();assert.equal(r.status,status,JSON.stringify(result));assert.equal(r.headers.get("cache-control"),"no-store");logs.push({payload,status:r.status,result});return result; }
+const guide=await api({operation:"guidance",input:{}});assert.ok(JSON.stringify(guide).includes("documents.patch"));
+for(const operation of ["trash","memo.history","content.restore","content.hardDelete","export"]) await api({operation,input:{}},422);
+await api({operation:"memos.create",input:{body:"forbidden",ownerId:"other"},idempotencyKey:"extra-owner"},422);
+await api({operation:"guidance",input:{}},403,{Cookie:"fog_session=irrelevant"});
+await api({operation:"guidance",input:{}},415,{"Content-Type":"text/plain"});
+const current=await api({operation:"documents.get",input:{id:fixture.documentId}});assert.equal(current.data.version,4);
+const deletion={operation:"content.delete",input:{kind:"memo",id:fixture.memoId,expectedVersion:2},idempotencyKey:`review-delete-${fixture.stamp}`};
+await api(deletion);const replay=await api({operation:"memos.create",input:fixture.memoRequest,idempotencyKey:fixture.memoKey});assert.equal(replay.resource,null);
+await api({operation:"memos.get",input:{id:fixture.memoId}},404);
+const doc=await api({operation:"documents.get",input:{id:fixture.documentId}});assert.equal(doc.data.sourceMemos.length,0);assert.ok(!JSON.stringify(doc).includes(fixture.memoId));
+const topic=await api({operation:"topics.get",input:{id:fixture.topicId}});assert.ok(!JSON.stringify(topic).includes(fixture.memoId));
+const concurrent={operation:"memos.create",input:{body:"P4a 独立並行要求"},idempotencyKey:`review-concurrent-${fixture.stamp}`};
+const receipts=await Promise.all(Array.from({length:4},()=>api(concurrent)));assert.equal(receipts.filter(x=>!x.replayed).length,1);assert.equal(new Set(receipts.map(x=>x.resource.id)).size,1);
+await writeFile("/tmp/fog-p4a-review-extra.json",JSON.stringify({deletion,concurrent,logs},null,2));console.log(JSON.stringify({checks:logs.length,concurrentCreated:1,replayed:3}));

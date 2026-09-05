@@ -1,9 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
-  - "infra/aws"
-  - "infra/cloudflare/pulumi"
 overrides:
+  "@tanstack/router-core": 1.169.2
   tinypool: 1.0.2
 # `.d.ts` files inside the pnpm store resolve bare `react` / `vitest`
 # type imports by walking up to the workspace root, so @types packages
@@ -12,6 +11,7 @@ publicHoistPattern:
   - "@types/*"
 allowBuilds:
   esbuild: true
-  workerd: true
-  protobufjs: false
   sharp: false
+  workerd: false
+patchedDependencies:
+  '@tanstack/router-core@1.169.2': patches/@tanstack__router-core@1.169.2.patch

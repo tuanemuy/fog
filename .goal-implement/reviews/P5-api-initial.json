@@ -1,0 +1,26 @@
+{
+  "time": "2026-09-05T14:44:56.435Z",
+  "log": [
+    {
+      "operation": "guidance",
+      "status": 200
+    },
+    {
+      "operation": "documents.patch",
+      "status": 200,
+      "replayed": false
+    },
+    {
+      "operation": "documents.patch",
+      "status": 409
+    },
+    {
+      "operation": "memos.get",
+      "status": 404
+    },
+    {
+      "operation": "content.restore",
+      "status": 422
+    }
+  ]
+}

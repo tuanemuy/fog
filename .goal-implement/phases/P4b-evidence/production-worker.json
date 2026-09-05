@@ -1,0 +1,9 @@
+{
+  "time": "2026-09-05T12:49:56.842Z",
+  "httpRequests": 0,
+  "queuedBefore": 1,
+  "queuedAfter": 0,
+  "delivered": true,
+  "shutdown": 0,
+  "log": "[listen.node] listening on http://127.0.0.1:3002\n[fog.reset-mail] delivery cycle { sentCount: 1, failedCount: 0 }\n[listen.node] received SIGTERM, draining\n"
+}

@@ -1,0 +1,10 @@
+$ vitest run
+
+ RUN  v4.1.6 /Users/hikaru/github.com/tuanemuy/fog
+
+
+ Test Files  15 passed (15)
+      Tests  100 passed (100)
+   Start at  20:13:10
+   Duration  1.06s (transform 821ms, setup 0ms, import 2.01s, tests 585ms, environment 1ms)
+

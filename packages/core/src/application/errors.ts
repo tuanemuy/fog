@@ -127,9 +127,7 @@ export function isForbiddenError(error: unknown): error is ForbiddenError {
  * can route them differently — a flood of `DataIntegrityError` means a
  * migration is broken, not the DB itself.
  *
- * `NetworkError` / `ExternalApiError` are template-only placeholders showing
- * the extension shape — no code throws them today. Delete them when you add
- * your first external adapter, or keep as reference.
+ * External adapters use `NetworkError` / `ExternalApiError` for provider failures.
  */
 export const SystemErrorCode = {
   DatabaseError: "DATABASE_ERROR",

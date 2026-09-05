@@ -1,0 +1,438 @@
+{
+  "deletion": {
+    "operation": "content.delete",
+    "input": {
+      "kind": "memo",
+      "id": "01a07177-7201-7044-8126-f4ec674af862",
+      "expectedVersion": 2
+    },
+    "idempotencyKey": "review-delete-1788610048471"
+  },
+  "concurrent": {
+    "operation": "memos.create",
+    "input": {
+      "body": "P4a 独立並行要求"
+    },
+    "idempotencyKey": "review-concurrent-1788610048471"
+  },
+  "logs": [
+    {
+      "payload": {
+        "operation": "guidance",
+        "input": {}
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "guidance",
+        "data": {
+          "operations": [
+            "guidance",
+            "memos.recent",
+            "memos.get",
+            "topics.list",
+            "topics.get",
+            "documents.get",
+            "search",
+            "memos.create",
+            "memos.replace",
+            "topics.create",
+            "topics.update",
+            "documents.create",
+            "documents.patch",
+            "documents.rewrite",
+            "content.delete"
+          ],
+          "guidance": [
+            "ユーザーの代理として、保存・検索・整理に必要な操作だけを実行してください。",
+            "検索結果は原文の事実情報です。要約や再構成はクライアント側で行い、必要なら単体取得してください。",
+            "メモは全文置換、文書は理由付きの部分編集を使ってください。対象文字列は一意な完全一致が必要です。",
+            "ユーザーが明示的に全面書き直しを求めた場合のみ documents.rewrite と confirmRewrite:true を使ってください。",
+            "更新には取得した expectedVersion、すべての書き込みには再試行でも同一の idempotencyKey を指定してください。",
+            "書き込みは現在有効な項目の識別子と版だけを返します。最新本文が必要なら単体取得してください。",
+            "削除はゴミ箱への移動です。ゴミ箱・履歴・復元・完全削除は人間専用で、AI操作として提供しません。",
+            "接続が失効した場合は操作を中止し、ユーザーに再接続を依頼してください。"
+          ]
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "trash",
+        "input": {}
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "operation": [
+              "Invalid discriminator value. Expected 'guidance' | 'memos.recent' | 'memos.get' | 'topics.list' | 'topics.get' | 'documents.get' | 'search' | 'memos.create' | 'memos.replace' | 'topics.create' | 'topics.update' | 'documents.create' | 'documents.patch' | 'documents.rewrite' | 'content.delete'"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memo.history",
+        "input": {}
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "operation": [
+              "Invalid discriminator value. Expected 'guidance' | 'memos.recent' | 'memos.get' | 'topics.list' | 'topics.get' | 'documents.get' | 'search' | 'memos.create' | 'memos.replace' | 'topics.create' | 'topics.update' | 'documents.create' | 'documents.patch' | 'documents.rewrite' | 'content.delete'"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "content.restore",
+        "input": {}
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "operation": [
+              "Invalid discriminator value. Expected 'guidance' | 'memos.recent' | 'memos.get' | 'topics.list' | 'topics.get' | 'documents.get' | 'search' | 'memos.create' | 'memos.replace' | 'topics.create' | 'topics.update' | 'documents.create' | 'documents.patch' | 'documents.rewrite' | 'content.delete'"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "content.hardDelete",
+        "input": {}
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "operation": [
+              "Invalid discriminator value. Expected 'guidance' | 'memos.recent' | 'memos.get' | 'topics.list' | 'topics.get' | 'documents.get' | 'search' | 'memos.create' | 'memos.replace' | 'topics.create' | 'topics.update' | 'documents.create' | 'documents.patch' | 'documents.rewrite' | 'content.delete'"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "export",
+        "input": {}
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "operation": [
+              "Invalid discriminator value. Expected 'guidance' | 'memos.recent' | 'memos.get' | 'topics.list' | 'topics.get' | 'documents.get' | 'search' | 'memos.create' | 'memos.replace' | 'topics.create' | 'topics.update' | 'documents.create' | 'documents.patch' | 'documents.rewrite' | 'content.delete'"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "forbidden",
+          "ownerId": "other"
+        },
+        "idempotencyKey": "extra-owner"
+      },
+      "status": 422,
+      "result": {
+        "error": {
+          "kind": "validation",
+          "code": "INVALID_INPUT",
+          "message": "Invalid input",
+          "retryable": false,
+          "fieldErrors": {
+            "input": [
+              "Unrecognized key: \"ownerId\""
+            ]
+          }
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "guidance",
+        "input": {}
+      },
+      "status": 403,
+      "result": {
+        "error": {
+          "kind": "forbidden",
+          "code": "BEARER_ONLY",
+          "message": "このAPIでは人間用のcookieを使用できません。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "guidance",
+        "input": {}
+      },
+      "status": 415,
+      "result": {
+        "error": {
+          "code": "UNSUPPORTED_MEDIA_TYPE",
+          "message": "JSONを使用してください。"
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "documents.get",
+        "input": {
+          "id": "01a07177-7231-77ca-be58-0f9cc157127e"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "documents.get",
+        "data": {
+          "id": "01a07177-7231-77ca-be58-0f9cc157127e",
+          "createdAt": "2026-09-05T12:07:28.561Z",
+          "updatedAt": "2026-09-05T12:09:09.133Z",
+          "version": 4,
+          "topicId": "01a07177-7229-75e8-b603-58e0850bb23c",
+          "title": "P4 AIの設計文書",
+          "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+          "sourceMemos": [
+            {
+              "id": "01a07177-7201-7044-8126-f4ec674af862",
+              "body": "P4 AIの記録 雲と霧の設計に更新。",
+              "createdAt": "2026-09-05T12:07:28.513Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "content.delete",
+        "input": {
+          "kind": "memo",
+          "id": "01a07177-7201-7044-8126-f4ec674af862",
+          "expectedVersion": 2
+        },
+        "idempotencyKey": "review-delete-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "content.delete",
+        "requestId": "01a07179-1257-70ee-a527-08085fb01712",
+        "replayed": false,
+        "resource": null
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4 AIの記録 雲の設計を覚えておく。"
+        },
+        "idempotencyKey": "p4-memo-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07177-7205-74ea-a544-3805156bf3e1",
+        "replayed": true,
+        "resource": null
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.get",
+        "input": {
+          "id": "01a07177-7201-7044-8126-f4ec674af862"
+        }
+      },
+      "status": 404,
+      "result": {
+        "error": {
+          "kind": "notFound",
+          "code": "MEMO_NOT_FOUND",
+          "message": "対象のデータが見つかりません。",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "documents.get",
+        "input": {
+          "id": "01a07177-7231-77ca-be58-0f9cc157127e"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "documents.get",
+        "data": {
+          "id": "01a07177-7231-77ca-be58-0f9cc157127e",
+          "createdAt": "2026-09-05T12:07:28.561Z",
+          "updatedAt": "2026-09-05T12:09:09.133Z",
+          "version": 4,
+          "topicId": "01a07177-7229-75e8-b603-58e0850bb23c",
+          "title": "P4 AIの設計文書",
+          "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+          "sourceMemos": []
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "topics.get",
+        "input": {
+          "id": "01a07177-7229-75e8-b603-58e0850bb23c"
+        }
+      },
+      "status": 200,
+      "result": {
+        "kind": "read",
+        "operation": "topics.get",
+        "data": {
+          "topic": {
+            "id": "01a07177-7229-75e8-b603-58e0850bb23c",
+            "createdAt": "2026-09-05T12:07:28.553Z",
+            "updatedAt": "2026-09-05T12:07:28.558Z",
+            "version": 2,
+            "title": "P4 AIと考える設計",
+            "description": "完了済みもAI検索する",
+            "completed": true
+          },
+          "documents": [
+            {
+              "id": "01a07177-7231-77ca-be58-0f9cc157127e",
+              "createdAt": "2026-09-05T12:07:28.561Z",
+              "updatedAt": "2026-09-05T12:09:09.133Z",
+              "version": 4,
+              "topicId": "01a07177-7229-75e8-b603-58e0850bb23c",
+              "title": "P4 AIの設計文書",
+              "body": "# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。",
+              "sourceMemos": []
+            }
+          ],
+          "relatedMemos": []
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4a 独立並行要求"
+        },
+        "idempotencyKey": "review-concurrent-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07179-1266-7069-a0c1-5f8e6a46424b",
+        "replayed": false,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07179-1265-738e-b669-1f33f9dce7bc",
+          "version": 1
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4a 独立並行要求"
+        },
+        "idempotencyKey": "review-concurrent-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07179-1266-7069-a0c1-5f8e6a46424b",
+        "replayed": true,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07179-1265-738e-b669-1f33f9dce7bc",
+          "version": 1
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4a 独立並行要求"
+        },
+        "idempotencyKey": "review-concurrent-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07179-1266-7069-a0c1-5f8e6a46424b",
+        "replayed": true,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07179-1265-738e-b669-1f33f9dce7bc",
+          "version": 1
+        }
+      }
+    },
+    {
+      "payload": {
+        "operation": "memos.create",
+        "input": {
+          "body": "P4a 独立並行要求"
+        },
+        "idempotencyKey": "review-concurrent-1788610048471"
+      },
+      "status": 200,
+      "result": {
+        "kind": "receipt",
+        "operation": "memos.create",
+        "requestId": "01a07179-1266-7069-a0c1-5f8e6a46424b",
+        "replayed": true,
+        "resource": {
+          "kind": "memo",
+          "id": "01a07179-1265-738e-b669-1f33f9dce7bc",
+          "version": 1
+        }
+      }
+    }
+  ]
+}

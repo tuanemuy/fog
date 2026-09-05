@@ -146,11 +146,46 @@ function hasSerializedRemnant(
 
 function asSerializedError(value: unknown): SerializedError | null {
   if (typeof value !== "object" || value === null) return null;
-  const v = value as { kind?: unknown; message?: unknown };
-  if (typeof v.kind !== "string" || typeof v.message !== "string") return null;
+  const v = value as {
+    kind?: unknown;
+    message?: unknown;
+    code?: unknown;
+    retryable?: unknown;
+    fieldErrors?: unknown;
+  };
+  if (
+    typeof v.kind !== "string" ||
+    typeof v.message !== "string" ||
+    (v.code !== null && typeof v.code !== "string") ||
+    (v.retryable !== undefined && typeof v.retryable !== "boolean")
+  )
+    return null;
+  if (
+    v.fieldErrors !== undefined &&
+    (typeof v.fieldErrors !== "object" ||
+      v.fieldErrors === null ||
+      Array.isArray(v.fieldErrors) ||
+      !Object.values(v.fieldErrors).every(
+        (messages) =>
+          Array.isArray(messages) &&
+          messages.every((message) => typeof message === "string"),
+      ))
+  )
+    return null;
   return isSerializedError(v as SerializedErrorBase & { kind: string })
     ? (v as SerializedError)
     : null;
+}
+
+export function isAppServerError(error: unknown): error is AppServerError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AppServerError" &&
+    hasSerializedRemnant(error) &&
+    asSerializedError(error.serialized) !== null
+  );
 }
 
 export function extractSerializedError(error: unknown): SerializedError {

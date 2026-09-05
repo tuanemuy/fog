@@ -1,0 +1,762 @@
+* {
+  box-sizing: border-box;
+}
+html {
+  min-height: 100%;
+}
+body {
+  margin: 0;
+  background: linear-gradient(
+    180deg,
+    var(--color-bg-page-top),
+    var(--color-bg-page) 240px
+  );
+  color: var(--color-neutral-900);
+  font-family: var(--font-base);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button,
+a,
+input,
+textarea,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+summary {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+a {
+  color: var(--color-primary-dark);
+  text-underline-offset: 0.2em;
+}
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+.fog-sr-only,
+.fog-skip:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.fog-skip:focus {
+  position: fixed;
+  z-index: 10;
+  padding: var(--space-sm);
+  background: var(--color-bg-card);
+}
+.fog-primary {
+  border: 0;
+  border-radius: var(--radius-full);
+  padding: var(--pad-btn);
+  background: var(--color-primary-dark);
+  color: var(--color-text-inverse);
+  font-weight: var(--weight-semibold);
+  transition: background var(--transition-fast);
+}
+.fog-primary:hover:not(:disabled) {
+  background: var(--color-primary-darker);
+}
+.fog-error {
+  color: var(--color-error-dark);
+  background: var(--color-error-bg);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fog-auth {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-xl) var(--space-md);
+}
+.fog-auth-sheet {
+  width: 100%;
+  max-width: 26rem;
+  padding: var(--space-2xl) var(--space-lg);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-card);
+  box-shadow: var(--shadow-sm);
+}
+.fog-auth-brand {
+  display: flex;
+  justify-content: center;
+}
+.fog-auth-sheet h1 {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  text-align: center;
+  line-height: var(--leading-tight);
+  margin: var(--space-section) 0 var(--space-sm);
+}
+.fog-auth-description {
+  text-align: center;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-auth-form {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-section);
+  gap: var(--space-sm);
+}
+.fog-auth-form label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.fog-auth-form input {
+  width: 100%;
+  min-height: 46px;
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--color-bg-card);
+}
+.fog-auth-form label:not(:first-child) {
+  margin-top: var(--space-md);
+}
+.fog-auth-form .fog-primary {
+  margin-top: var(--space-lg);
+}
+.fog-hint {
+  color: var(--color-neutral-600);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+.fog-auth-footer {
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+  margin: var(--space-lg) 0 0;
+}
+.fog-app {
+  display: flex;
+  min-height: 100dvh;
+  max-width: var(--container-max, 1160px);
+  margin: 0 auto;
+}
+.fog-sidebar {
+  display: none;
+}
+.fog-main-column {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-sm);
+}
+.fog-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 74px;
+  padding: var(--space-md) var(--space-lg);
+}
+.fog-header h1 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+.fog-mobile-brand {
+  display: flex;
+}
+.fog-mobile-menu {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+  padding: var(--space-sm);
+}
+.fog-mobile-brand img {
+  width: 65px;
+}
+.fog-nav-dialog {
+  position: fixed;
+  inset: auto 0 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: var(--content-max);
+  max-height: 85dvh;
+  overflow-y: auto;
+  border: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-lg) var(--space-xl)
+    max(var(--space-lg), env(safe-area-inset-bottom));
+  background: var(--color-bg-input);
+  backdrop-filter: blur(16px);
+  color: var(--color-neutral-900);
+  box-shadow: var(--shadow-lg);
+}
+.fog-nav-dialog::backdrop {
+  background: var(--color-overlay);
+}
+.fog-nav-dialog .fog-account {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-neutral-100);
+}
+.fog-side-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--pad-menu);
+  color: var(--color-neutral-600);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+}
+.fog-side-link[aria-current="page"] {
+  color: var(--color-neutral-900);
+  font-weight: var(--weight-semibold);
+}
+.fog-nav-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+.fog-side-link[aria-current="page"] .fog-nav-dot {
+  background: var(--color-primary);
+}
+.fog-back {
+  text-decoration: none;
+  padding: var(--space-sm);
+  color: var(--color-neutral-700);
+}
+.fog-sheet {
+  min-height: calc(100dvh - 74px);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-sm);
+}
+.fog-timeline {
+  padding: var(--space-2xl) var(--space-lg) 180px;
+}
+.fog-day + .fog-day {
+  margin-top: var(--space-section);
+}
+.fog-day h2 {
+  margin: 0;
+  padding-bottom: var(--space-md);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  border-bottom: 1px solid var(--color-neutral-100);
+}
+.fog-memo {
+  padding: var(--space-lg) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+  scroll-margin-top: var(--space-lg);
+}
+.fog-memo-meta {
+  display: flex;
+  gap: var(--space-md);
+  color: var(--color-neutral-600);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.fog-memo p {
+  margin: var(--space-sm) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-normal);
+}
+.fog-memo-pending {
+  opacity: 0.6;
+}
+.fog-empty {
+  text-align: center;
+  padding: 12vh 0 var(--space-2xl);
+}
+.fog-empty-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-lighter);
+  color: var(--color-primary-darker);
+  font-size: var(--text-xl);
+}
+.fog-empty h2 {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  margin: var(--space-lg) 0 var(--space-sm);
+}
+.fog-empty p {
+  margin: 0;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+}
+.fog-composer-wrap {
+  position: fixed;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: var(--space-lg);
+  right: var(--space-lg);
+  z-index: 2;
+  pointer-events: none;
+}
+.fog-composer {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-input);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--color-neutral-300);
+  box-shadow: var(--shadow-sm);
+  pointer-events: auto;
+}
+.fog-composer:focus-within {
+  border-color: var(--color-primary);
+}
+.fog-composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 54px;
+  max-height: 35dvh;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  outline: none;
+  padding: 6px;
+}
+.fog-composer textarea::placeholder {
+  color: var(--color-neutral-600);
+}
+.fog-composer .fog-primary {
+  padding: var(--pad-btn-sm);
+  flex: none;
+}
+.fog-composer .fog-error {
+  flex-basis: 100%;
+}
+.fog-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.fog-email {
+  font-size: var(--text-xs);
+  color: var(--color-neutral-600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fog-text-button {
+  padding: var(--space-sm) 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+}
+.fog-text-button:hover {
+  color: var(--color-primary-dark);
+}
+.fog-skeleton-date {
+  width: 120px;
+  height: 15px;
+  background: var(--color-neutral-100);
+  border-radius: var(--radius-sm);
+}
+.fog-skeleton-entry {
+  padding: var(--space-lg) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+}
+.fog-skeleton-entry div {
+  height: 13px;
+  background: var(--color-neutral-100);
+  margin: 14px 0;
+  border-radius: var(--radius-sm);
+}
+.fog-skeleton-entry div:first-child {
+  width: 46px;
+}
+.fog-skeleton-entry div:last-child {
+  width: 70%;
+}
+@media (min-width: 640px) {
+  .fog-auth-sheet {
+    padding: var(--space-2xl);
+  }
+  .fog-main-column {
+    padding: 0 var(--space-md);
+  }
+  .fog-header {
+    min-height: 88px;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-2xl);
+  }
+  .fog-header h1 {
+    font-size: var(--text-lg);
+  }
+  .fog-sheet {
+    min-height: calc(100dvh - 88px);
+  }
+  .fog-timeline {
+    padding: var(--space-2xl) var(--space-2xl) 180px;
+  }
+  .fog-composer-wrap {
+    left: var(--space-xl);
+    right: var(--space-xl);
+  }
+}
+@media (min-width: 1024px) {
+  .fog-sidebar {
+    display: flex;
+    flex-direction: column;
+    width: var(--sidebar-w, 220px);
+    flex: none;
+    padding: var(--space-2xl) var(--space-lg);
+  }
+  .fog-sidebar nav {
+    margin-top: var(--space-2xl);
+  }
+  .fog-sidebar > .fog-account {
+    margin-top: auto;
+    padding: var(--space-lg) 0;
+    position: sticky;
+    bottom: 0;
+  }
+  .fog-side-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--color-neutral-900);
+    text-decoration: none;
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-sm);
+    padding: var(--space-md) 0;
+  }
+  .fog-nav-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--radius-full);
+  }
+  .fog-mobile-brand,
+  .fog-mobile-menu {
+    display: none;
+  }
+  .fog-composer-wrap {
+    left: calc(50% + var(--sidebar-w, 220px) / 2);
+    right: auto;
+    width: min(
+      calc(100vw - var(--sidebar-w, 220px) - 88px),
+      calc(var(--container-max, 1160px) - var(--sidebar-w, 220px) - 88px)
+    );
+    transform: translateX(-50%);
+  }
+  .fog-timeline {
+    padding: var(--space-2xl) var(--space-2xl) 180px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+.fog-content {
+  max-width: var(--sheet-max);
+  margin: 0 auto;
+  padding: var(--space-2xl) var(--space-lg) calc(var(--space-2xl) * 2);
+}
+.fog-content-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.fog-content-toolbar h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+.fog-content-toolbar h3 {
+  margin: 0;
+}
+.fog-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+}
+.fog-text-link {
+  color: var(--color-primary-dark);
+  text-decoration: none;
+  font-size: var(--text-sm);
+}
+.fog-content-row {
+  display: block;
+  position: relative;
+  padding: var(--space-lg) var(--space-xl) var(--space-lg) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+  color: var(--color-neutral-900);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.fog-content-row strong {
+  display: block;
+  font-weight: var(--weight-medium);
+}
+.fog-content-row p {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-row-arrow {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  color: var(--color-neutral-500);
+  transform: translateY(-50%);
+}
+.fog-meta {
+  display: block;
+  color: var(--color-neutral-600);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.fog-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-top: var(--space-2xl);
+  border-bottom: 1px solid var(--color-neutral-100);
+  padding-bottom: var(--space-md);
+}
+.fog-section-heading h3,
+.fog-source-picker h3 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+.fog-description {
+  color: var(--color-neutral-600);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 var(--space-lg);
+}
+.fog-empty-inline {
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+  padding: var(--space-lg) 0;
+  margin: 0;
+}
+.fog-completed {
+  margin-top: var(--space-2xl);
+}
+.fog-completed summary {
+  padding: var(--space-md) 0;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+}
+.fog-badge {
+  border-radius: var(--radius-full);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--color-success-bg);
+  color: var(--color-success-dark);
+  font-size: var(--text-xs);
+}
+.fog-inline-menu {
+  position: relative;
+}
+.fog-inline-menu summary {
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-inline-menu > div {
+  position: absolute;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  width: var(--popover-min-w);
+  padding: var(--space-md);
+  border: 1px solid var(--color-neutral-100);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-md);
+}
+.fog-editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+  margin-bottom: var(--space-lg);
+}
+.fog-editor-form h3 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-sm);
+}
+.fog-editor-form label,
+.fog-form-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.fog-editor-form > input,
+.fog-editor-form > textarea,
+.fog-field,
+.fog-source-search input {
+  width: 100%;
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-card);
+}
+.fog-editor-form > .fog-actions {
+  margin-top: var(--space-md);
+}
+.fog-conflict {
+  padding: var(--space-lg);
+  margin: var(--space-lg) 0;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-dark);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+}
+.fog-conflict label {
+  display: flex;
+  align-items: start;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+.fog-conflict input {
+  flex: none;
+  margin-top: var(--space-sm);
+}
+.fog-context-link {
+  display: inline-block;
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-lg);
+  text-decoration: none;
+}
+.fog-document-editor .fog-actions {
+  margin-top: var(--space-xl);
+}
+.fog-title-input {
+  width: 100%;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  border: 0;
+  background: transparent;
+  padding: var(--space-sm) 0;
+}
+.fog-body-input {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  padding: var(--space-lg) 0;
+  line-height: var(--leading-normal);
+}
+.fog-form-label {
+  display: block;
+  margin: var(--space-lg) 0 var(--space-sm);
+}
+.fog-document-preview {
+  padding: var(--space-lg) 0;
+  min-height: 16rem;
+}
+.fog-source-picker {
+  margin-top: var(--space-2xl);
+  border-top: 1px solid var(--color-neutral-100);
+  padding-top: var(--space-lg);
+}
+.fog-source-search {
+  display: flex;
+  gap: var(--space-sm);
+  margin: var(--space-lg) 0;
+}
+.fog-source-search input {
+  flex: 1;
+  min-width: 0;
+}
+.fog-secondary {
+  border: 1px solid var(--color-neutral-300);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-neutral-700);
+  padding: var(--pad-btn-sm);
+}
+.fog-source-option {
+  display: flex;
+  align-items: start;
+  gap: var(--space-md);
+  padding: var(--space-lg) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+  cursor: pointer;
+}
+.fog-source-option > input {
+  margin-top: var(--space-sm);
+  accent-color: var(--color-primary-dark);
+}
+.fog-source-option > span {
+  flex: 1;
+  min-width: 0;
+}
+.fog-source-text {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+}
+.fog-source-selected {
+  display: flex;
+  align-items: start;
+  gap: var(--space-md);
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--color-neutral-100);
+}
+.fog-source-selected p {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  margin: 0;
+}
+.fog-saving-preview {
+  margin: var(--space-lg) 0;
+  padding: var(--space-lg) 0;
+  border-top: 1px solid var(--color-neutral-100);
+  opacity: 0.6;
+}
+@media (min-width: 640px) {
+  .fog-content {
+    padding-left: var(--space-2xl);
+    padding-right: var(--space-2xl);
+  }
+}
+@media (hover: hover) {
+  a.fog-content-row:hover {
+    color: var(--color-primary-dark);
+  }
+  .fog-side-link:hover {
+    background: var(--color-bg-hover);
+  }
+}

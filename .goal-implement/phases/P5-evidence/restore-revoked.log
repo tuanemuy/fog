@@ -1,0 +1,3 @@
+$ pnpm --filter @repo/web db:restore --backup /tmp/fog-p5-backups/fog-backup-20260905T140113146Z-01a071df-94bb-7633-ba4a-a8039de17f69 --destination /tmp/fog-p5-restored-revoked.db
+$ tsx --env-file-if-exists=.env scripts/restore.node.ts --backup /tmp/fog-p5-backups/fog-backup-20260905T140113146Z-01a071df-94bb-7633-ba4a-a8039de17f69 --destination /tmp/fog-p5-restored-revoked.db
+{"destination":"/tmp/fog-p5-restored-revoked.db","backupId":"fog-backup-20260905T140113146Z-01a071df-94bb-7633-ba4a-a8039de17f69","access":"revoked","sha256":"97ec36a265386d4a4d26511b861bd49b6d555754e360d8c3ef8edb3325482816"}

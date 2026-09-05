@@ -1,0 +1,42 @@
+[
+  {
+    "time": "2026-09-05T11:56:11.786Z",
+    "payload": {
+      "operation": "memos.create",
+      "input": {
+        "body": "P4 並行再試行は一件だけ"
+      },
+      "idempotencyKey": "p4-concurrent-1788608837309"
+    },
+    "status": 200,
+    "data": {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a0716a-874b-7625-aa5b-7623909a04c1",
+      "replayed": true,
+      "resource": {
+        "kind": "memo",
+        "id": "01a0716a-8745-76e8-b0c9-0d79400c5331",
+        "version": 1
+      }
+    }
+  },
+  {
+    "time": "2026-09-05T11:56:11.791Z",
+    "payload": {
+      "operation": "memos.create",
+      "input": {
+        "body": "P4 AIの記録 雲の設計を覚えておく。"
+      },
+      "idempotencyKey": "p4-memo-1788608837309"
+    },
+    "status": 200,
+    "data": {
+      "kind": "receipt",
+      "operation": "memos.create",
+      "requestId": "01a07164-f6d7-74e0-a298-f18af66ac254",
+      "replayed": true,
+      "resource": null
+    }
+  }
+]

@@ -1,3 +1,0 @@
-config:
-  tanstack-start-template-cf-routes:accountId: REPLACE_WITH_CF_ACCOUNT_ID
-  tanstack-start-template-cf-routes:resourcesStackRef: organization/tanstack-start-template-cf-resources/production

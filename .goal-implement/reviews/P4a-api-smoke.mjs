@@ -1,0 +1,24 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const {accessToken}=JSON.parse(await readFile('/tmp/fog-ai-review-token.json','utf8'));
+const base='http://localhost:3000';const stamp=Date.now();const log=[];
+async function request(operation,input,key,status=200){const payload={operation,input,...key?{idempotencyKey:key}:{}};const r=await fetch(base+'/api/ai',{method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await r.json();log.push({time:new Date().toISOString(),payload,status:r.status,result});assert.equal(r.status,status,JSON.stringify(result));return result;}
+const memoRequest={body:'P4 AIの記録 雲の設計を覚えておく。'};
+const memo=await request('memos.create',memoRequest,'p4-memo-'+stamp);assert.equal(memo.resource.version,1);
+const replay=await request('memos.create',memoRequest,'p4-memo-'+stamp);assert.equal(replay.resource.id,memo.resource.id);assert.equal(replay.replayed,true);
+await request('memos.create',{body:'payload改変'},'p4-memo-'+stamp,409);
+await request('memos.replace',{id:memo.resource.id,body:'P4 AIの記録 雲と霧の設計に更新。',expectedVersion:1},'p4-memo-edit-'+stamp);
+const topic=await request('topics.create',{title:'P4 AIと考える設計',description:'APIから作成したトピック'},'p4-topic-'+stamp);
+await request('topics.update',{id:topic.resource.id,title:'P4 AIと考える設計',description:'完了済みもAI検索する',completed:true,expectedVersion:1},'p4-topic-edit-'+stamp);
+const original='# 霧の計画\n\n設計は小さく始める。\n\n検証して進める。';
+const doc=await request('documents.create',{topicId:topic.resource.id,title:'P4 AIの設計文書',body:original,sourceMemoIds:[memo.resource.id],reason:'対話の内容を文書化'},'p4-doc-'+stamp);
+await request('documents.patch',{id:doc.resource.id,expectedVersion:1,find:'存在しない',replace:'変更',reason:'一致しない場合'},'p4-no-match-'+stamp,422);
+await request('documents.patch',{id:doc.resource.id,expectedVersion:1,find:'設計は小さく始める。',replace:'設計は小さく始め、確認を重ねる。',reason:'確認の手順を補足'},'p4-patch-'+stamp);
+await request('documents.patch',{id:doc.resource.id,expectedVersion:1,find:'検証して進める。',replace:'検証する。',reason:'古い版'},'p4-conflict-'+stamp,409);
+await request('documents.rewrite',{id:doc.resource.id,expectedVersion:2,title:'P4 AIの設計文書',body:'# 全面改稿\n\n利用者が依頼した新しい構成。',reason:'利用者から全面書き直しの明示依頼',confirmRewrite:true},'p4-rewrite-'+stamp);
+const full=await request('documents.get',{id:doc.resource.id});assert.equal(full.data.version,3);assert.equal(full.data.sourceMemos.length,1);assert.ok(!JSON.stringify(full).includes('deleted'));
+const results=await request('search',{query:'P4',topicId:topic.resource.id});assert.equal(results.data.items.length,2);
+await request('memos.recent',{limit:10});await request('memos.get',{id:memo.resource.id});await request('topics.list',{});await request('topics.get',{id:topic.resource.id});
+await request('memos.get',{id:'01a07135-949f-762d-9c22-f751e5369d1b'},undefined,404);
+await request('documents.create',{topicId:topic.resource.id,title:'壊れた文書',body:'invalid source',sourceMemoIds:['missing'],reason:'出典不在'},'p4-bad-source-'+stamp,404);
+const output={stamp,memoId:memo.resource.id,topicId:topic.resource.id,documentId:doc.resource.id,memoRequest,memoKey:'p4-memo-'+stamp,log};await writeFile('/tmp/fog-p4a-review-api-results.json',JSON.stringify(output,null,2));console.log(JSON.stringify({memoId:output.memoId,topicId:output.topicId,documentId:output.documentId,checks:log.length},null,2));

@@ -9,14 +9,53 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TodoRouteRouteImport } from './routes/todo/route'
+import { Route as TrashRouteImport } from './routes/trash'
+import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SearchRouteImport } from './routes/search'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as TodoIndexRouteImport } from './routes/todo/index'
-import { Route as TodoAboutRouteImport } from './routes/todo/about'
+import { Route as TopicsIndexRouteImport } from './routes/topics.index'
+import { Route as TopicsTopicIdRouteImport } from './routes/topics.$topicId'
+import { Route as PasswordResetCompleteRouteImport } from './routes/password.reset-complete'
+import { Route as PasswordResetRouteImport } from './routes/password.reset'
+import { Route as PasswordForgotRouteImport } from './routes/password.forgot'
+import { Route as DocumentsDocumentIdRouteImport } from './routes/documents.$documentId'
+import { Route as AiAuthorizeRouteImport } from './routes/ai.authorize'
+import { Route as TopicsTopicIdNewRouteImport } from './routes/topics.$topicId_.new'
+import { Route as MemosMemoIdHistoryRouteImport } from './routes/memos.$memoId.history'
+import { Route as DocumentsDocumentIdHistoryRouteImport } from './routes/documents.$documentId_.history'
+import { Route as DocumentsDocumentIdEditRouteImport } from './routes/documents.$documentId_.edit'
 
-const TodoRouteRoute = TodoRouteRouteImport.update({
-  id: '/todo',
-  path: '/todo',
+const TrashRoute = TrashRouteImport.update({
+  id: '/trash',
+  path: '/trash',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimelineRoute = TimelineRouteImport.update({
+  id: '/timeline',
+  path: '/timeline',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -24,55 +63,250 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TodoIndexRoute = TodoIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => TodoRouteRoute,
+const TopicsIndexRoute = TopicsIndexRouteImport.update({
+  id: '/topics/',
+  path: '/topics/',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const TodoAboutRoute = TodoAboutRouteImport.update({
-  id: '/about',
-  path: '/about',
-  getParentRoute: () => TodoRouteRoute,
+const TopicsTopicIdRoute = TopicsTopicIdRouteImport.update({
+  id: '/topics/$topicId',
+  path: '/topics/$topicId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PasswordResetCompleteRoute = PasswordResetCompleteRouteImport.update({
+  id: '/password/reset-complete',
+  path: '/password/reset-complete',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PasswordResetRoute = PasswordResetRouteImport.update({
+  id: '/password/reset',
+  path: '/password/reset',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PasswordForgotRoute = PasswordForgotRouteImport.update({
+  id: '/password/forgot',
+  path: '/password/forgot',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentsDocumentIdRoute = DocumentsDocumentIdRouteImport.update({
+  id: '/documents/$documentId',
+  path: '/documents/$documentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AiAuthorizeRoute = AiAuthorizeRouteImport.update({
+  id: '/ai/authorize',
+  path: '/ai/authorize',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TopicsTopicIdNewRoute = TopicsTopicIdNewRouteImport.update({
+  id: '/topics/$topicId_/new',
+  path: '/topics/$topicId/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemosMemoIdHistoryRoute = MemosMemoIdHistoryRouteImport.update({
+  id: '/memos/$memoId/history',
+  path: '/memos/$memoId/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentsDocumentIdHistoryRoute =
+  DocumentsDocumentIdHistoryRouteImport.update({
+    id: '/documents/$documentId_/history',
+    path: '/documents/$documentId/history',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DocumentsDocumentIdEditRoute = DocumentsDocumentIdEditRouteImport.update({
+  id: '/documents/$documentId_/edit',
+  path: '/documents/$documentId/edit',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
+  '/login': typeof LoginRoute
+  '/search': typeof SearchRoute
+  '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
+  '/timeline': typeof TimelineRoute
+  '/trash': typeof TrashRoute
+  '/ai/authorize': typeof AiAuthorizeRoute
+  '/documents/$documentId': typeof DocumentsDocumentIdRoute
+  '/password/forgot': typeof PasswordForgotRoute
+  '/password/reset': typeof PasswordResetRoute
+  '/password/reset-complete': typeof PasswordResetCompleteRoute
+  '/topics/$topicId': typeof TopicsTopicIdRoute
+  '/topics/': typeof TopicsIndexRoute
+  '/documents/$documentId/edit': typeof DocumentsDocumentIdEditRoute
+  '/documents/$documentId/history': typeof DocumentsDocumentIdHistoryRoute
+  '/memos/$memoId/history': typeof MemosMemoIdHistoryRoute
+  '/topics/$topicId/new': typeof TopicsTopicIdNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/todo/about': typeof TodoAboutRoute
-  '/todo': typeof TodoIndexRoute
+  '/login': typeof LoginRoute
+  '/search': typeof SearchRoute
+  '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
+  '/timeline': typeof TimelineRoute
+  '/trash': typeof TrashRoute
+  '/ai/authorize': typeof AiAuthorizeRoute
+  '/documents/$documentId': typeof DocumentsDocumentIdRoute
+  '/password/forgot': typeof PasswordForgotRoute
+  '/password/reset': typeof PasswordResetRoute
+  '/password/reset-complete': typeof PasswordResetCompleteRoute
+  '/topics/$topicId': typeof TopicsTopicIdRoute
+  '/topics': typeof TopicsIndexRoute
+  '/documents/$documentId/edit': typeof DocumentsDocumentIdEditRoute
+  '/documents/$documentId/history': typeof DocumentsDocumentIdHistoryRoute
+  '/memos/$memoId/history': typeof MemosMemoIdHistoryRoute
+  '/topics/$topicId/new': typeof TopicsTopicIdNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/todo': typeof TodoRouteRouteWithChildren
-  '/todo/about': typeof TodoAboutRoute
-  '/todo/': typeof TodoIndexRoute
+  '/login': typeof LoginRoute
+  '/search': typeof SearchRoute
+  '/settings': typeof SettingsRoute
+  '/signup': typeof SignupRoute
+  '/timeline': typeof TimelineRoute
+  '/trash': typeof TrashRoute
+  '/ai/authorize': typeof AiAuthorizeRoute
+  '/documents/$documentId': typeof DocumentsDocumentIdRoute
+  '/password/forgot': typeof PasswordForgotRoute
+  '/password/reset': typeof PasswordResetRoute
+  '/password/reset-complete': typeof PasswordResetCompleteRoute
+  '/topics/$topicId': typeof TopicsTopicIdRoute
+  '/topics/': typeof TopicsIndexRoute
+  '/documents/$documentId_/edit': typeof DocumentsDocumentIdEditRoute
+  '/documents/$documentId_/history': typeof DocumentsDocumentIdHistoryRoute
+  '/memos/$memoId/history': typeof MemosMemoIdHistoryRoute
+  '/topics/$topicId_/new': typeof TopicsTopicIdNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/todo' | '/todo/about' | '/todo/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/search'
+    | '/settings'
+    | '/signup'
+    | '/timeline'
+    | '/trash'
+    | '/ai/authorize'
+    | '/documents/$documentId'
+    | '/password/forgot'
+    | '/password/reset'
+    | '/password/reset-complete'
+    | '/topics/$topicId'
+    | '/topics/'
+    | '/documents/$documentId/edit'
+    | '/documents/$documentId/history'
+    | '/memos/$memoId/history'
+    | '/topics/$topicId/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/todo/about' | '/todo'
-  id: '__root__' | '/' | '/todo' | '/todo/about' | '/todo/'
+  to:
+    | '/'
+    | '/login'
+    | '/search'
+    | '/settings'
+    | '/signup'
+    | '/timeline'
+    | '/trash'
+    | '/ai/authorize'
+    | '/documents/$documentId'
+    | '/password/forgot'
+    | '/password/reset'
+    | '/password/reset-complete'
+    | '/topics/$topicId'
+    | '/topics'
+    | '/documents/$documentId/edit'
+    | '/documents/$documentId/history'
+    | '/memos/$memoId/history'
+    | '/topics/$topicId/new'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/search'
+    | '/settings'
+    | '/signup'
+    | '/timeline'
+    | '/trash'
+    | '/ai/authorize'
+    | '/documents/$documentId'
+    | '/password/forgot'
+    | '/password/reset'
+    | '/password/reset-complete'
+    | '/topics/$topicId'
+    | '/topics/'
+    | '/documents/$documentId_/edit'
+    | '/documents/$documentId_/history'
+    | '/memos/$memoId/history'
+    | '/topics/$topicId_/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  TodoRouteRoute: typeof TodoRouteRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  SearchRoute: typeof SearchRoute
+  SettingsRoute: typeof SettingsRoute
+  SignupRoute: typeof SignupRoute
+  TimelineRoute: typeof TimelineRoute
+  TrashRoute: typeof TrashRoute
+  AiAuthorizeRoute: typeof AiAuthorizeRoute
+  DocumentsDocumentIdRoute: typeof DocumentsDocumentIdRoute
+  PasswordForgotRoute: typeof PasswordForgotRoute
+  PasswordResetRoute: typeof PasswordResetRoute
+  PasswordResetCompleteRoute: typeof PasswordResetCompleteRoute
+  TopicsTopicIdRoute: typeof TopicsTopicIdRoute
+  TopicsIndexRoute: typeof TopicsIndexRoute
+  DocumentsDocumentIdEditRoute: typeof DocumentsDocumentIdEditRoute
+  DocumentsDocumentIdHistoryRoute: typeof DocumentsDocumentIdHistoryRoute
+  MemosMemoIdHistoryRoute: typeof MemosMemoIdHistoryRoute
+  TopicsTopicIdNewRoute: typeof TopicsTopicIdNewRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/todo': {
-      id: '/todo'
-      path: '/todo'
-      fullPath: '/todo'
-      preLoaderRoute: typeof TodoRouteRouteImport
+    '/trash': {
+      id: '/trash'
+      path: '/trash'
+      fullPath: '/trash'
+      preLoaderRoute: typeof TrashRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/timeline': {
+      id: '/timeline'
+      path: '/timeline'
+      fullPath: '/timeline'
+      preLoaderRoute: typeof TimelineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -82,40 +316,105 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/todo/': {
-      id: '/todo/'
-      path: '/'
-      fullPath: '/todo/'
-      preLoaderRoute: typeof TodoIndexRouteImport
-      parentRoute: typeof TodoRouteRoute
+    '/topics/': {
+      id: '/topics/'
+      path: '/topics'
+      fullPath: '/topics/'
+      preLoaderRoute: typeof TopicsIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/todo/about': {
-      id: '/todo/about'
-      path: '/about'
-      fullPath: '/todo/about'
-      preLoaderRoute: typeof TodoAboutRouteImport
-      parentRoute: typeof TodoRouteRoute
+    '/topics/$topicId': {
+      id: '/topics/$topicId'
+      path: '/topics/$topicId'
+      fullPath: '/topics/$topicId'
+      preLoaderRoute: typeof TopicsTopicIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password/reset-complete': {
+      id: '/password/reset-complete'
+      path: '/password/reset-complete'
+      fullPath: '/password/reset-complete'
+      preLoaderRoute: typeof PasswordResetCompleteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password/reset': {
+      id: '/password/reset'
+      path: '/password/reset'
+      fullPath: '/password/reset'
+      preLoaderRoute: typeof PasswordResetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password/forgot': {
+      id: '/password/forgot'
+      path: '/password/forgot'
+      fullPath: '/password/forgot'
+      preLoaderRoute: typeof PasswordForgotRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documents/$documentId': {
+      id: '/documents/$documentId'
+      path: '/documents/$documentId'
+      fullPath: '/documents/$documentId'
+      preLoaderRoute: typeof DocumentsDocumentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ai/authorize': {
+      id: '/ai/authorize'
+      path: '/ai/authorize'
+      fullPath: '/ai/authorize'
+      preLoaderRoute: typeof AiAuthorizeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/topics/$topicId_/new': {
+      id: '/topics/$topicId_/new'
+      path: '/topics/$topicId/new'
+      fullPath: '/topics/$topicId/new'
+      preLoaderRoute: typeof TopicsTopicIdNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/memos/$memoId/history': {
+      id: '/memos/$memoId/history'
+      path: '/memos/$memoId/history'
+      fullPath: '/memos/$memoId/history'
+      preLoaderRoute: typeof MemosMemoIdHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documents/$documentId_/history': {
+      id: '/documents/$documentId_/history'
+      path: '/documents/$documentId/history'
+      fullPath: '/documents/$documentId/history'
+      preLoaderRoute: typeof DocumentsDocumentIdHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documents/$documentId_/edit': {
+      id: '/documents/$documentId_/edit'
+      path: '/documents/$documentId/edit'
+      fullPath: '/documents/$documentId/edit'
+      preLoaderRoute: typeof DocumentsDocumentIdEditRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface TodoRouteRouteChildren {
-  TodoAboutRoute: typeof TodoAboutRoute
-  TodoIndexRoute: typeof TodoIndexRoute
-}
-
-const TodoRouteRouteChildren: TodoRouteRouteChildren = {
-  TodoAboutRoute: TodoAboutRoute,
-  TodoIndexRoute: TodoIndexRoute,
-}
-
-const TodoRouteRouteWithChildren = TodoRouteRoute._addFileChildren(
-  TodoRouteRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  TodoRouteRoute: TodoRouteRouteWithChildren,
+  LoginRoute: LoginRoute,
+  SearchRoute: SearchRoute,
+  SettingsRoute: SettingsRoute,
+  SignupRoute: SignupRoute,
+  TimelineRoute: TimelineRoute,
+  TrashRoute: TrashRoute,
+  AiAuthorizeRoute: AiAuthorizeRoute,
+  DocumentsDocumentIdRoute: DocumentsDocumentIdRoute,
+  PasswordForgotRoute: PasswordForgotRoute,
+  PasswordResetRoute: PasswordResetRoute,
+  PasswordResetCompleteRoute: PasswordResetCompleteRoute,
+  TopicsTopicIdRoute: TopicsTopicIdRoute,
+  TopicsIndexRoute: TopicsIndexRoute,
+  DocumentsDocumentIdEditRoute: DocumentsDocumentIdEditRoute,
+  DocumentsDocumentIdHistoryRoute: DocumentsDocumentIdHistoryRoute,
+  MemosMemoIdHistoryRoute: MemosMemoIdHistoryRoute,
+  TopicsTopicIdNewRoute: TopicsTopicIdNewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

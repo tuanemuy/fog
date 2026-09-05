@@ -1,0 +1,153 @@
+{
+  "time": "2026-09-05T14:16:22.043Z",
+  "artifact": "/tmp/fog-p5-backups/fog-backup-20260905T140113146Z-01a071df-94bb-7633-ba4a-a8039de17f69",
+  "sha256": "916a2770b1a2746e247c0bfa464ce2e609ab2a38e0c3b3bb0d08d4044c39ffc0",
+  "preserveByteIdentical": true,
+  "defaultAccessRevoked": true,
+  "tables": [
+    {
+      "name": "__drizzle_migrations",
+      "before": 1,
+      "after": 1,
+      "unchanged": true
+    },
+    {
+      "name": "_occ_guard",
+      "before": 0,
+      "after": 0,
+      "unchanged": true
+    },
+    {
+      "name": "fog_account_recovery",
+      "before": 1,
+      "after": 1,
+      "unchanged": true
+    },
+    {
+      "name": "fog_ai_authorization_codes",
+      "before": 0,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_ai_authorization_requests",
+      "before": 0,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_ai_connections",
+      "before": 7,
+      "after": 7,
+      "unchanged": false
+    },
+    {
+      "name": "fog_ai_idempotency",
+      "before": 18,
+      "after": 18,
+      "unchanged": true
+    },
+    {
+      "name": "fog_auth_attempts",
+      "before": 4,
+      "after": 4,
+      "unchanged": true
+    },
+    {
+      "name": "fog_document_revisions",
+      "before": 21,
+      "after": 21,
+      "unchanged": true
+    },
+    {
+      "name": "fog_document_sources",
+      "before": 6,
+      "after": 6,
+      "unchanged": true
+    },
+    {
+      "name": "fog_documents",
+      "before": 8,
+      "after": 8,
+      "unchanged": true
+    },
+    {
+      "name": "fog_google_credentials",
+      "before": 2,
+      "after": 2,
+      "unchanged": true
+    },
+    {
+      "name": "fog_google_requests",
+      "before": 0,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_memo_revisions",
+      "before": 223,
+      "after": 223,
+      "unchanged": true
+    },
+    {
+      "name": "fog_memos",
+      "before": 208,
+      "after": 208,
+      "unchanged": true
+    },
+    {
+      "name": "fog_password_credentials",
+      "before": 7,
+      "after": 7,
+      "unchanged": true
+    },
+    {
+      "name": "fog_password_resets",
+      "before": 0,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_reset_emails",
+      "before": 0,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_sessions",
+      "before": 12,
+      "after": 0,
+      "unchanged": false
+    },
+    {
+      "name": "fog_topics",
+      "before": 11,
+      "after": 11,
+      "unchanged": true
+    },
+    {
+      "name": "fog_users",
+      "before": 9,
+      "after": 9,
+      "unchanged": true
+    },
+    {
+      "name": "outbox_events",
+      "before": 0,
+      "after": 0,
+      "unchanged": true
+    },
+    {
+      "name": "processed_events",
+      "before": 0,
+      "after": 0,
+      "unchanged": true
+    },
+    {
+      "name": "todos",
+      "before": 0,
+      "after": 0,
+      "unchanged": true
+    }
+  ]
+}

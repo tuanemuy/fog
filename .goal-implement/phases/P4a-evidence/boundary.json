@@ -1,0 +1,47 @@
+[
+  {
+    "time": "2026-09-05T11:51:33.804Z",
+    "name": "decideFogAiConsent",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T11:51:33.820Z",
+    "name": "decideFogAiConsent",
+    "status": 403,
+    "marker": "CROSS_ORIGIN_REQUEST"
+  },
+  {
+    "time": "2026-09-05T11:51:33.825Z",
+    "name": "loginFog",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T11:51:33.830Z",
+    "name": "registerFog",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "time": "2026-09-05T11:51:33.848Z",
+    "name": "createFogMemo",
+    "status": 401,
+    "marker": "SESSION_REQUIRED"
+  },
+  {
+    "time": "2026-09-05T11:51:33.854Z",
+    "name": "emptyFogTrash",
+    "status": 403,
+    "marker": "HUMAN_SESSION_ONLY"
+  },
+  {
+    "name": "cookie-only API",
+    "status": 403
+  },
+  {
+    "name": "unregistered redirect",
+    "status": 401,
+    "redirect": false
+  }
+]

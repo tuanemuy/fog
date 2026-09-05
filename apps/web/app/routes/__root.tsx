@@ -1,3 +1,5 @@
+import "@/presentation/fogAccountViews";
+import "@/presentation/fogAccountActions";
 import {
   createRootRoute,
   HeadContent,
@@ -12,11 +14,11 @@ import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware"
 import { buildHead } from "@/presentation/head";
 import appCss from "../styles/index.css?url";
 
-// Server fns only reachable from `"use client"` components miss the
-// rsc manifest (frozen before the client build phase). Pull their
-// provider modules into a server-rendered route to register them.
-import "@/components/todo/CreateTodoForm/action";
-import "@/components/todo/TodoItem/action";
+import "@/presentation/fogActions";
+import "@/presentation/fogDataActions";
+import "@/presentation/fogAiActions";
+import "@/presentation/fogDocumentActions";
+import "@/presentation/fogMemoActions";
 
 export const loadAppContext = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])
@@ -29,10 +31,7 @@ export const loadAppContext = createServerFn({ method: "GET" })
   });
 
 const SITE_ASSET_LINKS = [
-  { rel: "icon", href: "/favicon.ico", sizes: "any" },
   { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
-  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
-  { rel: "manifest", href: "/site.webmanifest" },
 ];
 
 export const Route = createRootRoute({
@@ -50,7 +49,7 @@ export const Route = createRootRoute({
   errorComponent: ({ error }) => (
     <RootDocument>
       <div>
-        <h1>Something went wrong</h1>
+        <h1>エラーが発生しました</h1>
         <pre>{sanitizeRouteError(error)}</pre>
       </div>
     </RootDocument>
@@ -58,7 +57,7 @@ export const Route = createRootRoute({
   notFoundComponent: () => (
     <RootDocument>
       <div>
-        <h1>404 Not Found</h1>
+        <h1>ページが見つかりません</h1>
       </div>
     </RootDocument>
   ),
