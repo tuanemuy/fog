@@ -1,17 +1,7 @@
-# Wrangler `.dev.vars` template — copy to `.dev.vars` for local development.
-#
-# `wrangler dev` (including the workerd-backed `pnpm dev` via
-# `@cloudflare/vite-plugin`) auto-loads this file from the project root
-# and exposes each entry as a Worker binding, mirroring `wrangler secret
-# put` for production. Never commit the real `.dev.vars` — it is listed
-# in `.gitignore`.
-#
-# Non-secret config (e.g. `APP_URL`) belongs in the matching
-# `wrangler*.toml` `[vars]`, not here — `wrangler.toml` for local dev,
-# `wrangler.staging.toml` / `wrangler.production.toml` for remote
-# deploys. Reserve this file for credentials and tokens that must not
-# be checked in.
-#
-# Example (uncomment and replace when you add a secret-backed feature):
-# AUTH_SECRET="replace-me"
-# SOME_THIRD_PARTY_API_KEY="replace-me"
+# Copy to .dev.vars for local Workers development. Never commit real values.
+DATABASE_URL="libsql://fog-staging.example.turso.io"
+DATABASE_AUTH_TOKEN="replace-with-staging-token"
+FOG_GOOGLE_CLIENT_ID="replace-with-staging-client-id"
+FOG_GOOGLE_CLIENT_SECRET="replace-with-staging-client-secret"
+# Optional JSON array. Treat client secrets inside it as secrets.
+# FOG_AI_CLIENTS='[{"id":"local-client","name":"Local client","redirectUris":["https://client.example/callback"]}]'

@@ -10,6 +10,13 @@ import {
   restoreFogContent,
 } from "@/presentation/fogDataActions";
 import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  isTrashEmpty,
+  isTrashRestoreDisabled,
+  partialTrashMessage,
+  runTrashPurgeMutation,
+  runWithInvalidation,
+} from "./trashMutation";
 
 type Intent =
   | { kind: "restore" | "destroy"; item: TrashItem }
@@ -23,7 +30,11 @@ export function TrashBoard({
   data,
   topics,
 }: {
-  data: { items: TrashItem[]; retentionDays: number };
+  data: {
+    items: TrashItem[];
+    retentionDays: number;
+    purgingCount: number;
+  };
   topics: TopicView[];
 }) {
   const router = useRouter();
@@ -32,6 +43,7 @@ export function TrashBoard({
   const empty = useServerFn(emptyFogTrash);
   const [intent, setIntent] = useState<Intent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [destination, setDestination] = useState(topics[0]?.id ?? "new");
   const [newTitle, setNewTitle] = useState("");
@@ -40,6 +52,7 @@ export function TrashBoard({
   );
   const choose = (next: Intent) => {
     setError(null);
+    setNotice(null);
     setNewTitle("");
     setDestination(topics[0]?.id ?? "new");
     setIntent(next);
@@ -69,32 +82,58 @@ export function TrashBoard({
             ];
       hide(hidden);
       try {
-        if (intent.kind === "empty") await empty({ data: {} });
-        else if (intent.kind === "destroy")
-          await destroy({
-            data: { kind: intent.item.kind, id: intent.item.id },
-          });
-        else
-          await restore({
-            data: {
-              kind: intent.item.kind,
-              id: intent.item.id,
-              ...(parentDeleted ? { restoreTopicSet: true } : {}),
-              ...(missing
-                ? {
-                    targetTopic:
-                      destination === "new"
-                        ? {
-                            kind: "new" as const,
-                            title: newTitle,
-                            description: "",
-                          }
-                        : { kind: "existing" as const, id: destination },
-                  }
-                : {}),
-            },
-          });
-        await router.invalidate();
+        if (intent.kind === "empty") {
+          const result = await runTrashPurgeMutation(
+            () => empty({ data: {} }),
+            () => router.invalidate(),
+          );
+          if (result.status === "partial") {
+            setNotice(partialTrashMessage(result));
+            return;
+          }
+          setNotice("ゴミ箱を空にしました。");
+          setIntent(null);
+          return;
+        }
+        if (intent.kind === "destroy") {
+          const result = await runTrashPurgeMutation(
+            () =>
+              destroy({
+                data: { kind: intent.item.kind, id: intent.item.id },
+              }),
+            () => router.invalidate(),
+          );
+          if (result.status === "partial") {
+            setNotice(partialTrashMessage(result));
+            return;
+          }
+          setNotice("完全削除が完了しました。");
+          setIntent(null);
+          return;
+        }
+        await runWithInvalidation(
+          () =>
+            restore({
+              data: {
+                kind: intent.item.kind,
+                id: intent.item.id,
+                ...(parentDeleted ? { restoreTopicSet: true } : {}),
+                ...(missing
+                  ? {
+                      targetTopic:
+                        destination === "new"
+                          ? {
+                              kind: "new" as const,
+                              title: newTitle,
+                              description: "",
+                            }
+                          : { kind: "existing" as const, id: destination },
+                    }
+                  : {}),
+              },
+            }),
+          () => router.invalidate(),
+        );
         setIntent(null);
       } catch (failure) {
         setError(displayError(failure));
@@ -107,7 +146,7 @@ export function TrashBoard({
         <button
           type="button"
           className="fog-text-button"
-          disabled={!shown.length || pending}
+          disabled={isTrashEmpty(shown.length, data.purgingCount) || pending}
           onClick={() => choose({ kind: "empty" })}
         >
           空にする
@@ -118,7 +157,17 @@ export function TrashBoard({
         日間は復元できます。期限を過ぎると履歴ごと完全に削除されます。
         <Link to="/settings">保持期限を変更</Link>
       </p>
-      {shown.length === 0 ? (
+      {data.purgingCount > 0 && (
+        <p className="fog-hint" role="status">
+          {data.purgingCount}件は履歴を含めて削除処理中です。
+        </p>
+      )}
+      {notice && (
+        <p className="fog-hint" role="status">
+          {notice}
+        </p>
+      )}
+      {isTrashEmpty(shown.length, data.purgingCount) ? (
         <div className="fog-empty">
           <h3>ゴミ箱は空です</h3>
           <p>削除した項目はここから復元できます。</p>
@@ -129,9 +178,11 @@ export function TrashBoard({
             <div className="fog-section-heading">
               <span className="fog-badge">{labels[item.kind]}</span>
               <span className="fog-meta">
-                {item.remainingDays > 0
-                  ? `残り${item.remainingDays}日`
-                  : "次の自動削除で完全に削除"}
+                {item.purging
+                  ? "完全削除処理中"
+                  : item.remainingDays > 0
+                    ? `残り${item.remainingDays}日`
+                    : "次の自動削除で完全に削除"}
               </span>
             </div>
             <h3>{item.title}</h3>
@@ -146,18 +197,26 @@ export function TrashBoard({
             )}
             {item.kind === "document" && (
               <p className="fog-hint">
-                {item.topic.kind === "missing"
-                  ? "元のトピックは完全に削除されています。復元先を選べます。"
-                  : item.topic.kind === "deleted"
-                    ? `「${item.topic.title}」もゴミ箱にあります。${item.setDocumentIds.includes(item.id) ? "トピックとセットで削除" : "トピックより前に個別削除"}`
-                    : `復元先: ${item.topic.title}`}
+                {item.topic.kind === "purging"
+                  ? "元のトピックは完全削除処理中のため復元できません。"
+                  : item.topic.kind === "missing"
+                    ? "元のトピックは完全に削除されています。復元先を選べます。"
+                    : item.topic.kind === "deleted"
+                      ? `「${item.topic.title}」もゴミ箱にあります。${item.setDocumentIds.includes(item.id) ? "トピックとセットで削除" : "トピックより前に個別削除"}`
+                      : `復元先: ${item.topic.title}`}
               </p>
             )}
             <div className="fog-actions">
               <button
                 type="button"
                 className="fog-secondary"
-                disabled={pending}
+                disabled={
+                  pending ||
+                  isTrashRestoreDisabled(
+                    item.purging,
+                    item.kind === "document" && item.topic.kind === "purging",
+                  )
+                }
                 onClick={() => choose({ kind: "restore", item })}
               >
                 復元
@@ -264,8 +323,12 @@ export function TrashBoard({
                   ? "確認してセットで復元"
                   : "復元する"
                 : intent.kind === "empty"
-                  ? "すべて完全に削除"
-                  : "完全に削除する"}
+                  ? notice
+                    ? "残りを削除"
+                    : "すべて完全に削除"
+                  : notice
+                    ? "削除を続ける"
+                    : "完全に削除する"}
           </button>
         </ConfirmDialog>
       )}

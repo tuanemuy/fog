@@ -1,10 +1,11 @@
 {
   "name": "fog",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.1.2",
   "engines": {
-    "node": ">=22.12.0",
+    "node": ">=22.13.0",
     "pnpm": "11.1.2"
   },
   "scripts": {
@@ -12,6 +13,14 @@
     "dev:node": "pnpm --filter @repo/web dev:node",
     "build": "pnpm --filter @repo/web build",
     "build:node": "pnpm --filter @repo/web build:node",
+    "build:cloudflare": "pnpm --filter @repo/web build:cloudflare",
+    "build:cloudflare:stage": "pnpm --filter @repo/web build:cloudflare:stage",
+    "cloudflare:config": "pnpm --filter @repo/web cloudflare:config",
+    "cloudflare:authority": "pnpm --filter @repo/web cloudflare:authority",
+    "cloudflare:deploy": "pnpm --filter @repo/web cloudflare:deploy",
+    "cloudflare:secrets": "pnpm --filter @repo/web cloudflare:secrets",
+    "cloudflare:smoke": "pnpm --filter @repo/web cloudflare:smoke",
+    "cloudflare:github": "pnpm --filter @repo/web cloudflare:github",
     "start": "pnpm --filter @repo/web start",
     "start:node": "pnpm --filter @repo/web start:node",
     "typecheck": "tsgo && pnpm -r typecheck",
@@ -19,22 +28,26 @@
     "lint:fix": "biome check --write",
     "format": "biome format --write",
     "format:check": "biome format",
-    "test": "pnpm test:unit && pnpm test:integration",
+    "test": "pnpm test:unit && pnpm test:integration:node && pnpm test:integration:cloudflare",
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.config.integration.node.ts",
     "test:integration:node": "pnpm test:integration",
+    "test:integration:cloudflare": "vitest run --config vitest.config.integration.cloudflare.ts",
     "db:migrate": "pnpm --filter @repo/web db:migrate",
     "db:migrate:node": "pnpm --filter @repo/web db:migrate:node",
+    "db:migrate:cloudflare": "pnpm --filter @repo/web db:migrate:cloudflare",
     "db:backup": "pnpm --filter @repo/web db:backup",
     "db:restore": "pnpm --filter @repo/web db:restore",
     "db:prune-backups": "pnpm --filter @repo/web db:prune-backups"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
-    "esbuild": "^0.27.7",
+    "@cloudflare/vitest-pool-workers": "0.22.0",
     "@types/node": "^25.7.0",
     "@typescript/native-preview": "7.0.0-dev.20260513.1",
+    "esbuild": "^0.27.7",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "yaml": "^2.9.0"
   }
 }

@@ -274,6 +274,427 @@ test("empty trash affects only trash and preserves completed active topics", asy
   expect(await count("fog_document_revisions")).toBe(0);
 });
 
+test("trash batches bound every changed row while progressively purging 501 revisions", async () => {
+  const item = await memo();
+  await remove("memo", item);
+  await client.execute({
+    sql: `WITH RECURSIVE versions(version) AS (
+      SELECT 2 UNION ALL SELECT version+1 FROM versions WHERE version<501
+    )
+    INSERT INTO fog_memo_revisions
+      (memo_id,owner_id,version,body,actor_kind,actor_id,actor_name,created_at)
+    SELECT ?,?,version,'history','human',?,'Owner',? FROM versions`,
+    args: [item.id, a.userId, a.userId, now.toISOString()],
+  });
+  await client.batch(
+    [
+      "CREATE TABLE purge_audit (event TEXT NOT NULL)",
+      "CREATE TRIGGER audit_memo_purging AFTER UPDATE OF purging ON fog_memos WHEN OLD.purging<>NEW.purging BEGIN INSERT INTO purge_audit VALUES ('mark'); END",
+      "CREATE TRIGGER audit_memo_revision_delete AFTER DELETE ON fog_memo_revisions BEGIN INSERT INTO purge_audit VALUES ('revision'); END",
+      "CREATE TRIGGER audit_memo_delete AFTER DELETE ON fog_memos BEGIN INSERT INTO purge_audit VALUES ('memo'); END",
+    ],
+    "write",
+  );
+  expect(await count("fog_memo_revisions", `memo_id='${item.id}'`)).toBe(501);
+  const unitOfWork = new LibsqlFogUnitOfWork(client);
+  const first = await unitOfWork.run((context) =>
+    context.data(a.userId).deleteTrashBatch({ limitPerKind: 1 }),
+  );
+  expect(first).toEqual({ deletedCount: 0, processedRowCount: 1 });
+  expect(await count("purge_audit")).toBe(1);
+  await client.execute("DELETE FROM purge_audit");
+  expect(await count("fog_memo_revisions", `memo_id='${item.id}'`)).toBe(501);
+  expect(await services.trash(a)).toMatchObject({
+    items: [expect.objectContaining({ id: item.id, purging: true })],
+    purgingCount: 1,
+  });
+  await expect(
+    services.restore(a, { kind: "memo", id: item.id }),
+  ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+  let transactions = 1;
+  while ((await count("fog_memos", `id='${item.id}'`)) > 0) {
+    const result = await unitOfWork.run((context) =>
+      context.data(a.userId).deleteTrashBatch({ limitPerKind: 1 }),
+    );
+    expect(result.processedRowCount).toBe(1);
+    expect(await count("purge_audit")).toBe(1);
+    await client.execute("DELETE FROM purge_audit");
+    transactions++;
+    if (transactions > 503) throw new Error("bounded purge did not converge");
+  }
+  expect(transactions).toBe(503);
+  expect(await count("fog_memo_revisions", `memo_id='${item.id}'`)).toBe(0);
+});
+
+test("purging is an irreversible state across topic and set restore paths", async () => {
+  const parent = await topic();
+  const child = await doc(parent.id);
+  await remove("topic", parent);
+  const unitOfWork = new LibsqlFogUnitOfWork(client);
+  await unitOfWork.run((context) =>
+    context.data(a.userId).deleteTrashBatch({ limitPerKind: 1 }),
+  );
+  expect((await services.trash(a)).items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: parent.id, purging: true }),
+      expect.objectContaining({
+        id: child.id,
+        purging: false,
+        topic: expect.objectContaining({ kind: "purging" }),
+      }),
+    ]),
+  );
+  await expect(
+    services.restore(a, { kind: "topic", id: parent.id }),
+  ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+  await expect(
+    services.restore(a, {
+      kind: "document",
+      id: child.id,
+      restoreTopicSet: true,
+    }),
+  ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+  await unitOfWork.run((context) =>
+    context.data(a.userId).deleteTrashBatch({ limitPerKind: 1 }),
+  );
+  expect((await services.trash(a)).items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: child.id, purging: true }),
+    ]),
+  );
+  await expect(
+    client.execute({
+      sql: "UPDATE fog_documents SET deleted_at=NULL WHERE owner_id=? AND id=?",
+      args: [a.userId, child.id],
+    }),
+  ).rejects.toThrow();
+  await services.emptyTrash(a);
+  expect(
+    await count(
+      "fog_documents",
+      "purging=1 OR (purging=1 AND deleted_at IS NULL)",
+    ),
+  ).toBe(0);
+});
+
+test("topic root marker stays continuous across every one-row hard-delete boundary", async () => {
+  const parent = await topic();
+  const first = await doc(parent.id);
+  const second = await doc(parent.id);
+  await remove("topic", parent);
+  await client.batch(
+    [
+      "CREATE TABLE root_marker_audit (event TEXT NOT NULL)",
+      "CREATE TRIGGER audit_root_mark AFTER UPDATE OF purging ON fog_topics WHEN OLD.purging<>NEW.purging BEGIN INSERT INTO root_marker_audit VALUES ('topic-mark'); END",
+      "CREATE TRIGGER audit_root_document_mark AFTER UPDATE OF purging ON fog_documents WHEN OLD.purging<>NEW.purging BEGIN INSERT INTO root_marker_audit VALUES ('document-mark'); END",
+      "CREATE TRIGGER audit_root_revision_delete AFTER DELETE ON fog_document_revisions BEGIN INSERT INTO root_marker_audit VALUES ('revision'); END",
+      "CREATE TRIGGER audit_root_document_delete AFTER DELETE ON fog_documents BEGIN INSERT INTO root_marker_audit VALUES ('document'); END",
+      "CREATE TRIGGER audit_root_delete AFTER DELETE ON fog_topics BEGIN INSERT INTO root_marker_audit VALUES ('topic'); END",
+    ],
+    "write",
+  );
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 1, maxTransactions: 1 },
+  });
+  let result = await bounded.hardDelete(a, {
+    kind: "topic",
+    id: parent.id,
+  });
+  expect(result.status).toBe("partial");
+  expect(
+    (await client.execute("SELECT event FROM root_marker_audit")).rows,
+  ).toEqual([{ event: "topic-mark" }]);
+  await client.execute("DELETE FROM root_marker_audit");
+  for (let boundary = 1; result.status === "partial"; boundary++) {
+    const trash = await bounded.trash(a);
+    expect(trash.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: parent.id, purging: true }),
+      ]),
+    );
+    await expect(
+      bounded.restore(a, { kind: "topic", id: parent.id }),
+    ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+    const restorableChild = trash.items.find(
+      (item) => item.kind === "document" && item.topic.kind === "purging",
+    );
+    if (restorableChild)
+      await expect(
+        bounded.restore(a, {
+          kind: "document",
+          id: restorableChild.id,
+          restoreTopicSet: true,
+        }),
+      ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+    result = await bounded.hardDelete(a, {
+      kind: "topic",
+      id: parent.id,
+    });
+    expect(await count("root_marker_audit")).toBeLessThanOrEqual(1);
+    await client.execute("DELETE FROM root_marker_audit");
+    if (boundary > 10) throw new Error("one-row topic purge did not converge");
+  }
+  expect(result).toMatchObject({ status: "complete", remainingCount: 0 });
+  expect(await count("fog_topics", `id='${parent.id}'`)).toBe(0);
+  expect(
+    await count(
+      "fog_documents",
+      `id IN ('${first.id}','${second.id}') OR purging=1`,
+    ),
+  ).toBe(0);
+});
+
+test("generic empty-trash and retention batches reserve a topic root first", async () => {
+  const emptyParent = await topic();
+  const emptyChild = await doc(emptyParent.id);
+  await remove("topic", emptyParent);
+  const secondParent = await topic();
+  const secondChild = await doc(secondParent.id);
+  await remove("topic", secondParent);
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 1, maxTransactions: 1 },
+  });
+  expect(await bounded.emptyTrash(a)).toMatchObject({ status: "partial" });
+  expect(
+    await count("fog_topics", `id='${emptyParent.id}' AND purging=1`),
+  ).toBe(1);
+  expect(
+    await count("fog_documents", `id='${emptyChild.id}' AND purging=1`),
+  ).toBe(0);
+  expect(
+    await count("fog_topics", `owner_id='${a.userId}' AND purging=1`),
+  ).toBe(1);
+  expect(
+    await count("fog_documents", `id='${secondChild.id}' AND purging=1`),
+  ).toBe(0);
+
+  const retentionParent = await topic(b);
+  const retentionChild = await doc(retentionParent.id, [], b);
+  await remove("topic", retentionParent, b);
+  const unitOfWork = new LibsqlFogUnitOfWork(client);
+  const retentionResult = await unitOfWork.run((context) =>
+    context.data(b.userId).deleteTrashBatch({
+      deletedBefore: now.toISOString(),
+      limitPerKind: 1,
+    }),
+  );
+  expect(retentionResult.processedRowCount).toBe(1);
+  expect(
+    await count("fog_topics", `id='${retentionParent.id}' AND purging=1`),
+  ).toBe(1);
+  expect(
+    await count("fog_documents", `id='${retentionChild.id}' AND purging=1`),
+  ).toBe(0);
+  expect(
+    await count("fog_topics", `id='${emptyParent.id}' AND purging=1`),
+  ).toBe(1);
+});
+
+test("document hard delete drains sources and revisions before the parent", async () => {
+  const source = await memo("document source");
+  const parent = await topic();
+  const item = await doc(parent.id, [source.id]);
+  await remove("document", item);
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 1, maxTransactions: 1 },
+  });
+  let result = await bounded.hardDelete(a, {
+    kind: "document",
+    id: item.id,
+  });
+  expect(result.status).toBe("partial");
+  expect((await services.trash(a)).items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: item.id, purging: true }),
+    ]),
+  );
+  await expect(
+    services.restore(a, { kind: "document", id: item.id }),
+  ).rejects.toMatchObject({ code: "PURGE_IN_PROGRESS" });
+  let transactions = 1;
+  while (result.status === "partial") {
+    result = await bounded.hardDelete(a, {
+      kind: "document",
+      id: item.id,
+    });
+    transactions++;
+    if (transactions > 6) throw new Error("document purge did not converge");
+  }
+  expect(result).toMatchObject({ status: "complete", remainingCount: 0 });
+  expect(await count("fog_document_sources", `document_id='${item.id}'`)).toBe(
+    0,
+  );
+  expect(
+    await count("fog_document_revisions", `document_id='${item.id}'`),
+  ).toBe(0);
+  expect(await count("fog_documents", `id='${item.id}'`)).toBe(0);
+  expect(await count("fog_topics", `id='${parent.id}'`)).toBe(1);
+  expect(await count("fog_memos", `id='${source.id}'`)).toBe(1);
+});
+
+test("topic hard delete keeps revisions and late links inside the row budget", async () => {
+  const source = await memo("original source");
+  const lateSource = await memo("late source");
+  const unrelatedActive = await memo("active survivor");
+  const otherOwnerTrash = await memo("other owner trash", b);
+  await remove("memo", otherOwnerTrash, b);
+  const parent = await topic();
+  const child = await doc(parent.id, [source.id]);
+  await remove("topic", parent);
+  await client.execute({
+    sql: `WITH RECURSIVE versions(version) AS (
+      SELECT 2 UNION ALL SELECT version+1 FROM versions WHERE version<501
+    )
+    INSERT INTO fog_document_revisions
+      (document_id,owner_id,version,title,body,reason,actor_kind,actor_id,actor_name,created_at)
+    SELECT ?,?,version,'history','body','reason','human',?,'Owner',? FROM versions`,
+    args: [child.id, a.userId, a.userId, now.toISOString()],
+  });
+  await client.batch(
+    [
+      "CREATE TABLE bounded_topic_audit (event TEXT NOT NULL)",
+      "CREATE TRIGGER audit_topic_document_mark AFTER UPDATE OF purging ON fog_documents WHEN OLD.purging<>NEW.purging BEGIN INSERT INTO bounded_topic_audit VALUES ('mark'); END",
+      "CREATE TRIGGER audit_topic_source_delete AFTER DELETE ON fog_document_sources BEGIN INSERT INTO bounded_topic_audit VALUES ('source'); END",
+      "CREATE TRIGGER audit_topic_revision_delete AFTER DELETE ON fog_document_revisions BEGIN INSERT INTO bounded_topic_audit VALUES ('revision'); END",
+      "CREATE TRIGGER audit_topic_document_delete AFTER DELETE ON fog_documents BEGIN INSERT INTO bounded_topic_audit VALUES ('document'); END",
+      "CREATE TRIGGER audit_topic_delete AFTER DELETE ON fog_topics BEGIN INSERT INTO bounded_topic_audit VALUES ('topic'); END",
+    ],
+    "write",
+  );
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 5, maxTransactions: 1 },
+  });
+  let result = await bounded.hardDelete(a, { kind: "topic", id: parent.id });
+  expect(result.status).toBe("partial");
+  expect(await count("bounded_topic_audit")).toBeLessThanOrEqual(5);
+  await client.execute("DELETE FROM bounded_topic_audit");
+  await client.batch(
+    [
+      {
+        sql: "INSERT INTO fog_document_revisions(document_id,owner_id,version,title,body,reason,actor_kind,actor_id,actor_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        args: [
+          child.id,
+          a.userId,
+          502,
+          "late",
+          "late",
+          "late",
+          "human",
+          a.userId,
+          "Owner",
+          now.toISOString(),
+        ],
+      },
+      {
+        sql: "INSERT INTO fog_document_sources(document_id,memo_id,owner_id) VALUES(?,?,?)",
+        args: [child.id, lateSource.id, a.userId],
+      },
+    ],
+    "write",
+  );
+  let transactions = 1;
+  while (result.status === "partial") {
+    result = await bounded.hardDelete(a, {
+      kind: "topic",
+      id: parent.id,
+    });
+    expect(await count("bounded_topic_audit")).toBeLessThanOrEqual(5);
+    await client.execute("DELETE FROM bounded_topic_audit");
+    transactions++;
+    if (transactions > 110)
+      throw new Error("bounded topic purge did not converge");
+  }
+  expect(result).toMatchObject({ status: "complete", remainingCount: 0 });
+  expect(
+    await count("fog_document_revisions", `document_id='${child.id}'`),
+  ).toBe(0);
+  expect(await count("fog_document_sources", `document_id='${child.id}'`)).toBe(
+    0,
+  );
+  expect(await count("fog_memos", `id='${source.id}'`)).toBe(1);
+  expect(await count("fog_memos", `id='${lateSource.id}'`)).toBe(1);
+  expect(await count("fog_memos", `id='${unrelatedActive.id}'`)).toBe(1);
+  expect((await services.trash(b)).items.map((item) => item.id)).toEqual([
+    otherOwnerTrash.id,
+  ]);
+  expect(await count("fog_documents", "purging=1")).toBe(0);
+  expect(await count("fog_topics", "purging=1")).toBe(0);
+  expect((await client.execute("PRAGMA foreign_key_check")).rows).toEqual([]);
+});
+
+test("concurrent restore and bounded hard delete never create active purging content", async () => {
+  const item = await memo("concurrent transition");
+  await remove("memo", item);
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 1, maxTransactions: 1 },
+  });
+  const outcomes = await Promise.allSettled([
+    bounded.hardDelete(a, { kind: "memo", id: item.id }),
+    services.restore(a, { kind: "memo", id: item.id }),
+  ]);
+  expect(
+    outcomes.filter((outcome) => outcome.status === "fulfilled"),
+  ).toHaveLength(1);
+  expect(
+    outcomes.filter((outcome) => outcome.status === "rejected"),
+  ).toHaveLength(1);
+  expect(
+    await count(
+      "fog_memos",
+      `id='${item.id}' AND deleted_at IS NULL AND purging=1`,
+    ),
+  ).toBe(0);
+});
+
+test("empty trash returns typed partial progress and converges through bounded retries", async () => {
+  for (let index = 0; index < 5; index++) {
+    const item = await memo(`backlog ${index}`);
+    await remove("memo", item);
+  }
+  const bounded = await createFogServices({
+    unitOfWork: new LibsqlFogUnitOfWork(client),
+    crypto: nodeSecretCrypto,
+    clock,
+    ids: UuidV7Generator,
+    trashBatchPolicy: { rowLimit: 2, maxTransactions: 2 },
+  });
+  const first = await bounded.emptyTrash(a);
+  expect(first).toEqual({
+    status: "partial",
+    deletedCount: 0,
+    remainingCount: 5,
+  });
+  expect(await bounded.trash(a)).toMatchObject({
+    purgingCount: 2,
+    items: expect.arrayContaining([expect.objectContaining({ kind: "memo" })]),
+  });
+  let result = first;
+  for (let retry = 0; result.status === "partial" && retry < 10; retry++)
+    result = await bounded.emptyTrash(a);
+  expect(result).toMatchObject({ status: "complete", remainingCount: 0 });
+  expect((await bounded.trash(a)).items).toEqual([]);
+});
+
 test("retention worker uses injected clock and every owner current retention at the exact boundary", async () => {
   const old = await memo();
   const other = await memo("別ユーザー", b);
@@ -513,6 +934,10 @@ test("legacy nonnullable topic migration retains documents, revisions and source
         sql
           .replace("topic_id TEXT,", "topic_id TEXT NOT NULL,")
           .replace(
+            "purging INTEGER NOT NULL DEFAULT 0 CHECK(purging IN (0,1) AND (purging=0 OR deleted_at IS NOT NULL)), UNIQUE",
+            "UNIQUE",
+          )
+          .replace(
             "CHECK(topic_id IS NOT NULL OR deleted_at IS NOT NULL),",
             "",
           ),
@@ -581,7 +1006,7 @@ test("human source tombstones never leak deleted content through AI document, me
   ).toEqual([]);
 });
 
-test("hard deletion failure rolls back set history and preserved orphan assignment", async () => {
+test("hard deletion failure preserves bounded progress and resumes without deleting an orphan", async () => {
   const t = await topic();
   const orphan = await doc(t.id);
   const set = await doc(t.id);
@@ -596,8 +1021,18 @@ test("hard deletion failure rolls back set history and preserved orphan assignme
   expect((await services.trash(a)).items).toHaveLength(3);
   expect(
     (await services.trash(a)).items.find((x) => x.id === orphan.id)?.topic,
-  ).toMatchObject({ kind: "deleted", id: t.id });
+  ).toEqual({ kind: "missing" });
   expect(await count("fog_document_revisions", `document_id='${set.id}'`)).toBe(
     1,
   );
+  await client.execute("DROP TRIGGER fail_topic_hard_delete");
+  await expect(
+    services.hardDelete(a, { kind: "topic", id: t.id }),
+  ).resolves.toMatchObject({ status: "complete", remainingCount: 0 });
+  expect(await count("fog_document_revisions", `document_id='${set.id}'`)).toBe(
+    0,
+  );
+  expect((await services.trash(a)).items.map((item) => item.id)).toEqual([
+    orphan.id,
+  ]);
 });

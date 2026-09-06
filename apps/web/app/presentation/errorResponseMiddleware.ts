@@ -40,9 +40,10 @@ export const errorResponseMiddleware = createMiddleware({
       await logServerError(error, rawSerialized);
     }
 
+    const status = httpStatusFor(rawSerialized);
     const clientSerialized = redactForClient(rawSerialized);
     const appError = new AppServerError(clientSerialized);
-    setResponseStatus(httpStatusFor(clientSerialized));
+    setResponseStatus(status);
     throw appError;
   }
 });

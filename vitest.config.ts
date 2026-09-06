@@ -13,6 +13,7 @@ export default defineConfig({
       "**/dist/**",
       "**/.direnv/**",
       "**/*.integration.test.ts",
+      "**/*.cloudflare.test.ts",
       "spec/**",
       ".goal-implement/**",
     ],
