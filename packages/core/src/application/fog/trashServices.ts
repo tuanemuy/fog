@@ -1,7 +1,7 @@
 import { BusinessRuleError } from "@repo/core/domain/error";
 import { contentTitle, topicDescription } from "@repo/core/domain/fog/content";
 import { retentionPeriod } from "@repo/core/domain/fog/data";
-import { NotFoundError } from "../errors";
+import { ConflictError, NotFoundError } from "../errors";
 import type { Clock } from "../ports/clock";
 import {
   type ContentDependencies,
@@ -13,6 +13,10 @@ import type { ContentRef, DataServices } from "./dataTypes";
 import type { DataRepository, FogUnitOfWorkProvider } from "./ports";
 
 const DAY = 86_400_000;
+export const TRASH_DELETE_ROW_LIMIT = 100;
+export const EMPTY_TRASH_MAX_TRANSACTIONS = 40;
+export const RETENTION_OWNER_PAGE_SIZE = 25;
+export const RETENTION_MAX_TRANSACTIONS_PER_OWNER = 4;
 async function deleted(repo: DataRepository, ref: ContentRef) {
   const item = await repo.findTrash(ref);
   if (!item)
@@ -22,10 +26,16 @@ async function deleted(repo: DataRepository, ref: ContentRef) {
     );
   return item;
 }
+const purgeConflict = () =>
+  new ConflictError(
+    "PURGE_IN_PROGRESS",
+    "完全削除を開始した項目は復元できません。",
+  );
 export function createTrashServices({
   unitOfWork,
   clock,
   ids,
+  trashBatchPolicy,
 }: ContentDependencies): Pick<
   DataServices,
   | "softDelete"
@@ -67,9 +77,11 @@ export function createTrashServices({
       return unitOfWork.run(async (context) => {
         const repo = context.data(actor.userId);
         const retentionDays = await repo.retentionDays();
+        const counts = await repo.trashCount();
         const now = clock.now().getTime();
         return {
           retentionDays,
+          purgingCount: counts.purgingCount,
           items: (await repo.trash()).map((item) => ({
             ...item,
             remainingDays: Math.max(
@@ -87,6 +99,7 @@ export function createTrashServices({
       await unitOfWork.run(async (context) => {
         const repo = context.data(actor.userId);
         const item = await deleted(repo, input);
+        if (item.purging) throw purgeConflict();
         if (item.kind !== "document") {
           await repo.restore(input);
           return;
@@ -102,6 +115,7 @@ export function createTrashServices({
             await repo.restore(input, item.topic.id);
           return;
         }
+        if (item.topic.kind === "purging") throw purgeConflict();
         if (item.topic.kind === "active") {
           await repo.restore(input, item.topic.id);
           return;
@@ -139,18 +153,67 @@ export function createTrashServices({
     },
     async hardDelete(actor, input) {
       requireHuman(actor);
-      await unitOfWork.run(async (context) => {
+      const initialCount = await unitOfWork.read(async (context) => {
         const repo = context.data(actor.userId);
         await deleted(repo, input);
-        await repo.hardDelete(input);
+        return repo.purgeTargetCount(input);
       });
+      const rowLimit = trashBatchPolicy?.rowLimit ?? TRASH_DELETE_ROW_LIMIT;
+      const maxTransactions =
+        trashBatchPolicy?.maxTransactions ?? EMPTY_TRASH_MAX_TRANSACTIONS;
+      for (let batch = 0; batch < maxTransactions; batch++) {
+        const result = await unitOfWork.run((context) =>
+          context.data(actor.userId).deleteTrashBatch({
+            limitPerKind: rowLimit,
+            target: input,
+          }),
+        );
+        if (result.processedRowCount === 0) break;
+      }
+      const { active, remainingCount } = await unitOfWork.read(
+        async (context) => {
+          const repo = context.data(actor.userId);
+          return {
+            active: await repo.isPurgeTargetActive(input),
+            remainingCount: await repo.purgeTargetCount(input),
+          };
+        },
+      );
+      if (active)
+        throw new ConflictError(
+          "OPTIMISTIC_LOCK_FAILURE",
+          "項目の状態が変更されました。最新の内容を確認してください。",
+        );
+      return {
+        status: remainingCount === 0 ? "complete" : "partial",
+        deletedCount: Math.max(initialCount - remainingCount, 0),
+        remainingCount,
+      };
     },
     async emptyTrash(actor) {
       requireHuman(actor);
-      await unitOfWork.run(async (context) => {
-        const repo = context.data(actor.userId);
-        for (const item of await repo.trash()) await repo.hardDelete(item);
-      });
+      const rowLimit = trashBatchPolicy?.rowLimit ?? TRASH_DELETE_ROW_LIMIT;
+      const maxTransactions =
+        trashBatchPolicy?.maxTransactions ?? EMPTY_TRASH_MAX_TRANSACTIONS;
+      let deletedCount = 0;
+      for (let batch = 0; batch < maxTransactions; batch++) {
+        const result = await unitOfWork.run((context) =>
+          context.data(actor.userId).deleteTrashBatch({
+            limitPerKind: rowLimit,
+          }),
+        );
+        deletedCount += result.deletedCount;
+        if (result.processedRowCount === 0) break;
+      }
+      const counts = await unitOfWork.read((context) =>
+        context.data(actor.userId).trashCount(),
+      );
+      const remainingCount = counts.restorableCount + counts.purgingCount;
+      return {
+        status: remainingCount === 0 ? "complete" : "partial",
+        deletedCount,
+        remainingCount,
+      };
     },
     async getSettings(actor) {
       requireHuman(actor);
@@ -170,7 +233,7 @@ export function createTrashServices({
 }
 
 /** Applies each owner's current retention period without requiring a user session. */
-export function purgeExpiredTrash({
+export async function purgeExpiredTrash({
   unitOfWork,
   clock,
 }: {
@@ -178,14 +241,37 @@ export function purgeExpiredTrash({
   clock: Clock;
 }): Promise<{ deletedCount: number }> {
   const now = clock.now().getTime();
-  return unitOfWork.run(async (context) => {
-    let deletedCount = 0;
-    for (const owner of await context.retentionOwners()) {
-      const repo = context.data(owner.id);
-      for (const item of await repo.trash())
-        if (Date.parse(item.deletedAt) + owner.retentionDays * DAY <= now)
-          deletedCount += await repo.hardDelete(item);
+  let deletedCount = 0;
+  let afterId: string | undefined;
+  while (true) {
+    const owners = await unitOfWork.read((context) =>
+      context.retentionOwners({
+        ...(afterId ? { afterId } : {}),
+        limit: RETENTION_OWNER_PAGE_SIZE,
+      }),
+    );
+    for (const owner of owners) {
+      const deletedBefore = new Date(
+        now - owner.retentionDays * DAY,
+      ).toISOString();
+      for (
+        let batch = 0;
+        batch < RETENTION_MAX_TRANSACTIONS_PER_OWNER;
+        batch++
+      ) {
+        const result = await unitOfWork.run((context) =>
+          context.data(owner.id).deleteTrashBatch({
+            deletedBefore,
+            limitPerKind: TRASH_DELETE_ROW_LIMIT,
+          }),
+        );
+        deletedCount += result.deletedCount;
+        if (result.processedRowCount === 0) break;
+      }
     }
-    return { deletedCount };
-  });
+    if (owners.length < RETENTION_OWNER_PAGE_SIZE) break;
+    afterId = owners.at(-1)?.id;
+    if (!afterId) break;
+  }
+  return { deletedCount };
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fog-local-cloudflare",
+  "main": "app/server.cloudflare.ts",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    "crons": ["* * * * *", "0 3 * * *"]
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["fog-staging@example.com"]
+    }
+  ],
+  "secrets": {
+    "required": [
+      "DATABASE_URL",
+      "DATABASE_AUTH_TOKEN",
+      "FOG_GOOGLE_CLIENT_ID",
+      "FOG_GOOGLE_CLIENT_SECRET"
+    ]
+  },
+  "vars": {
+    "APP_URL": "https://staging-fog.example.com",
+    "DEPLOYMENT_SHA": "0000000000000000000000000000000000000000",
+    "DEPLOYMENT_ENV": "staging",
+    "EXPECTED_DATABASE_IDENTITY": "fog-staging.example.turso.io",
+    "FOG_EMAIL_FROM": "fog-staging@example.com",
+    "FOG_GOOGLE_CALLBACK_URL": "https://staging-fog.example.com/auth/google/callback"
+  }
+}

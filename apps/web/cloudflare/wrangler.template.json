@@ -1,0 +1,39 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "__WORKER_NAME__",
+  "main": "../../../app/server.cloudflare.ts",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "__HOSTNAME__",
+      "custom_domain": true
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *", "0 3 * * *"]
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["__EMAIL_FROM__"]
+    }
+  ],
+  "secrets": {
+    "required": [
+      "DATABASE_URL",
+      "DATABASE_AUTH_TOKEN",
+      "FOG_GOOGLE_CLIENT_ID",
+      "FOG_GOOGLE_CLIENT_SECRET"
+    ]
+  },
+  "vars": {
+    "APP_URL": "__APP_URL__",
+    "DEPLOYMENT_SHA": "__DEPLOYMENT_SHA__",
+    "DEPLOYMENT_ENV": "__STAGE__",
+    "EXPECTED_DATABASE_IDENTITY": "__DATABASE_IDENTITY__",
+    "FOG_EMAIL_FROM": "__EMAIL_FROM__",
+    "FOG_GOOGLE_CALLBACK_URL": "__GOOGLE_CALLBACK_URL__"
+  }
+}

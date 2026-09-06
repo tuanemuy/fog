@@ -31,8 +31,7 @@ import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { readFogAccountConfig } from "@/presentation/fogAccountConfig";
 import { installFogAccountRuntime } from "@/presentation/fogAccountRuntime";
 import { readFogAiClients } from "@/presentation/fogAiConfig";
-import { handleFogAiHttp, isFogAiHttp } from "@/presentation/fogAiHttp";
-import { handleFogGoogleCallback } from "@/presentation/fogGoogleHttp";
+import { createFogHttpHandler } from "@/serverHttp";
 import { createFogResetMailRunner } from "@/worker/node/fogResetMailRunner";
 import { createFogRetentionRunner } from "@/worker/node/fogRetentionRunner";
 
@@ -161,42 +160,19 @@ export async function boot(): Promise<NodeServerBoot> {
     (m) => m.default,
   );
 
-  const fetch = async (request: Request): Promise<Response> => {
-    if (new URL(request.url).pathname === "/auth/google/callback")
-      return handleFogGoogleCallback(request, {
-        services: getFogServices(),
-        appUrl: env.APP_URL,
-      });
-    if (new URL(request.url).pathname === "/healthz") {
-      if (request.method !== "GET" && request.method !== "HEAD")
-        return new Response(null, { status: 405 });
-      try {
-        await client.execute("SELECT 1");
-        return new Response(request.method === "HEAD" ? null : "ok", {
-          headers: {
-            "Cache-Control": "no-store",
-            "Content-Type": "text/plain",
-          },
-        });
-      } catch {
-        return new Response("unavailable", {
-          status: 503,
-          headers: { "Cache-Control": "no-store" },
-        });
-      }
-    }
-    if (isFogAiHttp(new URL(request.url).pathname))
-      return handleFogAiHttp(request, {
-        services: getFogServices(),
-        appUrl: env.APP_URL,
-        logger,
-      });
-    if (/^\/todo(?:\/|$)/.test(new URL(request.url).pathname))
-      return new Response("Not found", { status: 404 });
-    const container = createNodeRequestContainer(config);
-    const entry = await entryPromise;
-    return storage.run(container, async () => entry.fetch(request));
-  };
+  const fetch = createFogHttpHandler({
+    appUrl: env.APP_URL,
+    services: getFogServices(),
+    logger,
+    healthCheck: async () => {
+      await client.execute("SELECT 1");
+    },
+    render: async (request) => {
+      const container = createNodeRequestContainer(config);
+      const entry = await entryPromise;
+      return storage.run(container, async () => entry.fetch(request));
+    },
+  });
 
   const port = env.PORT;
   const hostname = env.HOSTNAME;

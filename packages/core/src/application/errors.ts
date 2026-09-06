@@ -134,6 +134,7 @@ export const SystemErrorCode = {
   DataIntegrityError: "DATA_INTEGRITY_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
+  CapacityExceeded: "CAPACITY_EXCEEDED",
 } as const;
 export type SystemErrorCode =
   (typeof SystemErrorCode)[keyof typeof SystemErrorCode];
@@ -142,6 +143,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
   new Set<SystemErrorCode>([
     SystemErrorCode.NetworkError,
     SystemErrorCode.ExternalApiError,
+    SystemErrorCode.CapacityExceeded,
   ]);
 
 export class SystemError extends ApplicationError<SystemErrorCode> {

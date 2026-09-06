@@ -6,6 +6,8 @@ node_modules/
 .output/
 .nitro/
 dist/
+dist-cloudflare/
+.cloudflare/
 
 # Node runtime
 data/

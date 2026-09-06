@@ -15,7 +15,11 @@ const derive = (password: string, salt: string): Promise<Buffer> =>
     );
   });
 
+export const FIXED_DUMMY_PASSWORD_HASH =
+  "scrypt$32768$8$3$6d2736553be61a2ee9ebc377292008122283bfac83cab4b3caa7adb399715148$c40bf0d0b57592fcef7e0b64e9a4e7cc2bf02da2debe96125df91d8550aec46ecda7a32f667bcefd70d1a752d750f17f5776bf238a38990c82fe373613ef5a58";
+
 export const nodeSecretCrypto: SecretCrypto = {
+  dummyPasswordHash: FIXED_DUMMY_PASSWORD_HASH,
   async hashPassword(password) {
     const salt = randomBytes(32).toString("hex");
     const hash = await derive(password, salt);

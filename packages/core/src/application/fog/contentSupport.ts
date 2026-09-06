@@ -8,6 +8,10 @@ export type ContentDependencies = {
   unitOfWork: FogUnitOfWorkProvider;
   clock: Clock;
   ids: IdGenerator;
+  trashBatchPolicy?: Readonly<{
+    rowLimit: number;
+    maxTransactions: number;
+  }>;
 };
 export function requireHuman(actor: Actor): void {
   if (actor.kind !== "human")
