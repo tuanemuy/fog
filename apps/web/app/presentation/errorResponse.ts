@@ -111,8 +111,6 @@ const HTTP_STATUS_BY_KIND: Record<SerializedErrorKind, number> = {
 };
 
 export function httpStatusFor(serialized: SerializedError): number {
-  if (serialized.kind === "system" && serialized.code === "CAPACITY_EXCEEDED")
-    return 503;
   return HTTP_STATUS_BY_KIND[serialized.kind];
 }
 

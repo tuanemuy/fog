@@ -2,10 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { type Client, createClient } from "@libsql/client";
-import type {
-  FogUnitOfWorkProvider,
-  SecretCrypto,
-} from "@repo/core/application/fog/ports";
 import { createFogServices } from "@repo/core/application/fog/services";
 import type { FogServices } from "@repo/core/application/fog/types";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -85,55 +81,6 @@ test("session expiration and login attempts use the injected clock", async () =>
   });
   now = new Date(now.getTime() + 31 * 24 * 60 * 60 * 1000);
   expect(await services.authenticate(registered.token)).toBeNull();
-});
-
-test("login performs KDF outside write transactions and preserves concurrent failure counts", async () => {
-  await services.register(credentials);
-  const delegate = new LibsqlFogUnitOfWork(client);
-  let writeTransactionCalls = 0;
-  let verifiedOutsideWrite = 0;
-  const unitOfWork: FogUnitOfWorkProvider = {
-    read: (operation) => delegate.read(operation),
-    run: async (operation) => {
-      writeTransactionCalls++;
-      try {
-        return await delegate.run(operation);
-      } finally {
-        writeTransactionCalls--;
-      }
-    },
-  };
-  const crypto: SecretCrypto = {
-    ...nodeSecretCrypto,
-    verifyPassword: async (password, hash) => {
-      expect(writeTransactionCalls).toBe(0);
-      verifiedOutsideWrite++;
-      return nodeSecretCrypto.verifyPassword(password, hash);
-    },
-  };
-  const concurrent = await createFogServices({
-    unitOfWork,
-    crypto,
-    clock: { now: () => now },
-    ids: UuidV7Generator,
-  });
-  const failures = await Promise.allSettled([
-    concurrent.login({ ...credentials, password: "wrong-one" }),
-    concurrent.login({ ...credentials, password: "wrong-two" }),
-  ]);
-  expect(failures.every((result) => result.status === "rejected")).toBe(true);
-  const attempts = await client.execute("SELECT count FROM fog_auth_attempts");
-  expect(attempts.rows[0]?.count).toBe(2);
-  await client.execute("DELETE FROM fog_auth_attempts");
-  const mixed = await Promise.allSettled([
-    concurrent.login(credentials),
-    concurrent.login({ ...credentials, password: "wrong-three" }),
-  ]);
-  expect(mixed.map((result) => result.status).sort()).toEqual([
-    "fulfilled",
-    "rejected",
-  ]);
-  expect(verifiedOutsideWrite).toBeGreaterThanOrEqual(2);
 });
 
 test("each tenant sees only their memos and every creation includes an immutable first revision", async () => {

@@ -75,7 +75,7 @@ export const hardDeleteFogContent = createServerFn({ method: "POST" })
     const { getFogServices } = await import(
       "@repo/core/application/fog/runtime"
     );
-    return getFogServices().hardDelete(actor, data);
+    await getFogServices().hardDelete(actor, data);
   });
 
 export const emptyFogTrash = createServerFn({ method: "POST" })
@@ -88,7 +88,7 @@ export const emptyFogTrash = createServerFn({ method: "POST" })
     const { getFogServices } = await import(
       "@repo/core/application/fog/runtime"
     );
-    return getFogServices().emptyTrash(actor);
+    await getFogServices().emptyTrash(actor);
   });
 
 export const saveFogRetention = createServerFn({ method: "POST" })

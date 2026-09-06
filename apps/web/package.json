@@ -6,22 +6,11 @@
   "scripts": {
     "dev": "pnpm dev:node",
     "dev:node": "vite dev --config vite.config.node.ts",
-    "dev:cloudflare": "vite dev --config vite.config.cloudflare.ts",
     "build": "pnpm build:node",
     "build:node": "vite build --config vite.config.node.ts",
-    "build:cloudflare": "vite build --config vite.config.cloudflare.ts",
-    "build:cloudflare:stage": "tsx scripts/cloudflareBuild.node.ts",
-    "cloudflare:config": "tsx scripts/cloudflareConfig.node.ts",
-    "cloudflare:authority": "tsx scripts/cloudflareAuthority.node.ts",
-    "cloudflare:deploy": "tsx scripts/cloudflareDeploy.node.ts",
-    "cloudflare:secrets": "tsx scripts/cloudflareSecrets.node.ts",
-    "cloudflare:smoke": "tsx scripts/cloudflareSmoke.node.ts",
-    "cloudflare:github": "tsx scripts/cloudflareGithub.node.ts",
     "typecheck": "tsgo",
-    "test:cloudflare": "vitest run --config ../../vitest.config.integration.cloudflare.ts",
     "db:migrate": "pnpm db:migrate:node",
     "db:migrate:node": "tsx --env-file-if-exists=.env scripts/migrate.node.ts",
-    "db:migrate:cloudflare": "tsx scripts/migrate.cloudflare.node.ts",
     "start": "node --env-file-if-exists=.env scripts/listen.node.mjs",
     "start:node": "pnpm start",
     "start:node:prod": "pnpm start",
@@ -43,8 +32,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.54.4",
-    "@cloudflare/workers-types": "5.20260905.1",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/react-router-devtools": "^1.166.13",
     "@types/node": "^25.7.0",
@@ -56,9 +43,7 @@
     "jose": "^6.2.11",
     "smtp-server": "^3.19.7",
     "tailwindcss": "^4.3.0",
-    "tldts": "^7.4.11",
     "tsx": "^4.21.0",
-    "vite": "^8.0.12",
-    "wrangler": "^4.129.0"
+    "vite": "^8.0.12"
   }
 }

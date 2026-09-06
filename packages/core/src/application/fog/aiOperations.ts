@@ -47,8 +47,6 @@ export function aiContentServices(
     unitOfWork: {
       run: <T>(operation: (context: FogUnitOfWork) => Promise<T>) =>
         operation(context),
-      read: <T>(operation: (context: FogUnitOfWork) => Promise<T>) =>
-        operation(context),
     },
   };
   return {

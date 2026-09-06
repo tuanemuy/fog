@@ -4,7 +4,6 @@ import { appServerErrorAdapter } from "./appServerErrorAdapter";
 import {
   AppServerError,
   extractSerializedError,
-  httpStatusFor,
   isAppServerError,
   redactForClient,
 } from "./errorResponse";
@@ -65,16 +64,5 @@ describe("application error transport", () => {
     expect(
       appServerErrorAdapter.toSerializable(new AppServerError(serialized)),
     ).toEqual(serialized);
-  });
-
-  it("maps retryable capacity exhaustion to service unavailable before redaction", () => {
-    expect(
-      httpStatusFor({
-        kind: "system",
-        code: "CAPACITY_EXCEEDED",
-        message: "busy",
-        retryable: true,
-      }),
-    ).toBe(503);
   });
 });

@@ -96,10 +96,7 @@ export interface FogUnitOfWork {
   account: AccountRepository;
   ai: AiRepository;
   data(ownerId: string): DataRepository;
-  retentionOwners(input: {
-    afterId?: string;
-    limit: number;
-  }): Promise<{ id: string; retentionDays: number }[]>;
+  retentionOwners(): Promise<{ id: string; retentionDays: number }[]>;
   memos(ownerId: string): MemoRepository;
   topics(ownerId: string): TopicRepository;
   documents(ownerId: string): DocumentRepository;
@@ -108,11 +105,9 @@ export interface FogUnitOfWork {
 /** Reads, dependent validation, and writes share one database transaction. */
 export interface FogUnitOfWorkProvider {
   run<T>(operation: (context: FogUnitOfWork) => Promise<T>): Promise<T>;
-  read<T>(operation: (context: FogUnitOfWork) => Promise<T>): Promise<T>;
 }
 
 export interface SecretCrypto {
-  readonly dummyPasswordHash: string;
   hashPassword(password: string): Promise<string>;
   verifyPassword(password: string, hash: string): Promise<boolean>;
   newToken(): string;
@@ -132,14 +127,7 @@ export interface DataRepository {
     group: string,
   ): Promise<void>;
   restore(ref: ContentRef, topicId?: string): Promise<void>;
-  deleteTrashBatch(input: {
-    deletedBefore?: string;
-    limitPerKind: number;
-    target?: ContentRef;
-  }): Promise<{ deletedCount: number; processedRowCount: number }>;
-  purgeTargetCount(ref: ContentRef): Promise<number>;
-  isPurgeTargetActive(ref: ContentRef): Promise<boolean>;
-  trashCount(): Promise<{ restorableCount: number; purgingCount: number }>;
+  hardDelete(ref: ContentRef): Promise<number>;
   retentionDays(): Promise<number>;
   setRetentionDays(days: number): Promise<void>;
   search(input: {

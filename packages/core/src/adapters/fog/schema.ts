@@ -21,8 +21,7 @@ export const fogSchema = [
     id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES fog_users(id) ON DELETE CASCADE,
     body TEXT NOT NULL CHECK(length(trim(body)) > 0), created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, version INTEGER NOT NULL CHECK(version >= 1),
-    deleted_at TEXT, deletion_group TEXT,
-    purging INTEGER NOT NULL DEFAULT 0 CHECK(purging IN (0,1) AND (purging=0 OR deleted_at IS NOT NULL)), UNIQUE(id, owner_id)
+    deleted_at TEXT, deletion_group TEXT, UNIQUE(id, owner_id)
   )`,
   "CREATE INDEX IF NOT EXISTS fog_memos_timeline ON fog_memos(owner_id, deleted_at, created_at DESC, id DESC)",
   `CREATE TABLE IF NOT EXISTS fog_memo_revisions (
@@ -37,16 +36,14 @@ export const fogSchema = [
     title TEXT NOT NULL CHECK(length(trim(title))>0), description TEXT NOT NULL,
     completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>=1),
-    deleted_at TEXT, deletion_group TEXT,
-    purging INTEGER NOT NULL DEFAULT 0 CHECK(purging IN (0,1) AND (purging=0 OR deleted_at IS NOT NULL)), UNIQUE(id,owner_id)
+    deleted_at TEXT, deletion_group TEXT, UNIQUE(id,owner_id)
   )`,
   "CREATE INDEX IF NOT EXISTS fog_topics_owner ON fog_topics(owner_id,deleted_at,completed,updated_at DESC,id DESC)",
   `CREATE TABLE IF NOT EXISTS fog_documents (
     id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES fog_users(id) ON DELETE CASCADE, topic_id TEXT,
     title TEXT NOT NULL CHECK(length(trim(title))>0), body TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>=1),
-    deleted_at TEXT, deletion_group TEXT,
-    purging INTEGER NOT NULL DEFAULT 0 CHECK(purging IN (0,1) AND (purging=0 OR deleted_at IS NOT NULL)), UNIQUE(id,owner_id),
+    deleted_at TEXT, deletion_group TEXT, UNIQUE(id,owner_id),
     CHECK(topic_id IS NOT NULL OR deleted_at IS NOT NULL),
     FOREIGN KEY(topic_id,owner_id) REFERENCES fog_topics(id,owner_id)
   )`,
@@ -134,10 +131,7 @@ export async function migrateFog(client: Client): Promise<void> {
     await client.batch(
       [
         table("fog_documents").replace("fog_documents (", "fog_documents_v2 ("),
-        `INSERT INTO fog_documents_v2
-          (id,owner_id,topic_id,title,body,created_at,updated_at,version,deleted_at,deletion_group)
-          SELECT id,owner_id,topic_id,title,body,created_at,updated_at,version,deleted_at,deletion_group
-          FROM fog_documents`,
+        "INSERT INTO fog_documents_v2 SELECT * FROM fog_documents",
         "CREATE TABLE fog_document_revisions_backup AS SELECT * FROM fog_document_revisions",
         "CREATE TABLE fog_document_sources_backup AS SELECT * FROM fog_document_sources",
         "DROP TABLE fog_document_sources",
@@ -154,12 +148,5 @@ export async function migrateFog(client: Client): Promise<void> {
       ],
       "write",
     );
-  }
-  for (const table of ["fog_memos", "fog_topics", "fog_documents"]) {
-    const current = await client.execute(`PRAGMA table_info(${table})`);
-    if (!current.rows.some((row) => row.name === "purging"))
-      await client.execute(
-        `ALTER TABLE ${table} ADD COLUMN purging INTEGER NOT NULL DEFAULT 0 CHECK(purging IN (0,1) AND (purging=0 OR deleted_at IS NOT NULL))`,
-      );
   }
 }

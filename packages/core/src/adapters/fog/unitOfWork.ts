@@ -145,32 +145,22 @@ class LibsqlAuthRepository implements AuthRepository {
 
 export class LibsqlFogUnitOfWork implements FogUnitOfWorkProvider {
   constructor(private readonly client: Client) {}
-  run<T>(operation: (context: FogUnitOfWork) => Promise<T>): Promise<T> {
-    return this.transaction("write", operation);
-  }
-  read<T>(operation: (context: FogUnitOfWork) => Promise<T>): Promise<T> {
-    return this.transaction("read", operation);
-  }
-  private async transaction<T>(
-    mode: "read" | "write",
-    operation: (context: FogUnitOfWork) => Promise<T>,
-  ): Promise<T> {
+  async run<T>(operation: (context: FogUnitOfWork) => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       let tx: Transaction | undefined;
       try {
-        tx = await this.client.transaction(mode);
+        tx = await this.client.transaction("write");
         const transaction = tx;
         const result = await operation({
           auth: new LibsqlAuthRepository(transaction),
           account: new LibsqlAccountRepository(transaction),
           ai: new LibsqlAiRepository(transaction),
           data: (ownerId) => new LibsqlDataRepository(transaction, ownerId),
-          retentionOwners: async ({ afterId, limit }) =>
+          retentionOwners: async () =>
             (
-              await transaction.execute({
-                sql: `SELECT id,retention_days AS retentionDays FROM fog_users${afterId ? " WHERE id>?" : ""} ORDER BY id LIMIT ?`,
-                args: [...(afterId ? [afterId] : []), limit],
-              })
+              await transaction.execute(
+                "SELECT id,retention_days AS retentionDays FROM fog_users ORDER BY id",
+              )
             ).rows.map((row) =>
               z
                 .object({

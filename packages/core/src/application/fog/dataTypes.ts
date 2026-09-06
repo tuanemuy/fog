@@ -3,11 +3,7 @@ import type { Actor, HumanActor, TopicView } from "./types";
 export type ContentKind = "memo" | "document" | "topic";
 export type ContentRef = Readonly<{ kind: ContentKind; id: string }>;
 export type TrashParent =
-  | Readonly<{
-      kind: "active" | "deleted" | "purging";
-      id: string;
-      title: string;
-    }>
+  | Readonly<{ kind: "active" | "deleted"; id: string; title: string }>
   | Readonly<{ kind: "missing" }>;
 export type TrashRecord = Readonly<{
   id: string;
@@ -15,7 +11,6 @@ export type TrashRecord = Readonly<{
   body: string;
   deletedAt: string;
   deletionGroupId: string | null;
-  purging: boolean;
   setDocumentIds: string[];
 }> &
   (
@@ -23,11 +18,6 @@ export type TrashRecord = Readonly<{
     | Readonly<{ kind: "memo" | "topic"; topic: null }>
   );
 export type TrashItem = TrashRecord & Readonly<{ remainingDays: number }>;
-export type EmptyTrashResult = Readonly<{
-  status: "complete" | "partial";
-  deletedCount: number;
-  remainingCount: number;
-}>;
 export type RestoreInput = ContentRef &
   Readonly<{
     restoreTopicSet?: boolean;
@@ -82,14 +72,12 @@ export interface DataServices {
     actor: Actor,
     input: ContentRef & { expectedVersion: number },
   ): Promise<void>;
-  trash(actor: HumanActor): Promise<{
-    items: TrashItem[];
-    retentionDays: number;
-    purgingCount: number;
-  }>;
+  trash(
+    actor: HumanActor,
+  ): Promise<{ items: TrashItem[]; retentionDays: number }>;
   restore(actor: HumanActor, input: RestoreInput): Promise<void>;
-  hardDelete(actor: HumanActor, input: ContentRef): Promise<EmptyTrashResult>;
-  emptyTrash(actor: HumanActor): Promise<EmptyTrashResult>;
+  hardDelete(actor: HumanActor, input: ContentRef): Promise<void>;
+  emptyTrash(actor: HumanActor): Promise<void>;
   getSettings(actor: HumanActor): Promise<{ retentionDays: number }>;
   setRetentionDays(
     actor: HumanActor,

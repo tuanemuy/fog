@@ -2,7 +2,7 @@
 
 気軽に残したメモを、AIと育てるアプリ。メモのタイムライン、トピックと文書、出典リンク、履歴と復元、検索、ゴミ箱、認可した AI クライアントによる編集を提供する。
 
-Node.js 22.12以上、pnpm 11.1.2、libSQL を使う。Web は TanStack Start / React 19、core は framework 非依存の domain・application・adapter で構成する。ローカルと単一 process 運用は Node.js、クラウド本番は Cloudflare Workers と Turso を使う。
+Node.js 22.12以上、pnpm 11.1.2、libSQL を使う。Web は TanStack Start / React 19、core は framework 非依存の domain・application・adapter で構成する。
 
 ## 起動
 
@@ -29,14 +29,13 @@ pnpm start
 ## 設定と運用
 
 - [Node 運用](docs/runtime_node.md): 起動、環境変数、migration、production、health、停止、クラウド DB。
-- [Cloudflare 運用](docs/runtime_cloudflare.md): staging / production、外部サービス、GitHub delivery、migration、rollback、障害対応。
 - [バックアップと復元](docs/backup_restore.md): 一貫した snapshot、保持、新 DB への復元と訓練、クラウド PITR。
 - [アカウント認証と復旧](docs/account_access.md): Google と SMTP の設定、ローカル OIDC / メール受信箱。
 - [AI クライアント](docs/ai_client.md): 操作一覧、認可、PKCE、ローカルクライアント fixture。
 - [データ運用](docs/fog_operations.md): ゴミ箱の保持期限と利用者向け export。
 - [開発とテスト](docs/test.md): 必須チェックと対象。
 
-Google・SMTP・Cloudflare Email Service・クラウド libSQL の実接続には利用する環境の設定が必要。ローカル fixture は外部サービスの確認を代替しない。GitHub Actions は `main` を staging へ配備し、Release Please の release を production approval 後に配備する。
+Google・SMTP・クラウド libSQL の実接続には利用する環境の設定が必要。ローカル fixture は外部サービスの確認を代替しない。自動 deploy は構成していない。
 
 ## 構成
 
