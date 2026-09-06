@@ -5,7 +5,6 @@ import { setResponseStatus } from "@tanstack/react-start/server";
 import {
   AppServerError,
   httpStatusFor,
-  isAppServerError,
   redactForClient,
   type SerializedError,
   serializeError,
@@ -32,9 +31,10 @@ export const errorResponseMiddleware = createMiddleware({
   } catch (error) {
     if (isRedirect(error) || isNotFound(error)) throw error;
 
-    const rawSerialized = isAppServerError(error)
-      ? error.serialized
-      : serializeError(error);
+    const rawSerialized =
+      error instanceof AppServerError
+        ? error.serialized
+        : serializeError(error);
 
     if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
       await logServerError(error, rawSerialized);

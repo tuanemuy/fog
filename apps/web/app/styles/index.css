@@ -1,9 +1,3 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./theme.css";
-
-@import "./fog.css";
-
-@import "./fog-content.css";
-
-@import "./fog-data.css";

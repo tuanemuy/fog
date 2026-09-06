@@ -1,9 +1,18 @@
+// Production launcher for the Node runtime.
+//
+// Plain ESM JavaScript (no TypeScript, no transpiler) so a production
+// host can `node`-execute it without `tsx` — the counterpart of
+// `listen.gcp.mjs`. `listen.node.ts` stays as the dev/tsx entry; this
+// file is what process managers (pm2, systemd, …) should point at.
+//
+// Like every launcher in this repo, it reads `process.env` only — env
+// injection is the invoker's job (`node --env-file-if-exists=.env`,
+// pm2 `--node-args`, systemd `EnvironmentFile=`, …).
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
-import { createStaticAssets } from "./staticAssets.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,11 +44,9 @@ async function main() {
   const { boot } = await loadBundled();
   const booted = await boot();
 
-  const assets = createStaticAssets(path.resolve(here, "../dist/client"));
   const server = serve(
     {
-      fetch: async (request) =>
-        (await assets(request)) ?? booted.fetch(request),
+      fetch: booted.fetch,
       port: booted.port,
       hostname: booted.hostname,
     },
@@ -50,10 +57,9 @@ async function main() {
     },
   );
 
-  let shuttingDown = false;
+  // These signal handlers run before `server.node.ts`'s own (which act
+  // as a safety net) because `process.once` fires in registration order.
   const shutdown = async (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
     console.log(`[listen.node] received ${signal}, draining`);
     await new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
@@ -70,9 +76,7 @@ async function main() {
   });
 }
 
-main().catch(() => {
-  console.error(
-    "[listen.node] failed to start; check build, environment, database, and listener configuration",
-  );
+main().catch((cause) => {
+  console.error("[listen.node] failed to start", cause);
   process.exit(1);
 });
