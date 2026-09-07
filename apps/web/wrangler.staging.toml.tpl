@@ -47,11 +47,6 @@ binding = "ASSETS"
 [vars]
 APP_URL = "${APP_URL}"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "${D1_DATABASE_NAME}"
-database_id = "${D1_DATABASE_ID}"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[durable_objects.bindings]]
 name = "USER_DATA"

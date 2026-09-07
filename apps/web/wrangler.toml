@@ -39,13 +39,6 @@ APP_URL = "http://localhost:3000"
 # production.
 DIAGNOSTICS_ENABLED = "true"
 
-# D1 carries the legacy `users` path only. The outbox is gone from it:
-# event rows live in the Durable Object that emitted them.
-[[d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 # Durable Object namespaces, implemented by the state Worker.
 [[durable_objects.bindings]]
