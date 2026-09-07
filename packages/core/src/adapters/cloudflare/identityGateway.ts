@@ -1,8 +1,4 @@
-import {
-  isSystemError,
-  SystemError,
-  SystemErrorCode,
-} from "@repo/core/application/errors";
+import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type {
   AttemptOutcomeDto,
   CredentialCoordinateDto,
@@ -33,10 +29,6 @@ export type IdentityGatewayDeps = Readonly<{
   clock: Clock;
   tuning: IdentityTuning;
 }>;
-
-function isNotInitialized(error: unknown): boolean {
-  return isSystemError(error) && error.code === SystemErrorCode.NotInitialized;
-}
 
 function coordinateLocator(
   coordinate: CredentialCoordinateDto,
@@ -93,14 +85,7 @@ export function createIdentityGateway(
 
   return {
     async readAccountState(userId) {
-      try {
-        return await callDurableObject(() =>
-          userData(userId).readAccountState(),
-        );
-      } catch (error) {
-        if (isNotInitialized(error)) return null;
-        throw error;
-      }
+      return callDurableObject(() => userData(userId).readAccountState());
     },
 
     async deriveCredentialLocator(kind, canonical, credentialId) {
@@ -132,6 +117,12 @@ export function createIdentityGateway(
 
     async initializeAccount(userId, input) {
       await callDurableObject(() => userData(userId).initializeAccount(input));
+    },
+
+    async commitSignupSaga(locator, operationId) {
+      return callDurableObject(() =>
+        directory(locator).commitSaga({ locator, operationId }),
+      );
     },
 
     async activateReservation(locator, operationId, userId) {
@@ -168,14 +159,7 @@ export function createIdentityGateway(
     },
 
     async readCurrentUser(userId) {
-      try {
-        return await callDurableObject(() =>
-          userData(userId).readCurrentUser(),
-        );
-      } catch (error) {
-        if (isNotInitialized(error)) return null;
-        throw error;
-      }
+      return callDurableObject(() => userData(userId).readCurrentUser());
     },
 
     async revealCanonical(coordinate, userId) {

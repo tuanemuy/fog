@@ -161,6 +161,18 @@ export function claimCandidatesQuery(descriptor: RowTableDescriptor): string {
 }
 
 /**
+ * The claim CAS {@link claimRows} issues per candidate, as text — exported
+ * on the same terms as {@link claimCandidatesQuery}: the plan assertion in
+ * `__tests__/rowRunner.integration.test.ts` measures the statement this
+ * module runs, which seeks by the row key.
+ */
+export function claimStatement(descriptor: RowTableDescriptor): string {
+  return `UPDATE ${descriptor.table} SET status = ?, lease_until = ?, owner_token = ?
+         WHERE ${descriptor.keyColumn} = ?
+           AND (status = 'pending' OR (status = ? AND lease_until < ?))`;
+}
+
+/**
  * Claims up to `limit` runnable rows inside one `transactionSync`.
  *
  * The selection is the **runnable set** (`status` alone) intersected with
@@ -216,9 +228,7 @@ export function claimRows<TRow extends Record<string, SqlStorageValue>>(
       const ownerToken = newOwnerToken();
       const matched = updateMatchedRow(
         sql,
-        `UPDATE ${descriptor.table} SET status = ?, lease_until = ?, owner_token = ?
-         WHERE ${descriptor.keyColumn} = ?
-           AND (status = 'pending' OR (status = ? AND lease_until < ?))`,
+        claimStatement(descriptor),
         descriptor.leasedStatus,
         options.now + options.leaseMs,
         ownerToken,
@@ -315,6 +325,20 @@ export function releaseForNextWakeUp(
  * claim, and reading the write as a completion would report work as
  * finished that no row records.
  */
+/** The terminal CAS {@link finalizeRow} issues, as text, on the terms of {@link claimStatement}. */
+export function finalizeStatement(descriptor: RowTableDescriptor): string {
+  const assignments = [
+    "status = ?",
+    "completed_at = ?",
+    "terminal_reason = COALESCE(?, terminal_reason)",
+    "lease_until = NULL",
+    "next_run_at = NULL",
+    ...(descriptor.clearsOwnerTokenOnTerminal ? ["owner_token = NULL"] : []),
+  ].join(", ");
+  return `UPDATE ${descriptor.table} SET ${assignments}
+     WHERE ${descriptor.keyColumn} = ? AND owner_token = ?`;
+}
+
 export function finalizeRow(
   sql: SqlStorage,
   descriptor: RowTableDescriptor,
@@ -328,18 +352,9 @@ export function finalizeRow(
     status === "completed"
       ? descriptor.completedStatus
       : descriptor.failedStatus;
-  const assignments = [
-    "status = ?",
-    "completed_at = ?",
-    "terminal_reason = COALESCE(?, terminal_reason)",
-    "lease_until = NULL",
-    "next_run_at = NULL",
-    ...(descriptor.clearsOwnerTokenOnTerminal ? ["owner_token = NULL"] : []),
-  ].join(", ");
   return updateMatchedRow(
     sql,
-    `UPDATE ${descriptor.table} SET ${assignments}
-     WHERE ${descriptor.keyColumn} = ? AND owner_token = ?`,
+    finalizeStatement(descriptor),
     nextStatus,
     now,
     terminalReason,

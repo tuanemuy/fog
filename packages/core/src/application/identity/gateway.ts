@@ -97,7 +97,12 @@ export type CurrentUserDto = Readonly<{
  * mapping key is distributed to the request Worker alone.
  */
 export interface IdentityGateway {
-  /** `null` for a Durable Object that was never initialised as well as for a missing row. */
+  /**
+   * `null` for an initialised Durable Object holding no account row. A
+   * Durable Object that was never initialised answers
+   * `SystemError(NotInitialized)`, passed through unchanged: only the
+   * presentation's session check folds it into "no session".
+   */
   readAccountState(userId: string): Promise<AccountState | null>;
   deriveCredentialLocator(
     kind: CredentialKind,
@@ -109,6 +114,11 @@ export interface IdentityGateway {
     input: ReserveCredentialDto,
   ): Promise<void>;
   initializeAccount(userId: string, input: InitializeAccountDto): Promise<void>;
+  /** The coordinator's `saga_committed` mark, written once phase 2 returned. */
+  commitSignupSaga(
+    locator: MappingLocator,
+    operationId: string,
+  ): Promise<boolean>;
   activateReservation(
     locator: MappingLocator,
     operationId: string,

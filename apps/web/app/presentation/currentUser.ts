@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 
 import { getContainer } from "@repo/core/application/di/containerStore";
+import { isSystemError, SystemErrorCode } from "@repo/core/application/errors";
 import { redirect } from "@tanstack/react-router";
 import { getRequestUrl } from "@tanstack/react-start/server";
 import { toSafeRedirect } from "./redirectSearch";
@@ -14,7 +15,10 @@ import { readSessionToken } from "./session";
  * request, never cached — and treats a generation the object has moved past
  * as no session. Every rejection (no cookie, bad signature, expired, epoch
  * mismatch, an account whose object was never initialised) is the same
- * `null`; nothing about why reaches the caller.
+ * `null`; nothing about why reaches the caller. The never-initialised case
+ * arrives as `SystemError(NotInitialized)` from the gateway and is folded
+ * here — and only here — because a token naming such an object is a stale
+ * or forged credential, not a broken server.
  */
 export async function getCurrentUserId(): Promise<string | null> {
   const token = readSessionToken();
@@ -25,12 +29,24 @@ export async function getCurrentUserId(): Promise<string | null> {
     container.clock.now(),
   );
   if (verified === null) return null;
-  const account = await container.identityGateway.readAccountState(
-    verified.userId,
-  );
+  const account = await readAccountStateOrNull(container, verified.userId);
   if (account === null || account.status !== "active") return null;
   if (account.sessionEpoch > verified.sessionEpoch) return null;
   return verified.userId;
+}
+
+async function readAccountStateOrNull(
+  container: Awaited<ReturnType<typeof getContainer>>,
+  userId: string,
+) {
+  try {
+    return await container.identityGateway.readAccountState(userId);
+  } catch (error) {
+    if (isSystemError(error) && error.code === SystemErrorCode.NotInitialized) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**

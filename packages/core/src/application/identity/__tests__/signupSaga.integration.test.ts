@@ -21,6 +21,7 @@ import { loginWithPassword } from "@repo/core/application/identity/loginWithPass
 import { registerWithPassword } from "@repo/core/application/identity/registerWithPassword";
 import { resumeSignupOperationKey } from "@repo/core/application/identity/reserveSignupCredential";
 import { isBusinessRuleError } from "@repo/core/domain/error";
+import { PlainPassword } from "@repo/core/domain/identity/valueObject";
 import { describe, expect, it } from "vitest";
 
 type OperationRow = Readonly<{
@@ -373,6 +374,183 @@ describe("registerWithPassword — the four-phase saga", () => {
         })
       ).userId,
     ).toBe(max.userId);
+  });
+});
+
+describe("sweep-reservations against the saga mark", () => {
+  // Phases 1 and 2 done, the mark written, the coordinator gone before
+  // phase 3: the TTL has passed, and the sweep must leave the row alone —
+  // it is the only material `resume-signup` has left to finish with.
+  it("(h) does not delete a reservation whose saga is committed but not yet activated", async () => {
+    const container = createTestContainer();
+    const email = uniqueEmail();
+    const userId = container.idGenerator.next();
+    const credentialId = container.idGenerator.next();
+    const operationId = container.idGenerator.next();
+    const gateway = container.identityGateway;
+    const locator = await gateway.deriveCredentialLocator(
+      "email",
+      email,
+      credentialId,
+    );
+    const now = Date.now();
+    await gateway.reserveCredential(locator, {
+      operationId,
+      candidateUserId: userId,
+      callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),
+      canonical: email,
+      passwordVerifier: await container.passwordHasher.hash(
+        PlainPassword.create(TEST_PASSWORD),
+      ),
+      reservedUntil: new Date(now + container.identityTuning.reservationTtlMs),
+      coordinator: { role: "coordinator", locators: [locator] },
+    });
+    await gateway.initializeAccount(userId, {
+      operationId,
+      callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),
+      credential: {
+        credentialId,
+        kind: "email",
+        label: "",
+        usableForLogin: true,
+      },
+      locators: [locator],
+    });
+    expect(await gateway.commitSignupSaga(locator, operationId)).toBe(true);
+
+    const marked = await readMapping(email);
+    expect(marked.status).toBe("reserved");
+    expect(marked.saga_committed).toBe(1);
+    expect(marked.user_id).toBeNull();
+
+    const bucket = await bucketOfEmail(email);
+    const stub = directoryStubOf(bucket.generation, bucket.bucketIndex);
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        // The TTL has run out, the sweep is due, and the re-drive is not.
+        sql.exec(
+          "UPDATE credential_mappings SET reserved_until = ? WHERE hmac = ?",
+          now - 1_000,
+          locator.hmac,
+        );
+        sql.exec(
+          "UPDATE jobs SET next_run_at = ? WHERE operation_key = 'sweep-reservations'",
+          now - 1_000,
+        );
+        sql.exec(
+          "UPDATE jobs SET next_run_at = ? WHERE operation_key = ?",
+          now + 3_600_000,
+          resumeSignupOperationKey(operationId),
+        );
+        await state.storage.setAlarm(Date.now() + 60_000);
+      },
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    const swept = await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      (sql) =>
+        sql
+          .exec<{ status: string }>(
+            "SELECT status FROM jobs WHERE operation_key = 'sweep-reservations'",
+          )
+          .toArray(),
+    );
+    expect(swept.map((row) => row.status)).not.toContain("poison");
+
+    const kept = await readMapping(email);
+    expect(kept.status).toBe("reserved");
+    expect(kept.saga_committed).toBe(1);
+    expect(kept.credential_id).toBe(credentialId);
+
+    // The re-drive still finishes the saga from that row.
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        sql.exec(
+          "UPDATE jobs SET next_run_at = ? WHERE operation_key = ?",
+          Date.now() - 1_000,
+          resumeSignupOperationKey(operationId),
+        );
+        await state.storage.setAlarm(Date.now() + 60_000);
+      },
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    const active = await readMapping(email);
+    expect(active.status).toBe("active");
+    expect(active.user_id).toBe(userId);
+    const login = await loginWithPassword({
+      container,
+      input: { email, password: TEST_PASSWORD },
+    });
+    expect(login.userId).toBe(userId);
+  });
+
+  it("(i) deletes an expired reservation that never reached phase 2", async () => {
+    const container = createTestContainer();
+    const email = uniqueEmail();
+    const userId = container.idGenerator.next();
+    const credentialId = container.idGenerator.next();
+    const operationId = container.idGenerator.next();
+    const gateway = container.identityGateway;
+    const locator = await gateway.deriveCredentialLocator(
+      "email",
+      email,
+      credentialId,
+    );
+    const now = Date.now();
+    await gateway.reserveCredential(locator, {
+      operationId,
+      candidateUserId: userId,
+      callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),
+      canonical: email,
+      passwordVerifier: null,
+      reservedUntil: new Date(now + container.identityTuning.reservationTtlMs),
+      coordinator: { role: "coordinator", locators: [locator] },
+    });
+    expect((await readMapping(email)).saga_committed).toBeNull();
+
+    const bucket = await bucketOfEmail(email);
+    const stub = directoryStubOf(bucket.generation, bucket.bucketIndex);
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        sql.exec(
+          "UPDATE credential_mappings SET reserved_until = ? WHERE hmac = ?",
+          now - 1_000,
+          locator.hmac,
+        );
+        sql.exec(
+          "UPDATE jobs SET next_run_at = ? WHERE operation_key = 'sweep-reservations'",
+          now - 1_000,
+        );
+        sql.exec(
+          "UPDATE jobs SET next_run_at = ? WHERE operation_key = ?",
+          now + 3_600_000,
+          resumeSignupOperationKey(operationId),
+        );
+        await state.storage.setAlarm(Date.now() + 60_000);
+      },
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    const rows = await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      (sql) =>
+        sql
+          .exec(
+            "SELECT status FROM credential_mappings WHERE hmac = ?",
+            locator.hmac,
+          )
+          .toArray(),
+    );
+    expect(rows).toEqual([]);
   });
 });
 

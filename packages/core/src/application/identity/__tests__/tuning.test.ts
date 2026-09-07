@@ -20,19 +20,44 @@ function configurationErrorFrom(fn: () => unknown): boolean {
 
 describe("reservationTtlFloorMs", () => {
   // Defaults: attempts 1..4 of a 5-attempt runner back off 2 s, 4 s, 8 s, 16 s
-  // (30 s); forward plus cleanup is 60 s, plus the 2 s margin.
-  it("is 62,000 ms with the default delivery tuning", () => {
-    expect(reservationTtlFloorMs()).toBe(62_000);
-    expect(reservationTtlFloorMs(DELIVERY_TUNING_DEFAULTS)).toBe(62_000);
+  // (30 s). Forward = the 60 s first re-drive wait + 30 s; cleanup = the
+  // runner's attempt-0 wait (1 s) + 30 s; plus the 2 s margin.
+  it("is 123,000 ms with the default tuning", () => {
+    expect(reservationTtlFloorMs()).toBe(123_000);
+    expect(reservationTtlFloorMs(DELIVERY_TUNING_DEFAULTS)).toBe(123_000);
+    expect(
+      reservationTtlFloorMs(
+        DELIVERY_TUNING_DEFAULTS,
+        IDENTITY_TUNING_DEFAULTS.signupResumeDelayMs,
+      ),
+    ).toBe(123_000);
   });
 
-  it("moves with the job runner's backoff", () => {
+  it("moves with the job runner's backoff and the first re-drive wait", () => {
     expect(
-      reservationTtlFloorMs({
-        ...DELIVERY_TUNING_DEFAULTS,
-        jobsMaxAttempts: 2,
-      }),
-    ).toBe(2 * 2_000 + 2_000);
+      reservationTtlFloorMs(
+        { ...DELIVERY_TUNING_DEFAULTS, jobsMaxAttempts: 2 },
+        10_000,
+      ),
+    ).toBe(10_000 + 2_000 + 1_000 + 2_000 + 2_000);
+  });
+
+  it("checks the TTL against the floor of the tuning's own re-drive wait", () => {
+    const floor = reservationTtlFloorMs(DELIVERY_TUNING_DEFAULTS, 100_000);
+    expect(
+      configurationErrorFrom(() =>
+        createIdentityTuning({
+          signupResumeDelayMs: 100_000,
+          reservationTtlMs: floor,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      createIdentityTuning({
+        signupResumeDelayMs: 100_000,
+        reservationTtlMs: floor + 1,
+      }).reservationTtlMs,
+    ).toBe(floor + 1);
   });
 });
 

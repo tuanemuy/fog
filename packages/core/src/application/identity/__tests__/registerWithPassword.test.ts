@@ -43,6 +43,7 @@ function locatorFor(credentialId: string): MappingLocator {
 function recordingGateway(
   calls: Call[],
   activate: () => boolean = () => true,
+  commit: () => boolean = () => true,
 ): IdentityGateway {
   return trippingIdentityGateway(trip, {
     deriveCredentialLocator: async (kind, canonical, credentialId) => {
@@ -57,6 +58,10 @@ function recordingGateway(
     },
     initializeAccount: async (userId, input) => {
       calls.push({ name: "initializeAccount", args: [userId, input] });
+    },
+    commitSignupSaga: async (locator, operationId) => {
+      calls.push({ name: "commitSignupSaga", args: [locator, operationId] });
+      return commit();
     },
     activateReservation: async (locator, operationId, userId) => {
       calls.push({
@@ -110,7 +115,7 @@ function expectedIds() {
 }
 
 describe("registerWithPassword", () => {
-  it("drives the saga in order: derive, reserve, initialize, activate, record", async () => {
+  it("drives the saga in order: derive, reserve, initialize, commit, activate, record", async () => {
     const calls: Call[] = [];
     const result = await registerWithPassword({
       container: makeContainer(recordingGateway(calls)),
@@ -123,6 +128,7 @@ describe("registerWithPassword", () => {
       "deriveCredentialLocator",
       "reserveCredential",
       "initializeAccount",
+      "commitSignupSaga",
       "activateReservation",
       "recordSignupLocator",
     ]);
@@ -170,9 +176,10 @@ describe("registerWithPassword", () => {
       locators: [locator],
     });
 
-    expect(argsOf(calls, 3)).toEqual([locator, operationId, userId]);
+    expect(argsOf(calls, 3)).toEqual([locator, operationId]);
+    expect(argsOf(calls, 4)).toEqual([locator, operationId, userId]);
 
-    expect(argsOf(calls, 4)).toEqual([
+    expect(argsOf(calls, 5)).toEqual([
       userId,
       {
         operationId,
@@ -185,6 +192,31 @@ describe("registerWithPassword", () => {
           label: "",
         },
       },
+    ]);
+  });
+
+  it("throws EMAIL_ALREADY_REGISTERED when the saga mark finds no reservation of its own", async () => {
+    const calls: Call[] = [];
+    const run = registerWithPassword({
+      container: makeContainer(
+        recordingGateway(
+          calls,
+          () => true,
+          () => false,
+        ),
+      ),
+      input: { email: "user@example.com", password: PASSWORD },
+    });
+
+    await expect(run).rejects.toSatisfy(
+      (error) =>
+        isConflictError(error) && error.code === "EMAIL_ALREADY_REGISTERED",
+    );
+    expect(calls.map((call) => call.name)).toEqual([
+      "deriveCredentialLocator",
+      "reserveCredential",
+      "initializeAccount",
+      "commitSignupSaga",
     ]);
   });
 

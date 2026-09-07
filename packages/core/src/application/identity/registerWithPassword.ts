@@ -19,6 +19,12 @@ export const INITIAL_CREDENTIAL_VERSION = 1;
  * a saga: reservation (phase 1) → account initialisation (phase 2) →
  * reservation activation (phase 3) → reverse-index record (phase 4). A saga
  * cut short is re-driven by the coordinator bucket's `resume-signup` job.
+ *
+ * Between phases 2 and 3 the coordinator writes the `saga_committed` mark
+ * on its reservation row (`spec/recovery/index.md`, 予約 TTL の不等式):
+ * from here on an account exists, so the row must outlive its TTL until
+ * the saga finishes or its cleanup runs, and the mark is what holds
+ * `sweep-reservations` off it.
  */
 export async function registerWithPassword({
   container,
@@ -63,6 +69,14 @@ export async function registerWithPassword({
     },
     locators: [locator],
   });
+
+  const committed = await gateway.commitSignupSaga(locator, operationId);
+  if (!committed) {
+    throw new ConflictError(
+      "EMAIL_ALREADY_REGISTERED",
+      "This email address is already registered",
+    );
+  }
 
   const activated = await gateway.activateReservation(
     locator,

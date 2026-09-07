@@ -9,7 +9,12 @@ import {
   trippingIdentityGateway,
   trippingMemoGateway,
 } from "../../__tests__/fakes";
-import { isNotFoundError, isSystemError, SystemErrorCode } from "../../errors";
+import {
+  isNotFoundError,
+  isSystemError,
+  SystemError,
+  SystemErrorCode,
+} from "../../errors";
 import type { UsecaseContainer } from "../../types";
 import type {
   CredentialCoordinateDto,
@@ -115,6 +120,25 @@ describe("getCurrentUser", () => {
 
     await expect(run(gateway)).rejects.toSatisfy(
       (error) => isNotFoundError(error) && error.code === "USER_NOT_FOUND",
+    );
+  });
+
+  // `USER_NOT_FOUND` is for an initialised object with no settings row. A
+  // never-initialised object is a system condition the gateway reports as
+  // `SystemError(NotInitialized)`, and the usecase does not re-read it.
+  it("passes SystemError(NotInitialized) through unchanged", async () => {
+    const gateway = trippingIdentityGateway(trip, {
+      readCurrentUser: async () => {
+        throw new SystemError(
+          SystemErrorCode.NotInitialized,
+          "The Durable Object has not been initialised",
+        );
+      },
+    });
+
+    await expect(run(gateway)).rejects.toSatisfy(
+      (error) =>
+        isSystemError(error) && error.code === SystemErrorCode.NotInitialized,
     );
   });
 

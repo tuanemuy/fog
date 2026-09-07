@@ -39,6 +39,11 @@ export type ReserveCredentialRpcInput = Readonly<{
   resumeAt: Date;
 }>;
 
+export type CommitSagaRpcInput = Readonly<{
+  locator: MappingLocator;
+  operationId: string;
+}>;
+
 export type ActivateReservationRpcInput = Readonly<{
   locator: MappingLocator;
   operationId: string;
@@ -65,6 +70,7 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
       jobRegistry: {
         "resume-signup": createResumeSignupHandler({
           env,
+          commit: (input) => this.commitLocally(input),
           activate: (input) => this.activateLocally(input),
         }),
         "sweep-reservations": createSweepReservationsHandler(),
@@ -86,6 +92,19 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
       this.env.IDENTITY_MAIL_ENCRYPTION_KEY,
     );
     return this.keyring;
+  }
+
+  private commitLocally(input: CommitSagaRpcInput): Promise<boolean> {
+    return this.runUnitOfWork((ctx) =>
+      ctx.credentialMappingWriter.commitSaga({
+        coordinate: {
+          credentialId: CredentialId.create(input.locator.credentialId),
+          kind: input.locator.kind,
+          mapping: encodeMapping(input.locator),
+        },
+        operationId: input.operationId,
+      }),
+    );
   }
 
   private activateLocally(
@@ -126,6 +145,11 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
         return undefined;
       });
     });
+  }
+
+  /** The coordinator's mark between registration phases 2 and 3. */
+  async commitSaga(input: CommitSagaRpcInput): Promise<RpcEnvelope<boolean>> {
+    return this.envelope(() => this.commitLocally(input));
   }
 
   /** Registration saga phase 3. */

@@ -3,6 +3,7 @@ import {
   type DeliveryTuning,
 } from "@repo/core/application/delivery/tuning";
 import type { JobKind } from "@repo/core/application/delivery/types";
+import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { Logger } from "@repo/core/application/ports/logger";
 import {
   claimRows,
@@ -164,7 +165,10 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
         registry[row.kind as JobKind] ??
         null;
       if (handler === null) {
-        throw new Error(`No handler registered for job kind ${row.kind}`);
+        throw new SystemError(
+          SystemErrorCode.JobHandlerMissing,
+          `No handler registered for job kind ${row.kind}`,
+        );
       }
       result = await handler({
         storage,

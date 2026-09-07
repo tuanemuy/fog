@@ -59,11 +59,24 @@ function backoffTotalMs(delivery: DeliveryTuning): number {
  * The floor `spec/recovery/index.md` puts under the reservation TTL: the time
  * to exhaust the forward attempts plus the time to exhaust the cleanup
  * attempts, plus a margin. The cleanup term is never folded into the margin.
+ *
+ * The forward total starts with the wait the coordinator sets before the
+ * first re-drive (`signupResumeDelayMs`), and the cleanup total starts
+ * with the runner's own first wait (`attempt = 0` of the same backoff
+ * curve): the reservation is only safe once both have run out.
  */
 export function reservationTtlFloorMs(
   delivery: DeliveryTuning = DELIVERY_TUNING_DEFAULTS,
+  signupResumeDelayMs: number = IDENTITY_TUNING_DEFAULTS.signupResumeDelayMs,
 ): number {
-  return 2 * backoffTotalMs(delivery) + RESERVATION_TTL_MARGIN_MS;
+  const forward = signupResumeDelayMs + backoffTotalMs(delivery);
+  const cleanup =
+    backoffDelayMs(
+      0,
+      delivery.jobsBackoffBaseMs,
+      delivery.jobsBackoffMaxDelayMs,
+    ) + backoffTotalMs(delivery);
+  return forward + cleanup + RESERVATION_TTL_MARGIN_MS;
 }
 
 export function createIdentityTuning(
@@ -71,7 +84,10 @@ export function createIdentityTuning(
   delivery: DeliveryTuning = DELIVERY_TUNING_DEFAULTS,
 ): IdentityTuning {
   const tuning: IdentityTuning = { ...IDENTITY_TUNING_DEFAULTS, ...overrides };
-  if (tuning.reservationTtlMs <= reservationTtlFloorMs(delivery)) {
+  if (
+    tuning.reservationTtlMs <=
+    reservationTtlFloorMs(delivery, tuning.signupResumeDelayMs)
+  ) {
     throw new SystemError(
       SystemErrorCode.ConfigurationError,
       "Identity tuning: reservationTtlMs must exceed the forward + cleanup backoff total plus margin",

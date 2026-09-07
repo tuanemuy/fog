@@ -1,3 +1,4 @@
+import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { MappingLocator } from "@repo/core/domain/identity/ports/credentialMappingRepository";
 import { encodeMapping } from "../crypto/locatorDerivation";
 import { callDurableObject, userDataStub } from "../doStubs";
@@ -24,6 +25,10 @@ export type ResumeSignupPayload = Readonly<{
 
 export type ResumeSignupDeps = Readonly<{
   env: StateWorkerEnv;
+  commit: (input: {
+    locator: MappingLocator;
+    operationId: string;
+  }) => Promise<boolean>;
   activate: (input: {
     locator: MappingLocator;
     operationId: string;
@@ -52,15 +57,24 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
       )
       .toArray()[0];
     if (!row || row.credential_id !== locator.credentialId) {
-      throw new Error("resume-signup: coordinator reservation is missing");
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "resume-signup: coordinator reservation is missing",
+      );
     }
     const userId = row.user_id ?? row.candidate_user_id;
     if (userId === null) {
-      throw new Error("resume-signup: reservation names no account");
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "resume-signup: reservation names no account",
+      );
     }
     const namespace = deps.env.USER_DATA;
     if (namespace === undefined) {
-      throw new Error("resume-signup: USER_DATA binding is not configured");
+      throw new SystemError(
+        SystemErrorCode.ConfigurationError,
+        "resume-signup: USER_DATA binding is not configured",
+      );
     }
     const locators = (
       row.locators === null ? [locator] : JSON.parse(row.locators)
@@ -84,9 +98,19 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
         locators,
       }),
     );
+    const committed = await deps.commit({ locator, operationId });
+    if (!committed) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "resume-signup: reservation lost before the saga mark",
+      );
+    }
     const activated = await deps.activate({ locator, operationId, userId });
     if (!activated && row.status !== "active") {
-      throw new Error("resume-signup: reservation could not be activated");
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "resume-signup: reservation could not be activated",
+      );
     }
     await callDurableObject(() =>
       stub.recordSignupLocator({

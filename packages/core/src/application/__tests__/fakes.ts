@@ -103,6 +103,7 @@ const IDENTITY_GATEWAY_METHODS = [
   "deriveCredentialLocator",
   "reserveCredential",
   "initializeAccount",
+  "commitSignupSaga",
   "activateReservation",
   "recordSignupLocator",
   "resolveLoginCredential",

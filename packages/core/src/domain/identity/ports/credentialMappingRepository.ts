@@ -110,6 +110,11 @@ export type ActivateReservationParams = Readonly<{
   userId: UserId;
 }>;
 
+export type CommitSagaParams = Readonly<{
+  coordinate: CredentialCoordinate;
+  operationId: string;
+}>;
+
 export type CancelReservationParams = Readonly<{
   coordinate: CredentialCoordinate;
   callerToken: string;
@@ -127,6 +132,17 @@ export type CancelReservationParams = Readonly<{
 export interface CredentialMappingWriter {
   /** Loses to an existing live row with `ConflictError`; a re-send of the same operation converges. */
   reserveCredential(params: ReserveCredentialParams): void;
+  /**
+   * Writes the `saga_committed` mark on the row of that operation once the
+   * account side has committed (registration phase 2 returned). The mark
+   * is what keeps `sweep-reservations` off a `reserved` row whose account
+   * already exists (`spec/recovery/index.md`, 予約 TTL の不等式), so it is
+   * written by the coordinator as its own step, before activation — never
+   * folded into `activateReservation`. `true` on a `reserved` or `active`
+   * row of that operation; `false` when the row is gone or belongs to
+   * another operation.
+   */
+  commitSaga(params: CommitSagaParams): boolean;
   /** Promotes the reservation of that operation to an active mapping. */
   activateReservation(params: ActivateReservationParams): boolean;
   /**

@@ -11,8 +11,9 @@ import {
 // the module under test, which is what makes the comparison an assertion
 // instead of a tautology.
 //
-// This is the counterpart, on the `jobs.kind` side, of the grep that
-// checks no `event.type` outside the roster appears in the source.
+// This is the counterpart, on the `jobs.kind` side, of `rosterGrep.test.ts`,
+// which scans the sources for every `jobs.kind` and `event.type` literal
+// and checks each against the roster.
 const ROSTER_USER_DATA = [
   "purge-trash",
   "reindex",

@@ -1,3 +1,4 @@
+import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type {
   AccountState,
   AccountStore,
@@ -48,7 +49,12 @@ export function createAccountStore(
           now(),
         )
         .toArray()[0];
-      if (!row) throw new Error("account row is missing");
+      if (!row) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "account row is missing",
+        );
+      }
       return row.reset_version;
     },
 

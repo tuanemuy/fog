@@ -288,6 +288,10 @@ export const SystemErrorCode = {
   // filing an unclassified `TypeError` under it sends the investigation
   // to the storage layer.
   UnclassifiedError: "UNCLASSIFIED_ERROR",
+  // A `jobs.kind` reached the runner with no handler in the registry — a
+  // row written by a newer build, or a registry a class forgot to fill.
+  // Distinct so a `poison` row's `terminal_reason` says which it was.
+  JobHandlerMissing: "JOB_HANDLER_MISSING",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

@@ -187,12 +187,28 @@ export function createCredentialMappingWriter(
       );
     },
 
+    commitSaga(params) {
+      const { coordinate } = params;
+      return updateMatchedRow(
+        sql,
+        `UPDATE credential_mappings
+           SET saga_committed = 1, updated_at = ?
+         WHERE kind = ? AND hmac = ? AND credential_id = ? AND operation_id = ?
+           AND status IN ('reserved', 'active')`,
+        now(),
+        coordinate.kind,
+        hmacOf(coordinate.kind, coordinate.mapping),
+        coordinate.credentialId,
+        params.operationId,
+      );
+    },
+
     activateReservation(params) {
       const { coordinate } = params;
       return updateMatchedRow(
         sql,
         `UPDATE credential_mappings
-           SET status = 'active', user_id = ?, saga_committed = 1, updated_at = ?
+           SET status = 'active', user_id = ?, updated_at = ?
          WHERE kind = ? AND hmac = ? AND credential_id = ? AND operation_id = ?
            AND (status = 'reserved' OR (status = 'active' AND user_id = ?))`,
         params.userId,
