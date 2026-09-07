@@ -6,6 +6,12 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { createServerFn } from "@tanstack/react-start";
+// Server functions referenced only from client islands inside a streamed RSC
+// payload are invisible to the production manifest unless a route module
+// imports them ("Server function info not found" at runtime, dev is
+// unaffected). These side-effect imports register them.
+import "@/components/auth/actions";
+import "@/components/timeline/actions";
 import type { ReactNode } from "react";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
