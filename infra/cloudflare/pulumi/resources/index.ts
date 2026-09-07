@@ -23,11 +23,22 @@ const db = new cloudflare.D1Database(
   { protect: true },
 );
 
+// The Queue carries event delivery and nothing else: it is the transport
+// between the Outbox relay (inside each Durable Object's `alarm()`) and
+// the consumers hosted in the request Worker. It is never a store and
+// never a work distributor.
 const eventsQueue = new cloudflare.Queue("events", {
   accountId,
   name: `${prefix}-events`,
 });
 
+// `message_retention_period` cannot be set from here: `QueueArgs` takes
+// `accountId` and `name` only, and the retention is a Queue-resource
+// setting reachable through `wrangler queues create/update
+// --message-retention-period-secs`. It is therefore an out-of-band
+// operational step (see the "Before first deploy" list in the `.tpl`s),
+// and `application/delivery/tuning.ts` carries it as a declared value the
+// constraint checks run against.
 const dlqQueue = new cloudflare.Queue("dlq", {
   accountId,
   name: `${prefix}-events-dlq`,

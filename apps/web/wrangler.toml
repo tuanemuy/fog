@@ -3,12 +3,22 @@
 # the resource names below lack the stage suffix that keeps environments
 # from colliding. Deploy via `wrangler.staging.toml` / `wrangler.production.toml`.
 #
-# Sibling Workers are declared as `[env.*]` named environments below so
-# they can be spun up locally with `wrangler dev --env <role>`.
+# This is the **request Worker**: it serves HTTP, does the CPU-bound work,
+# and hosts the queue consumers and the DLQ handler in its `queue()`
+# handler. The Durable Object classes live in the **state Worker**, whose
+# config is a separate file (`wrangler.state.toml`) rather than an
+# `[env.*]` block here — deploying and `wrangler dev` both want a real
+# file, `CLOUDFLARE_ENV` selects one environment across every Worker at
+# once so a single `[env.state]` cannot be pointed at the auxiliary
+# Worker alone, and aiming the Vite plugin at this same file twice makes
+# both Workers derive the same Vite environment name and collide.
 #
-# Wrangler does NOT inherit `d1_databases` / `vars` from top level into
-# named environments — the duplication across `[env.*]` blocks is by
-# design. Keep `database_id` / `APP_URL` in sync across every block.
+# `script_name` below must equal the `name` in `wrangler.state.toml`. The
+# Vite plugin resolves cross-Worker Durable Object bindings by that name
+# and **silently does nothing when it does not match** — nothing fails at
+# config load, and the mismatch only shows when a DO stub is actually
+# called. A unit test pins the two names against each other, and the
+# `/__diagnostics/schema-version` route makes one real round trip.
 name = "tanstack-start-template"
 main = "app/server.cloudflare.ts"
 compatibility_date = "2026-05-01"
@@ -22,140 +32,48 @@ directory = "./dist/client"
 binding = "ASSETS"
 
 [vars]
-APP_URL = "http://localhost:8787"
+APP_URL = "http://localhost:3000"
+# Registers the diagnostic route that makes one round trip into a Durable
+# Object through the stub-selection adapter. Declared here and in no
+# deployed stage's config, so the route does not exist in staging or
+# production.
+DIAGNOSTICS_ENABLED = "true"
 
-# D1: read/write for the request path. Outbox writes happen here
-# transactionally with aggregate writes — see packages/core/src/adapters/d1/.
+# D1 carries the legacy `users` path only. The outbox is gone from it:
+# event rows live in the Durable Object that emitted them.
 [[d1_databases]]
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
-# Service Binding to the relay Worker — kicked from usecases right
-# after a UoW commit so newly-persisted outbox rows publish without
-# waiting for the safety-net cron in [env.relay]. Failures are logged
-# and swallowed; the cron is the authoritative trigger.
-[[services]]
-binding = "RELAY"
-service = "tanstack-start-template-relay"
+# Durable Object namespaces, implemented by the state Worker.
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+script_name = "tanstack-start-template-state"
 
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"
+script_name = "tanstack-start-template-state"
 
-# === Relay (Service Binding fetch + safety-net cron) ====================
-[env.relay]
-name = "tanstack-start-template-relay"
-main = "app/worker/cloudflare/relay.ts"
-compatibility_date = "2026-05-01"
-compatibility_flags = ["nodejs_compat"]
-
-[env.relay.vars]
-APP_URL = "http://localhost:8787"
-# Outbox relay tuning. Strings because wrangler `[vars]` cannot carry
-# numeric types; parsed + validated at the worker entry boundary by
-# `readRelayTuning(env)`. Values match the application-layer defaults
-# exported from `packages/core/src/application/workers/eventRelayWorker.ts`.
-# Edit here (not in code) to tune prod / staging.
-OUTBOX_BATCH_SIZE = "100"
-OUTBOX_LEASE_MS = "300000"   # 5 min — covers worst-case single-batch dispatch
-OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep low
-
-[[env.relay.d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
-
-[[env.relay.queues.producers]]
-binding = "EVENTS_QUEUE"
-queue = "tanstack-start-template-events"
-
-# Cron is the safety net — the primary trigger is the RELAY service
-# binding fired from usecases after each UoW commit. 5 minutes is a
-# trade-off between recovery latency on a Service Binding outage and
-# the per-cron-tick request cost.
-[env.relay.triggers]
-crons = ["*/5 * * * *"]
-
-
-# === Consumer ===========================================================
-[env.consumer]
-name = "tanstack-start-template-consumer"
-main = "app/worker/cloudflare/consumer.ts"
-compatibility_date = "2026-05-01"
-compatibility_flags = ["nodejs_compat"]
-
-[env.consumer.vars]
-APP_URL = "http://localhost:8787"
-
-# D1 is bound for subscribers that write projections / idempotency
-# stamps. Drop if your consumers are stateless.
-[[env.consumer.d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
-
-[[env.consumer.queues.consumers]]
+# The mail consumer. `max_retries` and `dead_letter_queue` are the two
+# values that make "burn through the retries, then the DLQ" real; both are
+# mirrored as declared values in `application/delivery/tuning.ts`, and the
+# constraint `queue max retry period + DLQ retention < reset token TTL`
+# is checked there. `message_retention_period` is not a key here at all —
+# it belongs to the Queue resource and is set out of band.
+[[queues.consumers]]
 queue = "tanstack-start-template-events"
 max_batch_size = 25
 max_batch_timeout = 30 # seconds
-# Total delivery budget: relay's `DEFAULT_MAX_ATTEMPTS = 2` (publish-side
-# retries before quarantine) × consumer `1 + max_retries` here ≈ 8 in
-# the worst case. Keep both numbers small and adjust together —
-# multiplying them is what produces the user-visible retry count.
 max_retries = 3
 dead_letter_queue = "tanstack-start-template-events-dlq"
 
-
-# === Pruner =============================================================
-# Quarantined outbox rows (`failed_at IS NOT NULL`) are intentionally
-# preserved for operator inspection — the pruner only sweeps processed
-# rows.
-[env.pruner]
-name = "tanstack-start-template-pruner"
-main = "app/worker/cloudflare/pruner.ts"
-compatibility_date = "2026-05-01"
-compatibility_flags = ["nodejs_compat"]
-
-[env.pruner.vars]
-APP_URL = "http://localhost:8787"
-# Outbox pruner tuning. Parsed + validated at the worker entry boundary
-# by `readPruneTuning(env)`. Matches `DEFAULT_OUTBOX_RETENTION_MS` in
-# `packages/core/src/application/workers/outboxPrune.ts`.
-OUTBOX_RETENTION_MS = "604800000"   # 7 days
-
-[[env.pruner.d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
-
-[env.pruner.triggers]
-crons = ["0 3 * * *"] # 03:00 UTC daily
-
-
-# === DLQ ================================================================
-# DLQ intentionally has no dead-letter target — a re-failure here
-# would loop. `max_retries` is therefore kept low to absorb a transient
-# logger/projection blip without masquerading as automated recovery.
-[env.dlq]
-name = "tanstack-start-template-dlq"
-main = "app/worker/cloudflare/dlq.ts"
-compatibility_date = "2026-05-01"
-compatibility_flags = ["nodejs_compat"]
-
-[env.dlq.vars]
-APP_URL = "http://localhost:8787"
-
-# D1 mirrors the primary consumer for subscribers that persist
-# quarantined events. Drop if your DLQ handler stays purely log/metric.
-[[env.dlq.d1_databases]]
-binding = "DB"
-database_name = "tanstack-start-template-d1"
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "../../packages/core/src/adapters/d1/migrations"
-
-[[env.dlq.queues.consumers]]
+# The DLQ handler. It has no dead-letter target of its own — a re-failure
+# here would loop — so `max_retries` is kept low.
+[[queues.consumers]]
 queue = "tanstack-start-template-events-dlq"
 max_batch_size = 25
 max_batch_timeout = 30 # seconds

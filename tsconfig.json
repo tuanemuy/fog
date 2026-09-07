@@ -1,5 +1,5 @@
 {
-  "include": ["*.ts"],
+  "include": ["*.ts", "lint/**/*.ts"],
   "compilerOptions": {
     "lib": ["ES2022"],
     "types": ["node"],

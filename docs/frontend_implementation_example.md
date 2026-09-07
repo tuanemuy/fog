@@ -2,6 +2,8 @@
 
 Implementation example assuming TanStack Start (with React Server Components enabled).
 
+The `todo` domain used throughout is the template's own sample and is not part of this repository — read the `apps/web/app/{components,routes}/todo/…` paths below as illustrations of a pattern, not as files to open.
+
 Basic design principles:
 
 - **Choose RSC with an awareness of its "owner".** An RSC is nothing more than a React Flight payload returned from `createServerFn`. Decide first where you call it from = who holds that payload.
@@ -105,9 +107,9 @@ export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> 
 }
 ```
 
-The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
+The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/settings/SettingsSkeleton` shaped to `CurrentUserPanel`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
 
-This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/todo` settles its loader immediately and never triggers it.
+This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/settings` settles its loader immediately and never triggers it.
 
 ### 2. Held by TanStack Query
 
@@ -498,8 +500,14 @@ import {
   type SerializedValidationError,
 } from "./errorResponse";
 
-class InputValidationError extends CodedError {
+export class InputValidationError extends CodedError {
   override readonly name = "InputValidationError";
+  // Required by `CodedError`, whose abstract declaration derives the type from
+  // this class's own `toSerialized()`. That override is annotated with
+  // `SerializedValidationError`, so a value disagreeing with the `kind` it
+  // emits does not compile; leave that return type wide and the binding
+  // degrades to `string`. The annotation here is optional, and documents intent.
+  readonly serializedKind: SerializedValidationError["kind"] = "validation";
 
   constructor(public readonly fieldErrors: FieldErrors) {
     super("INVALID_INPUT", "Invalid input");
@@ -845,9 +853,13 @@ __root.tsx .errorComponent          ←  final fallback (sanitizeRouteError)
 An exception thrown by `createServerFn`'s `handler` reaches the client, but if it stays a plain `Error`, the `cause` chain and stack trace break during serialization, and branching by `kind` becomes impossible. So, in the presentation layer, we provide
 
 - `AppServerError` — an exception class dedicated to propagation (holds `serialized` as an enumerable own property and survives a JSON round trip)
-- `appServerErrorAdapter` (registered with `createStart` in `apps/web/app/start.ts`) — a serialization adapter that preserves the class identity of `AppServerError` across a Seroval roundtrip. **It runs only at boundaries via `createServerFn(...).middleware([errorResponseMiddleware])`**. Via direct `fetch` / an RSC error frame / a custom transport, the adapter does not run, and the client receives a plain Error/object (a remnant) that holds `serialized` as an own property
+- `appServerErrorAdapter` (registered with `createStart` in `apps/web/app/start.ts`) — a serialization adapter that preserves the class identity of `AppServerError` across a Seroval roundtrip. **It runs only at boundaries via `createServerFn(...).middleware([errorResponseMiddleware])`**. Via direct `fetch` / an RSC error frame / a custom transport, the adapter does not run, and the client receives a plain Error/object (a remnant) that holds `serialized` as an own property. The adapter is symmetric, so its `fromSerializable` also runs while an **incoming** request body is parsed — a client can post a node tagged `$TSR/t/AppServerError`, which is why that leg validates with `asSerializedError` and fails closed to `kind: "unknown"` instead of trusting the payload
 - `serializeError(error)` — folds Business / NotFound / Validation, etc. into a `SerializedError` (`{ kind, code, message, retryable?, fieldErrors? }`)
-- `extractSerializedError(error)` — extracts the `SerializedError` on the client side. Three-stage detection: (1) `instanceof AppServerError` (the adapter-passed path) → (2) structural `serialized` remnant detection (the adapter-not-passed path) → (3) `serializeError` fallback. **UI code must always go through this function. Using `instanceof AppServerError` for branching becomes false on the adapter-not-passed path and breaks silently**
+- `extractSerializedError(error)` — extracts the `SerializedError`. One payload stage plus a fallback:
+    - Any value carrying a `serialized` own property goes through `asSerializedError`, which validates every field the union declares and **rebuilds the value from the known keys only**, so an unknown property cannot ride along through `redactForClient`'s spread. A payload that fails falls through to `serializeError`.
+    - The adapter-passed and adapter-not-passed paths take that same stage, because **the `Symbol.for("@repo/web/AppServerError")` brand is deliberately not consulted here** — it does not survive the serialization boundary this receives values from, and it is forgeable, so it is neither necessary nor sufficient. Matching the brand is `isAppServerError`'s job, which the serialization adapter binds its `test` to.
+    - Not client-only: `errorResponseMiddleware` classifies with it too, which is why the shape of a thrown value must never derive from external input. Translate a value that came off the wire into an error class instead of re-throwing it.
+    - **UI code must always go through this function.** `instanceof AppServerError` is false both on the adapter-not-passed path and across the SSR / RSC module-graph split, and breaks silently — `lint/no-instanceof-error.grit` rejects it.
 - `errorResponseMiddleware` (`apps/web/app/presentation/errorResponseMiddleware.ts`) — wraps the entire server function (both `inputValidator` and the handler) to apply the above and set the HTTP status from `SerializedErrorKind`. TanStack Router's `redirect()` / `notFound()` sentinels are rethrown as-is. **Write `createServerFn(...).middleware([errorResponseMiddleware])` directly at the call site** (pre-applying via a separate module is not allowed because it breaks the RSC plugin's static rewrite)
 
 (`apps/web/app/presentation/errorResponse.ts`).

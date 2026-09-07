@@ -4,48 +4,97 @@ import { createMiddleware } from "@tanstack/react-start";
 import { setResponseStatus } from "@tanstack/react-start/server";
 import {
   AppServerError,
+  extractSerializedError,
   httpStatusFor,
   redactForClient,
   type SerializedError,
-  serializeError,
+  UNVERIFIED_SERIALIZED_ERROR,
 } from "./errorResponse";
 
 // Wraps the entire server-function pipeline so throws from `inputValidator`
-// and the handler land in the same catch. Setting the response status from
-// inside the handler alone would miss validator throws (they fire before
-// `.handler` runs), and the constructor of `AppServerError` can't touch the
-// server-only status setter directly. The `.server(...)` body is stripped
-// from client bundles by the TanStack Start compiler, so importing
-// `@tanstack/react-start/server` at module top-level is safe.
+// and the handler land in the same catch — setting the status inside the
+// handler alone would miss validator throws. The `.server(...)` body is
+// stripped from client bundles by the compiler, so the top-level import of
+// `@tanstack/react-start/server` is safe.
 //
-// This is the single redaction boundary for outbound errors: the raw
-// serialized form is handed to the injected `Logger` for ops triage, and
-// the client receives only `redactForClient(...)`. Logger output policy
-// (console, structured JSON, sink, …) is owned by the implementation that
-// the container injects — the middleware just forwards the raw payload.
+// This module owns the redaction boundary for outbound errors: this
+// middleware for awaited server functions, `guardStreamedRender` for RSC
+// leaves that render after the handler returned.
 export const errorResponseMiddleware = createMiddleware({
   type: "function",
 }).server(async ({ next }) => {
   try {
     return await next();
   } catch (error) {
+    // `isNotFound` is `obj?.isNotFound === true`, so it rides the invariant
+    // `extractSerializedError`'s JSDoc states — breaking it lets a decoded
+    // payload skip classification entirely. `isRedirect` does not: it tests
+    // `instanceof Response`, which no plain object can satisfy.
     if (isRedirect(error) || isNotFound(error)) throw error;
-
-    const rawSerialized =
-      error instanceof AppServerError
-        ? error.serialized
-        : serializeError(error);
-
-    if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
-      await logServerError(error, rawSerialized);
-    }
-
-    const clientSerialized = redactForClient(rawSerialized);
-    const appError = new AppServerError(clientSerialized);
-    setResponseStatus(httpStatusFor(clientSerialized));
+    const appError = await toClientError(error);
+    setResponseStatus(httpStatusFor(appError.serialized));
     throw appError;
   }
 });
+
+/**
+ * The same boundary, for renders that stream past the middleware.
+ *
+ * A streaming route forwards `renderServerComponent(...)` without awaiting
+ * it, so the RSC leaf renders after the handler returned and its throws
+ * never reach the middleware's `catch`. Leaves that read protected data
+ * wrap their loading in this so redaction and logging still happen.
+ *
+ * It classifies the failure the same way the middleware does — including a
+ * failure that already crossed a serialization boundary, whose `kind` is read
+ * back from its surviving payload — so redaction and the `system` / `unknown`
+ * logging branch see the kind the usecase earned.
+ *
+ * What it cannot do is put that classification back on the wire. The HTTP
+ * status is already committed, and the RSC boundary does not run
+ * `appServerErrorAdapter`, so unless the `serialized` payload survives that
+ * boundary the client reads the failure as `kind: "unknown"` — both failing
+ * towards less information.
+ */
+export async function guardStreamedRender<T>(
+  load: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isRedirect(error) || isNotFound(error)) throw error;
+    throw await toClientError(error);
+  }
+}
+
+// The single redaction point: the raw serialized form goes to the injected
+// `Logger` for ops triage, the client only ever sees `redactForClient(...)`.
+//
+// Classifying here is what put `extractSerializedError`'s structural stage on
+// the server side, so this function is the reason its invariant — a thrown
+// value's shape never derives from external input — has to hold. Read the
+// JSDoc there before routing a new kind of value into this catch.
+async function toClientError(error: unknown): Promise<AppServerError> {
+  // Not `isAppServerError` + `serializeError`: the brand does not survive a
+  // serialization boundary, so an error that already crossed one would lose its
+  // `kind` here and a 409 / 422 would leave as a 500.
+  //
+  // Last-resort backstop for the boundary catch, since the remnant stage can
+  // still throw on a hostile accessor. A secondary throw would leave the
+  // middleware's `catch` and skip status, redaction and logging.
+  let rawSerialized: SerializedError;
+  try {
+    rawSerialized = extractSerializedError(error);
+  } catch {
+    rawSerialized = UNVERIFIED_SERIALIZED_ERROR;
+  }
+
+  if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
+    await logServerError(error, rawSerialized);
+  }
+
+  return new AppServerError(redactForClient(rawSerialized));
+}
 
 // `containerStore` is client-graph safe (no node-only imports), so
 // statically importing `getContainer` here doesn't pull `node:async_hooks`

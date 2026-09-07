@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "worker-configuration.state.d.ts",
+    "app/worker/cloudflare/stateEnv.check.ts"
+  ],
+  "exclude": ["node_modules"],
+  "compilerOptions": {
+    "types": ["node", "@cloudflare/workers-types"]
+  }
+}

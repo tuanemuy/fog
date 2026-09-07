@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { buildHead } from "@/presentation/head";
 
@@ -21,15 +21,8 @@ export const Route = createFileRoute("/")({
 function LandingPage() {
   return (
     <main>
-      <h1>tanstack-start-template</h1>
-      <p>
-        TanStack Start + RSC + DDD + Cloudflare のリファレンステンプレート。
-      </p>
-      <p>
-        <Link to="/todo" search={{ page: 1, limit: 20 }}>
-          Todo を試す →
-        </Link>
-      </p>
+      <h1>fog</h1>
+      <p>雑に記録し、AIが整理するメモアプリ。</p>
     </main>
   );
 }

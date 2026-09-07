@@ -1,6 +1,6 @@
 # Backend Implementation Guide
 
-The Todo domain implementation is the canonical example. When adding a new domain, just follow the same structure.
+The snippets use a `Foo` domain — a placeholder for the aggregate you are adding. Each domain is laid out as `packages/core/src/domain/${domain}/` plus `packages/core/src/application/${domain}/`; follow that structure when adding one.
 
 > For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
 
@@ -10,57 +10,73 @@ The Todo domain implementation is the canonical example. When adding a new domai
 packages/core/src/
 ├── domain/
 │   ├── common/
-│   │   ├── event.ts               DomainEventBase, EventDraft, EventDecoder, WithEventDrafts
-│   │   └── pagination.ts
-│   ├── error.ts                   BusinessRuleError
+│   │   ├── event.ts                   EventId, DomainEventBase, EventDraft, WithEventDrafts
+│   │   ├── transactionalRepository.ts TransactionalRepository, ExpectedVersion, Versioned
+│   │   ├── version.ts                 Version (branded non-negative integer)
+│   │   ├── pagination.ts
+│   │   └── text.ts
+│   ├── error.ts                       BusinessRuleError, RehydrationError
 │   └── ${domain}/
 │       ├── entity.ts
 │       ├── valueObject.ts
-│       ├── events.ts
 │       ├── errorCode.ts
+│       ├── ${eventType}.ts            one file per event type: type constant + payload + draft factory
 │       └── ports/${domain}Repository.ts
 ├── application/
-│   ├── di/types.ts                SharedDeps, RequestContainer, WorkerContainer, AppConfig
-│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore, getContainer (shared)
-│   ├── di/serverCloudflare.ts     createRequestContainer, createWorkerContainer, readRequestServerConfig (CF runtime)
-│   ├── di/serverNode.ts           createNodeRequestContainer, createNodeWorkerContainer, readNodeServerEnv (Node runtime)
-│   ├── ports/
-│   │   ├── clock.ts
-│   │   ├── idGenerator.ts
-│   │   ├── logger.ts
-│   │   └── outboxRepository.ts
-│   ├── errors/index.ts            NotFound / Conflict / Validation / SystemError + helpers
-│   ├── events/
-│   │   └── buildDecoder.ts
-│   ├── execution/unitOfWork.ts    UnitOfWorkContext enumerates repository slots directly
-│   ├── workers/
-│   │   ├── eventRelayWorker.ts
-│   │   └── outboxPrune.ts
-│   ├── types.ts                   ServiceArgs<T>
+│   ├── delivery/
+│   │   ├── types.ts                   jobs.kind rosters + per-kind policy, RPC envelope types
+│   │   └── tuning.ts                  DeliveryTuning + createDeliveryTuning (declared operating values)
+│   ├── di/
+│   │   ├── types.ts                   SharedDeps, RequestContainer, AppConfig
+│   │   ├── containerStore.ts          installContainerStore, getContainer
+│   │   ├── secrets.ts                 requireSessionSecret, requireDirectoryRoutingKeyring
+│   │   └── serverCloudflare.ts        createRequestContainer, createQueueContainer, readRequestServerConfig
+│   ├── execution/
+│   │   └── unitOfWork.ts              the canonical (synchronous) UoW contract + one context per DO class
+│   ├── ports/                         clock.ts, idGenerator.ts, logger.ts, sessionCodec.ts
+│   ├── errors.ts                      NotFound / Conflict / Validation / Unauthorized / Forbidden / System
+│   ├── types.ts                       UsecaseContainer, ServiceArgs<T>
 │   └── ${domain}/
 │       ├── view.ts
-│       ├── eventDecoders.ts       outbox row → DomainEvent rehydration (lives in application because it depends on SystemError)
 │       ├── ${usecase}.ts
 │       └── __tests__/
-├── presentation/
-│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, httpStatusFor
-│   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
-│   ├── errorDisplay.ts            displayError, sanitizeRouteError
-│   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/
-    └── d1/
-        ├── client.ts
-        ├── schema.ts              domain tables + `_occ_guard` (for OCC abort in the deferred-batch UoW)
-        ├── unitOfWork.ts          D1UnitOfWorkProvider that assembles a PendingBatch and flushes via db.batch()
-        ├── pendingBatch.ts        Drizzle BatchItem buffer + automatic OCC guard injection
-        ├── repositories/
-        │   ├── helpers.ts         mapDbError + isOccGuardViolation
-        │   ├── ${domain}Repository.ts
-        │   └── outboxRepository.ts
-        └── migrations/            SQL migrations read by wrangler
+    ├── cloudflare/
+    │   ├── durableObjectBase.ts       AsyncWorkDurableObject: RPC envelope, schema gate, alarm()
+    │   ├── userDataDurableObject.ts   one user's data
+    │   ├── identityDirectoryDurableObject.ts  one credential bucket
+    │   ├── unitOfWork.ts              the DO providers, wrapping storage.transactionSync
+    │   ├── stores/                    accountStore.ts, credentialLocatorStore.ts,
+    │   │                              credentialMappingStore.ts, userSettingsRepository.ts,
+    │   │                              jobWriter.ts, outboxWriter.ts, operationsStore.ts
+    │   ├── schema/                    plan.ts + one migration plan per DO class
+    │   ├── migrationGate.ts           the fail-closed schema gate
+    │   ├── rowRunner.ts               claim / release / finalize / prune, shared by both runners
+    │   ├── jobRunner.ts               the local-job pass and the prune pass
+    │   ├── outboxRelay.ts             the relay pass (claim → publish → finalize)
+    │   ├── alarmSchedule.ts           rearm(): the earliest wake-up over both tables
+    │   ├── doStubs.ts                 stub selection + callDurableObject (envelope unwrapping)
+    │   ├── identityGateway.ts         the usecases' entry to both DO classes: locator derivation + RPC
+    │   ├── crypto/                    keyring.ts, locatorDerivation.ts, canonicalCipher.ts
+    │   └── queueMessage.ts, resetMailMaterials.ts, payloadDigest.ts, rpcErrors.ts
+    ├── d1/                            driver-error classification + the schema its integration tests pin
+    │                                  + pendingBatch.ts, the deferred-batch buffer, which has no caller
+    ├── console/mailSender.ts
+    └── webcrypto/                     pbkdf2PasswordHasher, hmacSessionCodec
 
 packages/core/src/lib/
-└── error.ts                       CodedError base + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
+└── error.ts                       CodedError base (identity brand + isCodedError / hasSerializedKind) + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
+
+apps/web/app/
+├── presentation/
+│   ├── errorResponse.ts           AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, redactForClient, httpStatusFor
+│   ├── errorResponseMiddleware.ts errorResponseMiddleware (wraps inputValidator + handler)
+│   ├── errorDisplay.ts            displayError, sanitizeRouteError
+│   ├── serverAction.ts            loadServerDeps, serverData — internal-only, intentionally schemaless
+│   └── validator.ts               validateInput(schema) — transport-boundary shape check
+└── worker/cloudflare/
+    ├── state.ts                   state Worker entry: re-exports the two Durable Object classes
+    └── queueHandlers.ts           mail consumer + DLQ handler, hosted by the request Worker
 ```
 
 ## Domain Layer
@@ -72,11 +88,12 @@ declare const fooIdBrand: unique symbol;
 export type FooId = string & { readonly [fooIdBrand]: true };
 
 export const FooId = {
-  create: (id: string): FooId => {
-    if (id.trim().length === 0) {
+  create: (raw: string): FooId => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
       throw new BusinessRuleError(FooErrorCode.InvalidId, "Invalid foo id");
     }
-    return id as FooId;
+    return trimmed as FooId;
   },
 };
 ```
@@ -88,6 +105,7 @@ Key points:
 - invalid values throw `BusinessRuleError` (the Result type is not used)
 - **do not add `generate()`**. id generation goes through the `IdGenerator` port in the application layer
 - domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-validates it with `IdGenerator.validate(id)` at rehydration time. Putting generation and validation behind the same port means that when you swap the generator, the validator switches over in pair automatically, letting you swap the format without touching the VO
+- the OCC counter is a value object too — `Version` (`packages/core/src/domain/common/version.ts`), with `Version.initial()` / `Version.next(v)` / `Version.create(raw)`. Entities never do raw arithmetic on it
 
 ### Entity
 
@@ -100,106 +118,189 @@ export const Foo = {
   create: (
     params: { id: string; /* ...domain inputs... */ },
     now: Date,
-  ): WithEventDrafts<ActiveFoo, FooEvent> => {
-    const id = FooId.create(params.id);
-    const foo: ActiveFoo = { ...params, id, version: 0, createdAt: now, updatedAt: now };
-    return { entity: foo, eventDrafts: [FooEvents.created(foo.id, now)] };
-  },
+  ): ActiveFoo => ({
+    ...params,
+    id: FooId.create(params.id),
+    status: "active",
+    version: Version.initial(),
+    createdAt: now,
+    updatedAt: now,
+  }),
 
-  complete: (
-    foo: ActiveFoo,
-    now: Date,
-  ): WithEventDrafts<CompletedFoo, FooEvent> => {
-    const next: CompletedFoo = { ...foo, status: "completed", version: foo.version + 1, updatedAt: now };
-    return { entity: next, eventDrafts: [FooEvents.completed(next.id, now)] };
-  },
+  complete: (foo: ActiveFoo, now: Date): CompletedFoo => ({
+    ...foo,
+    status: "completed",
+    version: Version.next(foo.version),
+    updatedAt: now,
+  }),
 };
 ```
 
 Key points:
 
 - represent state with a discriminated union → invalid transitions become type errors
-- as with `Todo.create`, **VO construction is concentrated in the entity factory** (the application layer passes `id` as a raw string)
+- **VO construction is concentrated in the entity factory** (the application layer passes `id` as a raw string)
 - take `now: Date` and the required `id` as arguments (domain never calls `new Date()` or `uuidv7()`)
-- state transitions return `WithEventDrafts<TEntity, TEvent>`, handling the entity together with its **identity-less drafts**. Assigning the `EventId` is the application layer's responsibility (`attachEventIds`)
-- for operations with no successor entity, such as deletion, do not put a method on the domain; the usecase emits `FooEvents.deleted(...)` directly
+- a transition that also emits events returns `WithEventDrafts<TEntity, TEvent>` — `{ entity, eventDrafts }` — and the caller hands `eventDrafts` to `enqueueEvent` inside the same unit of work that persists `entity`. The drafts are **identity-less**: the `EventId` is minted by the unit-of-work implementation, never by the domain
+- for operations with no successor entity, such as deletion, do not put a method on the domain; the usecase builds the draft with the domain's draft factory directly
+- a transition that changes nothing should return the argument unchanged rather than bump the version — `User.changeTrashRetentionDays` does exactly that, so a settings form re-posting its current value does not fight concurrent writers over OCC
 
 ### Domain Event
 
+One file per event type, in the domain layer, carrying the `type` constant, the payload type, the event type and the draft factory. `packages/core/src/domain/identity/passwordResetRequested.ts` is the shipped example.
+
 ```ts
-export type FooCreatedEvent = DomainEventBase<
-  "foo.created",
-  Readonly<{ fooId: FooId }>
+// packages/core/src/domain/foo/fooArchived.ts
+import type {
+  DomainEventBase,
+  EventDraft,
+} from "@repo/core/domain/common/event";
+import type { FooId } from "./valueObject";
+
+export const FOO_ARCHIVED = "foo.archived";
+
+export type FooArchivedPayload = Readonly<{ fooId: string }>;
+
+export type FooArchivedEvent = DomainEventBase<
+  typeof FOO_ARCHIVED,
+  FooArchivedPayload
 >;
 
-export type FooEvent = FooCreatedEvent | FooDeletedEvent;
-
-export const FooEvents = {
-  created: (fooId: FooId, occurredAt: Date): EventDraft<FooCreatedEvent> => ({
-    type: "foo.created",
+export function fooArchivedDraft(
+  fooId: FooId,
+  occurredAt: Date,
+): EventDraft<FooArchivedEvent> {
+  return {
+    type: FOO_ARCHIVED,
     payload: { fooId },
     occurredAt,
     aggregateId: fooId,
-  }),
-
-  deleted: (fooId: FooId, occurredAt: Date): EventDraft<FooDeletedEvent> => ({
-    type: "foo.deleted",
-    payload: { fooId },
-    occurredAt,
-    aggregateId: fooId,
-  }),
-};
+  };
+}
 ```
 
 Key points:
 
-- the factory returns **identity-less drafts**. The `EventId` is minted **inside the UoW** via `idGenerator` (the usecase just calls `collectEvents(drafts)`)
-- this removes `EventId` from domain-function arguments and concentrates the id-generation responsibility in the single UoW adapter
-- domain holds only event types and factories; the decoder goes to the application layer (keeping the dependency direction inward)
+- **the module is the single point of definition for the `type` string.** It lives in the domain because the factory that decides the `type`, the `aggregateId` and the payload shape is a domain artefact; putting the constant in the application layer would make the factory import application code and invert the dependency direction. Adapters (the relay, the consumer's routing) import it from here, which is inward and therefore legal
+- **the roster of every `event.type` and every `jobs.kind` lives in exactly one place, `spec/async/index.md`.** Adding one means answering which of the three classification rules it matched and adding one row to that table — nowhere else names it
+- the factory returns an **identity-less draft**. `EventId` is minted inside the unit of work from the `IdGenerator` port, which keeps id generation out of domain-function arguments and in the single UoW adapter
+- **the payload carries neither PII nor a reusable secret.** It is persisted for the PITR retention window and copied verbatim into the queue message. Delivery material that must never be persisted (a recipient, a raw token) is fetched by the consumer through an RPC back into the emitting DO at send time
+- **there is no decoder and no decoder registry.** Nothing rehydrates an outbox row back into a domain event: the relay copies `payload` through as-is, and the consumer routes on `type` and calls back into the emitting DO for every judgement. What type-checks a draft against the domain payload type is the `TEvent` binding on the unit-of-work context (below), not a decode step
 
-#### Event Decoder (application layer)
+## Application Layer
 
-Write the decoder declaratively with the `buildEventDecoder(type, schema, rehydrate)` helper. You only write the schema definition + brand reconstruction; the helper absorbs the shape assert / `SystemError` conversion / meta forwarding.
+### Registering side effects
+
+The unit-of-work context is the only write path for the effects an operation produces beyond its own business write. Two registration points exist on **every** DO class:
 
 ```ts
-// packages/core/src/application/foo/eventDecoders.ts
-import { z } from "zod";
-import type { EventDecoder } from "@repo/core/domain/common/event";
-import type { FooEvent } from "@repo/core/domain/foo/events";
-import { FooId } from "@repo/core/domain/foo/valueObject";
-import { buildEventDecoder } from "../events/buildDecoder";
+export interface CommonUnitOfWorkContext<
+  TKind extends string,
+  TEvent extends DomainEvent = never,
+> {
+  enqueueJob(input: EnqueueJobInput<TKind>): void;
+  enqueueEvent(drafts: readonly EventDraft<TEvent>[]): void;
+}
+```
 
-const fooCreatedSchema = z.object({ fooId: z.string() }).strict();
-const fooDeletedSchema = z.object({ fooId: z.string() }).strict();
+Everything else on a context differs by DO class (`spec/database/index.md` declares the roster per class): `UserDataUnitOfWorkContext` adds `recordOperation` / `updateOperation`, `IdentityDirectoryUnitOfWorkContext` adds nothing and binds `TEvent` to `PasswordResetRequestedEvent`.
 
-export type FooEventDecoders = {
-  readonly [K in FooEvent["type"]]: EventDecoder<
-    Extract<FooEvent, { type: K }>
-  >;
-};
+Key points:
 
-export const fooEventDecoders: FooEventDecoders = {
-  "foo.created": buildEventDecoder("foo.created", fooCreatedSchema, (p) => ({
-    fooId: FooId.create(p.fooId),
-  })),
-  "foo.deleted": buildEventDecoder("foo.deleted", fooDeletedSchema, (p) => ({
-    fooId: FooId.create(p.fooId),
-  })),
-};
+- **which mechanism carries an effect is decided by who owns its completion** — synchronous execution in the same transaction, an Outbox event, or a local job, in that order (`CLAUDE.md`, "Asynchronous execution contract")
+- `TKind` binds `enqueueJob` to the `jobs.kind` union its DO class may write, and `TEvent` binds `enqueueEvent` to the **event types** — not to their `type` strings — so a draft is measured against the domain's payload type. `TEvent` defaults to `never`, which makes a draft unconstructable and leaves `[]` as the only accepted argument: that is how a class with an empty event roster says so in the type
+- `EnqueueJobInput.operationKey` is derived deterministically by the caller — it is the job's identity, and re-submissions converge onto the existing row — so it never comes from `IdGenerator` and never from the client
+- both points write into the DO's own tables inside the same `transactionSync` as the business write, so a rollback unwinds them together with it
+
+### Usecase
+
+A usecase that mutates state runs its whole write inside one `run(fn)`, and **the callback is synchronous** — the signature type-rejects an `async` callback. Write the body as a plain function over the context, and let the DO entry hand it over (`this.runUnitOfWork((ctx) => beginSignup(ctx, operationId, now))`):
+
+```ts
+export function beginSignup(
+  ctx: UserDataUnitOfWorkContext,
+  operationId: string,
+  now: Date,
+): void {
+  ctx.recordOperation({
+    operationId,
+    kind: "signup",
+    payload: { step: "reserved" },
+    phase: "reserved",
+  });
+  ctx.enqueueJob({
+    operationKey: `resume-link:${operationId}`,
+    kind: "resume-link",
+    payload: { operationId },
+    nextRunAt: new Date(now.getTime() + 60_000),
+  });
+}
 ```
 
 Key points:
 
-- put the decoder in the **application layer**. Since it maps decode failures to `SystemError(DataIntegrityError)`, it depends on the application's error contract and therefore cannot live in the inward-facing domain
-- when adding a domain, the only diff is "schema definition + brand reconstruction". The shape assert / error conversion logic is confined to `buildEventDecoder`
-- the payload schema rejects extra fields with `z.object(...).strict()`
-- the whole map is typed as `[K in FooEvent["type"]]: EventDecoder<Extract<...>>` to enforce exhaustiveness (a missing registration in the map is a type error)
-- branded types are reconstructed inside the `rehydrate` function via `FooId.create(p.fooId)`
-- on decode failure, throw `SystemError(DataIntegrityError)` (the relay worker catches it per-row and routes it to the log)
+- resolve `now` / `id` at the top of the caller, from the `Clock` / `IdGenerator` ports. The `EventId` is minted by the unit of work, so the caller does not have to care
+- there are four VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and rebuilding a primitive that crossed the DO or queue boundary (`Email.create(materials.to)` in the mail consumer)
+- **never `await` inside the callback, and never call `run` from inside `run`.** Anything asynchronous — hashing, mail, a DO stub call — happens before or after, never within
+- the return value handed to the presentation layer is a DTO projected by a helper in `view.ts`. Type its fields as primitives, never branded VOs — brands widen to their primitive for free, so projection stays cast-free
+- there is intentionally no generic utility for OCC retry. `ConflictError("OPTIMISTIC_LOCK_FAILURE")` propagates straight to the caller
+
+The request-path identity usecases (`registerWithPassword` / `loginWithPassword` / `logout` / `getCurrentUser`) open no unit of work of their own: their state lives in Durable Objects, so they call in through `IdentityGateway` (`packages/core/src/application/identity/gateway.ts`) and the unit of work runs on the far side of that call. Read `registerWithPassword` for the `ServiceArgs<T>` shape, the "hash before the unit of work opens" rule and the shape of a saga that spans two objects; read the contract above for what a usecase inside one object looks like.
+
+### Container Wiring
+
+Provide the container as **one type per scope**, mixing in `SharedDeps` (`clock` / `idGenerator` / `logger`) by intersection, so each scope holds only the fields that scope needs.
+
+```ts
+export type SharedDeps = Readonly<{
+  clock: Clock;
+  idGenerator: IdGenerator;
+  logger: Logger;
+}>;
+
+// Request path: usecases that mutate aggregates + SSR head/meta.
+export type RequestContainer = SharedDeps &
+  Readonly<{
+    config: AppConfig;
+    identityGateway: IdentityGateway;
+    identityTuning: IdentityTuning;
+    passwordHasher: PasswordHasher;
+    sessionCodec: SessionCodec;
+  }>;
+
+// The `queue()` handlers: the mail consumer and the DLQ handler.
+export type QueueContainer = SharedDeps &
+  Readonly<{
+    tuning: DeliveryTuning;
+    bindings: DurableObjectBindings;
+    mailSender: MailSender;
+  }>;
+```
+
+```ts
+export function createRequestContainer(
+  config: RequestServerConfig,
+): RequestContainer { /* ...gateway + tuning + AppConfig + hasher + codec... */ }
+
+export function createQueueContainer(env: ServerEnv): QueueContainer {
+  /* ...tuning + DO bindings + mail provider... */
+}
+```
+
+Key points:
+
+- **repositories stay off the container.** The unit-of-work context is their single point of issue, which is what keeps every aggregate access inside a unit of work. `passwordHasher` is a deliberate exception: it is a domain port but not a repository, it touches no storage, and hashing must happen *before* the unit of work opens so a CPU-bound derivation never sits inside a transaction
+- a container whose shape names a platform type (`DurableObjectNamespace`, `D1Database`) belongs in the composition root `di/serverCloudflare.ts`, not in the layer-neutral `di/types.ts` that presentation and application code both import
+- **`QueueContainer` holds no repository, no unit of work and no processed-events store.** A consumer makes no business judgement, and idempotency is declared per consumer — this one keeps no key at all
+- it holds `tuning` so that building the container is where the declared operating values get checked. `createDeliveryTuning()` validates the constraints between them, and construction — not module scope — is where that failure should surface
+- `sessionCodec` is presentation-only: usecases receive `UsecaseContainer`, which omits it
+- consolidate the path that reads request-side env into `readRequestServerConfig()`
+
+## Adapter Layer
 
 ### Repository Port
 
-The base contract including OCC is already consolidated in `TransactionalRepository<TEntity, TId>` (`packages/core/src/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
+The base contract including OCC is consolidated in `TransactionalRepository<TEntity, TId>` (`packages/core/src/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
 
 ```ts
 export interface FooRepository extends TransactionalRepository<Foo, FooId> {
@@ -207,7 +308,7 @@ export interface FooRepository extends TransactionalRepository<Foo, FooId> {
 }
 ```
 
-What `TransactionalRepository<TEntity>` provides:
+What `TransactionalRepository<TEntity, TId>` provides:
 
 ```ts
 interface TransactionalRepository<TEntity, TId = string> {
@@ -221,7 +322,7 @@ type Versioned<T> = { readonly entity: T; readonly expectedVersion: ExpectedVers
 type ExpectedVersion<T> = number & { readonly [brand]: T };  // phantom T
 ```
 
-Bind `TId` to the branded `FooId`, not the raw `string` default. The lookup key is then a value object: the usecase constructs it via `FooId.create(input.id)` at its boundary — before the lookup — so the id-format invariant is checked in one place and is no longer duplicated against the transport-layer schema. This is the same "validate at value-object construction" rule the entity factory already follows; an id and an entity are separate concerns, so the id VO is built up front while the entity is what `findById` returns once existence is confirmed. Binding `TId` also makes a foreign id (a `BarId` passed to a `Foo` repository) a type error.
+Bind `TId` to the branded `FooId`, not the raw `string` default. The lookup key is then a value object: the usecase constructs it via `FooId.create(input.id)` at its boundary — before the lookup — so the id-format invariant is checked in one place and is no longer duplicated against the transport-layer schema. Binding `TId` also makes a foreign id (a `BarId` passed to a `Foo` repository) a type error.
 
 OCC is enforced at the type level with the `ExpectedVersion<Foo>` token:
 
@@ -232,226 +333,160 @@ OCC is enforced at the type level with the `ExpectedVersion<Foo>` token:
 
 Thanks to the phantom `T`, `ExpectedVersion<Foo>` and `ExpectedVersion<Bar>` are type-incompatible → **mixing up tokens between aggregates is a type error**. This severs the implicit connection of "the domain function bumps the version → the adapter recomputes `entity.version - 1`", giving a contract where the version observed at read time is carried straight through to the write.
 
-When adding a new domain:
-
-1. add one slot line to `UnitOfWorkContext` (`packages/core/src/application/execution/unitOfWork.ts`)
-2. in the D1 adapter (`packages/core/src/adapters/d1/unitOfWork.ts`), create the repository instance sharing the `PendingBatch` and stuff it into the context
-
-```ts
-export interface UnitOfWorkContext {
-  todoRepository: TodoRepository;
-  fooRepository: FooRepository;          // ← added
-  collectEvents(events: readonly DomainEvent[]): void;
-}
-```
-
-## Application Layer
-
-### Usecase
-
-```ts
-export async function createFoo({
-  container,
-  input,
-}: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
-  const now = container.clock.now();
-  const id = container.idGenerator.next();
-
-  const { entity: foo, eventDrafts } = Foo.create(
-    { id, /* ...input fields... */ },
-    now,
-  );
-
-  await container.unitOfWorkProvider.run(
-    async ({ fooRepository, collectEvents }) => {
-      await fooRepository.insert(foo);
-      collectEvents(eventDrafts);
-    },
-  );
-
-  return { foo: toFooView(foo) };
-}
-```
-
-```ts
-// for operations with "no successor entity", such as deletion, the usecase emits the event directly
-export async function deleteFoo({
-  container,
-  input,
-}: ServiceArgs<DeleteFooInput>): Promise<void> {
-  const now = container.clock.now();
-  const id = FooId.create(input.id);
-
-  await container.unitOfWorkProvider.run(
-    async ({ fooRepository, collectEvents }) => {
-      const found = await fooRepository.findById(id);
-      if (!found) throw new NotFoundError("FOO_NOT_FOUND", `...`);
-      await fooRepository.delete(found.entity.id, found.expectedVersion);
-      collectEvents([FooEvents.deleted(found.entity.id, now)]);
-    },
-  );
-}
-```
-
-Key points:
-
-- resolve `now` / `id` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
-- there are 4 VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and the event decoder
-- domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed
-- ride the Outbox pattern with `collectEvents` (flushed in the same tx)
-- the return value is a DTO (projected by a helper in `view.ts`). Type its fields as primitives, never branded VOs — brands widen to their primitive for free, so projection stays cast-free; the inbound direction is the VO `create()` above, also not a cast
-
-There is intentionally no generic utility for OCC retry. `ConflictError` propagates straight to the caller, and only the usecases that need it build their own retry individually.
-
-### Container Wiring
-
-Provide the container as **two independent types, one per scope**. Mix in `SharedDeps` (`clock` / `idGenerator` / `logger` / `shutdown`) by intersection, and have each scope hold only the fields that are needed in that scope alone.
-
-```ts
-export type SharedDeps = Readonly<{
-  clock: Clock;
-  idGenerator: IdGenerator;
-  logger: Logger;
-  shutdown: () => Promise<void>;
-}>;
-
-// For usecases that mutate aggregates / SSR head. It does not hold `outboxRepository`
-// (writes happen from inside the UoW via `collectEvents`), nor `idempotencyStore`
-// (queue-consumer only).
-export type RequestContainer = SharedDeps &
-  Readonly<{ config: AppConfig; unitOfWorkProvider: UnitOfWorkProvider }>;
-
-// For relay / pruner / queue consumer / DLQ that read and write the outbox directly.
-// It does not hold `config` or `unitOfWorkProvider`.
-export type WorkerContainer = SharedDeps &
-  Readonly<{
-    outboxRepository: OutboxRepository;
-    idempotencyStore: IdempotencyStore;
-  }>;
-```
-
-```ts
-export function createRequestContainer(
-  config: RequestServerConfig,
-): RequestContainer { /* ...UoW + AppConfig... */ }
-
-export function createWorkerContainer(env: ServerEnv): WorkerContainer {
-  /* ...outboxRepository + idempotencyStore... */
-}
-```
-
-Pass `idGenerator` to the `UnitOfWorkProvider`. It uses this to mint the `EventId` when `collectEvents` flushes drafts to the outbox. If you pass the same instance as the container's own `idGenerator`, swapping in a Fake for tests is a single-point change.
-
-Consolidate the path that reads request-side env into `readRequestServerConfig()`. A worker just passes `env: ServerEnv` straight to `createWorkerContainer`, without going through `AppConfig` or the `relay` Service Binding (because a worker neither returns HTML nor kicks the relay).
-
-The test-only `TestContainer = RequestContainer & WorkerContainer & { db }` flattens the fields of both scopes into a single fat shape — a convenience type for co-locating usecase invocation and worker-pipeline verification within a test. Production code never holds this intersection directly; it always receives either `RequestContainer` or `WorkerContainer`.
-
-Transient lock contention such as `SQLITE_BUSY` is retried internally by `DrizzleSqliteUnitOfWorkProvider` (a driver-level concern, so the application layer doesn't touch it).
-
-## Adapter Layer
+Adding an aggregate is two edits: one slot line on the context of the DO class that owns it (`packages/core/src/application/execution/unitOfWork.ts`), and the construction of the repository in that class's provider (`packages/core/src/adapters/cloudflare/unitOfWork.ts`).
 
 ### Repository (OCC implementation)
 
+The OCC write is a conditional `UPDATE` guarded on `id` **and** `version`, whose matched-row count is read back. `createUserSettingsRepository` (`packages/core/src/adapters/cloudflare/stores/userSettingsRepository.ts`) is the shipped one; `user_settings` is single-row, so `version` alone conditions it and there is no `id` predicate to add:
+
 ```ts
-async save(foo: Foo): Promise<void> {
-  if (foo.version === 0) {
-    await this.executor.insert(foos).values({ ...foo });
-    return;
-  }
-  const updated = await this.executor
-    .update(foos)
-    .set({ ...foo })
-    .where(and(eq(foos.id, foo.id), eq(foos.version, foo.version - 1)))
-    .returning({ id: foos.id });
-  if (updated.length === 0) {
+save: (user, expectedVersion) => {
+  const matched = updateMatchedRow(
+    sql,
+    `UPDATE user_settings
+     SET trash_retention_days = ?, version = ?, updated_at = ?
+     WHERE version = ?`,
+    user.trashRetentionDays,
+    user.version,
+    now,
+    expectedVersion as number,
+  );
+  if (!matched) {
+    // The message reaches the client as-is (`redactForClient` passes
+    // `conflict` through), so it must not carry the user id or the
+    // expected version.
     throw new ConflictError(
       "OPTIMISTIC_LOCK_FAILURE",
-      `Optimistic lock failure: ${foo.id}`,
+      "Optimistic lock failure: the user was modified concurrently",
     );
   }
+},
+```
+
+Key points:
+
+- **the token, not the entity, supplies the expected version.** `expectedVersion as number` is the only place the brand is stripped; the in-memory entity has already been bumped by the domain transition, so re-deriving `entity.version - 1` would be the bug the token exists to prevent
+- a 0-row update → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`, which travels to the transport boundary unswallowed — there is no retry at any level in between. Single-row tables have no `id`, so `version` alone conditions them (`spec/database/index.md` is the authority on the per-table form). **Only a writer that holds its token across a transaction boundary can match 0 rows**: a path that reads and writes inside one `run` never can, because the unit of work is a single transaction
+- the conflict message must carry no identifiers: `conflict` is one of the kinds `redactForClient` passes through verbatim
+- driver exceptions are converted to `SystemError(DatabaseError)` at the adapter boundary (`mapDbError`); application code never sees a provider-native error
+- rehydration re-validates the stored id with `IdGenerator.validate` and turns an invariant violation into `SystemError(DataIntegrityError)`
+- do not use upsert (`ON CONFLICT DO UPDATE`) — it would hide lost updates
+
+### Unit of Work
+
+`packages/core/src/adapters/cloudflare/unitOfWork.ts` implements `UnitOfWorkProvider.run(fn)` for both DO classes:
+
+1. `run` wraps `ctx.storage.transactionSync`, so the business write, any FTS5 projection and the rows appended by `enqueueJob` / `enqueueEvent` land in one transaction and a rollback unwinds all of them together
+2. the callback is synchronous by type, which is what makes that true — one `await` inside would break the transaction's atomicity
+3. one transaction per unit of work means operations inside a DO are fully serialized, so a usecase that reads and writes inside one `run` never conflicts with a concurrent one — OCC bites only a writer that holds its `version` token across a transaction boundary
+4. `enqueueEvent` mints the `EventId` from the `IdGenerator` port and writes one `outbox_events` row per draft, in its own statement (batching would have to stay under the 100 bind-parameter ceiling)
+5. both registration points raise a re-arm flag, which `takeRearmRequest()` hands to the caller **after** `run` has returned; `setAlarm()` is asynchronous and cannot be issued from inside `transactionSync`
+6. when `transactionSync` throws, the flag is cleared again — the rows rolled back, so nothing should be woken for them
+
+There is no second provider. The transitional D1 one went with the `users` table's last caller, so `UnitOfWorkProvider` — synchronous, `async`-rejecting — is now the only unit-of-work contract in the repository. What remains of the D1 adapter is the driver-error classification, the schema its integration tests pin, and `pendingBatch.ts`, which no longer has a caller.
+
+### Durable Object entry points
+
+Both DO classes extend `AsyncWorkDurableObject` (`packages/core/src/adapters/cloudflare/durableObjectBase.ts`), which owns the four things every entry shares:
+
+```ts
+async someEntry(arg: string): Promise<RpcEnvelope<Result>> {
+  return this.envelope(async () => {
+    await this.enterRpc();
+    return this.runUnitOfWork((ctx) => {
+      /* ...synchronous business write + enqueueJob / enqueueEvent... */
+    });
+  });
 }
 ```
 
 Key points:
 
-- a 0-row update → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
-- DB exceptions are converted to `SystemError(DatabaseError)` by `mapDbError`
-- do not use upsert (`ON CONFLICT DO UPDATE`) (because it would hide lost updates)
+- **`envelope` is the catch boundary.** Errors cross the request Worker ↔ DO boundary as a value envelope (`{ ok: true, value } | { ok: false, error }`), never as a thrown custom class: RPC does not preserve the structural serialization contract the guards depend on. The calling side unwraps it with `callDurableObject`, which additionally translates a failure of the stub call itself (the DO was unreachable or died) — those never enter the envelope
+- **what the envelope carries about an unclassified failure is a code-owned projection**, taken from the same `failureLabel` the runners write to `terminal_reason`. The thrown value's own `message` is never taken: a provider SDK puts the rejected request — recipient and raw token — in it, and this value reaches the request Worker's logger un-redacted
+- **`enterRpc` runs at the head of every entry**: resolve the DO's own locator, build the tuning, pass the fail-closed schema gate, and arm the Alarm if the gate seeded job rows. The diagnostic entries — `readSchemaVersion` among them — sit outside it on purpose, so an uninitialised DO can be reported as uninitialised instead of being created
+- **`runUnitOfWork` is the only place a unit of work is run and the Alarm re-armed afterwards.** Route usecase entries through it rather than calling `provider.run` and writing your own re-arm, or the rule "whoever added a runnable row arms the Alarm" splits per path
+- facade signatures take **primitives only** — branded types do not survive structured clone — and the value objects are rebuilt inside the DO. That reconstruction *is* the value-object validation point; the RPC hop is not a third one
 
-### Unit of Work
+### The Alarm
 
-`packages/core/src/adapters/d1/unitOfWork.ts` implements `UnitOfWorkProvider.run(fn)`:
+A DO has one Alarm and it multiplexes both tables. `alarm()` runs a fixed order: (1) re-arm and confirm persistence, (2) the schema gate, (3-a) the relay pass, (3-b) the jobs pass, then the prune, (4) recompute the earliest wake-up from both tables and re-arm.
 
-1. create a fresh `PendingBatch` (Drizzle BatchItem buffer)
-2. build the repository / outbox instances together with the shared PendingBatch and stuff them into `UnitOfWorkContext`
-3. pass `fn` a context that gathers the `collectEvents` buffer
-4. after `fn` resolves, stack the collected events onto the same PendingBatch
-5. flush atomically with `db.batch(pending.build())`
+Key points:
 
-Because D1 has no interactive tx, writes are not executed one-by-one inside the UoW but accumulated in the PendingBatch. Reads are immediate, hitting the binding directly. An OCC mismatch aborts the entire batch via the CHECK constraint on the `_occ_guard` table and reaches the presentation layer as `ConflictError("OPTIMISTIC_LOCK_FAILURE")`.
+- **it never throws.** Each step is wrapped so that one failing step neither aborts the wake-up nor escapes `alarm()`. Retry belongs to the job runner and to the relay, not to the platform
+- the relay pass and the job pass each run exactly once per wake-up, under **count limits held independently per pass**, so a backlog in one cannot starve the other
+- `rearm()` takes the earliest of what either table asks for — `pending` rows by `next_run_at` **and leased rows by `lease_until`** — and calls `deleteAlarm()` only when both runnable sets are empty
+- **the fail-closed path at (2) does not delete the Alarm.** It arms a fixed interval (no backoff — a fail-closed DO characteristically holds `pending` rows whose `next_run_at` is in the past, and arming that would spin) and returns, so a DO running behind its code recovers on the next wake-up once the deploy catches up
 
-There is no application-level retry because driver-level transient errors are handled on the Cloudflare binding side.
+### Job handler
 
-## Outbox Worker
+A local job is the mechanism for an effect whose completion a specific DO or saga coordinator owns. Adding one:
 
-```ts
-import { processOutboxEvents } from "@repo/core/application/workers/eventRelayWorker";
-
-await processOutboxEvents(container, async (event) => {
-  // switch on event.type and dispatch to the downstream handler
-}, { batchSize: 100 });
-```
-
-### Delivery contract (pitfalls the consumer implementation must guard against)
-
-As stated in the CLAUDE.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in CLAUDE.md; here we expand on "what the implementation must guard against".
-
-- **At-least-once (the same event arrives two or more times)** — the relay worker operates in the order "dispatch succeeds → update the outbox row's `processed_at`". If dispatch goes through but the process dies just before the update, the same event is re-dispatched in the next round. Write the consumer so that **processing the same event N times produces the same result**, either via `event.id`-based dedupe (a processed-id table / unique index) or a natural-key upsert. Code that assumes "trigger a side effect exactly once" (the "fire-and-forget" of external sends, billing, notifications) will duplicate the moment at-most-once breaks.
-  - The `IdempotencyStore` port bundled with the template (the `processed_events` table + D1 `INSERT OR IGNORE` to claim) is the minimal implementation of a "processed-id table". `handleQueue` calls `markProcessed(event.id)` before running the handler, and if `alreadyProcessed: true` it skips the handler and acks. Follow the same pattern when writing new consumers.
-  - **Stamp first vs stamp inside handler** — the template default is stamp first (claim → handler → ack). This order is safe if you write the handler as an idempotent overwrite (a projection UPSERT, etc.) whose result is unchanged on re-run. Conversely, when you want to **roll back the side effect and the stamp together** (the one-shot kind of external send, billing, notification), wrap the handler in `UnitOfWorkProvider.run` and put `markProcessed` and the side-effect write in the same batch within that UoW.
-- **No ordering (zero ordering guarantee)** — each row is rescheduled individually based on its `next_attempt_at` (spread out by backoff + jitter) and `attempts`, so an ordering where `foo.updated` / `foo.deleted` arrives before `foo.created` happens routinely. Don't write consumer-side logic that assumes a state transition like "if I see `deleted`, I must have seen `created`". If you need order, either **read the aggregate's current state before deciding**, or make the event self-contained by putting all the required state into the event payload.
-- **Quarantine (isolating poison rows)** — a row whose `attempts` reaches `maxAttempts` (default 2) gets `failed_at` set and is quarantined. A partial index drops it from `claimPending`, so a poison row doesn't block the hot path. To re-kick, reset `failed_at` / `next_attempt_at` to NULL and reset `attempts` to 0. Decode failures (payload schema mismatch) ride the same retry path — after fixing the schema, re-kick and it is re-dispatched. The relay's `maxAttempts` × the consumer's `1 + max_retries` (`wrangler.consumer.toml`) = the total number of attempts visible to the user. The rule of thumb is to keep this as a product of small values; setting one side to 5 inflates to 25 attempts even if the other is only 5.
-- **Multi-worker safety (claim/lease)** — a row is locked within a single claim+select transaction and becomes invisible to other workers for the lease period. On worker crash, the row is re-claimable once the lease expires. Even with multiple workers running, the same row is not dispatched twice.
-
-### Key points
-
-- log decode / dispatch failures to the logger and reschedule `next_attempt_at` with `attempts++` + exponential backoff
-
-After adding a new domain, export `<domain>EventDecoders` from `packages/core/src/application/${domain}/eventDecoders.ts` and add it to both the `AllDomainEvents` type union and `defaultEventDecoderRegistry` in `eventRelayWorker.ts`:
+1. add the kind to its DO class's union in `packages/core/src/application/delivery/types.ts` and declare its two convergence properties in `JOB_KIND_POLICY` — the dictionary is total, so a new kind that is not declared fails to type-check
+2. add the row to the roster in `spec/async/index.md`
+3. register a handler in the DO's `JobHandlerRegistry`
 
 ```ts
-type AllDomainEvents = TodoEvent | FooEvent;        // ← extend the union
-
-export const defaultEventDecoderRegistry = {
-  ...todoEventDecoders,
-  ...fooEventDecoders,        // ← add the decoder
-} satisfies DefaultEventDecoderRegistry;
+const handler: JobHandler = async ({ storage, payload, now, tuning }) => {
+  // ...one chunk of work...
+  return { kind: "finished" };
+};
 ```
 
-`DefaultEventDecoderRegistry` is a complete map type derived from `AllDomainEvents`, and `satisfies` rejects, as a compile error, the case where you wrote only the decoder while forgetting to add the domain — and vice versa. `EventDecoderRegistry` (`Partial<DefaultEventDecoderRegistry>`) is the type for passing overrides in tests and the like, forbidding unknown event types at the syntax level.
+Key points:
 
-### Outbox Prune
+- a handler returns `finished`, `rearm` (work remains — go back to `pending` at `nextRunAt`) or `yield` (the chunk-iteration ceiling was hit — release the lease and continue later)
+- **every job implementation must be idempotent.** The DO can reset immediately after the work succeeded and before the row is finalized, and the row is then re-claimed once its lease expires
+- the runner wraps each job in its own `try / catch`: one failing job neither aborts the rest of the pass nor escapes `alarm()`. A failure advances `attempt` and pushes `next_run_at` out by backoff; past the limit the row becomes `poison` with a `terminal_reason` for operator escalation
+- **when a row has a roll-back stage, the limit does not terminate it directly**: it writes the `terminal_reason` while the row is still runnable (terminal mode), the job stops making forward progress and runs the roll-back, and only a roll-back that itself ends without completing makes the row `poison`. Whether a stage exists is decided per row, not per kind — the selector is `TerminalStageSelector`
+- `done` rows are pruned; `poison` rows are never pruned, and they count against the DO's 10 GB cap until an operator acts
 
-```ts
-import { pruneOutbox } from "@repo/core/application/workers/outboxPrune";
+### Outbox relay
 
-await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 days
-```
+The relay runs inside each DO's `alarm()`, ahead of the job pass — it has no entry point of its own. One pass is three phases, with **only** the publish outside a transaction: claim rows in a transaction, `send()` each to the Queue, finalize in a second one.
 
-`retentionMs` is raw milliseconds. `pruneOutbox` uses `clock.now() - retentionMs` as the cutoff and calls `outboxRepository.pruneProcessed(cutoff)`. It does not touch pending rows (`processed_at IS NULL`). It is safe to run concurrently with the relay worker.
+Key points:
+
+- **the gap between phases 2 and 3 is where at-least-once comes from.** A DO reset there leaves the row to be re-claimed once its lease expires and published again
+- **phases 2 and 3 therefore fail differently and are caught separately.** `quarantined` is defined for a row the relay could not publish; once `send()` has returned, the message is on the Queue and a failed phase 3 is not a publish failure. A phase 3 that throws writes nothing at all — the row stays claimed and its lease expiry re-claims it
+- publishing is row by row; `sendBatch` is all-or-nothing and would advance `attempt` on every row claimed in that wake-up, which makes the per-row failure isolation unreachable
+- a row that cannot be published has its `attempt` advanced and is pushed out by backoff; past the limit it becomes `quarantined` with a `terminal_reason`. Quarantined rows are never pruned — the two operator entries (`listQuarantinedEvents` / `requeueQuarantinedEvent`) are how they leave
+- **the allow-list for logs is `event.id` and `type`.** The queue message is never logged as a whole — it carries `owner_token`, which is a reusable secret
+
+### Queue consumer
+
+The consumers are hosted by the **request Worker's** `queue()` handler (`apps/web/app/worker/cloudflare/queueHandlers.ts`), not by a Worker of their own. Delivery is **at-least-once with no ordering guarantee**; write every consumer on that premise.
+
+- **At-least-once (the same event arrives two or more times)** — the DO can reset after the relay published a row and before it finalized, so the same message is published again. Every consumer must be idempotent, **keyed on `event.id`**, and **where it keeps that key is declared per consumer** — there is no shared processed-events store. The mail consumer keeps no key at all: the emitting DO derives a `providerIdempotencyKey` deterministically from `event.id` and hands it back in the send-materials response, and the consumer passes it straight through to the provider without deriving anything itself
+- **No ordering** — jobs in different DOs share neither a clock nor a queue, and failures are pushed out by backoff, so `foo.archived` arriving before `foo.created` is routine. Never depend on the relative order of two units of asynchronous work: read the aggregate's current state before deciding, or make the event self-contained
+- **The consumer holds no business judgement.** Resolving the recipient, confirming a token is alive, judging supersession and deriving the idempotency key all happen in the emitting DO, behind one RPC. Delivery material that must never be persisted crosses the boundary only as that RPC's response
+- **A failure is caught and turned into a queue retry**, never into an unhandled rejection out of `queue()`. Past `max_retries` the message goes to the DLQ; failures on the far side of the queue are not the emitting DO's concern, and no ack is written back to it. A message this build cannot route is retried too, so it reaches the DLQ rather than being discarded against an at-least-once contract
+- **The queue is a transport boundary**, so a routing key from a message body is shape-checked before a stub exists — `idFromName` would otherwise open (and initialise) a Durable Object under whatever name it was given
+- **The DLQ handler records and acks. Nothing is forwarded** — DLQ messages never go to an external monitoring or log-aggregation sink
 
 ## Error Design
+
+Representative classes, one per layer role — **not the roster**. The roster is the ban list of `lint/no-instanceof-error.grit`, kept in sync by `lint/banList.test.ts` so there is one place to look and no second ledger to drift. That sync covers the class declarations the scan reaches; the forms it cannot reach are listed under KNOWN LIMITS in the `.grit` header.
 
 | Layer | Error type | Location |
 |---|---|---|
 | Domain | `BusinessRuleError<FooErrorCode>` | `packages/core/src/domain/error.ts` |
-| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors.ts` |
-| Presentation | `AppServerError` | `apps/web/app/presentation/errorResponse.ts` |
+| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `SystemError` | `packages/core/src/application/errors.ts` |
+| Presentation | `InputValidationError` | `apps/web/app/presentation/validator.ts` |
+| Presentation | `AppServerError` (transport envelope, extends `Error`) | `apps/web/app/presentation/errorResponse.ts` |
 
-Every error class extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+Every error class in that table except `AppServerError` extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, the `Symbol.for("@repo/core/CodedError")` identity brand, and two abstract members: `serializedKind` and `toSerialized()`. The latter's base return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+
+`serializedKind` is what the guards match on. Identity is tested structurally, never with `instanceof` — which is false across the SSR / RSC module-graph split and is rejected by `lint/no-instanceof-error.grit`.
+
+- **Declaring it.** The base declares `abstract readonly serializedKind: ReturnType<this["toSerialized"]>["kind"]`, so a value disagreeing with the `kind` its own override emits fails to compile (TS2416) — **but only where that override narrows its return type down to its own `kind` literal**. Leave the return type off, or annotate it in the base's own shape (`{ kind: string; … }`), and the binding degrades to `string` and the drift compiles.
+- **What actually catches drift.** A runtime check per class, `serializedKind === toSerialized().kind`, scanned in `packages/core/src/application/__tests__/errors.test.ts`, `packages/core/src/domain/__tests__/error.test.ts` and `apps/web/app/presentation/__tests__/validator.test.ts`. Add an error class, add it to that scan. Writing `readonly serializedKind: SerializedConflictError["kind"] = "conflict"` on the subclass changes neither, and documents intent.
+- **Checking it.** `isCodedError(error)` for the brand plus the shape the contract needs; `hasSerializedKind(error, kind)` for brand + discriminator, which is the one line every per-kind guard is. Pass that `kind` as `Serialized*Error["kind"]` rather than a bare literal — a typo would otherwise compile into a guard that is always `false`. The application layer's `kindGuard` factory enforces it by construction.
+- **What a guard returns.** The structural `Omit<CodedError, "toSerialized"> & { serializedKind; toSerialized() }`, never a concrete class. `Omit` rather than an intersection, which would keep both method signatures and leave `toSerialized()` at the base's wide return type.
 
 `code` is a plain string. The per-class enums are deliberately collapsed (the domain enum plus the `SerializedErrorKind` assembled in presentation cover the classification we need). `SystemErrorCode` is kept because it is used for the runtime `retryable` decision.
 
-`BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. `isBusinessRuleError(...)` narrows to `BusinessRuleError<string>`.
+`BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. On the catch side `isBusinessRuleError(...)` narrows to the contract carrying `kind: "business"`, not to `BusinessRuleError` — read `code` off it as a `string`.
 
-Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). Only the `SerializedError` union and `SerializedErrorKind` need to be appended in the presentation layer.
+Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). In the presentation layer only the `SerializedError` union and `SerializedErrorKind` need to be appended; outside it the new class still has to enter the ban list and the per-class scan named above.

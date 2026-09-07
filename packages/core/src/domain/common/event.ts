@@ -4,22 +4,47 @@ declare const eventIdBrand: unique symbol;
 
 export type EventId = string & { readonly [eventIdBrand]: true };
 
-// As with `TodoId`, the domain treats event ids as opaque, non-empty
-// strings. Format (UUIDv7 in this template) is the `IdGenerator`'s
-// responsibility, validated on rehydration by storage adapters.
+// As with `UserId`, the domain treats event ids as opaque, non-empty
+// strings and normalises them by trimming. Format (UUIDv7 in this
+// template) is the `IdGenerator`'s responsibility.
+//
+// Its limit: minting is the only point of validation, and the ids the
+// relay's claim and `list-quarantined-events` read back out of a DO's own
+// tables stay raw strings — those rows never left the object that wrote
+// them, so nothing about them crossed a transport boundary.
+//
+// The `eventId` the send-materials RPC takes did cross one — it rode a
+// Queue message out and came back as an RPC argument — and is not rebuilt
+// either, because non-emptiness is the only invariant `EventId` carries
+// and the guard subsumes it: an empty argument is rejected ahead of the
+// row lookup and a blank one matches no row, both answering
+// `nothing-to-send`.
 export const EventId = {
   create: (id: string): EventId => {
-    if (id.trim().length === 0) {
+    const trimmed = id.trim();
+    if (trimmed.length === 0) {
       throw new BusinessRuleError("INVALID_EVENT_ID", "Invalid event id");
     }
-    return id as EventId;
+    return trimmed as EventId;
   },
 };
 
-// `DomainEventDraftBase` is the identity-less shape produced by the domain.
-// `EventId` is an application-level concern (it requires `IdGenerator`), so
-// the domain emits drafts and the application attaches `id` before they are
-// persisted to the outbox.
+/**
+ * The identity-less shape produced by the domain.
+ *
+ * `EventId` is minted by the unit-of-work implementation against the
+ * application's `IdGenerator` port, so the domain touches neither id
+ * generation nor a clock — `occurredAt` is handed in by the caller.
+ *
+ * The single write path into `outbox_events` is the unit-of-work
+ * context's `enqueueEvent`, which takes drafts and writes the row inside
+ * the same `transactionSync` as the business data. There is no other
+ * registration point (`spec/database/index.md`, `spec/async/index.md`).
+ *
+ * `payload` carries neither PII nor a reusable secret — it is persisted
+ * for the PITR retention window and is copied verbatim into the Queue
+ * message (`spec/async/index.md`, hygiene rules).
+ */
 export type DomainEventDraftBase<
   TType extends string = string,
   TPayload extends Record<string, unknown> = Record<string, unknown>,
@@ -37,30 +62,26 @@ export type DomainEventBase<
 
 export type DomainEvent = DomainEventBase;
 
-// Identity-less event shape returned by domain functions. Application
-// usecases lift drafts into `DomainEvent` via `attachEventIds`.
+// Identity-less event shape returned by domain functions.
 //
 // The conditional is what makes this **distributive** over event unions:
-// `EventDraft<TodoCreatedEvent | TodoToggledEvent>` expands to
-// `Omit<TodoCreatedEvent, "id"> | Omit<TodoToggledEvent, "id">` rather than
-// collapsing to a single shape — which is what preserves the `type`
-// discriminator and lets consumers narrow on `draft.type`.
+// `EventDraft<AEvent | BEvent>` expands to
+// `Omit<AEvent, "id"> | Omit<BEvent, "id">` rather than collapsing to a
+// single shape — which is what preserves the `type` discriminator and
+// lets consumers narrow on `draft.type`.
 export type EventDraft<TEvent extends DomainEvent = DomainEvent> =
   TEvent extends unknown ? Omit<TEvent, "id"> : never;
 
-// Decoders are looked up by `event.type` in the registry, so the type is
-// already known by construction at the call site — passing it again would
-// be redundant. The `type` literal lives inside `TEvent["type"]` and is
-// re-attached by the decoder body.
-//
-// `payload` is `unknown`: it comes from the at-rest outbox row and has not
-// been shape-checked yet. The decoder body is the one that runs zod
-// validation and throws on mismatch.
-export type EventDecoder<TEvent extends DomainEvent = DomainEvent> = (
-  payload: unknown,
-  meta: Readonly<{ id: EventId; occurredAt: Date; aggregateId: string }>,
-) => TEvent;
-
+/**
+ * Pairing of the entity a transition produced with the event drafts it
+ * emitted. The usecase hands `eventDrafts` to `enqueueEvent` inside the
+ * same unit of work that persists `entity`.
+ *
+ * No concrete event type is defined today: the enumerated roster in
+ * `spec/async/index.md` declares zero User Data DO event types, and the
+ * one Identity Directory event (`identity.passwordResetRequested`) is
+ * emitted by a draft factory rather than an aggregate transition.
+ */
 export type WithEventDrafts<
   TEntity,
   TEvent extends DomainEvent = DomainEvent,
@@ -68,14 +89,3 @@ export type WithEventDrafts<
   entity: TEntity;
   eventDrafts: readonly EventDraft<TEvent>[];
 }>;
-
-// `Omit<TEvent, "id"> & { id: EventId }` is structurally `TEvent`, but TS
-// cannot prove that for arbitrary distributive `TEvent`. The unsafe cast is
-// centralised here so the assumption lives in exactly one place — callers
-// see a fully typed `TEvent[]`.
-export function attachEventIds<TEvent extends DomainEvent>(
-  drafts: readonly EventDraft<TEvent>[],
-  mintId: () => EventId,
-): readonly TEvent[] {
-  return drafts.map((draft) => ({ ...draft, id: mintId() }) as TEvent);
-}

@@ -1,7 +1,14 @@
-#!/usr/bin/env tsx
 /**
- * Render `wrangler.<stage>.toml` from a `.tpl` template by substituting
- * placeholders with outputs from the Cloudflare resources Pulumi stack.
+ * Render the deploy configs of both Workers for one stage from their
+ * `.tpl` templates, substituting placeholders with outputs from the
+ * Cloudflare resources Pulumi stack.
+ *
+ * Two files come out per stage — `wrangler.<stage>.toml` (request Worker)
+ * and `wrangler.state.<stage>.toml` (state Worker). **Rendering both from
+ * the same Pulumi outputs is what keeps the request config's
+ * `script_name` and the state config's `name` in agreement**; the Vite
+ * plugin and the deploy both go quiet rather than failing when they
+ * disagree.
  *
  * Usage:
  *   pnpm cf:render:<stage>
@@ -42,8 +49,16 @@ const stage: Stage = stageArg;
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(webRoot, "../..");
 const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
-const templatePath = resolve(webRoot, `wrangler.${stage}.toml.tpl`);
-const outPath = resolve(webRoot, `wrangler.${stage}.toml`);
+const targets = [
+  {
+    templatePath: resolve(webRoot, `wrangler.${stage}.toml.tpl`),
+    outPath: resolve(webRoot, `wrangler.${stage}.toml`),
+  },
+  {
+    templatePath: resolve(webRoot, `wrangler.state.${stage}.toml.tpl`),
+    outPath: resolve(webRoot, `wrangler.state.${stage}.toml`),
+  },
+];
 
 const raw = execFileSync(
   "pulumi",
@@ -70,17 +85,19 @@ const substitutions: Record<string, string | undefined> = {
   RESOURCE_PREFIX: outputs.exportedPrefix,
 };
 
-const template = readFileSync(templatePath, "utf8");
-const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
-  const value = substitutions[name];
-  if (value === undefined) {
-    throw new Error(
-      `Unknown placeholder \${${name}} in ${templatePath}. ` +
-        `Known: ${Object.keys(substitutions).join(", ")}`,
-    );
-  }
-  return value;
-});
+for (const { templatePath, outPath } of targets) {
+  const template = readFileSync(templatePath, "utf8");
+  const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
+    const value = substitutions[name];
+    if (value === undefined) {
+      throw new Error(
+        `Unknown placeholder \${${name}} in ${templatePath}. ` +
+          `Known: ${Object.keys(substitutions).join(", ")}`,
+      );
+    }
+    return value;
+  });
 
-writeFileSync(outPath, rendered);
-console.log(`wrote ${outPath}`);
+  writeFileSync(outPath, rendered);
+  console.log(`wrote ${outPath}`);
+}

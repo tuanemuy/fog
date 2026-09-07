@@ -3,10 +3,10 @@ declare const expectedVersionBrand: unique symbol;
 /**
  * Token capturing the persisted version observed at read time.
  *
- * Adapters mint these inside `findById` (the only legitimate
- * construction site, via an internal `as` cast). The phantom `T`
+ * Adapters mint these inside their lookup methods (the only legitimate
+ * construction sites, via an internal `as` cast). The phantom `T`
  * parameter makes tokens nominal per aggregate — a token captured for
- * `Todo` cannot be passed to a `User` repository and vice versa, so
+ * `Memo` cannot be passed to a `User` repository and vice versa, so
  * the brand catches both "forge a number" and "mix tokens across
  * aggregates" at the type level.
  */
@@ -16,7 +16,7 @@ export type ExpectedVersion<T> = number & {
 
 /**
  * Pair of an aggregate and the version token captured when it was
- * read. `findById` returns this so the caller can carry the
+ * read. Lookup methods return this so the caller can carry the
  * token into the matching `save` / `delete` call.
  */
 export type Versioned<T> = {
@@ -41,25 +41,25 @@ export type Versioned<T> = {
  * Both `save` and `delete` raise `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
  * when the supplied token does not match the persisted version.
  *
+ * All four methods return values rather than promises: the unit of work is
+ * a single `transactionSync`, which cannot await.
+ *
  * Read-only access patterns (listing, projection queries) live as
  * additional methods on the concrete repository interface — they are
  * intentionally not part of this base so that "must thread OCC" is
  * the only contract enforced here.
  *
  * `TId` should be bound to the aggregate's branded id value object
- * (e.g. `TransactionalRepository<Todo, TodoId>`), not left as the raw
+ * (e.g. `TransactionalRepository<Memo, MemoId>`), not left as the raw
  * `string` default. Binding it means the format invariant is validated
  * exactly once — at the usecase boundary via the id's smart
  * constructor, before the lookup — and a foreign id (a `UserId` passed
- * to a `Todo` repository) becomes a type error. The `string` default
+ * to a `Memo` repository) becomes a type error. The `string` default
  * exists only as a fallback for aggregates that have no dedicated id VO.
  */
 export interface TransactionalRepository<TEntity, TId = string> {
-  insert(entity: TEntity): Promise<void>;
-  findById(id: TId): Promise<Versioned<TEntity> | null>;
-  save(
-    entity: TEntity,
-    expectedVersion: ExpectedVersion<TEntity>,
-  ): Promise<void>;
-  delete(id: TId, expectedVersion: ExpectedVersion<TEntity>): Promise<void>;
+  insert(entity: TEntity): void;
+  findById(id: TId): Versioned<TEntity> | null;
+  save(entity: TEntity, expectedVersion: ExpectedVersion<TEntity>): void;
+  delete(id: TId, expectedVersion: ExpectedVersion<TEntity>): void;
 }

@@ -5,8 +5,23 @@ import {
   type SerializedValidationError,
 } from "./errorResponse";
 
-class InputValidationError extends CodedError {
+/**
+ * The transport boundary's shape failure, serialized as `kind: "validation"`.
+ *
+ * Exported because it is one of the layer's error types, not an implementation
+ * detail of {@link validateInput}: it is the second producer of the `validation`
+ * kind alongside the application layer's `ValidationError`, which is why
+ * `serializedKind` is many-to-one. It is not an `ApplicationError`.
+ *
+ * `validateInput` is the only producer here and does not throw this class
+ * as-is — it wraps `toSerialized()` in an `AppServerError` so
+ * `appServerErrorAdapter` recognises it on the way out. A bare throw is
+ * equivalent only behind `errorResponseMiddleware`; past a boundary without it
+ * the payload is dropped and the client reads `kind: "unknown"`.
+ */
+export class InputValidationError extends CodedError {
   override readonly name = "InputValidationError";
+  readonly serializedKind: SerializedValidationError["kind"] = "validation";
 
   constructor(public readonly fieldErrors: FieldErrors) {
     super("INVALID_INPUT", "Invalid input");
@@ -37,18 +52,28 @@ export function validateInput<T extends ZodType>(schema: T) {
   };
 }
 
+// Accumulates in a Map so a path key colliding with `Object.prototype`
+// (`"constructor"`, `"toString"`, …) reads back an own bucket — a plain-object
+// accumulator would return the inherited member and die on `bucket.push`.
+// `"__proto__"` is dropped rather than emitted, because `rebuildFieldErrors`
+// rejects any payload carrying it and would degrade the whole 422 to `unknown`;
+// the cost is that one path's message, leaving `INVALID_INPUT` to speak for it.
+// Both are reachable only through a schema that writes `issue.path` itself
+// (`superRefine`, or `z.record` over a parsed body), not through today's
+// fixed-key `z.object` schemas.
 function zodIssuesToFieldErrors(
   issues: ReadonlyArray<{
     readonly path: ReadonlyArray<PropertyKey>;
     readonly message: string;
   }>,
 ): FieldErrors {
-  const acc: Record<string, string[]> = {};
+  const acc = new Map<string, string[]>();
   for (const issue of issues) {
     const key = issue.path.map((segment) => String(segment)).join(".");
-    const bucket = acc[key] ?? [];
+    if (key === "__proto__") continue;
+    const bucket = acc.get(key) ?? [];
     bucket.push(issue.message);
-    acc[key] = bucket;
+    acc.set(key, bucket);
   }
-  return acc;
+  return Object.fromEntries(acc);
 }

@@ -8,22 +8,24 @@ import type { D1Migration } from "cloudflare:test";
 // The bindings are declared here rather than consumed from the app's
 // `wrangler types` output (`worker-configuration.d.ts`): that file is a
 // generated artifact of the web app and this package must typecheck on
-// its own. The shapes mirror `vitest.config.integration.ts` (miniflare
-// bindings) plus the D1 / queue bindings the adapter tests exercise.
+// its own. The shapes mirror the miniflare bindings of the two
+// integration projects (`vitest.config.d1.ts` / `vitest.config.do.ts`).
 // `MIGRATIONS` in particular is injected via `miniflare.bindings`, not
 // by `wrangler.toml`, so it never lands in generated types anywhere.
 declare global {
   namespace Cloudflare {
     interface Env {
       DB: D1Database;
-      EVENTS_QUEUE?: Queue;
-      RELAY?: Fetcher;
       APP_URL: string;
-      OUTBOX_BATCH_SIZE?: string;
-      OUTBOX_LEASE_MS?: string;
-      OUTBOX_MAX_ATTEMPTS?: string;
-      OUTBOX_RETENTION_MS?: string;
       MIGRATIONS: D1Migration[];
+      USER_DATA: DurableObjectNamespace<
+        import("../../cloudflare/userDataDurableObject").UserDataDurableObject
+      >;
+      IDENTITY_DIRECTORY: DurableObjectNamespace<
+        import("../../cloudflare/identityDirectoryDurableObject").IdentityDirectoryDurableObject
+      >;
+      EVENTS_QUEUE: Queue;
+      PROVIDER_IDEMPOTENCY_KEY: string;
     }
   }
 }

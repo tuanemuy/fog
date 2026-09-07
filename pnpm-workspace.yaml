@@ -1,7 +1,6 @@
 packages:
   - "apps/*"
   - "packages/*"
-  - "infra/aws"
   - "infra/cloudflare/pulumi"
 overrides:
   tinypool: 1.0.2

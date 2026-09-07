@@ -6,7 +6,7 @@ const UUID_V7_PATTERN =
 /**
  * Generator + format validator for opaque, stable, unique identifiers.
  *
- * Domain value objects (`TodoId`, `EventId`) treat the produced strings as
+ * Domain value objects (`UserId`, `EventId`) treat the produced strings as
  * opaque non-empty values — they deliberately do not validate the
  * generator's format. The *format* (UUIDv7 in this template) is a
  * deployment-level decision owned by the implementation chosen here, and

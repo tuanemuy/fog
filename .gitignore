@@ -10,18 +10,19 @@ dist/
 # Cloudflare Wrangler
 .wrangler/
 worker-configuration.d.ts
+worker-configuration.state.d.ts
 .dev.vars
 # Rendered from `wrangler.<stage>.toml.tpl` by scripts/render-wrangler.ts.
 # Edit the `.tpl` instead — these are regenerated on every deploy.
 wrangler.staging.toml
 wrangler.production.toml
+# State Worker configs rendered from `wrangler.state.<stage>.toml.tpl`.
+wrangler.state.staging.toml
+wrangler.state.production.toml
 
-# Node runtime
-data/
+# Local env files
 .env
 .env.*
-!.env.example
-!.env.*.example
 
 .envrc
 .direnv
@@ -29,3 +30,20 @@ data/
 *.db
 *.db-shm
 *.db-wal
+.claude/scheduled_tasks.lock
+
+# Test run evidence / reports written by the verification scripts.
+.artifacts/
+
+# Review scaffolding a new thread writes under `.thread/`. The rest of
+# `.thread/` is committed as the work log, but these files are intermediate:
+# what outlives them is the code itself, plus any deliberate deviation
+# transcribed into `.thread/{N}/adr.md`.
+.thread/*/review/
+.thread/*/plan-review/
+
+# Fixture written by `lint/pluginWiring.test.ts` and removed in its `finally`.
+# It has to sit under a linted root (`packages/**`) for the test to mean
+# anything, hence the repo-wide pattern; the test passes
+# `--vcs-use-ignore-file=false` so Biome still lints it.
+**/*.tmp.ts

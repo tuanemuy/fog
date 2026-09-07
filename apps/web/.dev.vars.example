@@ -1,17 +1,116 @@
 # Wrangler `.dev.vars` template — copy to `.dev.vars` for local development.
 #
 # `wrangler dev` (including the workerd-backed `pnpm dev` via
-# `@cloudflare/vite-plugin`) auto-loads this file from the project root
-# and exposes each entry as a Worker binding, mirroring `wrangler secret
-# put` for production. Never commit the real `.dev.vars` — it is listed
-# in `.gitignore`.
+# `@cloudflare/vite-plugin`) auto-loads this file and exposes each entry as
+# a Worker binding, mirroring `wrangler secret put` for production. Never
+# commit the real `.dev.vars` — it is listed in `.gitignore`.
 #
 # Non-secret config (e.g. `APP_URL`) belongs in the matching
-# `wrangler*.toml` `[vars]`, not here — `wrangler.toml` for local dev,
-# `wrangler.staging.toml` / `wrangler.production.toml` for remote
-# deploys. Reserve this file for credentials and tokens that must not
-# be checked in.
+# `wrangler*.toml` `[vars]`, not here. Reserve this file for credentials
+# and tokens that must not be checked in.
 #
-# Example (uncomment and replace when you add a secret-backed feature):
-# AUTH_SECRET="replace-me"
-# SOME_THIRD_PARTY_API_KEY="replace-me"
+# === Which Worker owns which secret ======================================
+#
+# There are two Workers. The request Worker serves HTTP, does the
+# CPU-bound work and hosts the queue consumers; the state Worker owns the
+# Durable Object classes. A secret belongs to whichever one reads it.
+#
+#   SESSION_SECRET               — request Worker
+#   MAIL_PROVIDER_API_KEY        — request Worker (the mail consumer lives there)
+#   DIRECTORY_ROUTING_SECRET     — request Worker (canonical → full-length HMAC)
+#   IDENTITY_MAIL_ENCRYPTION_KEY — state Worker (never leaves the Durable Object)
+#   PROVIDER_IDEMPOTENCY_KEY     — state Worker (never leaves the Durable Object)
+#
+# **DIRECTORY_ROUTING_SECRET and IDENTITY_MAIL_ENCRYPTION_KEY are
+# distributed to opposite Workers on purpose.** The request Worker can
+# compute where a credential lives and cannot read any address back;
+# the state Worker can read an address back and cannot compute where
+# anything lives. Handing either key to both Workers collapses that
+# split, and nothing in the code would notice.
+#
+# **Locally the split does not hold.** Both wrangler configs sit in this
+# same directory and `.dev.vars` is resolved against the config's
+# directory, so every entry of this file is handed to both Workers —
+# measured with `wrangler dev -c wrangler.toml -c wrangler.state.toml`,
+# where the state Worker receives `SESSION_SECRET` and
+# `DIRECTORY_ROUTING_SECRET` as well. The ownership above is what holds
+# from staging onward, where each secret is installed with
+# `wrangler secret put --config` against one Worker's config only.
+#
+# **This table is not the complete roster of secrets.** Of the three keys
+# that never leave a Durable Object, the reset-token derivation key still
+# has its ownership declared by the password-reset slice (#12). The
+# **previous** keyring entry and the rotation key commitment are added by
+# #67. `SESSION_SECRET` is listed above even though it predates this
+# table, so that the table reads as "the secrets declared so far" rather
+# than "all of them" — otherwise a later slice could take it for a
+# complete list and drop its own entry.
+#
+# Each secret is installed against the config of the Worker that owns it:
+#
+#   wrangler secret put SESSION_SECRET               --config wrangler.staging.toml
+#   wrangler secret put MAIL_PROVIDER_API_KEY        --config wrangler.staging.toml
+#   wrangler secret put DIRECTORY_ROUTING_SECRET     --config wrangler.staging.toml
+#   wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.staging.toml
+#   wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
+#
+# (substitute `wrangler.production.toml` / `wrangler.state.production.toml`
+# for production.)
+# =========================================================================
+
+# HMAC key that signs session cookies. Left empty on purpose: a value
+# published in this file would be a valid key for anyone who reads the
+# repository, and copying it into a deployment hands out every account.
+# Generate your own — the Worker refuses every request until you do:
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters. Owner: request Worker.
+SESSION_SECRET=""
+
+# Credential of the transactional mail provider. Owner: **request
+# Worker** — the mail consumer runs in its `queue()` handler, so the
+# provider is called from there and not from a Durable Object.
+#
+# #51 wires a development `MailSender` that calls no provider, so this may
+# stay empty locally; the production provider adapter arrives with #12.
+MAIL_PROVIDER_API_KEY=""
+
+# HMAC key that maps a canonical credential to its full-length value, from
+# which the Identity Directory bucket is chosen. Owner: **request
+# Worker** — bucket selection happens in the stub-selection adapter,
+# before any Durable Object is entered, which is why this key is
+# deliberately *not* one of the three that stay inside a DO.
+#
+# It is the key material of the **active** keyring entry. The generation
+# number and the bucket count are not variables: they are properties of
+# the generation itself, fixed in
+# `adapters/cloudflare/crypto/keyring.ts`, because changing the bucket
+# count re-buckets every credential already stored and is therefore a new
+# generation rather than a new setting. The `previous` entry and the
+# rotation commitment arrive with #67.
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters.
+DIRECTORY_ROUTING_SECRET=""
+
+# AES-256-GCM key protecting the canonical credential value
+# (`credential_mappings.encrypted_canonical`). Owner: **state Worker** —
+# it never leaves the Identity Directory Durable Object, which is what
+# keeps a stored address unreadable to the request Worker and to anything
+# that only reaches the routing key.
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters. Only one generation exists; re-encryption under
+# a second one arrives with #67.
+IDENTITY_MAIL_ENCRYPTION_KEY=""
+
+# HMAC key from which each Durable Object derives the
+# `providerIdempotencyKey` it hands back in the send-materials response.
+# Owner: **state Worker**. It never leaves the Durable Object: the
+# consumer receives the finished key and can neither derive nor verify it.
+#
+#   openssl rand -base64 48
+PROVIDER_IDEMPOTENCY_KEY=""

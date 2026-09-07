@@ -1,0 +1,25 @@
+# LOCAL DEV ONLY — the **state Worker**: the Worker that owns the Durable
+# Object classes. `pnpm dev` / `pnpm build` load it through
+# `auxiliaryWorkers` in `vite.config.cloudflare.ts`, and `pnpm start`
+# passes it as the second `-c` to `wrangler dev`.
+#
+# `name` must equal the `script_name` of both `durable_objects.bindings`
+# entries in `wrangler.toml`. The Vite plugin matches them by name and
+# does nothing at all when they differ — see the note there.
+#
+# The Outbox relay has no entry point of its own: it runs inside each
+# Durable Object's `alarm()`, ahead of the local-job pass.
+name = "tanstack-start-template-state"
+main = "app/worker/cloudflare/state.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UserDataDurableObject", "IdentityDirectoryDurableObject"]
+
+# The relay publishes from inside `alarm()`, so the producer binding
+# belongs to this Worker and not to the request Worker.
+[[queues.producers]]
+binding = "EVENTS_QUEUE"
+queue = "tanstack-start-template-events"

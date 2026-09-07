@@ -14,7 +14,14 @@ export default defineConfig({
     cloudflare({
       // Declare `rsc` as a child of the workerd-backed `ssr` env so the
       // RSC plugin's module runner is initialised inside the worker.
+      // This applies to the entry (request) Worker only.
       viteEnvironment: { name: "ssr", childEnvironments: ["rsc"] },
+      // The state Worker rides in the same miniflare so the request
+      // Worker's Durable Object bindings resolve in `pnpm dev` and
+      // `pnpm preview`. Without it those bindings have nothing to bind
+      // to. It is a separate config file rather than an `[env.*]` block
+      // — see the header of `wrangler.toml` for the three reasons.
+      auxiliaryWorkers: [{ configPath: "./wrangler.state.toml" }],
     }),
     tanstackStart({
       srcDirectory: "app",

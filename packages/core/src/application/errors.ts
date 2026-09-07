@@ -1,9 +1,20 @@
-import { CodedError, type SerializedErrorBase } from "@repo/core/lib/error";
+import {
+  CodedError,
+  type FieldErrors,
+  hasSerializedKind,
+  isCodedError,
+  type SerializedErrorBase,
+} from "@repo/core/lib/error";
 
 export type { FieldErrors } from "@repo/core/lib/error";
 
 export type SerializedNotFoundError = SerializedErrorBase & {
   kind: "notFound";
+};
+
+export type SerializedValidationError = SerializedErrorBase & {
+  kind: "validation";
+  fieldErrors?: FieldErrors;
 };
 
 export type SerializedConflictError = SerializedErrorBase & {
@@ -22,18 +33,85 @@ export type SerializedSystemError = SerializedErrorBase & {
   kind: "system";
 };
 
+/**
+ * Brand of its own rather than a `serializedKind` match: `ApplicationError` is
+ * an abstract layer boundary, not one serialized kind, and its subclasses each
+ * report a different `serializedKind`.
+ */
+const APPLICATION_ERROR_BRAND: unique symbol = Symbol.for(
+  "@repo/core/ApplicationError",
+);
+
 export abstract class ApplicationError<
   TCode extends string = string,
 > extends CodedError<TCode> {
   override readonly name: string = "ApplicationError";
+  readonly [APPLICATION_ERROR_BRAND] = true as const;
 }
 
+/**
+ * Narrows to the application layer's own errors only. `BusinessRuleError` is a
+ * `CodedError` but not an `ApplicationError`, so it answers `false` here; use
+ * `isCodedError` when the question is "already translated into the shared error
+ * contract" regardless of layer.
+ *
+ * `isCodedError` plus the layer brand, not the brand alone: the brand answers
+ * only which layer minted the value, while the narrowed type promises the whole
+ * `CodedError` contract, and the contract check is what keeps a bare
+ * `{ [brand]: true }` object from passing.
+ */
 export function isApplicationError(error: unknown): error is ApplicationError {
-  return error instanceof ApplicationError;
+  return isCodedError(error) && APPLICATION_ERROR_BRAND in error;
 }
+
+/**
+ * What a per-kind guard narrows to: the shared error contract plus the one
+ * `serializedKind` that was matched, never a concrete class — `serializedKind`
+ * is many-to-one, so class identity cannot be derived from it.
+ *
+ * `toSerialized` is `Omit`ted from `CodedError` rather than intersected over
+ * it: an intersection keeps both signatures and overload resolution picks the
+ * base one, leaving this half of the narrowing inert.
+ *
+ * This type claims more than the runtime checks — `serializedKind === kind` is
+ * all that is verified, and it holds only while every `Serialized*Error` adds
+ * nothing but optional properties to the base.
+ */
+type NarrowedByKind<
+  TSerialized extends SerializedErrorBase & { kind: string },
+> = Omit<CodedError, "toSerialized"> & {
+  readonly serializedKind: TSerialized["kind"];
+  toSerialized(): TSerialized;
+};
+
+/**
+ * Builds a per-kind guard so every one of them is generated from the same
+ * shape rather than hand-written.
+ *
+ * Taking the kind as `TSerialized["kind"]` is also what enforces
+ * `hasSerializedKind`'s calling convention, where a typo would otherwise
+ * compile into a guard that is always `false`. The `= never` default is what
+ * closes the loophole: `TSerialized` is not inferable from an indexed-access
+ * position, so without it a bare call falls back to the `string` constraint.
+ */
+function kindGuard<
+  TSerialized extends SerializedErrorBase & { kind: string } = never,
+>(
+  kind: TSerialized["kind"],
+): (error: unknown) => error is NarrowedByKind<TSerialized> {
+  return (error): error is NarrowedByKind<TSerialized> =>
+    hasSerializedKind(error, kind);
+}
+
+// Type pin for the claim above; lives here because `kindGuard` is
+// module-private. Omitting the type argument must not compile.
+// @ts-expect-error -- without an explicit type argument, `kind` is `never`
+const _kindGuardRequiresTypeArgument = () => kindGuard("notFound");
+void _kindGuardRequiresTypeArgument;
 
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
+  readonly serializedKind: SerializedNotFoundError["kind"] = "notFound";
 
   override toSerialized(): SerializedNotFoundError {
     return {
@@ -45,12 +123,11 @@ export class NotFoundError extends ApplicationError {
   }
 }
 
-export function isNotFoundError(error: unknown): error is NotFoundError {
-  return error instanceof NotFoundError;
-}
+export const isNotFoundError = kindGuard<SerializedNotFoundError>("notFound");
 
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
+  readonly serializedKind: SerializedConflictError["kind"] = "conflict";
 
   override toSerialized(): SerializedConflictError {
     return {
@@ -62,9 +139,57 @@ export class ConflictError extends ApplicationError {
   }
 }
 
-export function isConflictError(error: unknown): error is ConflictError {
-  return error instanceof ConflictError;
+export const isConflictError = kindGuard<SerializedConflictError>("conflict");
+
+/**
+ * Input / credential verification failure raised by a usecase.
+ *
+ * Distinct from `BusinessRuleError` (a domain invariant was violated) and
+ * from the presentation layer's `InputValidationError` (the transport
+ * payload did not match its shape schema). Use this when a usecase
+ * deliberately collapses several verification outcomes into one
+ * indistinguishable answer — `loginWithPassword` reporting
+ * `INVALID_CREDENTIALS` whether the email was malformed, the account is
+ * absent, or the password did not match.
+ *
+ * Shares `kind: "validation"` (and therefore HTTP 422) with
+ * `InputValidationError`; `fieldErrors` is optional so usecase-level
+ * failures that name no field use the same serialized shape.
+ */
+export class ValidationError extends ApplicationError {
+  override readonly name = "ValidationError";
+  readonly serializedKind: SerializedValidationError["kind"] = "validation";
+
+  constructor(
+    code: string,
+    message: string,
+    private readonly fieldErrors?: FieldErrors,
+    cause?: unknown,
+  ) {
+    super(code, message, cause);
+  }
+
+  override toSerialized(): SerializedValidationError {
+    return {
+      kind: "validation",
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      ...(this.fieldErrors !== undefined
+        ? { fieldErrors: this.fieldErrors }
+        : {}),
+    };
+  }
 }
+
+/**
+ * The kind with two producers today: the presentation layer's
+ * `InputValidationError` reports the same `serializedKind` and is not a
+ * `ValidationError`, so a match here says "a validation failure crossed the
+ * contract", never which class raised it.
+ */
+export const isValidationError =
+  kindGuard<SerializedValidationError>("validation");
 
 /**
  * Authorization failures raised by usecases. Distinguished into two kinds:
@@ -80,6 +205,7 @@ export function isConflictError(error: unknown): error is ConflictError {
  */
 export class UnauthorizedError extends ApplicationError {
   override readonly name = "UnauthorizedError";
+  readonly serializedKind: SerializedUnauthorizedError["kind"] = "unauthorized";
 
   override toSerialized(): SerializedUnauthorizedError {
     return {
@@ -91,14 +217,12 @@ export class UnauthorizedError extends ApplicationError {
   }
 }
 
-export function isUnauthorizedError(
-  error: unknown,
-): error is UnauthorizedError {
-  return error instanceof UnauthorizedError;
-}
+export const isUnauthorizedError =
+  kindGuard<SerializedUnauthorizedError>("unauthorized");
 
 export class ForbiddenError extends ApplicationError {
   override readonly name = "ForbiddenError";
+  readonly serializedKind: SerializedForbiddenError["kind"] = "forbidden";
 
   override toSerialized(): SerializedForbiddenError {
     return {
@@ -110,9 +234,8 @@ export class ForbiddenError extends ApplicationError {
   }
 }
 
-export function isForbiddenError(error: unknown): error is ForbiddenError {
-  return error instanceof ForbiddenError;
-}
+export const isForbiddenError =
+  kindGuard<SerializedForbiddenError>("forbidden");
 
 /**
  * Codes for unrecoverable system faults surfaced by adapters.
@@ -134,6 +257,37 @@ export function isForbiddenError(error: unknown): error is ForbiddenError {
 export const SystemErrorCode = {
   DatabaseError: "DATABASE_ERROR",
   DataIntegrityError: "DATA_INTEGRITY_ERROR",
+  // The crypto subsystem (WebCrypto) refused to compute — key import or
+  // derivation threw. Kept apart from `DataIntegrityError`, which is what
+  // a *stored* hash in an unreadable encoding raises.
+  CryptoError: "CRYPTO_ERROR",
+  // Writing or clearing the session cookie failed. Deliberately not
+  // `DatabaseError`: routing "the storage layer threw" and "the response
+  // header could not be written" to the same alert makes the former
+  // unreadable. Not retryable — a second attempt writes the same header
+  // into the same broken response.
+  SessionError: "SESSION_ERROR",
+  // A declared operating value violates a constraint that must hold, or
+  // the process was started through a path that cannot supply what the
+  // code needs (a Durable Object stub obtained without a name). Both are
+  // deployment-time faults: a retry re-reads the same declaration.
+  ConfigurationError: "CONFIGURATION_ERROR",
+  // The Durable Object's `_meta.schema_version` is ahead of the maximum
+  // this code knows. Fail closed rather than write rows through a schema
+  // whose columns this build cannot see — reading nothing is better than
+  // corrupting. Not retryable: it clears when the deploy catches up.
+  SchemaVersionAhead: "SCHEMA_VERSION_AHEAD",
+  // The Durable Object has no `_meta` row. Every User Data DO entry
+  // except the two diagnostics answers this without writing a row; the
+  // one path allowed to run the initialisation branch is
+  // `initialize-account` (#64).
+  NotInitialized: "NOT_INITIALIZED",
+  // A value thrown behind a catch boundary that no layer classified — it
+  // reached the boundary as something other than a `CodedError`. Kept
+  // apart from `DatabaseError` because that code is a triage entry point:
+  // filing an unclassified `TypeError` under it sends the investigation
+  // to the storage layer.
+  UnclassifiedError: "UNCLASSIFIED_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;
@@ -148,6 +302,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
 
 export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
+  readonly serializedKind: SerializedSystemError["kind"] = "system";
 
   override get retryable(): boolean {
     return RETRYABLE_SYSTEM_CODES.has(this.code);
@@ -163,6 +318,4 @@ export class SystemError extends ApplicationError<SystemErrorCode> {
   }
 }
 
-export function isSystemError(error: unknown): error is SystemError {
-  return error instanceof SystemError;
-}
+export const isSystemError = kindGuard<SerializedSystemError>("system");

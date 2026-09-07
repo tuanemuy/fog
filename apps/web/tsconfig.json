@@ -1,6 +1,19 @@
 {
   "include": ["**/*"],
-  "exclude": ["node_modules", "**/*.stories.*", "dist/**"],
+  // `worker-configuration.state.d.ts` is excluded because both generated
+  // files declare `Cloudflare.GlobalProps.mainModule` and `StringifyValues`
+  // globally: holding them in one program is a TS2717 / TS2300 collision that
+  // only `skipLibCheck` would hide. `tsconfig.state.json` is the program that
+  // reads it, together with `stateEnv.check.ts` — which is excluded here as
+  // well, since the `StateEnv` it asserts against is a global interface that
+  // exists only in that program.
+  "exclude": [
+    "node_modules",
+    "**/*.stories.*",
+    "dist/**",
+    "worker-configuration.state.d.ts",
+    "app/worker/cloudflare/stateEnv.check.ts"
+  ],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "types": ["node", "vite/client"],

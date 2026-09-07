@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <title>fog</title>
+  <style>
+    .ln { stroke: #191a1d; }
+    @media (prefers-color-scheme: dark) { .ln { stroke: #f6f6f8; } }
+  </style>
+  <path class="ln" d="M4.5 12 H19.5 M7 16 H15" fill="none" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="16.5" cy="7" r="2.2" fill="#e8590c"/>
+</svg>

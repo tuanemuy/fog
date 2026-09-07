@@ -1,22 +1,13 @@
 import { defineConfig } from "vitest/config";
 
-// Node-pool config for unit tests (domain logic, fakes, property-based,
-// pure usecases). Anything that needs a real D1 binding lives in
-// `*.integration.test.ts` and runs through `vitest.config.integration.ts`
-// (the `vitest-pool-workers` Workers pool).
+// `pnpm test:unit` is two projects: the node pool that runs the pure
+// logic suites (`vitest.config.unit.ts`) and the jsdom pool that renders
+// components (`vitest.config.dom.ts`). Same shape as
+// `vitest.config.integration.ts` — the root lists the projects and holds
+// nothing else, because in projects mode a `test` option here reaches
+// neither of them. Put per-project options in the project's own config.
 export default defineConfig({
-  resolve: {
-    tsconfigPaths: true,
-  },
   test: {
-    globals: true,
-    environment: "node",
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/.direnv/**",
-      "**/*.integration.test.ts",
-      "spec/**",
-    ],
+    projects: ["vitest.config.unit.ts", "vitest.config.dom.ts"],
   },
 });
