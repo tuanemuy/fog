@@ -15,6 +15,16 @@ compatibility_flags = ["nodejs_compat"]
 tag = "v1"
 new_sqlite_classes = ["UserDataDurableObject", "IdentityDirectoryDurableObject"]
 
+# Self-referencing namespaces for the saga jobs that call the other class
+# from inside `alarm()`. No `script_name`: these point at this Worker.
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"
+
 # The relay publishes from inside `alarm()`, so the producer binding is
 # here rather than on the request Worker.
 [[queues.producers]]

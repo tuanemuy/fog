@@ -18,6 +18,17 @@ compatibility_flags = ["nodejs_compat"]
 tag = "v1"
 new_sqlite_classes = ["UserDataDurableObject", "IdentityDirectoryDurableObject"]
 
+# Self-referencing namespaces: the registration saga's `resume-signup` job
+# runs inside an Identity Directory bucket's `alarm()` and calls the User
+# Data DO from there. No `script_name` — these point at this Worker.
+[[durable_objects.bindings]]
+name = "USER_DATA"
+class_name = "UserDataDurableObject"
+
+[[durable_objects.bindings]]
+name = "IDENTITY_DIRECTORY"
+class_name = "IdentityDirectoryDurableObject"
+
 # The relay publishes from inside `alarm()`, so the producer binding
 # belongs to this Worker and not to the request Worker.
 [[queues.producers]]

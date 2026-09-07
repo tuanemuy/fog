@@ -52,6 +52,13 @@ export type StateWorkerEnv = Readonly<{
   EVENTS_QUEUE: Queue<OutboxQueueMessage>;
   PROVIDER_IDEMPOTENCY_KEY?: string;
   IDENTITY_MAIL_ENCRYPTION_KEY?: string;
+  /**
+   * The state Worker's own namespaces, for the saga jobs that call the other
+   * class from inside `alarm()`. Untyped here because the classes extend this
+   * module; the job handlers cast the stub they address.
+   */
+  USER_DATA?: DurableObjectNamespace;
+  IDENTITY_DIRECTORY?: DurableObjectNamespace;
 }>;
 
 export type DurableObjectRuntimeConfig = Readonly<{

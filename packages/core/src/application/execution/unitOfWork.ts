@@ -12,8 +12,6 @@ import type {
   CredentialMappingWriter,
 } from "@repo/core/domain/identity/ports/credentialMappingRepository";
 import type { UserSettingsRepository } from "@repo/core/domain/identity/ports/userSettingsRepository";
-import type { DocumentRepository } from "@repo/core/domain/knowledge/ports/documentRepository";
-import type { TopicRepository } from "@repo/core/domain/knowledge/ports/topicRepository";
 import type { MemoRepository } from "@repo/core/domain/memo/ports/memoRepository";
 
 /**
@@ -138,21 +136,21 @@ export interface CommonUnitOfWorkContext<
 }
 
 /**
- * User Data DO context — the complete roster today: four aggregate
- * repositories, two non-aggregate stores, the `operations` registration
- * points and the two common ones.
+ * User Data DO context — the roster grows slice by slice toward
+ * `spec/database/index.md`'s declaration: today the two identity
+ * repositories/stores, the memo repository, the `operations` registration
+ * points and the two common ones. The knowledge repositories join with the
+ * knowledge slice; no placeholder stands in for them.
  *
  * **The search projection is not on it, and will not be.** The index is
  * maintained inside the writing repository's own statement, in the same
  * `transactionSync`; putting it here would make it injectable, and
  * therefore callable from outside the transaction whose atomicity is the
- * only thing keeping the index true. `TopicRepository` maintains none:
- * a topic has no entry to keep.
+ * only thing keeping the index true.
  *
  * `accountStore` is on the context but is **not** one of the nine
  * non-aggregate stores: `account` carries an OCC `version` and sits on the
- * aggregate-root side of that split. Not being folded into
- * `UserSettingsRepository` and being non-aggregate are different things.
+ * aggregate-root side of that split.
  *
  * Its event roster is empty and stays empty: `TEvent` is left at `never`,
  * so `enqueueEvent` here accepts nothing but `[]`.
@@ -161,8 +159,6 @@ export interface UserDataUnitOfWorkContext
   extends CommonUnitOfWorkContext<UserDataJobKind> {
   userSettingsRepository: UserSettingsRepository;
   memoRepository: MemoRepository;
-  topicRepository: TopicRepository;
-  documentRepository: DocumentRepository;
   accountStore: AccountStore;
   credentialLocatorStore: CredentialLocatorStore;
   recordOperation(input: RecordOperationInput): void;
