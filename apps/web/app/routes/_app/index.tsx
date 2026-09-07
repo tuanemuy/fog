@@ -25,7 +25,7 @@ export const Route = createFileRoute("/_app/")({
   // (`$_TSR.e()` is never emitted, so the streamed leaf stays unhydrated);
   // the production build streams and hydrates. Rendering client-side in
   // dev keeps the same code path — the loader's server function — usable.
-  ssr: import.meta.env.DEV ? false : true,
+  ssr: !import.meta.env.DEV,
   pendingComponent: () => null,
   loader: async () => {
     const { Timeline } = await renderTimeline();

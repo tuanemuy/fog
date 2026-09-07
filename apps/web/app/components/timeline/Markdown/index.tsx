@@ -3,7 +3,8 @@ import remarkGfm from "remark-gfm";
 
 /**
  * The light Markdown rendering of a memo body: lists, emphasis, code and
- * links, drawn as React elements — raw HTML in the source is shown as text.
+ * links, drawn as React elements. Raw HTML in the source is skipped — a tag
+ * is dropped and only its inner text survives — so nothing is ever injected.
  */
 export function Markdown({ body }: { body: string }) {
   return (

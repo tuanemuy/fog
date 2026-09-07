@@ -17,11 +17,11 @@ export type LoginWithPasswordOutput = Readonly<{ userId: string }>;
 
 const INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
 
+// One message and no field: naming a field would say which half was wrong.
 function invalidCredentials(): ValidationError {
   return new ValidationError(
     "INVALID_CREDENTIALS",
     INVALID_CREDENTIALS_MESSAGE,
-    { email: [INVALID_CREDENTIALS_MESSAGE] },
   );
 }
 
