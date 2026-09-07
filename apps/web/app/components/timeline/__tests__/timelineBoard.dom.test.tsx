@@ -216,7 +216,7 @@ describe("TimelineBoard", () => {
     });
     expect(invalidate).not.toHaveBeenCalled();
 
-    post.resolve({ memoId: "new" });
+    post.resolve({ memo: memo("new", "optimistic body", JAN_2_EARLY) });
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(composer().textarea.value).toBe(""));
     expect(screen.queryByRole("status")).toBeNull();
@@ -247,6 +247,66 @@ describe("TimelineBoard", () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 
+  // A response that never went through `errorResponseMiddleware` — the
+  // platform answering a 500 as JSON — *resolves* on the client. The board
+  // must not read that as a write.
+  it("treats a resolved value of the wrong shape as a system error and keeps the draft", async () => {
+    mocks.postMemoFn.mockResolvedValue({ status: 500, unhandled: true });
+    const { router } = await renderWithRouter(
+      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+    );
+    const invalidate = vi.spyOn(router, "invalidate");
+    const { textarea, submit } = composer();
+    fireEvent.change(textarea, { target: { value: "not saved" } });
+    fireEvent.click(submit);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("システムエラーが発生しました");
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(composer().textarea.value).toBe("not saved");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(mocks.postMemoFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts once when the form is submitted twice in the same frame", async () => {
+    const post = deferred<unknown>();
+    mocks.postMemoFn.mockReturnValue(post.promise);
+    const { router } = await renderWithRouter(
+      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+    );
+    const invalidate = vi.spyOn(router, "invalidate");
+    const { textarea, form } = composer();
+    fireEvent.change(textarea, { target: { value: "twice" } });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    await screen.findByRole("status");
+    post.resolve({ memo: memo("new", "twice", JAN_2_EARLY) });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(composer().textarea.value).toBe(""));
+    expect(mocks.postMemoFn).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("treats an older page of the wrong shape as a load error", async () => {
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      status: 500,
+      unhandled: true,
+    } as unknown as TimelinePageView);
+    await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)], "cursor-1")}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "過去のメモを読み込む" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("システムエラーが発生しました");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+  });
+
   it("loads the older page behind the cursor and appends it", async () => {
     mocks.loadTimelinePageFn.mockResolvedValue(
       page([memo("older", "older memo", JAN_1_EARLIER)], null),
@@ -259,7 +319,7 @@ describe("TimelineBoard", () => {
     const button = screen.getByRole("button", { name: "過去のメモを読み込む" });
     fireEvent.click(button);
     expect(mocks.loadTimelinePageFn).toHaveBeenCalledWith({
-      data: { cursor: "cursor-1", direction: "older", limit: 30 },
+      data: { cursor: "cursor-1", direction: "older", limit: 50 },
     });
     await screen.findByText("older memo");
     expect(screen.getAllByRole("article").map((a) => a.id)).toEqual([

@@ -10,7 +10,9 @@ import {
   type SerializedError,
 } from "@/presentation/errorResponse";
 import { DEFAULT_REDIRECT_PATH } from "@/presentation/redirectSearch";
+import { readServerFnResult } from "@/presentation/serverFnResult";
 import { loginFn, registerFn } from "../actions";
+import { isSessionStartedResult } from "../schema";
 
 type Field = "email" | "password";
 
@@ -81,7 +83,11 @@ export function AuthForm({
   const [state, action, pending] = useActionState<AuthFormState, FormData>(
     async () => {
       try {
-        await (signup ? register : login)({ data: { email, password } });
+        readServerFnResult(
+          await (signup ? register : login)({ data: { email, password } }),
+          isSessionStartedResult,
+          signup ? "registerFn" : "loginFn",
+        );
       } catch (failure) {
         try {
           return classifyAuthError(extractSerializedError(failure), mode);

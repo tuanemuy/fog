@@ -16,10 +16,15 @@ import {
   useTransition,
 } from "react";
 import { displayError } from "@/presentation/errorDisplay";
+import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDay } from "@/presentation/time";
 import { loadTimelinePageFn, postMemoFn } from "../actions";
 import { type DisplayMemo, MemoEntry } from "../MemoEntry";
-import { TIMELINE_PAGE_LIMIT } from "../schema";
+import {
+  isPostMemoResult,
+  isTimelinePageResult,
+  TIMELINE_PAGE_LIMIT,
+} from "../schema";
 
 type ComposerState = Readonly<{ error: string | null }>;
 
@@ -86,13 +91,17 @@ export function TimelineBoard({ initial }: { initial: TimelinePageView }) {
     busy.current = true;
     startLoad(async () => {
       try {
-        const result = await fetchPage({
-          data: {
-            cursor: next,
-            direction: "older",
-            limit: TIMELINE_PAGE_LIMIT,
-          },
-        });
+        const result = readServerFnResult(
+          await fetchPage({
+            data: {
+              cursor: next,
+              direction: "older",
+              limit: TIMELINE_PAGE_LIMIT,
+            },
+          }),
+          isTimelinePageResult,
+          "loadTimelinePageFn",
+        );
         setLoaded((current) => mergeTimeline(current, result.items));
         setCursor(result.nextCursor);
         setLoadError(null);
@@ -116,12 +125,26 @@ export function TimelineBoard({ initial }: { initial: TimelinePageView }) {
     return () => observer.disconnect();
   }, [next, loadError, loading, loadNext]);
 
+  // The draft the composer holds *now*, read at action time. The action's
+  // closure captures the draft of the render it was dispatched from, so two
+  // submits dispatched in one frame (`requestSubmit()` twice, Enter and a
+  // click) would both carry the same body and React would run them one
+  // after the other — the second after the first had already posted it.
+  // Clearing this ref on success and reading it here is what makes the
+  // second one a no-op; `posting` closes the same window for the interval
+  // before the pending state disables the controls.
+  const draftRef = useRef("");
+  draftRef.current = draft;
+  const posting = useRef(false);
+
   const [state, action, pending] = useActionState<ComposerState, FormData>(
-    async () => {
-      const body = draft;
-      if (body.trim().length === 0) {
-        return { error: "メモを入力してください" };
-      }
+    async (previous) => {
+      if (posting.current) return previous;
+      const body = draftRef.current;
+      // Only a programmatic submit reaches here empty (the button is
+      // disabled): the queued twin of a submit that already posted.
+      if (body.trim().length === 0) return previous;
+      posting.current = true;
       const now = new Date();
       addOptimistic({
         id: `pending-${now.getTime()}`,
@@ -134,13 +157,20 @@ export function TimelineBoard({ initial }: { initial: TimelinePageView }) {
         pending: true,
       });
       try {
-        await post({ data: { body } });
-        await router.invalidate();
+        readServerFnResult(
+          await post({ data: { body } }),
+          isPostMemoResult,
+          "postMemoFn",
+        );
+        draftRef.current = "";
         setDraft("");
+        await router.invalidate();
         return { error: null };
       } catch (failure) {
         // The optimistic entry reverts with the transition; the draft stays.
         return { error: displayError(failure) };
+      } finally {
+        posting.current = false;
       }
     },
     { error: null },

@@ -3,7 +3,9 @@
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState } from "react";
 import { logoutFn } from "@/components/auth/actions";
+import { isSessionEndedResult } from "@/components/auth/schema";
 import { displayError } from "@/presentation/errorDisplay";
+import { readServerFnResult } from "@/presentation/serverFnResult";
 
 /** S-AC-04. A full navigation afterwards, so no cached protected screen survives. */
 export function LogoutButton() {
@@ -11,7 +13,7 @@ export function LogoutButton() {
   const [error, action, pending] = useActionState<string | null, FormData>(
     async () => {
       try {
-        await logout({});
+        readServerFnResult(await logout({}), isSessionEndedResult, "logoutFn");
       } catch (failure) {
         return displayError(failure);
       }

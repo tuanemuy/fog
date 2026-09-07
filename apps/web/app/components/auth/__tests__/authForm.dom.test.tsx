@@ -1,5 +1,5 @@
-import { fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { AuthForm, classifyAuthError } from "@/components/auth/AuthForm";
 import {
@@ -29,7 +29,21 @@ vi.mock("@/components/auth/actions", () => ({
   logoutFn: vi.fn(),
 }));
 
+const assign = vi.fn<(url: string) => void>();
+const originalLocation = window.location;
+
+beforeEach(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...originalLocation, assign },
+  });
+});
+
 afterEach(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: originalLocation,
+  });
   vi.clearAllMocks();
 });
 
@@ -145,6 +159,34 @@ describe("AuthForm", () => {
     expect(url.searchParams.get("redirect")).toBeNull();
     expect(screen.queryByRole("link", { name: "ログイン" })).toBeNull();
     expectInternalHrefsToResolve();
+  });
+
+  it("login navigates to the carried target once the session is confirmed", async () => {
+    mocks.loginFn.mockResolvedValue({ userId: "u1" });
+    await renderWithRouter(<AuthForm mode="login" redirectTo="/settings" />, {
+      path: "/login",
+    });
+    fill("user@example.com", "password1");
+    fireEvent.click(screen.getByRole("button", { name: "ログイン" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/settings"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // The platform answering a 500 as JSON resolves on the client; that is
+  // not a session, and navigating on it would loop through the guard.
+  it("treats a resolved value of the wrong shape as a system error and stays", async () => {
+    mocks.registerFn.mockResolvedValue({ status: 500, unhandled: true });
+    await renderWithRouter(<AuthForm mode="signup" redirectTo={undefined} />, {
+      path: "/signup",
+    });
+    fill("user@example.com", "password1");
+    fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("システムエラーが発生しました");
+    expect(assign).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText("メールアドレス").getAttribute("aria-invalid"),
+    ).toBeNull();
   });
 
   it("login draws a rejected attempt as one form message, no field error", async () => {
