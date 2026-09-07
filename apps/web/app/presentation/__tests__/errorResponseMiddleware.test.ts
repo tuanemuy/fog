@@ -1,5 +1,6 @@
 import {
   FakeLogger,
+  FakeTokenGenerator,
   trippingIdentityGateway,
 } from "@repo/core/application/__tests__/fakes";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes/fakeMemoGateway";
@@ -79,6 +80,7 @@ function installContainer(): void {
     },
     clock: { now: () => new Date(0) },
     idGenerator: UuidV7Generator,
+    tokenGenerator: new FakeTokenGenerator(),
     logger,
   } satisfies RequestContainer;
 

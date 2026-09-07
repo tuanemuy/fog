@@ -1,3 +1,5 @@
+import type { TokenGenerator } from "../ports/tokenGenerator";
+
 /**
  * The opaque value that binds every cross-DO operation on an account to the
  * saga that created it. Below this length a stored or presented token is
@@ -5,10 +7,9 @@
  */
 export const CALLER_TOKEN_MIN_LENGTH = 32;
 
-/** 128 bits from the CSPRNG, hex-encoded. Never derived from time or an id. */
-export function newCallerToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+/** One fresh binding value from the port; never derived from time or an id. */
+export function newCallerToken(tokens: TokenGenerator): string {
+  return tokens.next();
 }
 
 export function isWellFormedCallerToken(value: string | null): boolean {

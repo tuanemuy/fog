@@ -1,4 +1,7 @@
-import { trippingIdentityGateway } from "@repo/core/application/__tests__/fakes";
+import {
+  FakeTokenGenerator,
+  trippingIdentityGateway,
+} from "@repo/core/application/__tests__/fakes";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes/fakeMemoGateway";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import type { RequestContainer } from "@repo/core/application/di/types";
@@ -117,6 +120,7 @@ describe("startSession", () => {
       },
       clock: { now: () => NOW },
       idGenerator: UuidV7Generator,
+      tokenGenerator: new FakeTokenGenerator(),
       logger: ConsoleLogger,
     } satisfies RequestContainer;
 

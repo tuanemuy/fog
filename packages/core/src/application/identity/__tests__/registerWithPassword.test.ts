@@ -7,6 +7,7 @@ import {
   FakeIdGenerator,
   FakeLogger,
   FakePasswordHasher,
+  FakeTokenGenerator,
   trippingIdentityGateway,
   trippingMemoGateway,
 } from "../../__tests__/fakes";
@@ -74,6 +75,7 @@ function makeContainer(gateway: IdentityGateway): UsecaseContainer {
   return {
     clock: { now: () => NOW },
     idGenerator: new FakeIdGenerator(),
+    tokenGenerator: new FakeTokenGenerator(),
     logger: new FakeLogger(),
     config: {
       appUrl: "http://localhost",

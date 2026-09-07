@@ -3,6 +3,7 @@ import { createIdentityGateway } from "@repo/core/adapters/cloudflare/identityGa
 import { createMemoGateway } from "@repo/core/adapters/cloudflare/memoGateway";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
+import { WebCryptoTokenGenerator } from "@repo/core/adapters/webcrypto/webCryptoTokenGenerator";
 import { content } from "@repo/core/config";
 import { createIdentityTuning } from "../identity/tuning";
 import { SystemClock } from "../ports/clock";
@@ -78,6 +79,7 @@ export function createRequestContainer(
     memoGateway: createMemoGateway(bindings),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({ secret: secrets.sessionSecret }),
+    tokenGenerator: WebCryptoTokenGenerator,
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

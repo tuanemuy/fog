@@ -6,6 +6,7 @@ import type { Clock } from "../ports/clock";
 import type { IdGenerator } from "../ports/idGenerator";
 import type { Logger } from "../ports/logger";
 import type { SessionCodec } from "../ports/sessionCodec";
+import type { TokenGenerator } from "../ports/tokenGenerator";
 
 export type AppConfig = Readonly<{
   appUrl: string;
@@ -37,4 +38,6 @@ export type RequestContainer = SharedDeps &
     memoGateway: MemoGateway;
     passwordHasher: PasswordHasher;
     sessionCodec: SessionCodec;
+    /** Opaque secrets minted on the request side: caller bindings, reset tokens, code `jti`s. */
+    tokenGenerator: TokenGenerator;
   }>;

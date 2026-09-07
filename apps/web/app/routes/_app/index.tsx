@@ -7,6 +7,7 @@ import { Deferred } from "@/components/ui/Deferred";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
+import { streamingRouteOptions } from "@/presentation/streamingRoute";
 
 // Returns the UNRESOLVED promise so navigation settles at once and the list
 // streams in under the skeleton.
@@ -21,12 +22,7 @@ export const Route = createFileRoute("/_app/")({
   // Mandatory for the streaming variant: a re-run loader hands out a fresh
   // promise and would re-suspend the boundary on every revisit.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
-  // In `vite dev` the SSR stream never closes once it carries the RSC payload
-  // (`$_TSR.e()` is never emitted, so the streamed leaf stays unhydrated);
-  // the production build streams and hydrates. Rendering client-side in
-  // dev keeps the same code path — the loader's server function — usable.
-  ssr: !import.meta.env.DEV,
-  pendingComponent: () => null,
+  ...streamingRouteOptions,
   loader: async () => {
     const { Timeline } = await renderTimeline();
     return { Timeline };

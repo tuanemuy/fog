@@ -6,6 +6,7 @@ import type {
 import type { IdentityGateway } from "../identity/gateway";
 import type { IdGenerator } from "../ports/idGenerator";
 import type { Logger, LogMeta } from "../ports/logger";
+import type { TokenGenerator } from "../ports/tokenGenerator";
 
 export { trippingMemoGateway } from "./fakes/fakeMemoGateway";
 
@@ -30,6 +31,19 @@ export class FakeIdGenerator implements IdGenerator {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       id,
     );
+  }
+}
+
+/** Deterministic 32-hex tokens: `f...0001`, `f...0002`, …, distinct per call. */
+export class FakeTokenGenerator implements TokenGenerator {
+  private counter: number;
+
+  constructor(start = 1) {
+    this.counter = start;
+  }
+
+  next(): string {
+    return (this.counter++).toString(16).padStart(32, "f");
   }
 }
 

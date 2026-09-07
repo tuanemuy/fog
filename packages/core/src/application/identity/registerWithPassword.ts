@@ -28,7 +28,7 @@ export async function registerWithPassword({
   const userId = container.idGenerator.next();
   const credentialId = container.idGenerator.next();
   const operationId = container.idGenerator.next();
-  const callerToken = newCallerToken();
+  const callerToken = newCallerToken(container.tokenGenerator);
 
   const email = Email.create(input.email);
   const password = PlainPassword.create(input.password);

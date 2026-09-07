@@ -1,4 +1,5 @@
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
+import { WebCryptoTokenGenerator } from "@repo/core/adapters/webcrypto/webCryptoTokenGenerator";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { registerWithPassword } from "@repo/core/application/identity/registerWithPassword";
 import { SystemClock } from "@repo/core/application/ports/clock";
@@ -38,6 +39,7 @@ export function createTestContainer(): RequestContainer {
     sessionCodec: throwingSessionCodec,
     clock: SystemClock,
     idGenerator: UuidV7Generator,
+    tokenGenerator: WebCryptoTokenGenerator,
     logger: ConsoleLogger,
   };
 }
