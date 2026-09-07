@@ -48,7 +48,7 @@
    2. `UserSettingsRepository.insert(user)` で永続化する
    3. **同じトランザクションで `AccountStore.initializeCallerBinding` により呼び出し元束縛の不透明値（`account.caller_token`）を書く** — 値は手順1 で採番し、以後この DO へ発行する操作（放棄・写像の削除・逆引きの記録）の束縛材料になる（domains/identity.md「AccountStore」）。**書かないと、それらの操作が照合規則によりすべて拒否側へ倒れる**
    4. **同じトランザクションで `recordOperation` により手続きを記録する**（`kind: "signup"`）。**この記録が「この DO はこの手続きが作った」ことの唯一の権威であり**、終端後の回収が発行する `abandon-account` のガードもここを読む（[recovery/index.md](../recovery/index.md)）。**digest を取る payload は `userId` / `credentialId` / `locators` の3つで全数であり、`callerToken` を含めない** — digest の導出は同期コールバックの中で閉じなければならず暗号ハッシュ（非同期 API）を掛けられないので、`payload_digest` 列が持つのは canonical 化した payload そのものである。載せた秘密はそのまま平文で永続化される。**同じ `operationId` の再送は、この3つが一致することで書き込みなしに成功へ収束する**
-6. 認証情報側の予約を確定させ、パスワードの検証材料を記録する（`activateReservation`）
+6. 手順5 の成功を受けて、まず**認証情報側の予約行に `saga_committed` の印を書き**（`CredentialMappingWriter.commitSaga`。`status IN ('reserved', 'active')` の自 `operationId` の行に対する CAS。印を書けなければ予約は既に失われているので `ConflictError("EMAIL_ALREADY_REGISTERED")`）、次いで予約を確定させてパスワードの検証材料を記録する（`activateReservation`。印は書かない）。**印と確定は別の文であり、印が先である** — 期限切れ予約の掃除（`sweep-reservations`）は `saga_committed IS NULL` の行だけを消すので、この印が「ユーザー単位設定側に既に行がある予約」を掃除から守る（[recovery/index.md](../recovery/index.md) の予約 TTL の不等式の節が、印が失われる窓を定める）。`resume-signup` による再駆動も同じ順で進み、印の CAS は既に印のある行にも成立するので冪等である
 7. **ユーザー単位設定側**で保有クレデンシャルの逆引きを記録する（`CredentialLocatorStore.record`。`usableForLogin` / `label` は認証情報側が判定した値を写す）。**この記録が済むまでログインは通らない** — ログインの到達性検査がこのストアを読むためである。**同じトランザクションで `updateOperation` により手続きの記録を完了にする** — この2つを分けると「ログインできるのに手続きは未完了」という安定した中間状態が生まれ、**完走したアカウントを終端後の回収が放棄できてしまう**（[recovery/index.md](../recovery/index.md) 段 S2）
 8. `userId` を返す
 
