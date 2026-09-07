@@ -293,7 +293,7 @@ export interface MemoRepository {
 
   findTimelineAround(
     anchor: Readonly<
-      | { kind: "date"; date: Date }   // 日付ジャンプ（S-TL-03）
+      | { kind: "date"; from: Date; toExclusive: Date } // 日付ジャンプ（S-TL-03）。表示タイムゾーンでのその日の開始と翌日の開始（排他）。日付の解釈は presentation の責務
       | { kind: "memo"; memoId: MemoId } // 指定メモ位置の表示（P-04）
     >,
     query: Readonly<{ limit: number; keyword: string | null }>,
@@ -331,7 +331,7 @@ export interface MemoRepository {
 | listByIdsIncludingTrashed | 指定 ID 群のメモを trashed 含め一括取得する（出典表示用。ドキュメントの「元になったメモ」の本文抜粋・投稿日時＋削除済みフラグ表示 S-DT-07 が 1 クエリで成立する）。存在しない（ハードデリート済み）ID は結果に含めない。使用範囲は findByIdIncludingTrashed と同じ（AI 向けユースケースでは使用しない）。**本文からスニペットを作るので射影にはしない**（domains/index.md「読み取り射影（サマリ）」の判定基準） | 同上 |
 | listActiveByIds | 指定 ID 群のメモを **active のみ**一括取得する。trashed・存在しない ID はいずれも結果に含めない（区別せず一律「含まれない」とし、ゴミ箱内の存在事実も漏らさない）。**AI 経路で使用可**: knowledge の `createDocument` の出典メモ検証（要求 ID のうち結果に含まれないものが 1 件でもあれば全体を失敗。S-AI-03 異常系）が主用途 | 同上 |
 | findTimelinePage | **active** なメモをカーソル位置から `direction` の向きに読む双方向カーソルページング。`items` は方向によらず常に `postedAt` 降順（同時刻は id で安定化）。`direction: "older"` はカーソルより過去側、`"newer"` はカーソルより新しい側を返し、`nextCursor` は同じ方向の続きを指す（`null` はその方向の終端）。`cursor: null` は先頭（最新）からの過去方向読みにのみ許される。`keyword` があれば本文部分一致で絞り込み。0 件は空配列（エラーにしない） | デコード不能な cursor → `ValidationError`。limit 範囲外・`direction: "newer"` で `cursor: null` はアダプター境界で `ValidationError` |
-| findTimelineAround | アンカー位置を中心に前後（新しい側・古い側）のメモを読む。`anchor.kind: "date"` は指定日の先頭位置（その日にメモがなければ**前後で最も近い**メモの位置。S-TL-03）、`anchor.kind: "memo"` は指定メモの位置（P-04 の「指定メモ位置へのスクロール＋ハイライト」の初期ページ。対象メモを `items` に含める）。以降の両方向無限スクロールは戻り値の `olderCursor` / `newerCursor` から `findTimelinePage` で継続する。メモが 0 件（keyword 絞り込み後 0 件を含む）なら `items: []`・両カーソル null。`anchor.kind: "memo"` の対象が不在・trashed の場合の扱い（案内表示等）はユースケースの責務とし、本メソッドは空結果を返す | DB 障害 → `SystemError(DatabaseError)` |
+| findTimelineAround | アンカー位置を中心に前後（新しい側・古い側）のメモを読む。`anchor.kind: "date"` は指定日の先頭位置（`[from, toExclusive)` に投稿されたメモのうち最新の位置。その日にメモがなければ**前後で最も近い**メモの位置 — `toExclusive` 以前で最新の候補と `from` 以後で最古の候補を 1 件ずつ引き、それぞれ `toExclusive` / `from` からの時間差が小さい方を採る。同距離なら過去側。S-TL-03）、`anchor.kind: "memo"` は指定メモの位置（P-04 の「指定メモ位置へのスクロール＋ハイライト」の初期ページ。対象メモを `items` に含める）。以降の両方向無限スクロールは戻り値の `olderCursor` / `newerCursor` から `findTimelinePage` で継続する。メモが 0 件（keyword 絞り込み後 0 件を含む）なら `items: []`・両カーソル null。`anchor.kind: "memo"` の対象が不在・trashed の場合の扱い（案内表示等）はユースケースの責務とし、本メソッドは空結果を返す | DB 障害 → `SystemError(DatabaseError)` |
 | listRevisionSummaries | 指定メモの全リビジョンを `revisionNumber` 昇順で、`MemoRevisionSummary`（誰が・いつ。**本文を含まない**）として返す。メモが存在すれば必ず 1 件以上 | メモ不存在時は空配列（存在確認は呼び出し側の責務） |
 | findRevision | 単一リビジョン取得（ロールバック・差分表示用）。なければ null。**差分もロールバックも本文が要るので射影にはしない**（domains/index.md「読み取り射影（サマリ）」の判定基準） | DB 障害 → `SystemError(DatabaseError)` |
 | listTrashed | trashed メモを `trashedAt` 降順で返す（ゴミ箱一覧用）。**`TrashQueryPort` アダプターの内部実装（UNION 枝）専用であり、application 層のユースケースから直接呼ばない**（ゴミ箱一覧の読み取り契約は trash の `TrashQueryPort` に一本化されており、本メソッドはその実装素材。読み取り契約の二重定義ではない） | 同上 |

@@ -120,7 +120,8 @@ TimelineItemView = MemoView + 次のフィールド:
 | フィールド | 型 | 必須 | バリデーション |
 |---|---|---|---|
 | userId | string | 必須 | 認証コンテキストから解決済み |
-| date | Date | 必須 | 有効な日付 |
+| date | Date | 必須 | 有効な日付。表示タイムゾーンでのその日の開始（presentation が算出する） |
+| dayEnd | Date | 必須 | 翌日の開始（排他境界）。`date` より後であること |
 | limit | number | 任意（既定 50） | 1〜100 の整数 |
 | keyword | string \| null | 任意（既定 null） | 絞り込み継続中のジャンプに対応 |
 
@@ -134,7 +135,7 @@ TimelineItemView = MemoView + 次のフィールド:
 
 #### 処理フロー
 
-1. `MemoRepository.findTimelineAround({ kind: "date", date }, { limit, keyword })` でアンカー前後のメモと両方向カーソルを取得する。指定日にメモがなければ前後で最も近いメモの位置が返る（S-TL-03 エッジケース。リポジトリ契約）
+1. `MemoRepository.findTimelineAround({ kind: "date", from: date, toExclusive: dayEnd }, { limit, keyword })` でアンカー前後のメモと両方向カーソルを取得する。指定日にメモがなければ前後で最も近いメモの位置が返る（S-TL-03 エッジケース。リポジトリ契約）
 2. getTimeline の手順 2〜4 と同様に `listSourceLinksByMemos` → `listSummariesByIdsIncludingTrashed` で出典導線を付与する
 3. メモが 0 件なら `items: []`・両カーソル null を返す
 
