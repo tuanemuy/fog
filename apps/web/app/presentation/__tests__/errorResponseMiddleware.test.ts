@@ -2,7 +2,6 @@ import {
   FakeLogger,
   trippingIdentityGateway,
 } from "@repo/core/application/__tests__/fakes";
-import { trippingKnowledgeGateway } from "@repo/core/application/__tests__/fakes/fakeKnowledgeGateway";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes/fakeMemoGateway";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import type { RequestContainer } from "@repo/core/application/di/types";
@@ -68,9 +67,6 @@ function installContainer(): void {
     identityGateway: trippingIdentityGateway((name) => trip(`reach ${name}`)),
     identityTuning: createIdentityTuning(),
     memoGateway: trippingMemoGateway((name) => {
-      throw new Error(`the presentation layer must not touch ${name}`);
-    }),
-    knowledgeGateway: trippingKnowledgeGateway((name) => {
       throw new Error(`the presentation layer must not touch ${name}`);
     }),
     passwordHasher: {
