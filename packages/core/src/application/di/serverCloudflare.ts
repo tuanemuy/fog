@@ -3,6 +3,7 @@ import { createIdentityGateway } from "@repo/core/adapters/cloudflare/identityGa
 import { createKnowledgeGateway } from "@repo/core/adapters/cloudflare/knowledgeGateway";
 import { createMemoGateway } from "@repo/core/adapters/cloudflare/memoGateway";
 import { createSearchGateway } from "@repo/core/adapters/cloudflare/searchGateway";
+import { createTrashGateway } from "@repo/core/adapters/cloudflare/trashGateway";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import { WebCryptoTokenGenerator } from "@repo/core/adapters/webcrypto/webCryptoTokenGenerator";
@@ -81,6 +82,7 @@ export function createRequestContainer(
     memoGateway: createMemoGateway(bindings),
     knowledgeGateway: createKnowledgeGateway(bindings),
     searchGateway: createSearchGateway(bindings),
+    trashGateway: createTrashGateway(bindings),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({ secret: secrets.sessionSecret }),
     tokenGenerator: WebCryptoTokenGenerator,

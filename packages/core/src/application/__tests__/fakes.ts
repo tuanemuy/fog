@@ -11,6 +11,7 @@ import type { TokenGenerator } from "../ports/tokenGenerator";
 export { trippingKnowledgeGateway } from "./fakes/fakeKnowledgeGateway";
 export { trippingMemoGateway } from "./fakes/fakeMemoGateway";
 export { trippingSearchGateway } from "./fakes/fakeSearchGateway";
+export { trippingTrashGateway } from "./fakes/fakeTrashGateway";
 
 /**
  * Deterministic ids that still pass `IdGenerator.validate`. The `ffffffff`
@@ -112,6 +113,7 @@ const IDENTITY_GATEWAY_METHODS = [
   "recordAttemptOutcome",
   "findCredentialLocator",
   "readCurrentUser",
+  "changeTrashRetentionDays",
   "revealCanonical",
 ] as const satisfies readonly (keyof IdentityGateway)[];
 

@@ -9,6 +9,7 @@ import type { Logger } from "../ports/logger";
 import type { SessionCodec } from "../ports/sessionCodec";
 import type { TokenGenerator } from "../ports/tokenGenerator";
 import type { SearchGateway } from "../search/gateway";
+import type { TrashGateway } from "../trash/gateway";
 
 export type AppConfig = Readonly<{
   appUrl: string;
@@ -40,6 +41,7 @@ export type RequestContainer = SharedDeps &
     memoGateway: MemoGateway;
     knowledgeGateway: KnowledgeGateway;
     searchGateway: SearchGateway;
+    trashGateway: TrashGateway;
     passwordHasher: PasswordHasher;
     sessionCodec: SessionCodec;
     /** Opaque secrets minted on the request side: caller bindings, reset tokens, code `jti`s. */

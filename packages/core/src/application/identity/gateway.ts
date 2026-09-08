@@ -141,6 +141,11 @@ export interface IdentityGateway {
     credentialId: string,
   ): Promise<CredentialLocatorDto | null>;
   readCurrentUser(userId: string): Promise<CurrentUserDto | null>;
+  /** S-ST-01: the setting plus the trash-wide `purge_after` recalculation and the wake-up. */
+  changeTrashRetentionDays(
+    userId: string,
+    retentionDays: number,
+  ): Promise<void>;
   /** Decrypts one canonical for its owner; `null` when the row is not that user's. */
   revealCanonical(
     coordinate: CredentialCoordinateDto,

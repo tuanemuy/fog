@@ -1,5 +1,6 @@
 import type { RpcEnvelope } from "@repo/core/application/delivery/types";
 import type { UserDataUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
+import { changeTrashRetentionDaysProcedure } from "@repo/core/application/identity/changeTrashRetentionDays";
 import type {
   CredentialLocatorDto,
   CurrentUserDto,
@@ -83,12 +84,33 @@ import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import type { SearchQueryDto } from "@repo/core/application/search/gateway";
 import { searchProcedure } from "@repo/core/application/search/search";
 import type { SearchOutputView } from "@repo/core/application/search/view";
+import { emptyTrashInDurableObject } from "@repo/core/application/trash/emptyTrash";
+import type {
+  ListTrashDto,
+  RestoreDocumentDto,
+  TrashItemRefDto,
+} from "@repo/core/application/trash/gateway";
+import { hardDeleteTrashItemProcedure } from "@repo/core/application/trash/hardDeleteTrashItem";
+import { listTrashProcedure } from "@repo/core/application/trash/listTrash";
+import { restoreDocumentProcedure } from "@repo/core/application/trash/restoreDocument";
+import { restoreMemoProcedure } from "@repo/core/application/trash/restoreMemo";
+import { restoreTopicProcedure } from "@repo/core/application/trash/restoreTopic";
+import type {
+  EmptyTrashView,
+  RestoreDocumentView,
+  RestoreMemoView,
+  RestoreTopicView,
+  TrashListView,
+} from "@repo/core/application/trash/view";
 import type { AccountState } from "@repo/core/domain/identity/ports/accountStore";
 import { CredentialId } from "@repo/core/domain/identity/valueObject";
+import { rearm } from "./alarmSchedule";
 import {
   AsyncWorkDurableObject,
   type StateWorkerEnv,
 } from "./durableObjectBase";
+import type { JobHandlerRegistry } from "./jobRunner";
+import { createPurgeTrashHandler } from "./jobs/purgeTrash";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 
@@ -101,13 +123,19 @@ import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
  */
 export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOfWorkContext> {
   constructor(ctx: DurableObjectState, env: StateWorkerEnv) {
+    const jobRegistry: JobHandlerRegistry = {};
     super(ctx, env, {
       plan: USER_DATA_PLAN,
       allowInitialize: false,
       clock: SystemClock,
       idGenerator: UuidV7Generator,
       logger: ConsoleLogger,
-      jobRegistry: {},
+      jobRegistry,
+    });
+    // Filled after `super`: the handler needs this object's unit of work.
+    jobRegistry["purge-trash"] = createPurgeTrashHandler({
+      provider: () => this.createUnitOfWorkProvider(),
+      logger: this.config.logger,
     });
   }
 
@@ -179,6 +207,84 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     return this.envelope(() =>
       this.runUnitOfWork((ctx) => readCurrentUserProcedure(ctx)),
     );
+  }
+
+  async changeTrashRetentionDays(input: {
+    retentionDays: number;
+  }): Promise<RpcEnvelope<void>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      const tuning = this.tuning();
+      return this.runUnitOfWork((ctx) => {
+        changeTrashRetentionDaysProcedure(ctx, input.retentionDays, now, {
+          chunkLimit: tuning.jobsMaxRowsPerChunk,
+          maxChunks: tuning.jobsMaxChunkIterations,
+        });
+        return undefined;
+      });
+    });
+  }
+
+  async listTrash(input: ListTrashDto): Promise<RpcEnvelope<TrashListView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => listTrashProcedure(ctx, input)),
+    );
+  }
+
+  async restoreMemo(memoId: string): Promise<RpcEnvelope<RestoreMemoView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        restoreMemoProcedure(ctx, memoId, now),
+      );
+    });
+  }
+
+  async restoreDocument(
+    input: RestoreDocumentDto,
+  ): Promise<RpcEnvelope<RestoreDocumentView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      const ids = {
+        userId: this.requireSelfLocator(),
+        newTopicId: this.config.idGenerator.next(),
+      };
+      return this.runUnitOfWork((ctx) =>
+        restoreDocumentProcedure(ctx, input, ids, now),
+      );
+    });
+  }
+
+  async restoreTopic(topicId: string): Promise<RpcEnvelope<RestoreTopicView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        restoreTopicProcedure(ctx, topicId, now),
+      );
+    });
+  }
+
+  async hardDeleteTrashItem(ref: TrashItemRefDto): Promise<RpcEnvelope<void>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => {
+        hardDeleteTrashItemProcedure(ctx, ref);
+        return undefined;
+      }),
+    );
+  }
+
+  /** One transaction per item (never nested), so a failure rolls back that item alone. */
+  async emptyTrash(): Promise<RpcEnvelope<EmptyTrashView>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const provider = this.createUnitOfWorkProvider();
+      const result = emptyTrashInDurableObject(
+        (fn) => provider.run(fn),
+        this.config.logger,
+      );
+      if (provider.takeRearmRequest()) await rearm(this.ctx.storage);
+      return result;
+    });
   }
 
   async postMemo(input: PostMemoDto): Promise<RpcEnvelope<MemoView>> {

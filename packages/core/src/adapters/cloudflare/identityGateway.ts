@@ -162,6 +162,12 @@ export function createIdentityGateway(
       return callDurableObject(() => userData(userId).readCurrentUser());
     },
 
+    async changeTrashRetentionDays(userId, retentionDays) {
+      await callDurableObject(() =>
+        userData(userId).changeTrashRetentionDays({ retentionDays }),
+      );
+    },
+
     async revealCanonical(coordinate, userId) {
       const locator = coordinateLocator(coordinate);
       return callDurableObject(() =>

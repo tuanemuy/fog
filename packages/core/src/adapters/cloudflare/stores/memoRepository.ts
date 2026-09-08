@@ -323,6 +323,14 @@ export function createMemoRepository(
     },
 
     save(memo, expectedVersion) {
+      // A restore (trashed → active) puts the id back into the citing
+      // documents' entries; an edit changes nothing on their side.
+      const previous = sql
+        .exec<{ status: string }>(
+          "SELECT status FROM memos WHERE id = ?",
+          memo.id,
+        )
+        .toArray()[0]?.status;
       const matched = updateMatchedRow(
         sql,
         `UPDATE memos SET body = ?, latest_revision_number = ?, status = ?, trashed_at = ?, purge_after = ?, version = ?, updated_at = ?
@@ -339,6 +347,9 @@ export function createMemoRepository(
       );
       if (!matched) throw occConflict();
       projectMemo(sql, memo);
+      if (previous === "trashed" && memo.status === "active") {
+        reprojectCitingDocuments(sql, memo.id);
+      }
     },
 
     hardDelete(id, expectedVersion) {

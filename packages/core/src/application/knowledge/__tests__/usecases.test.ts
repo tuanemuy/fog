@@ -11,6 +11,7 @@ import {
   trippingKnowledgeGateway,
   trippingMemoGateway,
   trippingSearchGateway,
+  trippingTrashGateway,
 } from "../../__tests__/fakes";
 import { isValidationError } from "../../errors";
 import { createDocument } from "../createDocument";
@@ -55,6 +56,9 @@ function knowledgeContainer(
     }, overrides),
     searchGateway: trippingSearchGateway((name) => {
       throw new Error(`unexpected search gateway call: ${name}`);
+    }),
+    trashGateway: trippingTrashGateway((name) => {
+      throw new Error(`unexpected trash gateway call: ${name}`);
     }),
     passwordHasher: new FakePasswordHasher(),
   };
