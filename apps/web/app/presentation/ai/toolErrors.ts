@@ -1,34 +1,24 @@
 import {
-  httpStatusFor,
-  redactForClient,
-  type SerializedError,
-  serializeError,
-} from "@/presentation/errorResponse";
+  type ClientErrorBody,
+  clientErrorStatus,
+  toClientErrorBody,
+} from "@/presentation/errorBody";
+import type { SerializedError } from "@/presentation/errorResponse";
 
 /** What the client sees of a failure: the same three fields on MCP and REST. */
-export type AiErrorBody = Readonly<{
-  kind: SerializedError["kind"];
-  code: string | null;
-  message: string;
-}>;
+export type AiErrorBody = ClientErrorBody;
 
 /**
- * A usecase failure as the AI client reads it. `business` / `notFound` /
- * `conflict` / `validation` carry their code and message (the client is
- * expected to act on them — retry after `get`, widen a patch, …);
- * `system` / `unknown` are redacted to the fixed wording, as everywhere.
+ * A usecase failure as the AI client reads it — the bare handlers' common
+ * shape: business / notFound / conflict / validation with their code and
+ * message, system / unknown redacted to the fixed wording.
  */
 export function toAiErrorBody(error: unknown): AiErrorBody {
-  const serialized = redactForClient(serializeError(error));
-  return {
-    kind: serialized.kind,
-    code: serialized.code,
-    message: serialized.message,
-  };
+  return toClientErrorBody(error);
 }
 
 export function aiErrorStatus(error: unknown): number {
-  return httpStatusFor(serializeError(error));
+  return clientErrorStatus(error);
 }
 
 /** The failures a tool reports as its own result rather than as a protocol error. */

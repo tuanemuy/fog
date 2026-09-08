@@ -146,6 +146,18 @@ function formatFieldErrors(
   return parts.length > 0 ? parts.join(" / ") : null;
 }
 
+// A system error is one fixed wording, except for the codes the transport
+// lets through by name (`errorBody.ts` PUBLIC_SYSTEM_CODES): those describe
+// a state of the user's own data, and the user is the one who can act.
+function renderSystemMessage(code: string | null): string {
+  switch (code) {
+    case "EXPORT_TOO_LARGE":
+      return "データ量が上限を超えているためエクスポートできません。サポートに連絡してください";
+    default:
+      return "システムエラーが発生しました";
+  }
+}
+
 export function renderErrorMessage(error: SerializedError): string {
   switch (error.kind) {
     case "business":
@@ -166,7 +178,7 @@ export function renderErrorMessage(error: SerializedError): string {
       return renderValidationMessage(error.code) ?? error.message;
     }
     case "system":
-      return "システムエラーが発生しました";
+      return renderSystemMessage(error.code);
     case "unknown":
       return "エラーが発生しました";
   }

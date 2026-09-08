@@ -1252,6 +1252,58 @@ li + li > .fog-revision-row {
   text-decoration: none;
 }
 .fog-password-change,
+.fog-export-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  max-width: 28rem;
+}
+.fog-export-info {
+  flex: 1;
+  min-width: 0;
+}
+.fog-export-title {
+  font-weight: var(--weight-medium);
+}
+.fog-export-desc {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+}
+.fog-export-info .fog-error {
+  margin-top: var(--space-sm);
+}
+.fog-export-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.fog-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  white-space: nowrap;
+}
+.fog-export-actions .fog-secondary {
+  text-decoration: none;
+}
+.fog-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-neutral-200);
+  border-top-color: var(--color-neutral-400);
+  animation: fog-spin 0.8s linear infinite;
+}
+@keyframes fog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .fog-ai-connections {
   display: flex;
   flex-direction: column;

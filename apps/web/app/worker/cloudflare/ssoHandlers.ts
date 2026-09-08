@@ -13,14 +13,11 @@ import {
 import type { RequestContainer } from "@repo/core/application/di/types";
 import {
   isConflictError,
-  isSystemError,
   isValidationError,
 } from "@repo/core/application/errors";
 import { toSafeRedirect } from "@/presentation/redirectSearch";
-import {
-  buildSessionCookie,
-  SESSION_COOKIE_NAME,
-} from "@/presentation/sessionCookie";
+import { readCookie, readSessionUserId } from "@/presentation/requestSession";
+import { buildSessionCookie } from "@/presentation/sessionCookie";
 
 export const SSO_STATE_COOKIE_NAME = "fog_sso_state";
 const SSO_STATE_COOKIE_MAX_AGE_SECONDS = 600;
@@ -116,48 +113,6 @@ function stateCookie(value: string | null, secure: boolean): string {
   ];
   if (secure) parts.push("Secure");
   return parts.join("; ");
-}
-
-function readCookie(request: Request, name: string): string | null {
-  const header = request.headers.get("cookie");
-  if (header === null) return null;
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) {
-      try {
-        return decodeURIComponent(rest.join("="));
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-/** The session check of `presentation/currentUser.ts`, on a raw request. */
-async function readSessionUserId(
-  request: Request,
-  container: RequestContainer,
-): Promise<string | null> {
-  const token = readCookie(request, SESSION_COOKIE_NAME);
-  if (token === null) return null;
-  const verified = await container.sessionCodec.verify(
-    token,
-    container.clock.now(),
-  );
-  if (verified === null) return null;
-  let account: Awaited<
-    ReturnType<typeof container.identityGateway.readAccountState>
-  >;
-  try {
-    account = await container.identityGateway.readAccountState(verified.userId);
-  } catch (error) {
-    if (isSystemError(error) && error.code === "NOT_INITIALIZED") return null;
-    throw error;
-  }
-  if (account === null || account.status !== "active") return null;
-  if (account.sessionEpoch > verified.sessionEpoch) return null;
-  return verified.userId;
 }
 
 async function handleStart(

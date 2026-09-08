@@ -4,6 +4,7 @@ import type {
 } from "@repo/core/application/identity/view";
 import { AiConnectionsList } from "../AiConnectionsList";
 import { CredentialList } from "../CredentialList";
+import { ExportPanel } from "../ExportPanel";
 import { LogoutButton } from "../LogoutButton";
 import { PasswordChangeForm } from "../PasswordChangeForm";
 import { RetentionForm } from "../RetentionForm";
@@ -15,9 +16,9 @@ export function hasPasswordCredential(user: CurrentUserView): boolean {
 
 /**
  * The display half of P-13: the address, the login methods with their
- * unlink and link actions, the password change, the trash retention and
- * the AI connections. The export joins with its slice. Never shows a
- * verifier or a provider subject: the view has none.
+ * unlink and link actions, the password change, the trash retention, the
+ * export and the AI connections. Never shows a verifier or a provider
+ * subject: the view has none.
  */
 export function CurrentUserPanel({
   user,
@@ -69,6 +70,13 @@ export function CurrentUserPanel({
           ゴミ箱の保持期限
         </h2>
         <RetentionForm retentionDays={user.trashRetentionDays} />
+      </section>
+
+      <section aria-labelledby="settings-data">
+        <h2 id="settings-data" className="fog-section-heading">
+          データ
+        </h2>
+        <ExportPanel />
       </section>
 
       <section aria-labelledby="settings-ai">

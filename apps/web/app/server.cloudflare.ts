@@ -11,6 +11,7 @@ import type { RequestContainer } from "@repo/core/application/di/types";
 import defaultEntry from "@tanstack/react-start/server-entry";
 import { handleAiRoute, isAiRoute } from "./presentation/ai/router";
 import { attachAiRuntime } from "./presentation/ai/runtime";
+import { handleExport, isExportRoute } from "./presentation/export/handler";
 import { handleDiagnostics } from "./worker/cloudflare/diagnostics";
 import { runQueueBatch } from "./worker/cloudflare/queueHandlers";
 import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
@@ -21,8 +22,9 @@ import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
  * request to TanStack Start. Two route families are answered before
  * TanStack sees them: the SSO handlers (`/auth/sso/`, `/__dev/sso/`),
  * which run outside the router because their outcome is a redirect with
- * cookies, and the diagnostics route. `queue()` hosts the mail consumer
- * and the DLQ handler.
+ * cookies, the AI API, the export download (a binary answer), and the
+ * diagnostics route. `queue()` hosts the mail consumer and the DLQ
+ * handler.
  */
 
 /** What `initialize` reports as `serverInfo.version`. */
@@ -61,6 +63,11 @@ export default {
           appUrl: config.appUrl,
           serverVersion: APP_VERSION,
         }),
+      );
+    }
+    if (isExportRoute(url.pathname)) {
+      return storage.run(container, () =>
+        handleExport(request, { container, appUrl: config.appUrl }),
       );
     }
     return storage.run(container, () => defaultEntry.fetch(request));
