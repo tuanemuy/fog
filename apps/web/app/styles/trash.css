@@ -1,0 +1,127 @@
+/* --- fog: trash (P-12) and the retention form (P-13) --------------------- */
+.fog-trash-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.fog-trash-note {
+  margin: 0;
+  color: var(--color-neutral-600);
+  font-size: var(--text-sm);
+}
+.fog-danger {
+  color: var(--color-error-dark);
+  border-color: var(--color-error);
+}
+.fog-danger:focus-visible {
+  outline-color: var(--color-error);
+}
+.fog-trash-groups,
+.fog-trash-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fog-trash-group + .fog-trash-group {
+  border-top: 1px solid var(--color-neutral-100);
+}
+.fog-trash-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--pad-row) 0;
+}
+.fog-trash-row.pending {
+  opacity: 0.6;
+}
+.fog-trash-child {
+  margin-left: var(--space-xl);
+  padding-top: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-top: 1px dashed var(--color-neutral-100);
+}
+.fog-trash-main {
+  flex: 1;
+  min-width: 0;
+}
+.fog-trash-title,
+.fog-trash-child-title {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.fog-trash-child-title {
+  font-size: var(--text-sm);
+}
+.fog-trash-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-neutral-500);
+}
+.fog-trash-pill {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-lighter);
+  color: var(--color-primary-darker);
+  letter-spacing: var(--tracking-label);
+}
+.fog-remaining {
+  color: var(--color-warning-dark);
+}
+.fog-row-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex: none;
+}
+.fog-row-actions .fog-secondary {
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+}
+.fog-destination fieldset {
+  border: 0;
+  padding: 0;
+  margin: var(--space-md) 0;
+  display: flex;
+  gap: var(--space-lg);
+}
+.fog-destination select,
+.fog-destination-new input,
+.fog-destination-new textarea {
+  width: 100%;
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-card);
+}
+.fog-destination-new label {
+  display: block;
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-retention-form label {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-retention-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0;
+}
+.fog-retention-line input {
+  width: 6rem;
+  border: var(--border-input);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-card);
+}
+.fog-input-unit {
+  color: var(--color-neutral-600);
+}

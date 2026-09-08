@@ -1,11 +1,16 @@
 import type { CurrentUserView } from "@repo/core/application/identity/view";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { CurrentUserPanel } from "@/components/settings/CurrentUserPanel";
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-start")>()),
   useServerFn: (fn: unknown) => fn,
+}));
+
+vi.mock("@/components/settings/actions", () => ({
+  changeTrashRetentionDaysFn: vi.fn(),
 }));
 
 vi.mock("@/components/auth/actions", () => ({
@@ -39,15 +44,18 @@ const user: CurrentUserView = {
 };
 
 describe("CurrentUserPanel", () => {
-  it("draws the address, one row per credential, retention, AI placeholder and logout", () => {
-    render(<CurrentUserPanel user={user} />);
+  it("draws the address, one row per credential, retention, AI placeholder and logout", async () => {
+    await renderWithRouter(<CurrentUserPanel user={user} />);
     expect(screen.getByText("user@example.com")).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
       "メールアドレスログインに使用",
       "外部アカウント（google）一意性の予約のみ",
     ]);
-    expect(screen.getByText("30 日")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("削除した項目を保持する日数") as HTMLInputElement)
+        .value,
+    ).toBe("30");
     expect(screen.getByText(/接続はまだありません。/).textContent).toContain(
       "AI クライアントからの接続は今後の更新で有効になります。",
     );
@@ -63,8 +71,10 @@ describe("CurrentUserPanel", () => {
     ]);
   });
 
-  it("never draws a verifier-looking value or the user id", () => {
-    const { container } = render(<CurrentUserPanel user={user} />);
+  it("never draws a verifier-looking value or the user id", async () => {
+    const { container } = await renderWithRouter(
+      <CurrentUserPanel user={user} />,
+    );
     // Present-side check first: the email credential's label is the only
     // carrier, and the row for it is drawn — so absence below is meaningful.
     expect(

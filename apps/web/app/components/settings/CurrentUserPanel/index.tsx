@@ -1,5 +1,6 @@
 import type { CurrentUserView } from "@repo/core/application/identity/view";
 import { LogoutButton } from "../LogoutButton";
+import { RetentionForm } from "../RetentionForm";
 
 const KIND_LABELS = { email: "メールアドレス", sso: "外部アカウント" } as const;
 
@@ -55,10 +56,7 @@ export function CurrentUserPanel({ user }: { user: CurrentUserView }) {
         <h2 id="settings-trash" className="fog-section-heading">
           ゴミ箱の保持期限
         </h2>
-        <p className="fog-settings-row">
-          <span>削除した項目を保持する日数</span>
-          <span className="fog-meta">{user.trashRetentionDays} 日</span>
-        </p>
+        <RetentionForm retentionDays={user.trashRetentionDays} />
       </section>
 
       <section aria-labelledby="settings-ai">

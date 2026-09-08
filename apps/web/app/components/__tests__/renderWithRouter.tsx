@@ -27,6 +27,7 @@ export const STUB_PATHS = [
   "/documents/$documentId/edit",
   "/documents/$documentId/history",
   "/search",
+  "/trash",
 ] as const;
 
 export type StubPath = (typeof STUB_PATHS)[number];

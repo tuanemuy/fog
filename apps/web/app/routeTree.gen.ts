@@ -13,6 +13,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppTrashRouteImport } from './routes/_app/trash'
 import { Route as AppTopicsRouteImport } from './routes/_app/topics'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSearchRouteImport } from './routes/_app/search'
@@ -40,6 +41,11 @@ const AppRoute = AppRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTrashRoute = AppTrashRouteImport.update({
+  id: '/trash',
+  path: '/trash',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTopicsRoute = AppTopicsRouteImport.update({
@@ -98,6 +104,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
+  '/trash': typeof AppTrashRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
   '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
+  '/trash': typeof AppTrashRoute
   '/': typeof AppIndexRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/_app/search': typeof AppSearchRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/topics': typeof AppTopicsRoute
+  '/_app/trash': typeof AppTrashRoute
   '/_app/': typeof AppIndexRoute
   '/_app/documents_/$documentId': typeof AppDocumentsDocumentIdRoute
   '/_app/topics_/$topicId': typeof AppTopicsTopicIdRoute
@@ -144,6 +153,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/topics'
+    | '/trash'
     | '/documents/$documentId'
     | '/topics/$topicId'
     | '/documents/$documentId/edit'
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/topics'
+    | '/trash'
     | '/'
     | '/documents/$documentId'
     | '/topics/$topicId'
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/_app/search'
     | '/_app/settings'
     | '/_app/topics'
+    | '/_app/trash'
     | '/_app/'
     | '/_app/documents_/$documentId'
     | '/_app/topics_/$topicId'
@@ -215,6 +227,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/trash': {
+      id: '/_app/trash'
+      path: '/trash'
+      fullPath: '/trash'
+      preLoaderRoute: typeof AppTrashRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/topics': {
@@ -287,6 +306,7 @@ interface AppRouteChildren {
   AppSearchRoute: typeof AppSearchRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTopicsRoute: typeof AppTopicsRoute
+  AppTrashRoute: typeof AppTrashRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocumentsDocumentIdRoute: typeof AppDocumentsDocumentIdRoute
   AppTopicsTopicIdRoute: typeof AppTopicsTopicIdRoute
@@ -300,6 +320,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSearchRoute: AppSearchRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTopicsRoute: AppTopicsRoute,
+  AppTrashRoute: AppTrashRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocumentsDocumentIdRoute: AppDocumentsDocumentIdRoute,
   AppTopicsTopicIdRoute: AppTopicsTopicIdRoute,
