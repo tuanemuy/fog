@@ -244,7 +244,8 @@ describe("SearchPanel", () => {
     fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
     await waitFor(() => expect(screen.getByText("later")).toBeTruthy());
     expect(screen.queryByRole("alert")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "もっと読む" }));
+    // The transition may still be pending when the row lands; wait for the label.
+    fireEvent.click(await screen.findByRole("button", { name: "もっと読む" }));
     const expired = await screen.findByRole("alert");
     expect(expired.textContent).toContain("もう一度検索してください");
     fireEvent.click(

@@ -71,7 +71,10 @@ async function firstPage(
     return { kind: "results", page };
   } catch (error) {
     const serialized = extractSerializedError(error);
-    if (serialized.kind === "notFound" && serialized.code === "TOPIC_NOT_FOUND") {
+    if (
+      serialized.kind === "notFound" &&
+      serialized.code === "TOPIC_NOT_FOUND"
+    ) {
       return { kind: "topicMissing" };
     }
     throw error;
