@@ -164,7 +164,7 @@ consumer は event payload から送信内容を組み立てず、**発行元 DO
 | 失敗の位置 | 記録先 | 状態 | operator 導線 |
 |---|---|---|---|
 | relay が Queue へ publish できない（binding 障害・payload 不正） | 発行元 DO の `outbox_events` | `quarantined` + `terminal_reason` | DO の operator 専用 maintenance 経路（quarantine の一覧・再駆動） |
-| consumer が処理に失敗する | Queue の retry → DLQ | Queue 側の管理 | DLQ ハンドラ |
+| consumer が処理に失敗する | Queue の retry → DLQ | Queue 側の管理 | DLQ ハンドラ（**自動で 1 回だけ**再配送を試み — 送信材料 RPC → provider の同じ手順 — `send` / `nothing-to-send` / 失敗のいずれでも ack する。ログは `event.id` / `type` / 結果の 3 項目まで。手動で取り出す口は無い） |
 
 - **`published` は「Queue へ渡した」の意味であり、「処理された」ではない。**
 - **発行元 DO へ ack を書き戻さない。** 書き戻すと、書き戻し自体が at-least-once で失敗しうるため三段目の隔離先が要り、DO が「配送されていない」と「処理されていない」の2つの状態を持つことになる。

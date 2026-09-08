@@ -480,7 +480,7 @@ Alarm ジョブの多重化テーブル。1 DO につき Alarm は1本しか持�
 | `status` | TEXT | NOT NULL, CHECK (`status IN ('pending','running','done','poison')`) |
 | `lease_until` | INTEGER | nullable。claim の有効期限 |
 | `owner_token` | TEXT | nullable。claim した実行主体の識別子。完了は CAS でこれを照合する |
-| `terminal_reason` | TEXT | nullable。終端の理由 |
+| `terminal_reason` | TEXT | nullable。終端の理由。**値は recovery/index.md の 6 値語彙のトークンに、`operationId` を持つ saga ならその値を空白 1 つで続けた形**（`forward-exhausted <operationId>` / `cleanup-material-lost:forward-conflict <operationId>` など。`operationId` を持たない kind はトークンだけ）。`outbox_events.terminal_reason` は relay の失敗 code のままで、この語彙は使わない |
 | `completed_at` | INTEGER | nullable。**`done` / `poison` へ落ちた時刻**。`pending` / `running` では `NULL`。`next_run_at` では代用できない（あちらはバックオフで未来へ先送りされる列である） |
 
 インデックス:

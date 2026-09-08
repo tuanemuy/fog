@@ -150,7 +150,7 @@ Identity Directory の2種類の鍵ローテーション — **写像鍵**（rou
 | 向き | ガード | 置き場 |
 |---|---|---|
 | 写像鍵の移送は、暗号鍵ローテーションが完了するまで始まらない | `remap-chunk` の直列化ガード（暗号 keyring に previous がある / 自 bucket に `encryptionGeneration` ≠ active の行がある / `done` でない `rotate-encryption` ジョブがある → 拒否） | 移送元 bucket |
-| 暗号鍵ローテーションは、写像鍵ローテーションの進行中に始まらない | `rotate-encryption` の起動 RPC が、**コミットメントに previous 写像世代が存在するあいだ拒否**する | 各 bucket |
+| 暗号鍵ローテーションは、写像鍵ローテーションの進行中に始まらない | `rotate-encryption` の起動 RPC（operator 経路の `start-rotate-encryption`。引数なし）が、**コミットメントに previous 写像世代が存在するあいだ拒否**する | 各 bucket |
 | 古い暗号世代の行は移送されない | `import-remapped-mappings` のガード (iv) | 移送先 bucket |
 
 - デッドロックしない — どちらのガードも**開始**条件であり、どちらも進行中でなければ片方を開始でき、開始した側が完了するまでもう片方が待つだけである
@@ -250,3 +250,9 @@ echo "saga=$saga rows=$rows"; [ $((rows - 1)) -eq $((saga + 4)) ] && echo OK || 
 - **運用**: maintenance 経路の到達制御・実行前承認・監査様式、チャンクサイズと駆動の反復手順（**決定材料に、チャンク中の cross-DO RPC — s3 の `record-remapped-locator` と s4 の import — が共有 bucket と User Data DO を占有する時間を含める**）、退役判定の運用手順（`read-rotation-checkpoint` の集計と、退役デプロイ直前の checkpoint 再読）、**Identity Directory bucket を PITR で復元した場合の checkpoint 無効化と移送の再駆動**（RI-4 の限界）、**「cross-DO RPC の実行寿命に platform 仕様として上限が実在すること」の確認と実値**（削除の no-op 確定の再発行間隔の下限材料）、ローテーション直後のリセットリンク失効の告知、衝突分岐 (e) の対応手順、両鍵同時漏えい時の順序
 - **自動回収（引き継ぎではなく決着済みの相手である。正本は [recovery/index.md](../recovery/index.md)）**: 本設計は回収の入力（`callerToken` / `targetLocators` / コーディネーター予約行の保全）を変更しない。移送は見送り（s1 / s3）によって未完了 saga の材料に触れず、**回収の各段が消す行（コーディネーター予約行 / `active` な孤児写像）はいずれも s1 の行ローカル見送りか s3 の locator 実在検査に落ちるので、移送と回収が同じ行を取り合わない**
 - **実装**: 本ファイルの RPC 4エントリ・予約の世代ガードと退役証明の無効化・**削除の no-op 確定（`sweep-orphan-mapping` / `finalize-withdrawal` の完了判定の変更）**・直列化ガード・`rotate-encryption` の条件付き UPDATE・コミットメント変数・`encrypted_canonical` / `caller_token` の NOT NULL 化と lookup の世代順序（database/index.md）・`record` の全行最大規則と `advanceCredentialVersion` の戻り値契約（domains/identity.md）の実装
+
+## 鍵材料の配布形
+
+- 2 世代を運ぶ変数は JSON の配列 3 つである: `DIRECTORY_ROUTING_KEYRING`（request Worker。`[{ role, generation, key, bucketCount }]`）、`DIRECTORY_KEY_COMMITMENT`（state Worker。`[{ role, generation, keyDigest, bucketCount }]`）、`IDENTITY_MAIL_ENCRYPTION_KEYRING`（state Worker。`[{ role, generation, key }]`）。`role` は `active` / `previous`。
+- 未設定なら従来の単一変数（`DIRECTORY_ROUTING_SECRET` / `IDENTITY_MAIL_ENCRYPTION_KEY`）から `active` の generation 1 だけを組む。配列が設定されていれば単一変数は読まない。
+- 世代ガードで拒否された予約は、request 経路では `SystemError(ConfigurationError)`（利用者には一様なエラー）、ジョブ経路（`resume-signup` の非コーディネーター予約 / `resume-link` の再予約）では `ConflictError("GENERATION_MISMATCH")` として前進不能を確定し、終端モードへ入る（recovery/index.md）。

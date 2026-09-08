@@ -109,7 +109,7 @@ cross-DO saga の前進ジョブが前進不能に達したときの**終端の�
 | `resume-signup` | Identity Directory（コーディネーター bucket） | `credential_locators` に対応行を持たない **`active` な孤児 mapping**（phase 3 の部分成功）/ 未昇格の **`reserved` 行**（phase 1b の途中）/ phase 2 が成功していれば**ログイン手段を持たない `active` アカウント**（phase 4 未了）/ コーディネーター予約行。**孤児 mapping と `reserved` 行は同じ bucket に同居しうる** | あり | S1〜S4 | 巻き戻し（放棄） | 含む | 同一 |
 | `resume-link` | User Data | **`active` な孤児 mapping**（手順3→4 の落下）/ **`reserved` 行**（手順2〜3）/ `phase != 'done'` の `operations` 行（`kind='link'`） | あり | L1〜L3 | 巻き戻し | 含む | 同一 |
 | `resume-credential-change` | Identity Directory | `change_state` が `NULL` でない mapping 行（`'pending'` = phase 2 未適用 / `'advanced'` = 適用済み）と、それに伴う `pending_verifier` / `change_origin` / `operation_id` | あり | C1 | 巻き戻し（`'pending'` のときだけ。`'advanced'` では前進のみ） | 含まない | 同一でない |
-| `finalize-withdrawal` | User Data | `account.status='deleting'` のまま mapping / `credential_locators` が残る | なし | — | 前進 | — | — |
+| `finalize-withdrawal` | User Data | `account.status='deleting'` のまま mapping / `credential_locators` が残る | なし | — | 前進（**消すのはアカウントの到達性だけ** — 全世代の写像行、`credential_locators`、AI 接続の失効、交換済み認可コード、`caller_token` の抹消と `status='deleted'` / `deleted_at` の tombstone。メモ・トピック・ドキュメント・検索索引・`operations` は消さない） | — | — |
 | `sweep-orphan-mapping` | User Data | unlink の **`active` な孤児 mapping** / `phase != 'done'` の `operations` 行（`kind='unlink'`） | なし | — | 前進 | — | — |
 
 - **後始末を持たない2種は、前進そのものが回収である。** `finalize-withdrawal` は退会の削除の再試行、`sweep-orphan-mapping` は unlink の削除の再試行であり、**巻き戻す先が無い**（退会は不可逆な意思、unlink は User Data 側の削除が既に確定している）。前進不能が確定したら終端モードへ入らず、そのまま `poison` + operator へ落ちる
