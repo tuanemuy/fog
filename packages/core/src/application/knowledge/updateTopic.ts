@@ -10,9 +10,9 @@ import { type TopicView, toTopicView } from "./view";
 export type UpdateTopicInput = Readonly<{
   userId: string;
   topicId: string;
-  name?: string;
-  description?: string | null;
-  archived?: boolean;
+  name?: string | undefined;
+  description?: string | null | undefined;
+  archived?: boolean | undefined;
 }>;
 
 /** S-DT-03 / S-AI-06, request side. An update that changes nothing is refused here. */
