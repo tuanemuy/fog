@@ -36,6 +36,13 @@ describe("NAV_ITEMS", () => {
     }
   });
 
+  it("serves the memo history route without listing it in the nav", () => {
+    expect(productionPaths()).toContain("/memos/$memoId/history");
+    expect(
+      NAV_ITEMS.some((item) => (item.to as string).startsWith("/memos")),
+    ).toBe(false);
+  });
+
   it("carries each spec destination exactly when its route exists", () => {
     const paths = productionPaths();
     const navTargets = NAV_ITEMS.map((item) => item.to as string);
@@ -53,8 +60,9 @@ describe("NAV_ITEMS", () => {
 });
 
 describe("titleFor", () => {
-  it("names the timeline and the settings screens", () => {
+  it("names the timeline, the memo history and the settings screens", () => {
     expect(titleFor("/")).toBe("タイムライン");
+    expect(titleFor("/memos/abc/history")).toBe("メモ履歴");
     expect(titleFor("/settings")).toBe("設定");
   });
 

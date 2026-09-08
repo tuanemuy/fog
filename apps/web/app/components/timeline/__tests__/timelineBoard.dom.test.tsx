@@ -5,6 +5,7 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
   groupByDay,
   mergeTimeline,
@@ -18,9 +19,16 @@ const mocks = vi.hoisted(() => ({
   loadTimelinePageFn:
     vi.fn<
       (input: {
-        data: { cursor: string | null; direction: string; limit: number };
+        data: {
+          cursor: string | null;
+          direction: string;
+          limit: number;
+          keyword: string | null;
+        };
       }) => Promise<TimelinePageView>
     >(),
+  softDeleteMemoFn:
+    vi.fn<(input: { data: { memoId: string } }) => Promise<unknown>>(),
 }));
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
@@ -31,6 +39,8 @@ vi.mock("@tanstack/react-start", async (importOriginal) => ({
 vi.mock("@/components/timeline/actions", () => ({
   postMemoFn: mocks.postMemoFn,
   loadTimelinePageFn: mocks.loadTimelinePageFn,
+  editMemoFn: vi.fn(),
+  softDeleteMemoFn: mocks.softDeleteMemoFn,
 }));
 
 class IntersectionObserverStub {
@@ -70,9 +80,9 @@ function memo(id: string, body: string, postedAt: Date): TimelineItemView {
 
 function page(
   items: readonly TimelineItemView[],
-  nextCursor: string | null = null,
-): TimelinePageView {
-  return { items, nextCursor };
+  olderCursor: string | null = null,
+): TimelineBoardInitial {
+  return { items, olderCursor, newerCursor: null, target: null };
 }
 
 function deferred<T>() {
@@ -147,7 +157,7 @@ describe("groupByDay", () => {
 
 describe("TimelineBoard", () => {
   it("draws the empty state and enables posting once a body is typed", async () => {
-    await renderWithRouter(<TimelineBoard initial={page([])} />);
+    await renderWithRouter(<TimelineBoard initial={page([])} search={{}} />);
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
       "最初のメモを残そう",
     );
@@ -169,6 +179,7 @@ describe("TimelineBoard", () => {
           memo("m2", "second day", JAN_2_EARLY),
           memo("m1", "first day", JAN_1_LATE),
         ])}
+        search={{}}
       />,
     );
     const headings = screen.getAllByRole("heading", { level: 2 });
@@ -188,6 +199,7 @@ describe("TimelineBoard", () => {
           memo("m2", "late", JAN_1_LATE),
           memo("m1", "earlier", JAN_1_EARLIER),
         ])}
+        search={{}}
       />,
     );
     expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
@@ -198,7 +210,10 @@ describe("TimelineBoard", () => {
     const post = deferred<unknown>();
     mocks.postMemoFn.mockReturnValue(post.promise);
     const { router } = await renderWithRouter(
-      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)])}
+        search={{}}
+      />,
     );
     const invalidate = vi.spyOn(router, "invalidate");
     const { textarea, submit } = composer();
@@ -232,7 +247,10 @@ describe("TimelineBoard", () => {
       }),
     );
     const { router } = await renderWithRouter(
-      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)])}
+        search={{}}
+      />,
     );
     const invalidate = vi.spyOn(router, "invalidate");
     const { textarea, submit } = composer();
@@ -253,7 +271,10 @@ describe("TimelineBoard", () => {
   it("treats a resolved value of the wrong shape as a system error and keeps the draft", async () => {
     mocks.postMemoFn.mockResolvedValue({ status: 500, unhandled: true });
     const { router } = await renderWithRouter(
-      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)])}
+        search={{}}
+      />,
     );
     const invalidate = vi.spyOn(router, "invalidate");
     const { textarea, submit } = composer();
@@ -273,7 +294,10 @@ describe("TimelineBoard", () => {
     const post = deferred<unknown>();
     mocks.postMemoFn.mockReturnValue(post.promise);
     const { router } = await renderWithRouter(
-      <TimelineBoard initial={page([memo("m1", "existing", JAN_1_LATE)])} />,
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)])}
+        search={{}}
+      />,
     );
     const invalidate = vi.spyOn(router, "invalidate");
     const { textarea, form } = composer();
@@ -297,6 +321,7 @@ describe("TimelineBoard", () => {
     await renderWithRouter(
       <TimelineBoard
         initial={page([memo("m1", "existing", JAN_1_LATE)], "cursor-1")}
+        search={{}}
       />,
     );
     fireEvent.click(
@@ -308,18 +333,25 @@ describe("TimelineBoard", () => {
   });
 
   it("loads the older page behind the cursor and appends it", async () => {
-    mocks.loadTimelinePageFn.mockResolvedValue(
-      page([memo("older", "older memo", JAN_1_EARLIER)], null),
-    );
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [memo("older", "older memo", JAN_1_EARLIER)],
+      nextCursor: null,
+    });
     await renderWithRouter(
       <TimelineBoard
         initial={page([memo("m1", "existing", JAN_1_LATE)], "cursor-1")}
+        search={{}}
       />,
     );
     const button = screen.getByRole("button", { name: "過去のメモを読み込む" });
     fireEvent.click(button);
     expect(mocks.loadTimelinePageFn).toHaveBeenCalledWith({
-      data: { cursor: "cursor-1", direction: "older", limit: 50 },
+      data: {
+        cursor: "cursor-1",
+        direction: "older",
+        limit: 50,
+        keyword: null,
+      },
     });
     await screen.findByText("older memo");
     expect(screen.getAllByRole("article").map((a) => a.id)).toEqual([
@@ -331,5 +363,327 @@ describe("TimelineBoard", () => {
         screen.queryByRole("button", { name: "過去のメモを読み込む" }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("mergeTimeline re-base", () => {
+  it("lets the higher version win on either side and the loader page win a tie", () => {
+    const v1 = { ...memo("a", "v1", JAN_1_LATE), version: 1 };
+    const v2 = { ...memo("a", "v2", JAN_1_LATE), version: 2 };
+    expect(mergeTimeline([v1], [v2])[0]?.body).toBe("v2");
+    expect(mergeTimeline([v2], [v1])[0]?.body).toBe("v2");
+    expect(
+      mergeTimeline(
+        [{ ...v1, body: "initial" }],
+        [{ ...v1, body: "loaded" }],
+      )[0]?.body,
+    ).toBe("initial");
+  });
+});
+
+describe("TimelineBoard: filter", () => {
+  it("shows the no-match state with a clear action that drops q", async () => {
+    const { router } = await renderWithRouter(
+      <TimelineBoard initial={page([])} search={{ q: "買い物" }} />,
+      { path: "/?q=買い物" },
+    );
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      "「買い物」に一致するメモは見つかりませんでした",
+    );
+    const input = screen.getByRole("textbox", {
+      name: "キーワードで絞り込む",
+    }) as HTMLInputElement;
+    expect(input.value).toBe("買い物");
+    // Two clear affordances: the × in the bar and the empty state's button.
+    const clears = screen.getAllByRole("button", { name: "絞り込みを解除" });
+    expect(clears).toHaveLength(2);
+    fireEvent.click(clears[1] as HTMLElement);
+    await waitFor(() =>
+      expect(router.state.location.search).not.toHaveProperty("q"),
+    );
+  });
+
+  it("navigates with the submitted keyword", async () => {
+    const { router } = await renderWithRouter(
+      <TimelineBoard initial={page([])} search={{}} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "キーワードで絞り込む" }),
+    );
+    const input = screen.getByRole("textbox", { name: "キーワードで絞り込む" });
+    fireEvent.change(input, { target: { value: " abc " } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ q: "abc" }),
+    );
+  });
+
+  it("still posts under a filter and then returns to the plain timeline", async () => {
+    mocks.postMemoFn.mockResolvedValue({ memo: memo("new", "x", JAN_2_EARLY) });
+    const { router } = await renderWithRouter(
+      <TimelineBoard initial={page([])} search={{ q: "買い物" }} />,
+      { path: "/?q=買い物" },
+    );
+    const { textarea, submit } = composer();
+    fireEvent.change(textarea, { target: { value: "posted under filter" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(mocks.postMemoFn).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(router.state.location.search).not.toHaveProperty("q"),
+    );
+    expect(router.state.location.pathname).toBe("/");
+  });
+});
+
+describe("TimelineBoard: date jump", () => {
+  it("announces the day when it holds memos", async () => {
+    await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "on the day", JAN_1_LATE)])}
+        search={{ date: "2026-01-01" }}
+      />,
+      { path: "/?date=2026-01-01" },
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "2026年1月1日(木)に移動しました",
+    );
+  });
+
+  it("explains the nearest position when the day is empty and returns to the head", async () => {
+    const { router } = await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "other day", JAN_2_EARLY)])}
+        search={{ date: "2026-01-01" }}
+      />,
+      { path: "/?date=2026-01-01" },
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "にメモはありません",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "先頭に戻る" }));
+    await waitFor(() =>
+      expect(router.state.location.search).not.toHaveProperty("date"),
+    );
+  });
+});
+
+describe("TimelineBoard: both sentinels", () => {
+  it("loads the newer page from the top sentinel and prepends it", async () => {
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [memo("newer", "newer memo", JAN_2_EARLY)],
+      nextCursor: null,
+    });
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{
+          items: [memo("m1", "pivot", JAN_1_LATE)],
+          olderCursor: null,
+          newerCursor: "cursor-newer",
+          target: null,
+        }}
+        search={{ q: "memo" }}
+      />,
+      { path: "/?q=memo" },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "新しいメモを読み込む" }),
+    );
+    expect(mocks.loadTimelinePageFn).toHaveBeenCalledWith({
+      data: {
+        cursor: "cursor-newer",
+        direction: "newer",
+        limit: 50,
+        keyword: "memo",
+      },
+    });
+    await screen.findByText("newer memo");
+    expect(screen.getAllByRole("article").map((a) => a.id)).toEqual([
+      "memo-newer",
+      "memo-m1",
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "新しいメモを読み込む" }),
+      ).toBeNull(),
+    );
+  });
+});
+
+describe("TimelineBoard: position-specified visit", () => {
+  it("highlights the found target and scrolls it into view", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{
+          ...page([
+            memo("m2", "other", JAN_2_EARLY),
+            memo("m1", "target", JAN_1_LATE),
+          ]),
+          target: { memoId: "m1", state: "found" },
+        }}
+        search={{ memo: "m1" }}
+      />,
+      { path: "/?memo=m1" },
+    );
+    const article = document.getElementById("memo-m1");
+    expect(article?.classList.contains("fog-memo-highlight")).toBe(true);
+    expect(
+      document
+        .getElementById("memo-m2")
+        ?.classList.contains("fog-memo-highlight"),
+    ).toBe(false);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it.each([
+    [
+      "notFound",
+      "指定されたメモは見つかりません。通常のタイムラインを表示しています",
+    ],
+    [
+      "trashed",
+      "指定されたメモはゴミ箱にあります。通常のタイムラインを表示しています",
+    ],
+  ] as const)(
+    "explains a %s target and shows the plain list",
+    async (state, text) => {
+      await renderWithRouter(
+        <TimelineBoard
+          initial={{
+            ...page([memo("m1", "plain", JAN_1_LATE)]),
+            target: { memoId: "gone", state },
+          }}
+          search={{ memo: "gone" }}
+        />,
+        { path: "/?memo=gone" },
+      );
+      expect(screen.getByRole("status").textContent).toBe(text);
+      expect(document.querySelector(".fog-memo-highlight")).toBeNull();
+      expect(screen.getAllByRole("article")).toHaveLength(1);
+    },
+  );
+});
+
+async function openDeleteDialog() {
+  fireEvent.click(screen.getByRole("button", { name: "メモの操作" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "削除" }));
+  return screen.findByRole("dialog", { name: "メモを削除しますか？" });
+}
+
+describe("TimelineBoard: delete is owned by the board", () => {
+  it("keeps the memo when the dialog is cancelled", async () => {
+    await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "keep", JAN_1_LATE)])}
+        search={{}}
+      />,
+    );
+    const dialog = await openDeleteDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "キャンセル" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(mocks.softDeleteMemoFn).not.toHaveBeenCalled();
+  });
+
+  it("removes the memo optimistically and keeps it gone once the server confirms", async () => {
+    const del = deferred<unknown>();
+    mocks.softDeleteMemoFn.mockReturnValue(del.promise);
+    const { router } = await renderWithRouter(
+      <TimelineBoard
+        initial={page([
+          memo("m2", "stays", JAN_2_EARLY),
+          memo("m1", "goes", JAN_1_LATE),
+        ])}
+        search={{}}
+      />,
+    );
+    const invalidate = vi.spyOn(router, "invalidate");
+    const m1 = document.getElementById("memo-m1") as HTMLElement;
+    fireEvent.click(within(m1).getByRole("button", { name: "メモの操作" }));
+    fireEvent.click(within(m1).getByRole("menuitem", { name: "削除" }));
+    const confirm = await screen.findByRole("dialog", {
+      name: "メモを削除しますか？",
+    });
+    fireEvent.click(within(confirm).getByRole("button", { name: "削除" }));
+
+    await waitFor(() => expect(document.getElementById("memo-m1")).toBeNull());
+    expect(mocks.softDeleteMemoFn).toHaveBeenCalledWith({
+      data: { memoId: "m1" },
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+
+    del.resolve({ deleted: true });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.getElementById("memo-m1")).toBeNull();
+    expect(screen.getAllByRole("article").map((a) => a.id)).toEqual([
+      "memo-m2",
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("brings the memo back and offers a retry when the delete fails", async () => {
+    mocks.softDeleteMemoFn.mockRejectedValueOnce(
+      new AppServerError({
+        kind: "system",
+        code: "DATABASE_ERROR",
+        message: "x",
+        retryable: true,
+      }),
+    );
+    await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "flaky", JAN_1_LATE)])}
+        search={{}}
+      />,
+    );
+    const dialog = await openDeleteDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "削除" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("システムエラーが発生しました");
+    await waitFor(() =>
+      expect(document.getElementById("memo-m1")).not.toBeNull(),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mocks.softDeleteMemoFn).toHaveBeenCalledTimes(1);
+
+    mocks.softDeleteMemoFn.mockResolvedValueOnce({ deleted: true });
+    fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
+    await waitFor(() =>
+      expect(mocks.softDeleteMemoFn).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() => expect(document.getElementById("memo-m1")).toBeNull());
+  });
+});
+
+describe("TimelineBoard: N-1", () => {
+  it("does not re-send the body when the first of two same-frame submits fails", async () => {
+    mocks.postMemoFn.mockRejectedValue(
+      new AppServerError({
+        kind: "system",
+        code: "DATABASE_ERROR",
+        message: "x",
+        retryable: true,
+      }),
+    );
+    await renderWithRouter(
+      <TimelineBoard
+        initial={page([memo("m1", "existing", JAN_1_LATE)])}
+        search={{}}
+      />,
+    );
+    const { textarea, form } = composer();
+    fireEvent.change(textarea, { target: { value: "twice failing" } });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("システムエラーが発生しました");
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(mocks.postMemoFn).toHaveBeenCalledTimes(1);
+    expect(composer().textarea.value).toBe("twice failing");
+    expect(screen.getAllByRole("article")).toHaveLength(1);
   });
 });

@@ -14,7 +14,13 @@ import { expect } from "vitest";
  * with no loader and no `validateSearch`: the harness draws the element,
  * not the screen behind the link.
  */
-export const STUB_PATHS = ["/", "/settings", "/login", "/signup"] as const;
+export const STUB_PATHS = [
+  "/",
+  "/settings",
+  "/login",
+  "/signup",
+  "/memos/$memoId/history",
+] as const;
 
 export type StubPath = (typeof STUB_PATHS)[number];
 
