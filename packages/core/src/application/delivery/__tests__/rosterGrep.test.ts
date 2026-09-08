@@ -20,6 +20,9 @@ const ROOTS = ["packages/core/src", "apps/web/app"] as const;
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
+    // `lint/pluginWiring.test.ts` writes and removes `*.tmp.ts` fixtures
+    // under this tree while a parallel worker may be scanning it.
+    if (entry.endsWith(".tmp.ts")) continue;
     const path = join(dir, entry);
     if (entry === "__tests__" || entry === "node_modules") continue;
     if (statSync(path).isDirectory()) {
