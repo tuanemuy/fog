@@ -41,11 +41,11 @@ const activeClient: Overrides = {
   authorizeAiClient: async () => ({ clientName: "Claude" }),
 };
 
-function deps(c: RequestContainer) {
+function deps(c: RequestContainer, appUrl = APP_URL) {
   return {
     container: c,
     tokenCodec: codec,
-    appUrl: APP_URL,
+    appUrl,
     serverVersion: "test",
   };
 }
@@ -164,6 +164,20 @@ describe("POST /mcp", () => {
       deps(c),
     );
     expect(foreign.status).toBe(403);
+    // O-4: the same origin passes even when APP_URL carries a path or slash.
+    const own = await handleMcp(
+      new Request(`${APP_URL}/mcp`, {
+        method: "POST",
+        headers: {
+          origin: APP_URL,
+          authorization: await bearer(),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      }),
+      deps(c, `${APP_URL}/`),
+    );
+    expect(own.status).toBe(200);
   });
 
   it("tools/call runs the tool with the AI actor, answers a business failure as isError, a system one as -32000", async () => {
@@ -534,9 +548,27 @@ describe("OAuth 2.1 endpoints", () => {
     // The same code a second time is spent.
     expect((await exchange(good)).status).toBe(400);
 
+    // O-2: the pair is bound to the client it was issued to.
+    for (const client_id of [
+      undefined,
+      await codec.issueClientId({
+        name: "other",
+        redirectUris: ["https://o.example/cb"],
+        iat: 1,
+      }),
+    ]) {
+      const foreign = await exchange({
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+        ...(client_id === undefined ? {} : { client_id }),
+      });
+      expect(foreign.status).toBe(400);
+      expect(await foreign.json()).toMatchObject({ error: "invalid_grant" });
+    }
     const refreshed = await exchange({
       grant_type: "refresh_token",
       refresh_token: tokens.refresh_token,
+      client_id,
     });
     expect(refreshed.status).toBe(200);
     const renewed = (await refreshed.json()) as {
@@ -547,14 +579,15 @@ describe("OAuth 2.1 endpoints", () => {
       uid: "user-1",
       cid: "conn-1",
     });
-    expect(
-      await codec.verifyRefresh(renewed.refresh_token, NOW),
-    ).not.toBeNull();
+    expect(await codec.verifyRefresh(renewed.refresh_token, NOW)).toMatchObject(
+      { client: client_id },
+    );
 
     active = false;
     const dead = await exchange({
       grant_type: "refresh_token",
       refresh_token: tokens.refresh_token,
+      client_id,
     });
     expect(dead.status).toBe(400);
     expect(await dead.json()).toMatchObject({ error: "invalid_grant" });

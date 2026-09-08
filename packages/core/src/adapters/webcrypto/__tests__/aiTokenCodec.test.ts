@@ -28,11 +28,12 @@ describe("aiTokenCodec", () => {
       await codec.verifyAccess(access, at(AI_ACCESS_TOKEN_TTL_MS)),
     ).toBeNull();
 
-    const refresh = await codec.issueRefresh("u", "c", NOW);
+    const refresh = await codec.issueRefresh("u", "c", "fog_x", NOW);
     expect(
       await codec.verifyRefresh(refresh, at(AI_ACCESS_TOKEN_TTL_MS)),
     ).toMatchObject({
       typ: "refresh",
+      client: "fog_x",
     });
     expect(
       await codec.verifyRefresh(refresh, at(AI_REFRESH_TOKEN_TTL_MS)),
@@ -85,7 +86,7 @@ describe("aiTokenCodec", () => {
   // another, even though every kind shares the secret and the encoding.
   it("refuses a value of one kind presented as another", async () => {
     const access = await codec.issueAccess("u", "c", NOW);
-    const refresh = await codec.issueRefresh("u", "c", NOW);
+    const refresh = await codec.issueRefresh("u", "c", "fog_x", NOW);
     const code = await codec.issueCode(
       {
         jti: "j",

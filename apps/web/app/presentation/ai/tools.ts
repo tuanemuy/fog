@@ -1,4 +1,4 @@
-import type { RequestContainer } from "@repo/core/application/di/types";
+import type { AiToolContainer } from "@repo/core/application/di/aiToolContainer";
 import {
   type AiClientActorDto,
   rebuildActor,
@@ -45,7 +45,7 @@ export const AI_TOOL_NAMES = [
 export type AiToolName = (typeof AI_TOOL_NAMES)[number];
 
 export type AiToolContext = Readonly<{
-  container: RequestContainer;
+  container: AiToolContainer;
   userId: string;
   /** Never a `UserActor`: the human-only usecases refuse this at the type level. */
   actor: AiClientActorDto;

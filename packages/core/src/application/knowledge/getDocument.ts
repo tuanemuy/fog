@@ -1,6 +1,6 @@
 import { DocumentId } from "@repo/core/domain/knowledge/valueObject";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import { documentNotFound } from "./shared";
 import { type DocumentView, toDocumentView } from "./view";
 
@@ -10,7 +10,10 @@ export type GetDocumentInput = Readonly<{ userId: string; documentId: string }>;
 export async function getDocument({
   container,
   input,
-}: ServiceArgs<GetDocumentInput>): Promise<DocumentView> {
+}: ServiceArgs<
+  GetDocumentInput,
+  Needs<"knowledgeGateway">
+>): Promise<DocumentView> {
   return container.knowledgeGateway.getDocument(input.userId, input.documentId);
 }
 

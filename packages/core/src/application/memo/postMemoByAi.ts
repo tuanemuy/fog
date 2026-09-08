@@ -1,5 +1,5 @@
 import type { AiClientActorDto } from "../identity/actorDto";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { AiMemoView } from "./view";
 
 export type PostMemoByAiInput = Readonly<{
@@ -15,7 +15,10 @@ export type PostMemoByAiOutput = Readonly<{ memo: AiMemoView }>;
 export async function postMemoByAi({
   container,
   input,
-}: ServiceArgs<PostMemoByAiInput>): Promise<PostMemoByAiOutput> {
+}: ServiceArgs<
+  PostMemoByAiInput,
+  Needs<"memoGateway">
+>): Promise<PostMemoByAiOutput> {
   const memo = await container.memoGateway.postMemo(input.userId, {
     body: input.body,
     actor: input.actor,

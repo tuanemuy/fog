@@ -1,6 +1,6 @@
 import { AiClientConnectionId } from "@repo/core/domain/identity/valueObject";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 
 export type AuthorizeAiClientInput = Readonly<{
   userId: string;
@@ -20,7 +20,10 @@ export type AuthorizedAiClient = Readonly<{ clientName: string }>;
 export async function authorizeAiClient({
   container,
   input,
-}: ServiceArgs<AuthorizeAiClientInput>): Promise<AuthorizedAiClient | null> {
+}: ServiceArgs<
+  AuthorizeAiClientInput,
+  Needs<"identityGateway">
+>): Promise<AuthorizedAiClient | null> {
   return container.identityGateway.authorizeAiClient(
     input.userId,
     input.connectionId,

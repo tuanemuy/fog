@@ -1,6 +1,6 @@
 import { ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { RecentMemosDto } from "./gateway";
 import { type RecentMemosView, toAiMemoView } from "./view";
 
@@ -18,7 +18,10 @@ export type RecentMemosInput = Readonly<{
 export async function recentMemos({
   container,
   input,
-}: ServiceArgs<RecentMemosInput>): Promise<RecentMemosView> {
+}: ServiceArgs<
+  RecentMemosInput,
+  Needs<"memoGateway">
+>): Promise<RecentMemosView> {
   const limit = input.limit ?? RECENT_MEMOS_DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < LIMIT_MIN || limit > LIMIT_MAX) {
     throw new ValidationError(

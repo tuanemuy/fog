@@ -2,7 +2,7 @@ import { type LiveTopic, Topic } from "@repo/core/domain/knowledge/entity";
 import { TopicId } from "@repo/core/domain/knowledge/valueObject";
 import { ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { UpdateTopicDto } from "./gateway";
 import { topicNotFound } from "./shared";
 import { type TopicView, toTopicView } from "./view";
@@ -19,7 +19,10 @@ export type UpdateTopicInput = Readonly<{
 export async function updateTopic({
   container,
   input,
-}: ServiceArgs<UpdateTopicInput>): Promise<TopicView> {
+}: ServiceArgs<
+  UpdateTopicInput,
+  Needs<"knowledgeGateway">
+>): Promise<TopicView> {
   if (
     input.name === undefined &&
     input.description === undefined &&

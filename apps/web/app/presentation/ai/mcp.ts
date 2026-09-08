@@ -106,7 +106,7 @@ export async function handleMcp(
   // DNS-rebinding guard of the Streamable HTTP transport: a browser origin
   // other than the app's own is refused; non-browser clients send none.
   const origin = request.headers.get("origin");
-  if (origin !== null && origin !== deps.appUrl) {
+  if (origin !== null && origin !== new URL(deps.appUrl).origin) {
     return new Response("Forbidden", { status: 403 });
   }
   const auth = await authorizeAiRequest(request, deps);

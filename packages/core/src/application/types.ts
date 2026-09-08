@@ -10,7 +10,16 @@ import type { RequestContainer } from "./di/types";
  */
 export type UsecaseContainer = Omit<RequestContainer, "sessionCodec">;
 
-export type ServiceArgs<T> = {
-  container: UsecaseContainer;
+/**
+ * A usecase's arguments. `C` is what the usecase reads off the container;
+ * a usecase reached from more than one face (the AI tools among them)
+ * declares the narrowest `Needs<…>` it can, so a caller holding only that
+ * much can call it and nothing wider leaks through the call.
+ */
+export type ServiceArgs<T, C = UsecaseContainer> = {
+  container: C;
   input: T;
 };
+
+/** The container members a usecase needs, and no others. */
+export type Needs<K extends keyof UsecaseContainer> = Pick<UsecaseContainer, K>;

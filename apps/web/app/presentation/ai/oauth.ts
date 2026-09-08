@@ -346,7 +346,7 @@ export async function handleToken(
     if (!consumed.ok) {
       return oauthError("invalid_grant", "The authorization code is not valid");
     }
-    return tokenResponse(deps, code.uid, code.cid, now);
+    return tokenResponse(deps, code.uid, code.cid, code.client, now);
   }
 
   if (grant === "refresh_token") {
@@ -356,13 +356,21 @@ export async function handleToken(
     );
     if (refresh === null)
       return oauthError("invalid_grant", "The refresh token is not valid");
+    // A public client refreshes with its `client_id`, and only the client
+    // the pair was issued to may (OAuth 2.1 §4.3.1).
+    if ((form.client_id ?? "") !== refresh.client) {
+      return oauthError(
+        "invalid_grant",
+        "The refresh token was not issued to this client",
+      );
+    }
     const client = await authorizeAiClient({
       container: deps.container,
       input: { userId: refresh.uid, connectionId: refresh.cid },
     });
     if (client === null)
       return oauthError("invalid_grant", "The connection is no longer active");
-    return tokenResponse(deps, refresh.uid, refresh.cid, now);
+    return tokenResponse(deps, refresh.uid, refresh.cid, refresh.client, now);
   }
 
   return oauthError(
@@ -375,11 +383,12 @@ async function tokenResponse(
   deps: OAuthDeps,
   uid: string,
   cid: string,
+  client: string,
   now: Date,
 ): Promise<Response> {
   const [access_token, refresh_token] = await Promise.all([
     deps.tokenCodec.issueAccess(uid, cid, now),
-    deps.tokenCodec.issueRefresh(uid, cid, now),
+    deps.tokenCodec.issueRefresh(uid, cid, client, now),
   ]);
   return Response.json(
     {

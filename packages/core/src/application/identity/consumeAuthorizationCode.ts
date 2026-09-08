@@ -1,4 +1,4 @@
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 
 export type ConsumeAuthorizationCodeInput = Readonly<{
   userId: string;
@@ -23,7 +23,10 @@ export type ConsumeAuthorizationCodeOutput =
 export async function consumeAuthorizationCode({
   container,
   input,
-}: ServiceArgs<ConsumeAuthorizationCodeInput>): Promise<ConsumeAuthorizationCodeOutput> {
+}: ServiceArgs<
+  ConsumeAuthorizationCodeInput,
+  Needs<"identityGateway">
+>): Promise<ConsumeAuthorizationCodeOutput> {
   return container.identityGateway.consumeAuthorizationCode(input.userId, {
     jti: input.jti,
     expiresAt: input.expiresAt,

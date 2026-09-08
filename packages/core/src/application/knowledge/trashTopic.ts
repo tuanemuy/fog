@@ -4,7 +4,7 @@ import { RetentionPolicy } from "@repo/core/domain/trash/retentionPolicy";
 import { SystemError, SystemErrorCode } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import { armPurgeTrash } from "../trash/armPurgeTrash";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import { topicNotFound } from "./shared";
 import type { TrashTopicView } from "./view";
 
@@ -14,7 +14,10 @@ export type TrashTopicInput = Readonly<{ userId: string; topicId: string }>;
 export async function trashTopic({
   container,
   input,
-}: ServiceArgs<TrashTopicInput>): Promise<TrashTopicView> {
+}: ServiceArgs<
+  TrashTopicInput,
+  Needs<"knowledgeGateway">
+>): Promise<TrashTopicView> {
   return container.knowledgeGateway.trashTopic(input.userId, input.topicId);
 }
 

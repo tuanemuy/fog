@@ -35,6 +35,8 @@ export type AiRefreshToken = Readonly<{
   typ: "refresh";
   uid: string;
   cid: string;
+  /** The `client_id` the pair was issued to; a refresh must present the same (OAuth 2.1 §4.3). */
+  client: string;
   exp: number;
 }>;
 
@@ -74,7 +76,12 @@ export type AiAuthorizeRequest = Readonly<{
 export interface AiTokenCodec {
   issueAccess(uid: string, cid: string, now: Date): Promise<string>;
   verifyAccess(token: string, now: Date): Promise<AiAccessToken | null>;
-  issueRefresh(uid: string, cid: string, now: Date): Promise<string>;
+  issueRefresh(
+    uid: string,
+    cid: string,
+    client: string,
+    now: Date,
+  ): Promise<string>;
   verifyRefresh(token: string, now: Date): Promise<AiRefreshToken | null>;
   issueCode(
     payload: Omit<AiAuthorizationCode, "typ" | "exp">,
@@ -190,11 +197,12 @@ export function createAiTokenCodec(options: { secret: string }): AiTokenCodec {
       };
     },
 
-    async issueRefresh(uid, cid, now) {
+    async issueRefresh(uid, cid, client, now) {
       const payload: AiRefreshToken = {
         typ: "refresh",
         uid,
         cid,
+        client,
         exp: now.getTime() + AI_REFRESH_TOKEN_TTL_MS,
       };
       return sign(await keys.refresh(), payload);
@@ -206,11 +214,18 @@ export function createAiTokenCodec(options: { secret: string }): AiTokenCodec {
         v.typ !== "refresh" ||
         !str(v.uid) ||
         !str(v.cid) ||
+        !str(v.client) ||
         !live(v.exp, now)
       ) {
         return null;
       }
-      return { typ: "refresh", uid: v.uid, cid: v.cid, exp: v.exp };
+      return {
+        typ: "refresh",
+        uid: v.uid,
+        cid: v.cid,
+        client: v.client,
+        exp: v.exp,
+      };
     },
 
     async issueCode(payload, now) {

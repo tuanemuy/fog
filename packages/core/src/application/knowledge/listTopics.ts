@@ -1,5 +1,5 @@
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { ListTopicsDto } from "./gateway";
 import {
   type TopicListView,
@@ -17,7 +17,10 @@ export type ListTopicsInput = Readonly<{
 export async function listTopics({
   container,
   input,
-}: ServiceArgs<ListTopicsInput>): Promise<TopicListView> {
+}: ServiceArgs<
+  ListTopicsInput,
+  Needs<"knowledgeGateway">
+>): Promise<TopicListView> {
   return container.knowledgeGateway.listTopics(input.userId, {
     includeArchived: input.includeArchived,
   });

@@ -205,6 +205,7 @@ async function refresh(): Promise<void> {
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: state.refreshToken,
+      client_id: state.clientId ?? "",
     }).toString(),
   });
   const tokens = (await json(response)) as {

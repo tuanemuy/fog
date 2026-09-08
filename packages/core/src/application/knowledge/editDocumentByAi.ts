@@ -7,7 +7,7 @@ import {
 import { ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import { type AiClientActorDto, rebuildActor } from "../identity/actorDto";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { EditDocumentByAiDto } from "./gateway";
 import { documentNotFound } from "./shared";
 import type { EditDocumentByAiView } from "./view";
@@ -39,7 +39,10 @@ export function changeReasonRequired(): ValidationError {
 export async function editDocumentByAi({
   container,
   input,
-}: ServiceArgs<EditDocumentByAiInput>): Promise<EditDocumentByAiView> {
+}: ServiceArgs<
+  EditDocumentByAiInput,
+  Needs<"knowledgeGateway">
+>): Promise<EditDocumentByAiView> {
   const changeReason = input.changeReason?.trim() ?? "";
   if (changeReason.length === 0) throw changeReasonRequired();
   return container.knowledgeGateway.editDocumentByAi(input.userId, {

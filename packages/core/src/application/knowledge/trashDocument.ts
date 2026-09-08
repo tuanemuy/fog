@@ -4,7 +4,7 @@ import { RetentionPolicy } from "@repo/core/domain/trash/retentionPolicy";
 import { SystemError, SystemErrorCode } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import { armPurgeTrash } from "../trash/armPurgeTrash";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import { documentNotFound } from "./shared";
 
 export type TrashDocumentInput = Readonly<{
@@ -16,7 +16,7 @@ export type TrashDocumentInput = Readonly<{
 export async function trashDocument({
   container,
   input,
-}: ServiceArgs<TrashDocumentInput>): Promise<void> {
+}: ServiceArgs<TrashDocumentInput, Needs<"knowledgeGateway">>): Promise<void> {
   await container.knowledgeGateway.trashDocument(
     input.userId,
     input.documentId,

@@ -1,5 +1,5 @@
 import { MemoId } from "@repo/core/domain/memo/valueObject";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 
 export type DeleteMemoByAiInput = Readonly<{ userId: string; memoId: string }>;
 
@@ -12,7 +12,7 @@ export type DeleteMemoByAiInput = Readonly<{ userId: string; memoId: string }>;
 export async function deleteMemoByAi({
   container,
   input,
-}: ServiceArgs<DeleteMemoByAiInput>): Promise<void> {
+}: ServiceArgs<DeleteMemoByAiInput, Needs<"memoGateway">>): Promise<void> {
   await container.memoGateway.softDeleteMemo(
     input.userId,
     MemoId.create(input.memoId),

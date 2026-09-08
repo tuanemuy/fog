@@ -131,6 +131,23 @@ describe("the AI tool registry", () => {
 // browsing or a human-only edit. `search` is shared with the human face
 // by the spec; it is the one both-faces read here.
 describe("what the AI presentation can reach", () => {
+  // O-3: a tool holds `AiToolContainer` (three gateways) and only hands it
+  // to a usecase; no source under `presentation/ai/` names a gateway
+  // member or a gateway type, so nothing calls one around the usecases.
+  it("never touches a gateway directly", () => {
+    for (const file of sourceFiles(aiDir)) {
+      const source = readFileSync(file, "utf8");
+      expect(
+        /\.\w*Gateway\b/.test(source),
+        `${file} reaches a gateway member`,
+      ).toBe(false);
+      expect(
+        /\b\w+Gateway\b(?!:)/.test(source.replace(/^\s*\/\/.*$/gm, "")),
+        `${file} names a gateway type`,
+      ).toBe(false);
+    }
+  });
+
   it("imports only the allowed usecase modules", () => {
     for (const file of sourceFiles(aiDir)) {
       for (const spec of importsOf(readFileSync(file, "utf8"))) {

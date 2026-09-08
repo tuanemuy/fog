@@ -5,7 +5,7 @@ import {
 } from "@repo/core/domain/search/valueObject";
 import { SystemError, SystemErrorCode, ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { SearchQueryDto } from "./gateway";
 import type { SearchOutputView, SearchResultItemView } from "./view";
 
@@ -37,7 +37,10 @@ function checkLimit(limit: number): number {
 export async function search({
   container,
   input,
-}: ServiceArgs<SearchInput>): Promise<SearchOutputView> {
+}: ServiceArgs<
+  SearchInput,
+  Needs<"searchGateway">
+>): Promise<SearchOutputView> {
   return container.searchGateway.search(input.userId, {
     keyword: input.keyword,
     topicId: input.topicId ?? null,

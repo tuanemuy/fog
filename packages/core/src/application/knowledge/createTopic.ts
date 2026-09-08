@@ -1,7 +1,7 @@
 import { UserId } from "@repo/core/domain/identity/valueObject";
 import { Topic } from "@repo/core/domain/knowledge/entity";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { CreateTopicDto } from "./gateway";
 import { type TopicView, toTopicView } from "./view";
 
@@ -15,7 +15,10 @@ export type CreateTopicInput = Readonly<{
 export async function createTopic({
   container,
   input,
-}: ServiceArgs<CreateTopicInput>): Promise<TopicView> {
+}: ServiceArgs<
+  CreateTopicInput,
+  Needs<"knowledgeGateway">
+>): Promise<TopicView> {
   return container.knowledgeGateway.createTopic(input.userId, {
     name: input.name,
     description: input.description ?? null,

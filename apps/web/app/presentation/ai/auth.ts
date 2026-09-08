@@ -1,4 +1,5 @@
 import type { AiTokenCodec } from "@repo/core/adapters/webcrypto/aiTokenCodec";
+import { toAiToolContainer } from "@repo/core/application/di/aiToolContainer";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { isSystemError, SystemErrorCode } from "@repo/core/application/errors";
 import { authorizeAiClient } from "@repo/core/application/identity/authorizeAiClient";
@@ -74,7 +75,7 @@ export async function authorizeAiRequest(
   return {
     ok: true,
     ctx: {
-      container: deps.container,
+      container: toAiToolContainer(deps.container),
       userId: access.uid,
       actor: {
         kind: "aiClient",

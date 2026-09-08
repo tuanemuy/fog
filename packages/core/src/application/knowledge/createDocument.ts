@@ -5,7 +5,7 @@ import { TopicId } from "@repo/core/domain/knowledge/valueObject";
 import { MemoId } from "@repo/core/domain/memo/valueObject";
 import { NotFoundError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import type { CreateDocumentDto } from "./gateway";
 import {
   blankToNull,
@@ -32,7 +32,10 @@ export type CreateDocumentInput = Readonly<{
 export async function createDocument({
   container,
   input,
-}: ServiceArgs<CreateDocumentInput>): Promise<CreateDocumentView> {
+}: ServiceArgs<
+  CreateDocumentInput,
+  Needs<"knowledgeGateway">
+>): Promise<CreateDocumentView> {
   return container.knowledgeGateway.createDocument(input.userId, {
     actor: toActorDto(input.actor),
     topicId: input.topicId,

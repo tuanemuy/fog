@@ -2,7 +2,7 @@ import { Memo } from "@repo/core/domain/memo/entity";
 import { MemoId } from "@repo/core/domain/memo/valueObject";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import { type AiClientActorDto, rebuildActor } from "../identity/actorDto";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import { memoNotFound } from "./editMemo";
 import type { UpdateMemoByAiDto } from "./gateway";
 import type { UpdateMemoByAiView } from "./view";
@@ -23,7 +23,10 @@ export type UpdateMemoByAiInput = Readonly<{
 export async function updateMemoByAi({
   container,
   input,
-}: ServiceArgs<UpdateMemoByAiInput>): Promise<UpdateMemoByAiView> {
+}: ServiceArgs<
+  UpdateMemoByAiInput,
+  Needs<"memoGateway">
+>): Promise<UpdateMemoByAiView> {
   return container.memoGateway.updateMemoByAi(input.userId, {
     memoId: MemoId.create(input.memoId),
     body: input.body,

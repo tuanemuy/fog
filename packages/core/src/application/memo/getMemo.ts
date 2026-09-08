@@ -1,6 +1,6 @@
 import { MemoId } from "@repo/core/domain/memo/valueObject";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
-import type { ServiceArgs } from "../types";
+import type { Needs, ServiceArgs } from "../types";
 import { memoNotFound } from "./editMemo";
 import { type MemoView, toMemoView } from "./view";
 
@@ -20,7 +20,7 @@ export type GetMemoOutput = Readonly<{
 export async function getMemo({
   container,
   input,
-}: ServiceArgs<GetMemoInput>): Promise<GetMemoOutput> {
+}: ServiceArgs<GetMemoInput, Needs<"memoGateway">>): Promise<GetMemoOutput> {
   const memo = await container.memoGateway.getMemo(
     input.userId,
     MemoId.create(input.memoId),
