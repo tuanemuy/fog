@@ -4,6 +4,7 @@ import {
   SystemErrorCode,
 } from "@repo/core/application/errors";
 import { CALLER_TOKEN_MIN_LENGTH } from "@repo/core/application/identity/callerToken";
+import { resumeSignupOperationKey } from "@repo/core/application/identity/reserveSignupCredential";
 import type {
   CredentialAttemptRecorder,
   CredentialKind,
@@ -357,18 +358,40 @@ export function createCredentialMappingWriter(
     cancelReservation(params) {
       const { coordinate } = params;
       if (params.callerToken.length < CALLER_TOKEN_MIN_LENGTH) return;
-      sql.exec(
-        `DELETE FROM credential_mappings
-         WHERE kind = ? AND hmac = ? AND credential_id = ? AND caller_token = ?`,
-        coordinate.kind,
-        hmacOf(coordinate.kind, coordinate.mapping),
-        coordinate.credentialId,
-        params.callerToken,
-      );
+      const deleted = sql
+        .exec<{
+          operation_id: string | null;
+          coordinator_locator: string | null;
+        }>(
+          `DELETE FROM credential_mappings
+           WHERE kind = ? AND hmac = ? AND credential_id = ? AND caller_token = ?
+           RETURNING operation_id, coordinator_locator`,
+          coordinate.kind,
+          hmacOf(coordinate.kind, coordinate.mapping),
+          coordinate.credentialId,
+          params.callerToken,
+        )
+        .toArray()[0];
       sql.exec(
         "DELETE FROM password_reset_tokens WHERE credential_id = ?",
         coordinate.credentialId,
       );
+      // A handed-back coordinator ends its saga: the `resume-signup` row
+      // that would re-drive it has no material left and would only run to
+      // `poison`. It is still `pending` (never claimed), so no owner-token
+      // CAS is involved.
+      if (
+        deleted !== undefined &&
+        deleted.coordinator_locator === null &&
+        deleted.operation_id !== null
+      ) {
+        sql.exec(
+          `UPDATE jobs SET status = 'done', completed_at = ?, lease_until = NULL, next_run_at = NULL, owner_token = NULL
+           WHERE operation_key = ? AND status = 'pending'`,
+          now(),
+          resumeSignupOperationKey(deleted.operation_id),
+        );
+      }
     },
   };
 }

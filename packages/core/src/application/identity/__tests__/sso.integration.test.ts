@@ -249,6 +249,22 @@ describe("registerOrLoginWithSso", () => {
       "EMAIL_ALREADY_REGISTERED",
     );
     expect(await ssoMapping("google", subject)).toBeUndefined();
+    // The handed-back coordinator's resume-signup has nothing to re-drive
+    // and must not run to `poison`: it is closed with the reservation.
+    const bucket = await ssoBucket("google", subject);
+    const jobs = await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      (sql) =>
+        sql
+          .exec<JobRow>(
+            "SELECT operation_key, kind, status, terminal_reason FROM jobs WHERE kind = 'resume-signup' AND json_extract(payload, '$.locator.hmac') = ?",
+            bucket.hmac,
+          )
+          .toArray(),
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.status).toBe("done");
   });
 
   it("re-driving the two-credential saga through resume-signup is idempotent", async () => {
@@ -277,13 +293,16 @@ describe("registerOrLoginWithSso", () => {
         directoryStubOf(bucket.generation, bucket.bucketIndex),
       ),
     ).toBe(true);
+    // Buckets are shared across the suites, so the row is picked by the
+    // locator its payload names, not by kind alone.
     const job = await inDirectoryStorage(
       bucket.generation,
       bucket.bucketIndex,
       (sql) =>
         sql
           .exec<JobRow>(
-            "SELECT operation_key, kind, status, terminal_reason FROM jobs WHERE kind = 'resume-signup'",
+            "SELECT operation_key, kind, status, terminal_reason FROM jobs WHERE kind = 'resume-signup' AND json_extract(payload, '$.locator.hmac') = ?",
+            bucket.hmac,
           )
           .one(),
     );
