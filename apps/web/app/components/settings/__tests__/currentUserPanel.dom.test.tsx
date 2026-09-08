@@ -11,6 +11,9 @@ vi.mock("@tanstack/react-start", async (importOriginal) => ({
 
 vi.mock("@/components/settings/actions", () => ({
   changeTrashRetentionDaysFn: vi.fn(),
+  changePasswordFn: vi.fn(),
+  unlinkSsoCredentialFn: vi.fn(),
+  revokeAllAiClientConnectionsFn: vi.fn(),
 }));
 
 vi.mock("@/components/auth/actions", () => ({
@@ -44,31 +47,54 @@ const user: CurrentUserView = {
 };
 
 describe("CurrentUserPanel", () => {
-  it("draws the address, one row per credential, retention, AI placeholder and logout", async () => {
+  it("draws the address, one row per credential, retention, AI panel and logout", async () => {
     await renderWithRouter(<CurrentUserPanel user={user} />);
     expect(screen.getByText("user@example.com")).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
       "メールアドレスログインに使用",
-      "外部アカウント（google）一意性の予約のみ",
+      "外部アカウント（google）一意性の予約のみ解除",
     ]);
     expect(
       (screen.getByLabelText("削除した項目を保持する日数") as HTMLInputElement)
         .value,
     ).toBe("30");
-    expect(screen.getByText(/接続はまだありません。/).textContent).toContain(
-      "AI クライアントからの接続は今後の更新で有効になります。",
-    );
+    expect(screen.getByRole("button", { name: "すべて失効" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
     ).toEqual([
       "アカウント",
       "ログイン手段",
+      "パスワードの変更",
       "ゴミ箱の保持期限",
       "AI クライアント接続",
       "セッション",
     ]);
+    // P-13 is the only entry that creates something P-03 can unlink.
+    expect(
+      screen.getByRole("link", { name: /SSO 連携を追加/ }).getAttribute("href"),
+    ).toBe("/auth/sso/google/start?intent=link");
+  });
+
+  // S-AC-07: the password section is decided by `usableForLogin`, not by
+  // the presence of an email row — an SSO-only account has one too.
+  it("hides the password change for an account whose email is a uniqueness hold only", async () => {
+    await renderWithRouter(
+      <CurrentUserPanel
+        user={{
+          ...user,
+          credentials: [
+            { ...user.credentials[0]!, usableForLogin: false },
+            { ...user.credentials[1]!, usableForLogin: true },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "パスワードの変更" }),
+    ).toBeNull();
+    expect(screen.queryByRole("form", { name: "パスワードの変更" })).toBeNull();
   });
 
   it("never draws a verifier-looking value or the user id", async () => {

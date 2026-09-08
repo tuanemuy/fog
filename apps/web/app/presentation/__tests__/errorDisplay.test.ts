@@ -295,6 +295,60 @@ describe("renderErrorMessage", () => {
       "このメールアドレスは登録済みです",
     ],
     [
+      "an SSO identity held by another account",
+      {
+        kind: "conflict",
+        code: "SSO_IDENTITY_ALREADY_REGISTERED",
+        message: "This SSO identity is already registered",
+      },
+      "この外部アカウントは既に別のアカウントに連携されています",
+    ],
+    [
+      "a spent reset link",
+      {
+        kind: "validation",
+        code: "RESET_TOKEN_INVALID",
+        message: "The reset link is invalid or has expired",
+      },
+      "リンクが無効か期限切れです",
+    ],
+    [
+      "a wrong current password",
+      {
+        kind: "validation",
+        code: "CURRENT_PASSWORD_MISMATCH",
+        message: "The current password is not correct",
+      },
+      "現在のパスワードが正しくありません",
+    ],
+    [
+      "a limited attempt",
+      {
+        kind: "validation",
+        code: "TOO_MANY_ATTEMPTS",
+        message: "Attempts are limited for now",
+      },
+      "試行回数の上限に達しました。しばらくしてからお試しください",
+    ],
+    [
+      "the last login method",
+      {
+        kind: "business",
+        code: IdentityErrorCode.LastCredentialRemoval,
+        message: "Cannot remove the last credential",
+      },
+      "最後のログイン手段は解除できません",
+    ],
+    [
+      "an account without a password",
+      {
+        kind: "business",
+        code: IdentityErrorCode.PasswordNotSupported,
+        message: "This account has no password credential",
+      },
+      "このアカウントにはパスワードが設定されていません",
+    ],
+    [
       "a lost race",
       {
         kind: "conflict",

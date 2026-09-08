@@ -315,6 +315,46 @@ describe("the diagnostic route is a local affordance only", () => {
   });
 });
 
+// The development mail sink and the stub identity provider are selected
+// by two variables that `.dev.vars.example` declares as local-only. Their
+// whole containment is that no deployed config declares them — a
+// `[vars]` entry in a template would ship the console sink (which prints
+// the raw reset link) or the stub provider (which accepts any subject) to
+// a real stage.
+describe("the development sink and the stub provider are local affordances only", () => {
+  it.each(["MAIL_DEV_SINK", "SSO_DEV_STUB"])(
+    "%s is declared in .dev.vars.example",
+    (name) => {
+      expect(read(".dev.vars.example")).toMatch(new RegExp(`^${name}=`, "m"));
+    },
+  );
+
+  it.each(
+    DEPLOYED_CONFIGS.flatMap((file) =>
+      ["MAIL_DEV_SINK", "SSO_DEV_STUB"].map((name) => [file, name] as const),
+    ),
+  )("%s does not declare %s", (file, name) => {
+    expect(read(file)).not.toMatch(new RegExp(`^\\s*${name}\\s*=`, "m"));
+  });
+});
+
+// The sender address is what the mail provider is asked to send as, so
+// every request Worker config that could reach a provider carries it as a
+// `[vars]` entry, and the deployed ones read it from the Pulumi output.
+describe("the request Worker configs declare the sender address", () => {
+  it("wrangler.toml", () => {
+    expect(stringValue(read("wrangler.toml"), "MAIL_FROM_ADDRESS")).toMatch(
+      /@/,
+    );
+  });
+
+  it.each(REQUEST_CONFIGS.slice(1))("%s", (file) => {
+    expect(stringValue(read(file), "MAIL_FROM_ADDRESS")).toBe(
+      "${MAIL_FROM_ADDRESS}",
+    );
+  });
+});
+
 // `vitest.config.do.ts` hand-writes the queue settings so that a batch's
 // disposition in the DO suites matches what a real queue would produce.
 // Nothing derives them, so this is where the copy is held to its source.

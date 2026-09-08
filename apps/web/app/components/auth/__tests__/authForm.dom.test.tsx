@@ -122,6 +122,65 @@ function fill(email: string, password: string) {
   });
 }
 
+describe("AuthForm — SSO and reset entries", () => {
+  it("offers the providers with the origin and the redirect carried, and the reset link on login", async () => {
+    const { expectInternalHrefsToResolve } = await renderWithRouter(
+      <AuthForm mode="login" redirectTo="/topics" />,
+      { path: "/login" },
+    );
+    expect(
+      screen.getByRole("link", { name: "Google で続行" }).getAttribute("href"),
+    ).toBe("/auth/sso/google/start?redirect=%2Ftopics");
+    expect(
+      screen.getByRole("link", { name: "Apple で続行" }).getAttribute("href"),
+    ).toBe("/auth/sso/apple/start?redirect=%2Ftopics");
+    expect(
+      screen
+        .getByRole("link", { name: "パスワードをお忘れの方" })
+        .getAttribute("href"),
+    ).toBe("/password-reset");
+    expectInternalHrefsToResolve();
+  });
+
+  it("signup carries its origin so an error returns here, and has no reset link", async () => {
+    await renderWithRouter(<AuthForm mode="signup" redirectTo={undefined} />, {
+      path: "/signup",
+    });
+    expect(
+      screen.getByRole("link", { name: "Google で続行" }).getAttribute("href"),
+    ).toBe("/auth/sso/google/start?from=signup");
+    expect(
+      screen.queryByRole("link", { name: "パスワードをお忘れの方" }),
+    ).toBeNull();
+  });
+
+  it("draws a held address from the SSO callback as an error with the login entry", async () => {
+    await renderWithRouter(
+      <AuthForm
+        mode="signup"
+        redirectTo={undefined}
+        ssoError="email_registered"
+      />,
+      { path: "/signup" },
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("既に登録されています");
+    expect(
+      within(alert).getByRole("link", { name: "ログインする" }),
+    ).toBeTruthy();
+  });
+
+  it("draws a cancelled round trip as an interruption on login", async () => {
+    await renderWithRouter(
+      <AuthForm mode="login" redirectTo={undefined} ssoError="cancelled" />,
+      { path: "/login" },
+    );
+    expect(screen.getByRole("alert").textContent).toBe(
+      "外部アカウントでの認証が中断されました",
+    );
+  });
+});
+
 describe("AuthForm", () => {
   it("signup shows the password hint and links to /login with the redirect", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(

@@ -19,6 +19,8 @@ export const STUB_PATHS = [
   "/settings",
   "/login",
   "/signup",
+  "/password-reset",
+  "/password-reset/done",
   "/memos/$memoId/history",
   "/topics",
   "/topics/$topicId",
@@ -31,6 +33,14 @@ export const STUB_PATHS = [
 ] as const;
 
 export type StubPath = (typeof STUB_PATHS)[number];
+
+/**
+ * Paths the request Worker answers before the router sees them (the bare
+ * SSO handlers, `server.cloudflare.ts`). An anchor pointing under one of
+ * these is a real link with nothing in the route tree behind it, so the
+ * resolution check skips it rather than failing on a route it cannot have.
+ */
+export const BARE_HANDLER_PREFIXES = ["/auth/sso/"] as const;
 
 function buildRouter(element: ReactElement, path: string) {
   const rootRoute = createRootRoute({ component: () => element });
@@ -73,7 +83,11 @@ export async function renderWithRouter(
   const expectInternalHrefsToResolve = () => {
     const hrefs = [...result.container.querySelectorAll("a[href]")]
       .map((anchor) => anchor.getAttribute("href") ?? "")
-      .filter((href) => href.startsWith("/"));
+      .filter(
+        (href) =>
+          href.startsWith("/") &&
+          !BARE_HANDLER_PREFIXES.some((prefix) => href.startsWith(prefix)),
+      );
     for (const href of hrefs) {
       const { pathname } = new URL(href, "http://harness.local");
       const matches = router.matchRoutes(pathname, {});
