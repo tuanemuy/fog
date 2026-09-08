@@ -54,6 +54,7 @@ describe("NAV_ITEMS", () => {
     }
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       "タイムライン",
+      "トピック",
       "設定",
     ]);
   });
@@ -64,6 +65,15 @@ describe("titleFor", () => {
     expect(titleFor("/")).toBe("タイムライン");
     expect(titleFor("/memos/abc/history")).toBe("メモ履歴");
     expect(titleFor("/settings")).toBe("設定");
+  });
+
+  it("names the knowledge screens", () => {
+    expect(titleFor("/topics")).toBe("トピック");
+    expect(titleFor("/topics/abc")).toBe("トピック詳細");
+    expect(titleFor("/topics/abc/documents/new")).toBe("ドキュメント作成");
+    expect(titleFor("/documents/abc")).toBe("ドキュメント");
+    expect(titleFor("/documents/abc/edit")).toBe("ドキュメント編集");
+    expect(titleFor("/documents/abc/history")).toBe("ドキュメント履歴");
   });
 
   it("falls back to the product name elsewhere", () => {
@@ -117,6 +127,24 @@ describe("AppShell", () => {
         .getAttribute("aria-current"),
     ).toBeNull();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("設定");
+  });
+
+  it("marks the topics item current on /topics", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>, { path: "/topics" });
+    const nav = within(mainNav());
+    expect(
+      nav.getByRole("link", { name: "トピック" }).getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      nav
+        .getByRole("link", { name: "タイムライン" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "トピック",
+    );
+    expect(NAV_ITEMS[1]?.match("/documents/x")).toBe(true);
+    expect(NAV_ITEMS[1]?.match("/topics/x")).toBe(true);
   });
 
   it("offers a dialog-backed mobile menu and a skip link to #main", async () => {

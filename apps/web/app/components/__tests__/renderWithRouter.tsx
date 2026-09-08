@@ -20,6 +20,12 @@ export const STUB_PATHS = [
   "/login",
   "/signup",
   "/memos/$memoId/history",
+  "/topics",
+  "/topics/$topicId",
+  "/topics/$topicId/documents/new",
+  "/documents/$documentId",
+  "/documents/$documentId/edit",
+  "/documents/$documentId/history",
 ] as const;
 
 export type StubPath = (typeof STUB_PATHS)[number];

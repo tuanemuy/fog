@@ -325,3 +325,36 @@ describe("MemoEntry inline edit", () => {
     expect(mocks.editMemoFn).not.toHaveBeenCalled();
   });
 });
+
+describe("MemoEntry source-document trail", () => {
+  it("draws the trail with a live link and a disabled trashed entry", async () => {
+    const { expectInternalHrefsToResolve } = await renderWithRouter(
+      <MemoEntry
+        memo={{
+          ...memo("cited", new Date(0)),
+          sourceDocuments: [
+            { documentId: "d1", title: "設計メモ", isTrashed: false },
+            { documentId: "d2", title: "x", isTrashed: true },
+          ],
+        }}
+      />,
+    );
+    const nav = screen.getByRole("navigation", {
+      name: "出典になっているドキュメント",
+    });
+    expect(
+      within(nav)
+        .getByRole("link", { name: /設計メモ/ })
+        .getAttribute("href"),
+    ).toBe("/documents/d1");
+    expect(nav.querySelector('[aria-disabled="true"]')?.textContent).toContain(
+      "削除済みのドキュメント",
+    );
+    expectInternalHrefsToResolve();
+  });
+
+  it("draws no trail for a memo nothing cites", async () => {
+    await renderWithRouter(<MemoEntry memo={memo("plain", new Date(0))} />);
+    expect(screen.queryByRole("navigation")).toBeNull();
+  });
+});
