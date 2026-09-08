@@ -29,6 +29,7 @@ import {
   applyInitialSchema,
   isInitialized,
   readSchemaVersion,
+  readSelfLocator,
   runMigrationGate,
 } from "./migrationGate";
 import { runRelayPass } from "./outboxRelay";
@@ -95,11 +96,14 @@ export abstract class AsyncWorkDurableObject<
   /**
    * `ctx.id.name` — the DO's own locator, readable from inside the object
    * (including in the constructor) for any stub obtained through
-   * `idFromName`. It is `undefined` only for a stub built from
-   * `idFromString` / `newUniqueId`, and the stub-selection adapter never
-   * builds one that way.
+   * `idFromName`. It is `undefined` for a stub built from `idFromString` /
+   * `newUniqueId`, which the stub-selection adapter never builds — and,
+   * on the local workerd, for an object the runtime brought back on its
+   * own to fire an Alarm after a process restart (PH-06 verification O-2).
+   * `requireSelfLocator` falls back to `_meta.self_locator` for that case.
    */
   protected readonly selfLocatorValue: string | undefined;
+  private storedSelfLocator: string | null = null;
   private cachedTuning: DeliveryTuning | null = null;
 
   constructor(
@@ -116,18 +120,34 @@ export abstract class AsyncWorkDurableObject<
   protected abstract createUnitOfWorkProvider(): UnitOfWorkProvider<TCtx>;
 
   /**
-   * Resolves the DO's own locator, or fails. A DO reached through a stub
-   * that was not built from a name cannot know which tenant it is, and
-   * the relay would have no routing key to push.
+   * Resolves the DO's own locator: `ctx.id.name` when the stub carries
+   * it, otherwise `_meta.self_locator`, the copy the schema gate wrote on
+   * initialisation for exactly the paths on which the name is unavailable
+   * (`spec/database/index.md`). Both the RPC entries and `alarm()` come
+   * through here, so an object woken without its name still relays with
+   * its routing key and runs its due jobs. When both values exist the gate
+   * checks that they agree (`runMigrationGate`); a locator taken from
+   * `_meta` is by construction the one the gate wrote.
+   *
+   * **Limit.** The fallback exists for the local workerd, which restores
+   * an object to fire a due Alarm after `wrangler dev` restarts without
+   * handing it `id.name`; the production runtime keeps the name on every
+   * wake-up. An object with neither a name nor a `_meta` row was never
+   * initialised and cannot know which tenant it is: `NotInitialized`, as
+   * on any other read of an uninitialised object.
    */
   protected requireSelfLocator(): string {
-    if (this.selfLocatorValue === undefined || this.selfLocatorValue === "") {
-      throw new SystemError(
-        SystemErrorCode.ConfigurationError,
-        "Durable Object was reached through a stub that carries no name",
-      );
+    if (this.selfLocatorValue !== undefined && this.selfLocatorValue !== "") {
+      return this.selfLocatorValue;
     }
-    return this.selfLocatorValue;
+    this.storedSelfLocator ??= readSelfLocator(this.ctx.storage.sql);
+    if (this.storedSelfLocator !== null && this.storedSelfLocator !== "") {
+      return this.storedSelfLocator;
+    }
+    throw new SystemError(
+      SystemErrorCode.NotInitialized,
+      "Durable Object was reached through a stub that carries no name, and holds no locator of its own",
+    );
   }
 
   protected tuning(): DeliveryTuning {
