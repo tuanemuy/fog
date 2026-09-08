@@ -18,7 +18,7 @@ fog の永続化スキーマ。**Cloudflare Workers + ユーザー単位 SQLite-
 
 - **テナント分離の保証は列条件ではなく到達可能性による**（domains/index.md「テナント分離」）。同じ User Data DO の中に他ユーザーの行は原理的に存在せず、他ユーザーの DO stub を得る経路も存在しない。**したがってどのテーブルも `user_id` 列を持たず、複合インデックスの先頭に `user_id` を置くこともしない**（唯一 `credential_mappings.user_id` だけは例外だが、それは分離のための述語ではなくクレデンシャルから `userId` への**写像そのもの**である）
   - **`outbox_events` も `user_id` 列を持たない。ただし配送メッセージは宛先 DO の routing key を運ぶ** — DO の識別子が DO の外へ出る唯一の点である。Queue メッセージが運ぶ routing key は、**発行元 DO 自身の locator** である（Identity Directory では `_meta.self_locator` と同じ `dir:g{世代}:b{番号}` の bucket 名。多数の利用者で共有される粒度なので個人を指さない）。**クレデンシャル単位の内部キー（canonical の全長 HMAC）は載せない** — 窓で切れない仮名になり、`aggregate_id`（窓キー）を外した理由（DLQ 上での宛先相関）をそのまま無効化する（async/index.md「payload と `terminal_reason` の衛生規則」）
-- 自分の `userId` は `_meta.self_locator` に1行だけ持つ。用途はエクスポートのヘッダ・移送と検証・DO 名が使えない経路のフォールバックに限り、**行データの絞り込みには使わない**
+- 自分の `userId` は `_meta.self_locator` に1行だけ持つ。用途は移送と検証・DO 名が使えない経路のフォールバックに限り（エクスポートのアーカイブには載せない — マニフェストの形は domains/export.md が定め、内部 ID を可搬ファイルに残さない）、**行データの絞り込みには使わない**
 - 1 DO あたりのストレージ上限は 10 GB で、**本体と FTS5 インデックスの合計**で見る（requirements 5.3）。**`outbox_events` と `reset_request_windows` も同じ 10 GB に算入する**（前者は保持期間ぶんの `published` 行と `quarantined` 行を、後者は掃除されるまでの窓行を抱える）。**ただし「保持期間ぶんの `published` 行」は上限ではない** — prune はジョブランナーの起動末尾でしか走らないので、**終端行しか残っていない DO は定義上 `deleteAlarm()` 済みで起床せず、保持期間を過ぎた `published` 行が次の投入まで残る**（実効的な露出窓の上限は async/index.md「呼び出しガード」が持つ）。**`quarantined` の行は prune の対象外であり、自動では減らない** — 減らす手段は operator 経路の再駆動と明示削除だけである（`outbox_events` の節 / 「operator 専用 maintenance 経路」）。**`jobs` の `poison` 行も同じ扱いで算入する**（prune の対象は `done` だけである。`jobs` の prune の項 / [recovery/index.md](../recovery/index.md)）。逼迫時は書き込みだけが失敗し読みと削除は通るので、導線は「ゴミ箱を空にする / エクスポートして削除する」が生きる。**ただしこれは保存済みの行が現行の不変条件を満たすことを前提にする** — 値オブジェクトの上限を下げた後に残った超過行は読みでも削除でも `SystemError(DataIntegrityError)` になり（削除は消去の直前に対象を取り直すため）、この2つの導線が**両方とも**塞がる（`### documents`「本文上限のバイト予算」／[domains/index.md](../domains/index.md)「再水和の再検証」）
 - **単位の読み方**: 本ファイルを通じて「2 MB/行」は **2,000,000 バイト**、「100 KB/文」は **100,000 バイト**（いずれも decimal）として読む。Cloudflare の公開ドキュメントも CLAUDE.md「Storage limits」も単位を明示しないので、逆算が上限超過の入力を「安全」と宣言しない側へ倒す。**この解釈は本ファイル内の他の 2 MB 記述にも及ぶ**（`outbox_events.payload` / `jobs.payload`）。**実測では、この 2 MB/行は開発ランタイム（Miniflare 上の DO SQLite）では強制されない** — 2,000,000 バイトの行も 2,097,152 バイトの行も書き込めてしまい、実際に落ちるのは SQLite 自身のレコード長上限（`SQLITE_TOOBIG`）で、閾値は行あたり約 2,200,000 バイトである。したがって実測は decimal / binary のどちらも裏づけず、安全側の decimal 解釈を採る。**行サイズの一次的な保証は逆算の側にあり、テストは網ではない**。
 
@@ -666,7 +666,7 @@ DO ごとのメタ情報。単一行。
 | カラム | 型 | 制約 |
 |---|---|---|
 | `schema_version` | INTEGER | NOT NULL。この DO に適用済みのスキーマバージョン |
-| `self_locator` | TEXT | NOT NULL。自 locator。User Data DO ではその DO の `userId` が入る（DO 名が使えない経路のフォールバック、エクスポートのヘッダ、移送と検証の3用途に限る）。**行データの絞り込みには使わない** |
+| `self_locator` | TEXT | NOT NULL。自 locator。User Data DO ではその DO の `userId` が入る（DO 名が使えない経路のフォールバック、移送と検証の2用途に限る。エクスポートのアーカイブには載せない）。**行データの絞り込みには使わない** |
 
 - **usecase からは書けない。書き込み口を持たない唯一の非集約ストアである。** 書くのは初期化時の自 locator 書き込みと migration ゲートの `schema_version` 更新だけであり、どちらもゲート／constructor であって usecase ではない（口を置くと `schema_version` を書ける経路ができ、fail-closed の権威が二重になる）
 - OCC の `version` は持たない
