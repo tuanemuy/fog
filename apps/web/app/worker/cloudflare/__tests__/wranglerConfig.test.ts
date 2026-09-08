@@ -367,6 +367,30 @@ describe("the AI client token secret belongs to the request Worker", () => {
   );
 });
 
+// The operator surface's bearer is a request-Worker secret with the same
+// placement rules as the AI token secret; it is never a `[vars]` entry.
+describe("the operator token belongs to the request Worker", () => {
+  it(".dev.vars.example declares it and attributes it to the request Worker", () => {
+    const example = read(".dev.vars.example");
+    expect(example).toMatch(/^OPERATOR_TOKEN=/m);
+    expect(example).toMatch(/^#\s+OPERATOR_TOKEN\s+— request Worker/m);
+  });
+
+  it.each(REQUEST_CONFIGS.slice(1))(
+    "%s lists it for wrangler secret put",
+    (file) => {
+      expect(read(file)).toContain("wrangler secret put OPERATOR_TOKEN");
+    },
+  );
+
+  it.each([...REQUEST_CONFIGS, ...STATE_CONFIGS])(
+    "%s does not declare it as a variable",
+    (file) => {
+      expect(read(file)).not.toMatch(/^\s*OPERATOR_TOKEN\s*=/m);
+    },
+  );
+});
+
 // The sender address is what the mail provider is asked to send as, so
 // every request Worker config that could reach a provider carries it as a
 // `[vars]` entry, and the deployed ones read it from the Pulumi output.

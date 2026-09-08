@@ -119,19 +119,20 @@ async function pullBackUser(userId: string, key: string): Promise<void> {
 // crosses the ceiling terminates the row without being counted again.
 const POISON_ATTEMPT = deliveryTuning.jobsMaxAttempts - 1;
 
-function expectPoison(row: JobRow, code: string): void {
+function expectPoison(row: JobRow, reason: string): void {
   expect(row.status).toBe("poison");
   expect(row.attempt).toBe(POISON_ATTEMPT);
-  expect(row.terminal_reason).toBe(code);
+  expect(row.terminal_reason).toBe(reason);
   expect(row.completed_at).not.toBeNull();
 }
 
-// R-INF-03: a saga job that cannot make progress is retried under the
-// runner's backoff and, past the ceiling, ends `poison` with the failure's
-// `code` in `terminal_reason` — never thrown out of `alarm()`. None of the
-// four kinds has a rollback stage yet (PH-09), so the terminal mode is not
-// entered and the row terminates directly.
-describe("PH-06 job kinds: failure → backoff → poison with the code", () => {
+// R-INF-03 / R-REC-01: a saga job that cannot make progress is retried
+// under the runner's backoff and, past the ceiling, confirms non-progress
+// — never thrown out of `alarm()`. A kind with a cleanup stage enters
+// terminal mode and ends `done` through it; a kind without one ends
+// `poison` with `forward-exhausted` (the six-token vocabulary; the
+// failure's code goes to the log).
+describe("PH-06 job kinds: failure → backoff → confirmation", () => {
   it("sweep-reset-tokens: a bucket whose table is gone", async () => {
     const stub = directoryStubOf(
       BROKEN_BUCKET.generation,
@@ -228,9 +229,11 @@ describe("PH-06 job kinds: failure → backoff → poison with the code", () => 
         );
       },
     );
-    expectPoison(row, "NOT_INITIALIZED");
-    // The row is left as it was: the change is still pending, the old
-    // verifier still in place (the rollback stage is PH-09's).
+    // PH-09: the ceiling enters terminal mode and C1 rolls the pending
+    // change back; the row ends `done` with the forward reason kept.
+    expect(row.status).toBe("done");
+    expect(row.terminal_reason).toBe(`forward-exhausted ${operationId}`);
+    expect(row.completed_at).not.toBeNull();
     const after = await inDirectoryStorage(
       bucket.generation,
       bucket.bucketIndex,
@@ -245,8 +248,8 @@ describe("PH-06 job kinds: failure → backoff → poison with the code", () => 
           )
           .one(),
     );
-    expect(after.change_state).toBe("pending");
-    expect(after.pending_verifier).toBe("fake$pending");
+    expect(after.change_state).toBeNull();
+    expect(after.pending_verifier).toBeNull();
   });
 
   it("resume-link: a record that names no locator", async () => {
@@ -269,7 +272,18 @@ describe("PH-06 job kinds: failure → backoff → poison with the code", () => 
       () => userJob(userId, key),
       () => pullBackUser(userId, key),
     );
-    expectPoison(row, "DATA_INTEGRITY_ERROR");
+    // PH-09: the ceiling enters terminal mode; L1〜L3 find a record with
+    // no coordinate to hand back and close it with the job's `done`.
+    expect(row.status).toBe("done");
+    expect(row.terminal_reason).toBe("forward-exhausted broken-link");
+    const closed = await inUserDataStorage(userId, (sql) =>
+      sql
+        .exec<{ phase: string }>(
+          "SELECT phase FROM operations WHERE operation_id = 'broken-link'",
+        )
+        .one(),
+    );
+    expect(closed.phase).toBe("done");
   });
 
   it("sweep-orphan-mapping: an unlink record whose mapping cannot be read", async () => {
@@ -295,7 +309,7 @@ describe("PH-06 job kinds: failure → backoff → poison with the code", () => 
       () => userJob(userId, key),
       () => pullBackUser(userId, key),
     );
-    expectPoison(row, "DATA_INTEGRITY_ERROR");
+    expectPoison(row, "forward-exhausted");
     // The record stays open for the operator; nothing was deleted.
     const record = await inUserDataStorage(userId, (sql) =>
       sql

@@ -200,20 +200,81 @@ describe("handleEventsBatch", () => {
 });
 
 describe("handleDlqBatch", () => {
-  it("acks every message after a warning that carries only id and type", () => {
+  it("re-drives each message once through the same delivery, then acks with only id, type and outcome logged", async () => {
     const entries: Entry[] = [];
+    const answers: SendMailMaterials[] = [
+      {
+        kind: "send",
+        to: "a@example.com",
+        resetToken: "t",
+        providerIdempotencyKey: "k",
+      },
+      { kind: "nothing-to-send" },
+    ];
+    const {
+      container: c,
+      send,
+      stubCalls,
+    } = container(entries, async () => {
+      const next = answers.shift();
+      if (next === undefined) throw new Error("no answer left");
+      return next;
+    });
     const a = message({ eventId: "evt-a" });
-    const b = message({ eventId: "evt-b", type: "x" });
-    handleDlqBatch(batch("events-dlq", [a, b]), fakeLogger(entries));
-    expect(a.acked && b.acked).toBe(true);
-    expect(entries).toEqual([
+    const b = message({ eventId: "evt-b" });
+    const unserved = message({ eventId: "evt-c", type: "x" });
+    const dlq = batch("events-dlq", [a, b, unserved]);
+    await handleDlqBatch(dlq, c);
+    expect(a.acked && b.acked && unserved.acked).toBe(true);
+    expect(dlq.ackedAll).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(stubCalls).toHaveLength(2);
+    expect(entries.filter((e) => e.message === "dlq")).toEqual([
       {
         level: "warn",
         message: "dlq",
-        meta: { eventId: "evt-a", type: "identity.passwordResetRequested" },
+        meta: {
+          eventId: "evt-a",
+          type: "identity.passwordResetRequested",
+          outcome: "sent",
+        },
       },
-      { level: "warn", message: "dlq", meta: { eventId: "evt-b", type: "x" } },
+      {
+        level: "warn",
+        message: "dlq",
+        meta: {
+          eventId: "evt-b",
+          type: "identity.passwordResetRequested",
+          outcome: "nothing-to-send",
+        },
+      },
+      {
+        level: "warn",
+        message: "dlq",
+        meta: { eventId: "evt-c", type: "x", outcome: "unserved" },
+      },
     ]);
     expect(JSON.stringify(entries)).not.toContain("o".repeat(32));
+  });
+
+  it("a failed re-drive is still acked, as failed", async () => {
+    const entries: Entry[] = [];
+    const { container: c } = container(entries, async () => {
+      throw new Error("bucket unreachable");
+    });
+    const a = message({ eventId: "evt-a" });
+    await handleDlqBatch(batch("events-dlq", [a]), c);
+    expect(a.acked).toBe(true);
+    expect(entries.filter((e) => e.message === "dlq")).toEqual([
+      {
+        level: "warn",
+        message: "dlq",
+        meta: {
+          eventId: "evt-a",
+          type: "identity.passwordResetRequested",
+          outcome: "failed",
+        },
+      },
+    ]);
   });
 });
