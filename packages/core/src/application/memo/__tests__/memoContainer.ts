@@ -45,6 +45,7 @@ export function memoContainer(
 
 export const EMPTY_WINDOW = {
   items: [],
+  pivotId: null,
   olderCursor: null,
   newerCursor: null,
 } as const;

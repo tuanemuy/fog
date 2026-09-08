@@ -55,6 +55,7 @@ export function jumpToDateProcedure(
   );
   return {
     items: window.items.map(toTimelineItemView),
+    pivotId: window.pivotId,
     olderCursor: window.olderCursor,
     newerCursor: window.newerCursor,
   };

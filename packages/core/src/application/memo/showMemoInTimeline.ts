@@ -30,7 +30,12 @@ export function showMemoInTimelineProcedure(
   input: ShowMemoDto,
 ): MemoWindowView {
   const memoId = MemoId.create(input.memoId);
-  const empty = { items: [], olderCursor: null, newerCursor: null } as const;
+  const empty = {
+    items: [],
+    pivotId: null,
+    olderCursor: null,
+    newerCursor: null,
+  } as const;
   const found = ctx.memoRepository.findByIdIncludingTrashed(memoId);
   if (found === null) {
     return { ...empty, targetState: "notFound", targetMemoId: memoId };
@@ -44,6 +49,7 @@ export function showMemoInTimelineProcedure(
   );
   return {
     items: window.items.map(toTimelineItemView),
+    pivotId: window.pivotId,
     olderCursor: window.olderCursor,
     newerCursor: window.newerCursor,
     targetState: "found",

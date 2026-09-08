@@ -44,6 +44,8 @@ export function toMemoView(memo: ActiveMemo): MemoView {
 /** A window around an anchor: the continuation in both directions. */
 export type TimelineWindowView = Readonly<{
   items: readonly TimelineItemView[];
+  /** The memo the anchor resolved to (one of `items`); the screen scrolls to it. */
+  pivotId: string | null;
   olderCursor: string | null;
   newerCursor: string | null;
 }>;

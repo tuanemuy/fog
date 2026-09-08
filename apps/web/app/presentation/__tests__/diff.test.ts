@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toDiffLines } from "@/presentation/diff";
+import { EOF_NEWLINE_NOTE, toDiffLines } from "@/presentation/diff";
 
 describe("toDiffLines", () => {
   it("marks unchanged lines as context", () => {
@@ -34,6 +34,19 @@ describe("toDiffLines", () => {
       { kind: "context", text: "a" },
       { kind: "added", text: "b" },
     ]);
+  });
+
+  it("says so when only the final newline differs, instead of showing nothing", () => {
+    expect(toDiffLines("a", "a\n")).toEqual([
+      { kind: "context", text: "a" },
+      { kind: "note", text: EOF_NEWLINE_NOTE },
+    ]);
+    expect(toDiffLines("a\nb\n", "a\nb")).toEqual([
+      { kind: "context", text: "a" },
+      { kind: "context", text: "b" },
+      { kind: "note", text: EOF_NEWLINE_NOTE },
+    ]);
+    expect(toDiffLines("a\n", "a\n")).toEqual([{ kind: "context", text: "a" }]);
   });
 
   it("keeps a blank line inside the body as a line", () => {

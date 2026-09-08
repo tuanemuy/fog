@@ -66,6 +66,7 @@ export async function loadTimelineWindow(
     if (shown.targetState === "found") {
       return {
         items: shown.items,
+        pivotId: shown.pivotId,
         olderCursor: shown.olderCursor,
         newerCursor: shown.newerCursor,
         target,
@@ -74,6 +75,7 @@ export async function loadTimelineWindow(
     const page = await loadPage(userId, null);
     return {
       items: page.items,
+      pivotId: null,
       olderCursor: page.nextCursor,
       newerCursor: null,
       target,
@@ -86,6 +88,7 @@ export async function loadTimelineWindow(
   const page = await loadPage(userId, mode.keyword);
   return {
     items: page.items,
+    pivotId: null,
     olderCursor: page.nextCursor,
     newerCursor: null,
     target: null,

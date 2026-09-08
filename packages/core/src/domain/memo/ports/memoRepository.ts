@@ -40,6 +40,8 @@ export type TimelineAnchor =
   | Readonly<{ kind: "memo"; memoId: MemoId }>;
 
 export type TimelineWindow = Readonly<{
+  /** The memo the anchor resolved to; one of `items`. `null` for an empty window. */
+  pivotId: MemoId | null;
   items: readonly ActiveMemo[];
   olderCursor: TimelineCursor | null;
   newerCursor: TimelineCursor | null;

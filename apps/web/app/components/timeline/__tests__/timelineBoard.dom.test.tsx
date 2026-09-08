@@ -82,7 +82,7 @@ function page(
   items: readonly TimelineItemView[],
   olderCursor: string | null = null,
 ): TimelineBoardInitial {
-  return { items, olderCursor, newerCursor: null, target: null };
+  return { items, olderCursor, newerCursor: null, target: null, pivotId: null };
 }
 
 function deferred<T>() {
@@ -465,6 +465,66 @@ describe("TimelineBoard: date jump", () => {
       expect(router.state.location.search).not.toHaveProperty("date"),
     );
   });
+
+  // B-1: the viewport starts at the memo the day resolved to, not at the
+  // newest row of the window.
+  it("scrolls the pivot's day group into view when the pivot heads it", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{
+          ...page([
+            memo("newer", "next day", JAN_2_EARLY),
+            memo("pivot", "on the day", JAN_1_LATE),
+            memo("older", "earlier that day", JAN_1_EARLIER),
+          ]),
+          pivotId: "pivot",
+        }}
+        search={{ date: "2026-01-01" }}
+      />,
+      { path: "/?date=2026-01-01" },
+    );
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    const scrolled = scrollIntoView.mock.instances[0] as Element;
+    expect(scrolled.classList.contains("fog-day")).toBe(true);
+    expect(scrolled.querySelector("article")?.id).toBe("memo-pivot");
+    expect(document.querySelectorAll(".fog-memo-highlight")).toHaveLength(0);
+  });
+
+  it("scrolls the pivot row itself when it is not the first of its day", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{
+          ...page([
+            memo("first", "later that day", JAN_1_LATE),
+            memo("pivot", "the oldest after the day", JAN_1_EARLIER),
+          ]),
+          pivotId: "pivot",
+        }}
+        search={{ date: "2025-12-31" }}
+      />,
+      { path: "/?date=2025-12-31" },
+    );
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect((scrollIntoView.mock.instances[0] as Element).id).toBe("memo-pivot");
+  });
+
+  it("does not scroll on the plain list or on a filter", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{ ...page([memo("m1", "x", JAN_1_LATE)]), pivotId: "m1" }}
+        search={{ q: "x" }}
+      />,
+      { path: "/?q=x" },
+    );
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
 });
 
 describe("TimelineBoard: both sentinels", () => {
@@ -477,6 +537,7 @@ describe("TimelineBoard: both sentinels", () => {
       <TimelineBoard
         initial={{
           items: [memo("m1", "pivot", JAN_1_LATE)],
+          pivotId: null,
           olderCursor: null,
           newerCursor: "cursor-newer",
           target: null,

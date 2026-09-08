@@ -4,12 +4,14 @@ const MARK: Record<DiffLine["kind"], string> = {
   added: "+",
   removed: "−",
   context: "",
+  note: "",
 };
 
 const SPOKEN: Record<DiffLine["kind"], string> = {
   added: "追加: ",
   removed: "削除: ",
   context: "",
+  note: "",
 };
 
 /** The line-level unified rendering of `spec/design/pages/memo-history.html`. */

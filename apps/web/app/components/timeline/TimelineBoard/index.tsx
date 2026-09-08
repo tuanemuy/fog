@@ -280,6 +280,19 @@ export function TimelineBoard({
     }
   }, [target]);
 
+  // A date jump: start the viewport at the memo the day resolved to. When
+  // that memo heads its day group the group scrolls, so the day heading is
+  // what the reader sees first; otherwise the memo row itself does.
+  const pivotId = mode.kind === "date" ? initial.pivotId : null;
+  useEffect(() => {
+    if (pivotId === null) return;
+    const element = document.getElementById(`memo-${pivotId}`);
+    if (!element || typeof element.scrollIntoView !== "function") return;
+    const group = element.closest(".fog-day");
+    const headsGroup = group?.querySelector("article") === element;
+    (headsGroup && group ? group : element).scrollIntoView({ block: "start" });
+  }, [pivotId]);
+
   // One post per submit event. Two submits dispatched in the same frame
   // (`requestSubmit()` twice, Enter and a click) both arrive before the
   // pending state disables the controls; the second one is stopped here,

@@ -21,7 +21,12 @@ import {
   postAt,
 } from "./memoFixtures";
 
-const EMPTY_WINDOW = { items: [], olderCursor: null, newerCursor: null };
+const EMPTY_WINDOW = {
+  items: [],
+  pivotId: null,
+  olderCursor: null,
+  newerCursor: null,
+};
 
 function ids(items: readonly TimelineItemView[]): string[] {
   return items.map((item) => item.id);
@@ -118,6 +123,7 @@ describe("jumpToDate: the window around a day", () => {
 
     const window = await jump({ limit: 1 });
     expect(ids(window.items)).toEqual([b.id]);
+    expect(window.pivotId).toBe(b.id);
     expect(window.olderCursor).not.toBeNull();
     expect(window.newerCursor).not.toBeNull();
     expect(await walkBothWays(container, userId, window)).toEqual([
@@ -128,6 +134,8 @@ describe("jumpToDate: the window around a day", () => {
 
     const two = await jump({ limit: 2 });
     expect(ids(two.items)).toEqual([c.id, b.id]);
+    // The pivot is the day's memo, not the window's newest row.
+    expect(two.pivotId).toBe(b.id);
     expectNewestFirst(two.items);
     expect(two.newerCursor).toBeNull();
     expect(two.olderCursor).not.toBeNull();
@@ -150,6 +158,7 @@ describe("jumpToDate: the window around a day", () => {
     // 07-24: 49 h to B from the day's end, 49 h to C from its start — a tie.
     const tie = await day(container, userId, "2026-07-24")({ limit: 1 });
     expect(ids(tie.items)).toEqual([b.id]);
+    expect(tie.pivotId).toBe(b.id);
     expect(await walkBothWays(container, userId, tie)).toContain(c.id);
   });
 
@@ -166,6 +175,7 @@ describe("jumpToDate: the window around a day", () => {
     // 07-24: 49 h to B, 48.5 h to C2 — the future wins.
     const window = await day(container, userId, "2026-07-24")({ limit: 1 });
     expect(ids(window.items)).toEqual([near.id]);
+    expect(window.pivotId).toBe(near.id);
     expect(await walkBothWays(container, userId, window)).toContain(b.id);
     expect(await walkBothWays(container, userId, window)).toContain(c.id);
   });
@@ -267,6 +277,7 @@ describe("showMemoInTimeline: the window around a memo", () => {
 
     const middle = await show(b.id, 2);
     expect(middle.targetState).toBe("found");
+    expect(middle.pivotId).toBe(b.id);
     expect(middle.targetMemoId).toBe(b.id);
     expect(ids(middle.items)).toEqual([c.id, b.id]);
     expect(middle.newerCursor).toBeNull();

@@ -1,6 +1,9 @@
 import { diffLines } from "diff";
 
-export type DiffLineKind = "added" | "removed" | "context";
+export type DiffLineKind = "added" | "removed" | "context" | "note";
+
+/** The one difference `ignoreNewlineAtEof` hides, said in words instead. */
+export const EOF_NEWLINE_NOTE = "末尾の改行の有無だけが異なります";
 
 export type DiffLine = Readonly<{ kind: DiffLineKind; text: string }>;
 
@@ -22,14 +25,20 @@ function splitLines(value: string): string[] {
 export function toDiffLines(base: string, target: string): DiffLine[] {
   // Without `ignoreNewlineAtEof` a last line gains a spurious −/+ pair the
   // moment a line is appended after it, because "b" and "b\n" differ.
-  return diffLines(base, target, { ignoreNewlineAtEof: true }).flatMap(
-    (change) => {
-      const kind: DiffLineKind = change.added
-        ? "added"
-        : change.removed
-          ? "removed"
-          : "context";
-      return splitLines(change.value).map((text) => ({ kind, text }));
-    },
-  );
+  const lines: DiffLine[] = diffLines(base, target, {
+    ignoreNewlineAtEof: true,
+  }).flatMap((change) => {
+    const kind: DiffLineKind = change.added
+      ? "added"
+      : change.removed
+        ? "removed"
+        : "context";
+    return splitLines(change.value).map((text) => ({ kind, text }));
+  });
+  // Two revisions that differ only by the final newline are still two
+  // revisions; an all-context diff would read as "identical".
+  if (base !== target && lines.every((line) => line.kind === "context")) {
+    lines.push({ kind: "note", text: EOF_NEWLINE_NOTE });
+  }
+  return lines;
 }

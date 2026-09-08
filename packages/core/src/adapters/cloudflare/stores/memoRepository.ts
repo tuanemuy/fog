@@ -420,7 +420,12 @@ export function createMemoRepository(
     findTimelineAround(anchor, query): TimelineWindow {
       const pivot = resolvePivot(sql, anchor, query.keyword);
       if (pivot === null) {
-        return { items: [], olderCursor: null, newerCursor: null };
+        return {
+          items: [],
+          olderCursor: null,
+          newerCursor: null,
+          pivotId: null,
+        };
       }
       // The pivot counts against `limit` on the older side, so the window
       // never exceeds `limit` rows: 1 → the pivot alone, 2 → one newer + it.
@@ -453,6 +458,7 @@ export function createMemoRepository(
       // An empty newer half (`limit: 1`) continues from the pivot itself.
       const newest = newer.rows[0] ?? { posted_at: pivot.p, id: pivot.i };
       return {
+        pivotId: MemoId.create(pivot.i),
         items: rows.map((row) => rehydrate(row, userId) as ActiveMemo),
         olderCursor:
           older.hasMore && oldest
