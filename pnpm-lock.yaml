@@ -44,6 +44,9 @@ importers:
       '@tanstack/react-start':
         specifier: ^1.167.65
         version: 1.167.65(@vitejs/plugin-rsc@0.5.26(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vite@8.0.12(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vite@8.0.12(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0))
+      diff:
+        specifier: ^8.0.4
+        version: 8.0.4
       react:
         specifier: ^19.2.6
         version: 19.2.6

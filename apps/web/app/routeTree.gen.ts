@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -39,18 +40,25 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMemosMemoIdHistoryRoute = AppMemosMemoIdHistoryRouteImport.update({
+  id: '/memos_/$memoId/history',
+  path: '/memos/$memoId/history',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/settings': typeof AppSettingsRoute
+  '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
+  '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -59,13 +67,21 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/memos_/$memoId/history': typeof AppMemosMemoIdHistoryRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/signup' | '/settings'
+  fullPaths: '/' | '/login' | '/signup' | '/settings' | '/memos/$memoId/history'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/signup' | '/settings' | '/'
-  id: '__root__' | '/_app' | '/login' | '/signup' | '/_app/settings' | '/_app/'
+  to: '/login' | '/signup' | '/settings' | '/' | '/memos/$memoId/history'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/signup'
+    | '/_app/settings'
+    | '/_app/'
+    | '/_app/memos_/$memoId/history'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -111,17 +127,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/memos_/$memoId/history': {
+      id: '/_app/memos_/$memoId/history'
+      path: '/memos/$memoId/history'
+      fullPath: '/memos/$memoId/history'
+      preLoaderRoute: typeof AppMemosMemoIdHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppMemosMemoIdHistoryRoute: typeof AppMemosMemoIdHistoryRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
+  AppMemosMemoIdHistoryRoute: AppMemosMemoIdHistoryRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

@@ -24,8 +24,11 @@ export const NAV_ITEMS = [
 
 export type NavItem = (typeof NAV_ITEMS)[number];
 
+const MEMO_HISTORY_PATH = /^\/memos\/[^/]+\/history$/;
+
 const TITLES: ReadonlyArray<readonly [(path: string) => boolean, string]> = [
   [(path) => path === "/", "タイムライン"],
+  [(path) => MEMO_HISTORY_PATH.test(path), "メモ履歴"],
   [(path) => path === "/settings", "設定"],
 ];
 

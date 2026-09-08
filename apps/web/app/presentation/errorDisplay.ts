@@ -155,12 +155,21 @@ export function renderErrorMessage(error: SerializedError): string {
  * boundary before any payload can reach a screen, so this widens nothing
  * `extractSerializedError`'s invariant holds shut.
  */
-function toDisplayError(error: unknown): SerializedError {
+export function toDisplayError(error: unknown): SerializedError {
   return asSerializedError(error) ?? extractSerializedError(error);
 }
 
 export function displayError(error: unknown): string {
   return renderErrorMessage(toDisplayError(error));
+}
+
+/** The OCC signal a screen answers by reloading and asking for a retry. */
+export function isOptimisticLockFailure(error: unknown): boolean {
+  const serialized = toDisplayError(error);
+  return (
+    serialized.kind === "conflict" &&
+    serialized.code === "OPTIMISTIC_LOCK_FAILURE"
+  );
 }
 
 export function sanitizeRouteError(error: unknown): string {
