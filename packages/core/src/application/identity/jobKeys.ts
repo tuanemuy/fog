@@ -2,6 +2,8 @@
 export const SWEEP_RESET_TOKENS_OPERATION_KEY = "sweep-reset-tokens";
 /** `jobs.operation_key` of the User Data DO's one `sweep-orphan-mapping` row. */
 export const SWEEP_ORPHAN_MAPPING_OPERATION_KEY = "sweep-orphan-mapping";
+/** `jobs.operation_key` of the User Data DO's one `finalize-withdrawal` row; both entry points converge on it. */
+export const FINALIZE_WITHDRAWAL_OPERATION_KEY = "finalize-withdrawal";
 
 export const resumeCredentialChangeOperationKey = (operationId: string) =>
   `resume-credential-change:${operationId}`;

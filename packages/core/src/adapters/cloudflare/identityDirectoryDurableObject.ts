@@ -45,6 +45,11 @@ import {
   AsyncWorkDurableObject,
   type StateWorkerEnv,
 } from "./durableObjectBase";
+import {
+  createCredentialChangeCleanupHandler,
+  credentialChangeHasCleanup,
+} from "./jobs/cleanup/credentialChangeCleanup";
+import { createSignupCleanupHandler } from "./jobs/cleanup/signupCleanup";
 import { createResumeCredentialChangeHandler } from "./jobs/resumeCredentialChange";
 import { createResumeSignupHandler } from "./jobs/resumeSignup";
 import { createSweepReservationsHandler } from "./jobs/sweepReservations";
@@ -85,7 +90,25 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
   private keyring: EncryptionKeyring | null = null;
 
   constructor(ctx: DurableObjectState, env: StateWorkerEnv) {
+    const signupCleanup = createSignupCleanupHandler({
+      env,
+      bucket: () => this.bucket(),
+    });
+    const credentialChangeCleanup = createCredentialChangeCleanupHandler();
     super(ctx, env, {
+      // The cleanup stages of `spec/recovery/index.md`: always for a
+      // registration, and for a credential change only while its mapping
+      // is still `pending` under this saga.
+      terminalStage: (row, sql) => {
+        if (row.kind === "resume-signup") return signupCleanup;
+        if (
+          row.kind === "resume-credential-change" &&
+          credentialChangeHasCleanup(row, sql)
+        ) {
+          return credentialChangeCleanup;
+        }
+        return null;
+      },
       plan: IDENTITY_DIRECTORY_PLAN,
       allowInitialize: true,
       clock: SystemClock,
@@ -459,6 +482,47 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
       );
     }
     return key;
+  }
+
+  /**
+   * Operator entry, the last resort of a withdrawal
+   * (`spec/database/index.md`): every mapping row this bucket holds for
+   * the account, whatever its `status`, and the reset tokens of those
+   * credentials. The only deletion an operator may issue without a caller
+   * token, which is why it is not on the identity gateway.
+   */
+  async purgeUserMappings(
+    userId: string,
+  ): Promise<RpcEnvelope<{ deletedMappings: number; deletedTokens: number }>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const sql = this.ctx.storage.sql;
+      return this.ctx.storage.transactionSync(() => {
+        const ids = sql
+          .exec<{ credential_id: string }>(
+            "SELECT credential_id FROM credential_mappings WHERE user_id = ?",
+            userId,
+          )
+          .toArray()
+          .map((row) => row.credential_id);
+        let deletedTokens = 0;
+        for (const id of ids) {
+          deletedTokens += sql
+            .exec<{ credential_id: string }>(
+              "DELETE FROM password_reset_tokens WHERE credential_id = ? RETURNING credential_id",
+              id,
+            )
+            .toArray().length;
+        }
+        const deletedMappings = sql
+          .exec<{ credential_id: string }>(
+            "DELETE FROM credential_mappings WHERE user_id = ? RETURNING credential_id",
+            userId,
+          )
+          .toArray().length;
+        return { deletedMappings, deletedTokens };
+      });
+    });
   }
 
   /** Diagnostics: the `userId`s that hold a mapping in this bucket. Passes the gate, writes nothing. */

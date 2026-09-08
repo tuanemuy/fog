@@ -5,7 +5,10 @@ import {
   type DeliveryTuning,
 } from "@repo/core/application/delivery/tuning";
 import type {
+  DeliveryBacklog,
+  ListPoisonedJobsResult,
   ListQuarantinedEventsResult,
+  PoisonedJobCursor,
   QuarantinedEventCursor,
   QuarantinedEventSummary,
   RpcEnvelope,
@@ -391,6 +394,158 @@ export abstract class AsyncWorkDurableObject<
   }
 
   /**
+   * Operator entry: deletes one quarantined row for good. The last of the
+   * two ways a quarantined row leaves (`spec/database/index.md`); read
+   * `terminal_reason` first, since nothing records the row afterwards.
+   * Removes nothing runnable, so the Alarm is not re-armed.
+   */
+  async deleteQuarantinedEvent(
+    eventId: string,
+  ): Promise<RpcEnvelope<{ deleted: boolean }>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const deleted = this.ctx.storage.transactionSync(() =>
+        updateMatchedRow(
+          this.ctx.storage.sql,
+          "DELETE FROM outbox_events WHERE id = ? AND status = 'quarantined'",
+          eventId,
+        ),
+      );
+      return { deleted };
+    });
+  }
+
+  /**
+   * Operator entry: what still waits to be published. `quarantined` rows
+   * are not backlog — they are the listing's — so only the two live
+   * statuses are counted.
+   */
+  async readDeliveryBacklog(): Promise<RpcEnvelope<DeliveryBacklog>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const row = this.ctx.storage.sql
+        .exec<{ pending: number; publishing: number; oldest: number | null }>(
+          `SELECT
+             (SELECT count(*) FROM outbox_events WHERE status = 'pending') AS pending,
+             (SELECT count(*) FROM outbox_events WHERE status = 'publishing') AS publishing,
+             (SELECT min(created_at) FROM outbox_events WHERE status IN ('pending','publishing')) AS oldest`,
+        )
+        .one();
+      return {
+        pendingCount: row.pending,
+        publishingCount: row.publishing,
+        oldestCreatedAt: row.oldest,
+      };
+    });
+  }
+
+  /**
+   * Operator entry: lists `poison` job rows, oldest first, by the same
+   * discipline as {@link listQuarantinedEvents}: five columns and no
+   * `payload` (the column that explains a termination is
+   * `terminal_reason`), a bounded page, a keyset cursor on
+   * `(completed_at, operation_key)` that `jobs_completed_idx` resolves.
+   * Read-only, so it does not re-arm the Alarm.
+   */
+  async listPoisonedJobs(
+    cursor?: PoisonedJobCursor | null,
+  ): Promise<RpcEnvelope<ListPoisonedJobsResult>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const limit = this.tuning().listPoisonedJobsLimit;
+      const sql = this.ctx.storage.sql;
+      const rows = cursor
+        ? sql
+            .exec<PoisonedRow>(
+              `SELECT operation_key, kind, attempt, completed_at, terminal_reason
+               FROM jobs
+               WHERE status = 'poison'
+                 AND (completed_at > ?1 OR (completed_at = ?1 AND operation_key > ?2))
+               ORDER BY completed_at ASC, operation_key ASC LIMIT ?3`,
+              cursor.completedAt,
+              cursor.operationKey,
+              limit + 1,
+            )
+            .toArray()
+        : sql
+            .exec<PoisonedRow>(
+              `SELECT operation_key, kind, attempt, completed_at, terminal_reason
+               FROM jobs
+               WHERE status = 'poison'
+               ORDER BY completed_at ASC, operation_key ASC LIMIT ?1`,
+              limit + 1,
+            )
+            .toArray();
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      return {
+        rows: page.map((row) => ({
+          operationKey: row.operation_key,
+          kind: row.kind,
+          attempt: row.attempt,
+          completedAt: row.completed_at ?? 0,
+          terminalReason: row.terminal_reason,
+        })),
+        nextCursor:
+          rows.length > limit && last
+            ? {
+                completedAt: last.completed_at ?? 0,
+                operationKey: last.operation_key,
+              }
+            : null,
+      } satisfies ListPoisonedJobsResult;
+    });
+  }
+
+  /**
+   * Operator entry: re-drives one `poison` row. Four columns and no more —
+   * `status = 'pending'`, `next_run_at = now`, `attempt = 0`,
+   * `completed_at = NULL` — which is convergence rule (2) minus the
+   * payload it does not replace (`spec/database/index.md`).
+   * `terminal_reason` is **kept**: it is the record an operator reads, and
+   * it is what makes the next run a cleanup where one exists rather than
+   * a forward (`spec/recovery/index.md`). `lease_until` / `owner_token`
+   * are already `NULL` on a terminated row. Re-armed afterwards, for the
+   * same reason as the quarantine re-drive.
+   */
+  async requeuePoisonedJob(
+    operationKey: string,
+  ): Promise<RpcEnvelope<{ requeued: boolean }>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const now = this.config.clock.now().getTime();
+      const requeued = this.ctx.storage.transactionSync(() =>
+        updateMatchedRow(
+          this.ctx.storage.sql,
+          `UPDATE jobs SET status = 'pending', next_run_at = ?, attempt = 0, completed_at = NULL
+           WHERE operation_key = ? AND status = 'poison'`,
+          now,
+          operationKey,
+        ),
+      );
+      if (requeued) await rearm(this.ctx.storage);
+      return { requeued };
+    });
+  }
+
+  /** Operator entry: deletes one `poison` row for good. Removes nothing runnable; no re-arm. */
+  async deletePoisonedJob(
+    operationKey: string,
+  ): Promise<RpcEnvelope<{ deleted: boolean }>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const deleted = this.ctx.storage.transactionSync(() =>
+        updateMatchedRow(
+          this.ctx.storage.sql,
+          "DELETE FROM jobs WHERE operation_key = ? AND status = 'poison'",
+          operationKey,
+        ),
+      );
+      return { deleted };
+    });
+  }
+
+  /**
    * The fixed order of a wake-up: (1) re-arm and confirm persistence,
    * (2) the schema gate, (3-a) the relay pass, (3-b) the jobs pass,
    * the prune at the tail, (4) recompute from both tables and re-arm.
@@ -501,6 +656,14 @@ export abstract class AsyncWorkDurableObject<
     }
   }
 }
+
+type PoisonedRow = Readonly<{
+  operation_key: string;
+  kind: string;
+  attempt: number;
+  completed_at: number | null;
+  terminal_reason: string | null;
+}>;
 
 type QuarantinedRow = Readonly<{
   id: string;

@@ -175,3 +175,30 @@ export type ListQuarantinedEventsResult = Readonly<{
   rows: readonly QuarantinedEventSummary[];
   nextCursor: QuarantinedEventCursor | null;
 }>;
+
+/** One `poison` job row as returned by `list-poisoned-jobs`: five columns, never `payload`. */
+export type PoisonedJobSummary = Readonly<{
+  operationKey: string;
+  kind: string;
+  attempt: number;
+  completedAt: number;
+  terminalReason: string | null;
+}>;
+
+/** Keyset cursor of `list-poisoned-jobs` on `(completed_at, operation_key)`, the same discipline as the quarantine listing. */
+export type PoisonedJobCursor = Readonly<{
+  completedAt: number;
+  operationKey: string;
+}>;
+
+export type ListPoisonedJobsResult = Readonly<{
+  rows: readonly PoisonedJobSummary[];
+  nextCursor: PoisonedJobCursor | null;
+}>;
+
+/** `read-delivery-backlog`: what still waits to be published; `quarantined` is not backlog. */
+export type DeliveryBacklog = Readonly<{
+  pendingCount: number;
+  publishingCount: number;
+  oldestCreatedAt: number | null;
+}>;

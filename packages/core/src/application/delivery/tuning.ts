@@ -220,6 +220,8 @@ export type DeliveryTuning = Readonly<{
    * rows that shifted down.
    */
   listQuarantinedEventsLimit: number;
+  /** Page size of `list-poisoned-jobs`; the same discipline as the quarantine listing. */
+  listPoisonedJobsLimit: number;
 }>;
 
 /**
@@ -263,6 +265,7 @@ export const DELIVERY_TUNING_DEFAULTS: DeliveryTuning = {
   queueMaxMessageBytes: 128_000,
 
   listQuarantinedEventsLimit: 50,
+  listPoisonedJobsLimit: 50,
 };
 
 /**

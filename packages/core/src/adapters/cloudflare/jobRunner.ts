@@ -3,7 +3,11 @@ import {
   type DeliveryTuning,
 } from "@repo/core/application/delivery/tuning";
 import type { JobKind } from "@repo/core/application/delivery/types";
-import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import {
+  isConflictError,
+  SystemError,
+  SystemErrorCode,
+} from "@repo/core/application/errors";
 import type { Logger } from "@repo/core/application/ports/logger";
 import {
   claimRows,
@@ -16,6 +20,13 @@ import {
   releaseWithBackoff,
   updateMatchedRow,
 } from "./rowRunner";
+import {
+  crownedToken,
+  forwardTokenFor,
+  forwardTokenOf,
+  operationIdOf,
+  terminalReason,
+} from "./terminalReason";
 
 export type JobRow = Readonly<{
   operation_key: string;
@@ -50,19 +61,30 @@ export type JobRow = Readonly<{
  *   requires. Progress written by the handler outside that closure is a
  *   separate transaction and does not have that guarantee.
  *
+ * `finished` may carry a `commit` too: a cleanup's last stage writes its
+ *   material away in the same `transactionSync` as the row's `done`
+ *   (S4 / L3 / C1 of `spec/recovery/index.md`), so the two land or roll
+ *   back together.
+ * `poison` — **a cleanup stage only**: the material it needs is gone
+ *   (S1 / L1 cannot read their row), so retrying repeats the same verdict.
+ *   The row terminates `poison` with `cleanup-material-lost:*` whatever
+ *   `attempt` says. A forward handler answering this is a contract
+ *   violation and is treated as a failure.
+ *
  * `commit` is **synchronous**, and its `undefined` return type is what
  * enforces it: a `void` return type accepts a `Promise` as well, and with
  * it an `async` closure — which cannot run inside `transactionSync` and
  * would let the release commit on its own.
  */
 export type JobHandlerResult =
-  | Readonly<{ kind: "finished" }>
+  | Readonly<{ kind: "finished"; commit?: (sql: SqlStorage) => undefined }>
   | Readonly<{ kind: "rearm"; nextRunAt: Date }>
   | Readonly<{
       kind: "yield";
       nextRunAt: Date;
       commit?: (sql: SqlStorage) => undefined;
-    }>;
+    }>
+  | Readonly<{ kind: "poison"; reason: "material-lost" }>;
 
 export type JobHandlerContext = Readonly<{
   storage: DurableObjectStorage;
@@ -99,14 +121,17 @@ export type JobHandlerRegistry = Partial<Record<JobKind, JobHandler>>;
  * of terminating it, and the row becomes `poison` only if the roll-back
  * itself ends without completing.
  *
- * **No handlers and no stages are registered yet, so the default selector
- * answers "no stage" and the terminal-mode write never fires.** The
- * write only happens when a roll-back stage actually exists
- * (`spec/database/index.md`), and which kinds have one, what each does
- * and how long its materials live are declared in
- * `spec/recovery/index.md`.
+ * The selector reads the row's state through `sql` when the answer
+ * depends on it (`resume-credential-change`: the mapping's
+ * `change_state`). Which kinds have a stage, what each does and how long
+ * its materials live are declared in `spec/recovery/index.md`; the same
+ * selector decides both the entry into terminal mode and what a row in
+ * it runs.
  */
-export type TerminalStageSelector = (row: JobRow) => JobHandler | null;
+export type TerminalStageSelector = (
+  row: JobRow,
+  sql: SqlStorage,
+) => JobHandler | null;
 
 export const NO_TERMINAL_STAGE: TerminalStageSelector = () => null;
 
@@ -152,6 +177,9 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
 
   for (const { row, ownerToken } of claimed) {
     let result: JobHandlerResult;
+    // Whether this wake-up ran a cleanup stage: decides how a failure
+    // ends (a cleanup burns out with a crown, a forward re-confirms).
+    let stageRan = false;
     try {
       // `status IN ('pending','running') AND terminal_reason IS NOT NULL`
       // is the definition of terminal mode. A row in it stops advancing
@@ -159,18 +187,18 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
       // stage exists: if the row's state changed and the stage went
       // away, or the row was re-submitted, it resumes advancing.
       const inTerminalMode = row.terminal_reason !== null;
-      const stage = selectTerminalStage(row);
-      const handler =
-        (inTerminalMode ? stage : null) ??
-        registry[row.kind as JobKind] ??
-        null;
+      const stage = inTerminalMode
+        ? selectTerminalStage(row, storage.sql)
+        : null;
+      const handler = stage ?? registry[row.kind as JobKind] ?? null;
+      stageRan = stage !== null;
       if (handler === null) {
         throw new SystemError(
           SystemErrorCode.JobHandlerMissing,
           `No handler registered for job kind ${row.kind}`,
         );
       }
-      result = await handler({
+      const handlerResult = await handler({
         storage,
         row,
         payload: JSON.parse(row.payload) as unknown,
@@ -178,6 +206,13 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
         now,
         tuning,
       });
+      if (handlerResult.kind === "poison" && stage === null) {
+        throw new SystemError(
+          SystemErrorCode.UnclassifiedError,
+          `A forward handler for ${row.kind} declared lost material`,
+        );
+      }
+      result = handlerResult;
     } catch (error) {
       logger.error("Job execution failed", {
         kind: row.kind,
@@ -194,6 +229,7 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
             now,
             tuning,
             selectTerminalStage,
+            stageRan,
           ),
         );
         if (!matched) warnLostLease(logger, row);
@@ -211,7 +247,7 @@ export async function runJobsPass(options: JobPassOptions): Promise<void> {
 
     try {
       const matched = storage.transactionSync(() =>
-        applyJobResult(storage, row, ownerToken, result, now),
+        applyJobResult(storage, row, ownerToken, result, now, stageRan),
       );
       if (!matched) warnLostLease(logger, row);
     } catch (error) {
@@ -243,9 +279,14 @@ function applyJobResult(
   ownerToken: string,
   result: JobHandlerResult,
   now: number,
+  stageRan: boolean,
 ): boolean {
   const sql = storage.sql;
   if (result.kind === "finished") {
+    // A cleanup's last stage and the row's `done` land together; the
+    // reason stays as the record that this row once confirmed it could
+    // not advance (`COALESCE` in the statement keeps it).
+    result.commit?.(sql);
     return finalizeRow(
       sql,
       JOBS_TABLE,
@@ -254,6 +295,27 @@ function applyJobResult(
       "completed",
       now,
       null,
+    );
+  }
+  if (result.kind === "poison") {
+    // Material lost: the crown says the cleanup ran and found nothing to
+    // clean, whatever `attempt` was. `stageRan` is true here by the
+    // check in the pass loop.
+    void stageRan;
+    return finalizeRow(
+      sql,
+      JOBS_TABLE,
+      row.operation_key,
+      ownerToken,
+      "failed",
+      now,
+      terminalReason(
+        crownedToken(
+          "cleanup-material-lost",
+          forwardTokenOf(row.terminal_reason),
+        ),
+        operationIdOf(parsePayload(row)),
+      ),
     );
   }
   if (result.kind === "yield") {
@@ -277,6 +339,70 @@ function applyJobResult(
   );
 }
 
+/** What a failed run does to its row — the pure half of {@link applyJobFailure}. */
+export type FailureOutcome =
+  | Readonly<{ kind: "backoff"; attempt: number }>
+  | Readonly<{ kind: "enter-terminal"; reason: string }>
+  | Readonly<{ kind: "poison"; reason: string }>;
+
+export type FailureFacts = Readonly<{
+  error: unknown;
+  attempt: number;
+  maxAttempts: number;
+  /** The row's current `terminal_reason`. */
+  currentReason: string | null;
+  /** Whether this wake-up ran a cleanup stage rather than the forward. */
+  stageRan: boolean;
+  /** Whether a cleanup stage exists for the row's state (asked only for a forward failure). */
+  hasStage: () => boolean;
+  operationId: string | null;
+}>;
+
+/**
+ * The seven terminal-mode triggers of `spec/recovery/index.md` plus the
+ * ordinary backoff, decided from three facts: whether the row is already
+ * in terminal mode, whether a cleanup stage ran this wake-up, and
+ * whether the failure confirms non-progress now (`ConflictError`, or the
+ * ceiling).
+ *
+ * - forward, not confirmed → backoff
+ * - forward, confirmed, a stage exists → **enter terminal mode** (the
+ *   reason is written, `attempt` restarts, the row stays runnable)
+ * - forward, confirmed, no stage → `poison` with the forward token; for
+ *   a row already in terminal mode this is the *re-confirmation*, and
+ *   the reason is replaced by the current one
+ * - cleanup, under the ceiling → backoff, the reason untouched
+ * - cleanup, at the ceiling → `poison` with `cleanup-exhausted:*`
+ *
+ * A cleanup has no notion of "confirmed": a `ConflictError` out of one
+ * of its RPCs is a failure like any other and spends the backoff.
+ */
+export function failureOutcome(facts: FailureFacts): FailureOutcome {
+  const nextAttempt = facts.attempt + 1;
+  const exhausted = nextAttempt >= facts.maxAttempts;
+  if (facts.stageRan) {
+    if (!exhausted) return { kind: "backoff", attempt: nextAttempt };
+    return {
+      kind: "poison",
+      reason: terminalReason(
+        crownedToken("cleanup-exhausted", forwardTokenOf(facts.currentReason)),
+        facts.operationId,
+      ),
+    };
+  }
+  if (!exhausted && !isConflictError(facts.error)) {
+    return { kind: "backoff", attempt: nextAttempt };
+  }
+  const reason = terminalReason(
+    forwardTokenFor(facts.error),
+    facts.operationId,
+  );
+  if (facts.currentReason === null && facts.hasStage()) {
+    return { kind: "enter-terminal", reason };
+  }
+  return { kind: "poison", reason };
+}
+
 function applyJobFailure(
   storage: DurableObjectStorage,
   row: JobRow,
@@ -285,40 +411,44 @@ function applyJobFailure(
   now: number,
   tuning: DeliveryTuning,
   selectTerminalStage: TerminalStageSelector,
+  stageRan: boolean,
 ): boolean {
   const sql = storage.sql;
-  const nextAttempt = row.attempt + 1;
-
-  if (nextAttempt < tuning.jobsMaxAttempts) {
+  const outcome = failureOutcome({
+    error,
+    attempt: row.attempt,
+    maxAttempts: tuning.jobsMaxAttempts,
+    currentReason: row.terminal_reason,
+    stageRan,
+    hasStage: () => selectTerminalStage(row, sql) !== null,
+    operationId: operationIdOf(parsePayload(row)),
+  });
+  if (outcome.kind === "backoff") {
     return releaseWithBackoff(
       sql,
       JOBS_TABLE,
       row.operation_key,
       ownerToken,
-      nextAttempt,
+      outcome.attempt,
       now +
         backoffDelayMs(
-          nextAttempt,
+          outcome.attempt,
           tuning.jobsBackoffBaseMs,
           tuning.jobsBackoffMaxDelayMs,
         ),
     );
   }
-
-  const reason = failureLabel(error, "Job failed");
-
-  // Terminal mode: the forward attempts are spent but a roll-back stage
-  // exists for this row, so `terminal_reason` is written while the row
-  // stays runnable and `completed_at` is deliberately not written. No
-  // extra wait and no new operating value is introduced — the next run
-  // time is what the ordinary backoff rule gives for `attempt = 0`.
-  if (row.terminal_reason === null && selectTerminalStage(row) !== null) {
+  if (outcome.kind === "enter-terminal") {
+    // Terminal mode: the reason is written while the row stays runnable
+    // and `completed_at` is deliberately not written. No extra wait and
+    // no new operating value — the next run time is what the ordinary
+    // backoff rule gives for `attempt = 0`.
     return updateMatchedRow(
       sql,
       `UPDATE jobs SET status = 'pending', attempt = 0, terminal_reason = ?,
          next_run_at = ?, lease_until = NULL, owner_token = NULL
        WHERE operation_key = ? AND owner_token = ?`,
-      reason,
+      outcome.reason,
       now +
         backoffDelayMs(
           0,
@@ -329,7 +459,8 @@ function applyJobFailure(
       ownerToken,
     );
   }
-
+  // `poison`: `finalizeRow` keeps a NULL reason, so a re-confirmation
+  // hands the current reason in and it replaces the old one.
   return finalizeRow(
     sql,
     JOBS_TABLE,
@@ -337,8 +468,16 @@ function applyJobFailure(
     ownerToken,
     "failed",
     now,
-    reason,
+    outcome.reason,
   );
+}
+
+function parsePayload(row: JobRow): unknown {
+  try {
+    return JSON.parse(row.payload) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /**

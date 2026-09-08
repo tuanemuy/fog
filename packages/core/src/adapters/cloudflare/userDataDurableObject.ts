@@ -2,6 +2,11 @@ import type { RpcEnvelope } from "@repo/core/application/delivery/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { UserDataUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
 import type { ExportSourceDto } from "@repo/core/application/export/gateway";
+import {
+  type AbandonAccountDto,
+  type AbandonAccountResult,
+  abandonAccountProcedure,
+} from "@repo/core/application/identity/abandonAccount";
 import { approveAiClientAuthorizationProcedure } from "@repo/core/application/identity/approveAiClientAuthorization";
 import { findActiveAiClientProcedure } from "@repo/core/application/identity/authorizeAiClient";
 import { changeTrashRetentionDaysProcedure } from "@repo/core/application/identity/changeTrashRetentionDays";
@@ -153,9 +158,12 @@ import {
   type StateWorkerEnv,
 } from "./durableObjectBase";
 import type { JobHandlerRegistry } from "./jobRunner";
+import { createLinkCleanupHandler } from "./jobs/cleanup/linkCleanup";
+import { createFinalizeWithdrawalHandler } from "./jobs/finalizeWithdrawal";
 import { createPurgeTrashHandler } from "./jobs/purgeTrash";
 import { createResumeLinkHandler } from "./jobs/resumeLink";
 import { createSweepOrphanMappingHandler } from "./jobs/sweepOrphanMapping";
+import { isInitialized } from "./migrationGate";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
 import { readCallerToken } from "./stores/accountStore";
 import { createAiClientConnectionRepository } from "./stores/aiClientConnectionRepository";
@@ -176,6 +184,7 @@ import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOfWorkContext> {
   constructor(ctx: DurableObjectState, env: StateWorkerEnv) {
     const jobRegistry: JobHandlerRegistry = {};
+    const linkCleanup = createLinkCleanupHandler({ env });
     super(ctx, env, {
       plan: USER_DATA_PLAN,
       allowInitialize: false,
@@ -183,6 +192,15 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
       idGenerator: UuidV7Generator,
       logger: ConsoleLogger,
       jobRegistry,
+      // The one cleanup this class owns (`spec/recovery/index.md`): a
+      // link's roll-back. Withdrawal and the orphan sweep are forward only.
+      terminalStage: (row) => (row.kind === "resume-link" ? linkCleanup : null),
+    });
+    jobRegistry["finalize-withdrawal"] = createFinalizeWithdrawalHandler({
+      env,
+      userId: () => this.requireSelfLocator(),
+      provider: () => this.createUnitOfWorkProvider(),
+      now: () => this.config.clock.now(),
     });
     // Filled after `super`: the handler needs this object's unit of work.
     jobRegistry["purge-trash"] = createPurgeTrashHandler({
@@ -245,6 +263,25 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
         recordSignupLocatorProcedure(ctx, input);
         return undefined;
       });
+    });
+  }
+
+  /**
+   * Stage S2 of the signup cleanup (`spec/recovery/index.md`). Step (1)
+   * of its evaluation — an object that was never initialised — is
+   * answered here **before the gate**, so that a cleanup for a saga whose
+   * phase 2 never ran neither creates an empty object nor fails: there is
+   * nothing to abandon. Every other step runs inside the unit of work.
+   */
+  async abandonAccount(
+    dto: AbandonAccountDto,
+  ): Promise<RpcEnvelope<AbandonAccountResult>> {
+    return this.envelope(async () => {
+      if (!isInitialized(this.ctx.storage.sql)) return "nothing-to-abandon";
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        abandonAccountProcedure(ctx, this.ctx.storage.sql, dto, now),
+      );
     });
   }
 
