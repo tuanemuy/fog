@@ -1,14 +1,31 @@
-import type { RpcEnvelope } from "@repo/core/application/delivery/types";
+import type {
+  RpcEnvelope,
+  SendMailMaterials,
+} from "@repo/core/application/delivery/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { IdentityDirectoryUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
+import {
+  beginCredentialChangeProcedure,
+  markCredentialChangeAdvancedProcedure,
+  promoteVerifierProcedure,
+} from "@repo/core/application/identity/credentialChangeProcedures";
 import type {
   AttemptOutcomeDto,
+  BeginCredentialChangeDto,
+  ConsumedResetTokenDto,
   CredentialCoordinateDto,
+  DeleteMappingDto,
   LoginCredentialDto,
+  PromoteVerifierDto,
   ReserveCredentialDto,
 } from "@repo/core/application/identity/gateway";
 import { toCredentialCoordinate } from "@repo/core/application/identity/rebuild";
+import {
+  type ResetRequestProcedureInput,
+  requestPasswordResetProcedure,
+} from "@repo/core/application/identity/requestPasswordReset";
 import { reserveSignupCredentialProcedure } from "@repo/core/application/identity/reserveSignupCredential";
+import { createIdentityTuning } from "@repo/core/application/identity/tuning";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
@@ -20,6 +37,7 @@ import { CredentialId, UserId } from "@repo/core/domain/identity/valueObject";
 import { openCanonical, sealCanonical } from "./crypto/canonicalCipher";
 import {
   type EncryptionKeyring,
+  MIN_KEYRING_SECRET_LENGTH,
   requireEmailEncryptionKeyring,
 } from "./crypto/keyring";
 import { encodeMapping } from "./crypto/locatorDerivation";
@@ -30,7 +48,11 @@ import {
 import { createResumeSignupHandler } from "./jobs/resumeSignup";
 import { createSweepReservationsHandler } from "./jobs/sweepReservations";
 import { IDENTITY_DIRECTORY_PLAN } from "./schema/identityDirectoryPlan";
-import { listMappedUserIds } from "./stores/credentialMappingStore";
+import {
+  listMappedUserIds,
+  readMappingCoordinate,
+} from "./stores/credentialMappingStore";
+import { readResetMailMaterials } from "./stores/sendMailMaterials";
 import { createIdentityDirectoryUnitOfWorkProvider } from "./unitOfWork";
 
 export type ReserveCredentialRpcInput = Readonly<{
@@ -72,6 +94,16 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
           env,
           commit: (input) => this.commitLocally(input),
           activate: (input) => this.activateLocally(input),
+          openCanonical: (row) =>
+            openCanonical(
+              this.encryptionKeyring(),
+              { kind: row.kind, credentialId: row.credentialId },
+              {
+                ciphertext: row.ciphertext,
+                encryptionGeneration: row.encryptionGeneration,
+                nonce: row.nonce,
+              },
+            ),
         }),
         "sweep-reservations": createSweepReservationsHandler(),
       },
@@ -84,7 +116,34 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
       clock: this.config.clock,
       idGenerator: this.config.idGenerator,
       selfLocator: this.requireSelfLocator(),
+      resetTokenKey: this.resetTokenKey(),
+      bucket: this.bucket(),
+      identityTuning: createIdentityTuning(undefined, this.tuning()),
+      resetTokenTtlMs: this.tuning().resetTokenTtlMs,
     });
+  }
+
+  /** `dir:g{generation}:b{index}` — this bucket's own coordinates. */
+  private bucket(): { generation: number; bucketIndex: number } {
+    const match = /^dir:g(\d+):b(\d+)$/.exec(this.requireSelfLocator());
+    if (match === null) {
+      throw new SystemError(
+        SystemErrorCode.ConfigurationError,
+        "The directory bucket has no bucket-shaped locator",
+      );
+    }
+    return { generation: Number(match[1]), bucketIndex: Number(match[2]) };
+  }
+
+  private resetTokenKey(): string {
+    const key = this.env.IDENTITY_RESET_TOKEN_KEY;
+    if (key === undefined || key.length < MIN_KEYRING_SECRET_LENGTH) {
+      throw new SystemError(
+        SystemErrorCode.ConfigurationError,
+        "IDENTITY_RESET_TOKEN_KEY is not configured",
+      );
+    }
+    return key;
   }
 
   private encryptionKeyring(): EncryptionKeyring {
@@ -223,6 +282,165 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
       }
       return canonical;
     });
+  }
+
+  /** S-AC-07 phase 0: the whole request in one transaction (`requestPasswordResetProcedure`). */
+  async requestPasswordReset(
+    input: ResetRequestProcedureInput,
+  ): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      const tuning = createIdentityTuning(undefined, this.tuning());
+      await this.runUnitOfWork((ctx) => {
+        requestPasswordResetProcedure(ctx, input, now, tuning);
+        return undefined;
+      });
+    });
+  }
+
+  /** Consumes the token and answers with the coordinate the change saga needs. */
+  async consumeResetToken(
+    token: string,
+  ): Promise<RpcEnvelope<ConsumedResetTokenDto | null>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      const bucket = this.bucket();
+      const sql = this.ctx.storage.sql;
+      return this.runUnitOfWork((ctx) => {
+        const consumed = ctx.resetTokenStore.verifyAndConsume(token, now);
+        if (consumed === null) return null;
+        const credentialId = CredentialId.create(consumed.credentialId);
+        const record =
+          ctx.credentialMappingReader.findByCredentialId(credentialId);
+        const coordinate = readMappingCoordinate(sql, consumed.credentialId);
+        if (record === null || coordinate === null) return null;
+        return {
+          userId: consumed.userId,
+          credentialId: consumed.credentialId,
+          coordinate: {
+            credentialId: consumed.credentialId,
+            kind: coordinate.kind,
+            mapping: encodeMapping({
+              ...bucket,
+              kind: coordinate.kind,
+              hmac: coordinate.hmac,
+            }),
+          },
+          hasVerifier: record.passwordVerifier !== null,
+          changeAuthToken: consumed.changeAuthToken,
+        };
+      });
+    });
+  }
+
+  /** Credential-change saga phase 1. */
+  async beginCredentialChange(input: {
+    coordinate: CredentialCoordinateDto;
+    dto: BeginCredentialChangeDto;
+    resumeAt: Date;
+  }): Promise<RpcEnvelope<boolean>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        beginCredentialChangeProcedure(
+          ctx,
+          input.coordinate,
+          input.dto,
+          input.resumeAt,
+        ),
+      ),
+    );
+  }
+
+  /** Credential-change saga phase 3a. */
+  async markCredentialChangeAdvanced(input: {
+    coordinate: CredentialCoordinateDto;
+    operationId: string;
+  }): Promise<RpcEnvelope<boolean>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        markCredentialChangeAdvancedProcedure(
+          ctx,
+          input.coordinate,
+          input.operationId,
+        ),
+      ),
+    );
+  }
+
+  /** Credential-change saga phase 3b. */
+  async promoteVerifier(input: {
+    coordinate: CredentialCoordinateDto;
+    dto: PromoteVerifierDto;
+  }): Promise<RpcEnvelope<boolean>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        promoteVerifierProcedure(ctx, input.coordinate, input.dto),
+      ),
+    );
+  }
+
+  async cancelReservation(input: {
+    locator: MappingLocator;
+    callerToken: string;
+  }): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      await this.runUnitOfWork((ctx) => {
+        ctx.credentialMappingWriter.cancelReservation({
+          coordinate: {
+            credentialId: CredentialId.create(input.locator.credentialId),
+            kind: input.locator.kind,
+            mapping: encodeMapping(input.locator),
+          },
+          callerToken: input.callerToken,
+        });
+        return undefined;
+      });
+    });
+  }
+
+  /** Unlink: the row and its tokens go, only for the owner presenting the caller token. */
+  async deleteMapping(input: {
+    coordinate: CredentialCoordinateDto;
+    dto: DeleteMappingDto;
+  }): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      await this.runUnitOfWork((ctx) => {
+        ctx.credentialMappingWriter.deleteMapping({
+          coordinate: toCredentialCoordinate(input.coordinate),
+          userId: UserId.create(input.dto.userId),
+          callerToken: input.dto.callerToken,
+        });
+        return undefined;
+      });
+    });
+  }
+
+  /** The send-materials RPC; the guard lives in `readResetMailMaterials`. Passes the gate, writes nothing. */
+  async getResetMailMaterials(input: {
+    eventId: string;
+    ownerToken: string | null | undefined;
+  }): Promise<RpcEnvelope<SendMailMaterials>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      return readResetMailMaterials(this.ctx.storage.sql, input, {
+        resetTokenKey: this.resetTokenKey(),
+        providerIdempotencyKey: this.providerIdempotencyKey(),
+        bucket: this.bucket(),
+        encryptionKeyring: this.encryptionKeyring(),
+        nowMs: this.config.clock.now().getTime(),
+      });
+    });
+  }
+
+  private providerIdempotencyKey(): string {
+    const key = this.env.PROVIDER_IDEMPOTENCY_KEY;
+    if (key === undefined || key.length < MIN_KEYRING_SECRET_LENGTH) {
+      throw new SystemError(
+        SystemErrorCode.ConfigurationError,
+        "PROVIDER_IDEMPOTENCY_KEY is not configured",
+      );
+    }
+    return key;
   }
 
   /** Diagnostics: the `userId`s that hold a mapping in this bucket. Passes the gate, writes nothing. */

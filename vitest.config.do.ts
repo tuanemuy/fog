@@ -60,6 +60,7 @@ export default defineConfig({
           // the real one. The encryption key is held to the keyring's
           // declared floor, because the keyring refuses a shorter one.
           PROVIDER_IDEMPOTENCY_KEY: "test-provider-idempotency-key",
+          IDENTITY_RESET_TOKEN_KEY: "test-reset-token-key-at-least-32-chars",
           IDENTITY_MAIL_ENCRYPTION_KEY:
             "test-identity-mail-encryption-key-0123456789",
         },

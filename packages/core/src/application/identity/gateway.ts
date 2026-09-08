@@ -60,16 +60,82 @@ export type ReserveCredentialDto = Readonly<{
     | Readonly<{ role: "member"; coordinatorLocator: string }>;
 }>;
 
+export type CredentialRefDto = Readonly<{
+  credentialId: string;
+  kind: CredentialKind;
+  label: string;
+  usableForLogin: boolean;
+}>;
+
 export type InitializeAccountDto = Readonly<{
   operationId: string;
   callerToken: string;
-  credential: Readonly<{
-    credentialId: string;
-    kind: CredentialKind;
-    label: string;
-    usableForLogin: boolean;
-  }>;
+  /** One for a password signup; two (subject + address) for an SSO signup. */
+  credentials: readonly CredentialRefDto[];
   locators: readonly MappingLocator[];
+}>;
+
+export type ConsumedResetTokenDto = Readonly<{
+  userId: string;
+  credentialId: string;
+  coordinate: CredentialCoordinateDto;
+  /** The credential holds a password verifier — the only kind a reset may change. */
+  hasVerifier: boolean;
+  changeAuthToken: string;
+}>;
+
+export type BeginCredentialChangeDto = Readonly<{
+  operationId: string;
+  /** Carried into the `resume-credential-change` payload; the bucket does not know the owner otherwise. */
+  userId: string;
+  pendingVerifier: string;
+  origin: CredentialChangeOrigin;
+  changeAuthToken: string | null;
+}>;
+
+export type ApplyCredentialChangeDto = Readonly<{
+  credentialId: string;
+  /** A reset completion advances `resetVersion` and revokes the connections of the previous one. */
+  resetCompletion: boolean;
+}>;
+
+export type ApplyCredentialChangeResult = Readonly<{
+  credentialVersion: number;
+}>;
+
+export type PromoteVerifierDto = Readonly<{
+  operationId: string;
+  credentialVersion: number;
+}>;
+
+export type BeginLinkDto = Readonly<{
+  operationId: string;
+  credentialId: string;
+  locator: MappingLocator;
+}>;
+
+export type BeginLinkResult = Readonly<{ callerToken: string }>;
+
+export type CompleteLinkDto = Readonly<{
+  operationId: string;
+  locator: CredentialLocatorDto;
+}>;
+
+export type OperationRefDto = Readonly<{ operationId: string }>;
+
+export type BeginUnlinkDto = Readonly<{
+  operationId: string;
+  credentialId: string;
+}>;
+
+export type BeginUnlinkResult = Readonly<{
+  locators: readonly CredentialLocatorDto[];
+  callerToken: string;
+}>;
+
+export type DeleteMappingDto = Readonly<{
+  userId: string;
+  callerToken: string;
 }>;
 
 export type RecordSignupLocatorDto = Readonly<{
@@ -141,6 +207,49 @@ export interface IdentityGateway {
     credentialId: string,
   ): Promise<CredentialLocatorDto | null>;
   readCurrentUser(userId: string): Promise<CurrentUserDto | null>;
+  /** The whole request, in the bucket the canonical resolves to; nothing is answered. */
+  requestPasswordReset(canonicalEmail: string): Promise<void>;
+  /** Consumes the token in the bucket it names; `null` for malformed / unknown / expired / used. */
+  consumeResetToken(token: string): Promise<ConsumedResetTokenDto | null>;
+  /** Hands back a reservation this caller token holds; absent is success. */
+  cancelReservation(
+    locator: MappingLocator,
+    callerToken: string,
+  ): Promise<void>;
+  beginCredentialChange(
+    coordinate: CredentialCoordinateDto,
+    dto: BeginCredentialChangeDto,
+  ): Promise<boolean>;
+  applyCredentialChange(
+    userId: string,
+    dto: ApplyCredentialChangeDto,
+  ): Promise<ApplyCredentialChangeResult>;
+  markCredentialChangeAdvanced(
+    coordinate: CredentialCoordinateDto,
+    operationId: string,
+  ): Promise<boolean>;
+  promoteVerifier(
+    coordinate: CredentialCoordinateDto,
+    dto: PromoteVerifierDto,
+  ): Promise<boolean>;
+  /** The row behind a coordinate, verifier included — the change-password read. */
+  readCredentialForChange(
+    coordinate: CredentialCoordinateDto,
+  ): Promise<LoginCredentialDto | null>;
+  resolveSsoIdentity(
+    provider: string,
+    providerSubject: string,
+  ): Promise<LoginCredentialDto | null>;
+  beginLink(userId: string, dto: BeginLinkDto): Promise<BeginLinkResult>;
+  completeLink(userId: string, dto: CompleteLinkDto): Promise<void>;
+  finishLink(userId: string, dto: OperationRefDto): Promise<void>;
+  beginUnlink(userId: string, dto: BeginUnlinkDto): Promise<BeginUnlinkResult>;
+  deleteMapping(
+    coordinate: CredentialCoordinateDto,
+    dto: DeleteMappingDto,
+  ): Promise<void>;
+  finishUnlink(userId: string, dto: OperationRefDto): Promise<void>;
+  revokeAllAiClientConnections(userId: string): Promise<number>;
   /** S-ST-01: the setting plus the trash-wide `purge_after` recalculation and the wake-up. */
   changeTrashRetentionDays(
     userId: string,

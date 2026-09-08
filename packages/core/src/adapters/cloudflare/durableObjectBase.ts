@@ -52,6 +52,8 @@ export type StateWorkerEnv = Readonly<{
   EVENTS_QUEUE: Queue<OutboxQueueMessage>;
   PROVIDER_IDEMPOTENCY_KEY?: string;
   IDENTITY_MAIL_ENCRYPTION_KEY?: string;
+  /** The reset-token derivation key; state Worker only (`spec/async/index.md` 衛生規則). */
+  IDENTITY_RESET_TOKEN_KEY?: string;
   /**
    * The state Worker's own namespaces, for the saga jobs that call the other
    * class from inside `alarm()`. Untyped here because the classes extend this

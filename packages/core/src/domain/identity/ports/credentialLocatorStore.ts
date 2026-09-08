@@ -22,6 +22,8 @@ export interface CredentialLocatorStore {
   list(): readonly CredentialLocator[];
   /** The newest-generation row for that credential, or `null`. */
   findByCredentialId(credentialId: CredentialId): CredentialLocator | null;
+  /** Every generation's row of the credential, newest first — the material an unlink stashes before deleting. */
+  listByCredentialId(credentialId: CredentialId): readonly CredentialLocator[];
   /**
    * Upsert. `credentialVersion` is written as the maximum of the argument and
    * the existing maximum over every row of that `credentialId`, on inserts as

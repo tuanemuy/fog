@@ -179,12 +179,14 @@ describe("registerWithPassword", () => {
     expect(initInput).toEqual({
       operationId,
       callerToken: reserveInput.callerToken,
-      credential: {
-        credentialId,
-        kind: "email",
-        label: "",
-        usableForLogin: true,
-      },
+      credentials: [
+        {
+          credentialId,
+          kind: "email",
+          label: "",
+          usableForLogin: true,
+        },
+      ],
       locators: [locator],
     });
 

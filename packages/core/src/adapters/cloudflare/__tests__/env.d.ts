@@ -15,6 +15,7 @@ declare global {
       EVENTS_QUEUE: Queue;
       PROVIDER_IDEMPOTENCY_KEY: string;
       IDENTITY_MAIL_ENCRYPTION_KEY: string;
+      IDENTITY_RESET_TOKEN_KEY: string;
     }
   }
 }

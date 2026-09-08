@@ -115,6 +115,22 @@ const IDENTITY_GATEWAY_METHODS = [
   "readCurrentUser",
   "changeTrashRetentionDays",
   "revealCanonical",
+  "requestPasswordReset",
+  "consumeResetToken",
+  "cancelReservation",
+  "beginCredentialChange",
+  "applyCredentialChange",
+  "markCredentialChangeAdvanced",
+  "promoteVerifier",
+  "readCredentialForChange",
+  "resolveSsoIdentity",
+  "beginLink",
+  "completeLink",
+  "finishLink",
+  "beginUnlink",
+  "deleteMapping",
+  "finishUnlink",
+  "revokeAllAiClientConnections",
 ] as const satisfies readonly (keyof IdentityGateway)[];
 
 type Exhaustive<T extends readonly (keyof IdentityGateway)[]> =

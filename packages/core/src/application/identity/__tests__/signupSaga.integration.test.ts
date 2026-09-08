@@ -408,12 +408,14 @@ describe("sweep-reservations against the saga mark", () => {
     await gateway.initializeAccount(userId, {
       operationId,
       callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),
-      credential: {
-        credentialId,
-        kind: "email",
-        label: "",
-        usableForLogin: true,
-      },
+      credentials: [
+        {
+          credentialId,
+          kind: "email",
+          label: "",
+          usableForLogin: true,
+        },
+      ],
       locators: [locator],
     });
     expect(await gateway.commitSignupSaga(locator, operationId)).toBe(true);

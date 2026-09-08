@@ -11,12 +11,15 @@ import type {
   CredentialMappingReader,
   CredentialMappingWriter,
 } from "@repo/core/domain/identity/ports/credentialMappingRepository";
+import type { PasswordResetThrottlePort } from "@repo/core/domain/identity/ports/passwordResetThrottlePort";
+import type { PasswordResetTokenPort } from "@repo/core/domain/identity/ports/passwordResetTokenPort";
 import type { UserSettingsRepository } from "@repo/core/domain/identity/ports/userSettingsRepository";
 import type { DocumentRepository } from "@repo/core/domain/knowledge/ports/documentRepository";
 import type { TopicRepository } from "@repo/core/domain/knowledge/ports/topicRepository";
 import type { MemoRepository } from "@repo/core/domain/memo/ports/memoRepository";
 import type { SearchIndexPort } from "@repo/core/domain/search/ports/searchIndexPort";
 import type { TrashQueryPort } from "@repo/core/domain/trash/ports/trashQueryPort";
+import type { AiClientConnectionRevoker } from "../identity/aiClientConnectionRevoker";
 
 /**
  * The canonical unit-of-work contract.
@@ -171,14 +174,15 @@ export interface UserDataUnitOfWorkContext
   trashQueryPort: TrashQueryPort;
   accountStore: AccountStore;
   credentialLocatorStore: CredentialLocatorStore;
+  /** Interim write path into `ai_client_connections` until the AI slice's repository (PH-06 △-2). */
+  aiClientConnectionRevoker: AiClientConnectionRevoker;
   recordOperation(input: RecordOperationInput): void;
   updateOperation(input: UpdateOperationInput): void;
 }
 
 /**
- * Identity Directory DO context — the complete roster today. The window
- * and token tables are #12 and `rotation_checkpoints` is #67, so
- * `credential_mappings` is the whole of the business side.
+ * Identity Directory DO context. `credential_mappings` and the two reset
+ * tables are the business side; `rotation_checkpoints` is #67.
  *
  * **The three members below are the complete set of ways that table is
  * read and written.** `credentialMappingWriter` holds the six procedure
@@ -195,6 +199,10 @@ export interface IdentityDirectoryUnitOfWorkContext
   credentialMappingReader: CredentialMappingReader;
   credentialMappingWriter: CredentialMappingWriter;
   credentialAttemptRecorder: CredentialAttemptRecorder;
+  /** `password_reset_tokens`: issue / consume / decoy (`PasswordResetTokenPort`). */
+  resetTokenStore: PasswordResetTokenPort;
+  /** `reset_request_windows`: the one write, `claimWindow` (`PasswordResetThrottlePort`). */
+  resetThrottleStore: PasswordResetThrottlePort;
 }
 
 export type UserDataUnitOfWorkProvider =

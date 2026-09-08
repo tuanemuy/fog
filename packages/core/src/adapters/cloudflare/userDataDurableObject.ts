@@ -1,16 +1,36 @@
 import type { RpcEnvelope } from "@repo/core/application/delivery/types";
+import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { UserDataUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
 import { changeTrashRetentionDaysProcedure } from "@repo/core/application/identity/changeTrashRetentionDays";
+import { applyCredentialChangeProcedure } from "@repo/core/application/identity/credentialChangeProcedures";
 import type {
+  ApplyCredentialChangeDto,
+  ApplyCredentialChangeResult,
+  BeginLinkDto,
+  BeginLinkResult,
+  BeginUnlinkDto,
+  BeginUnlinkResult,
+  CompleteLinkDto,
   CredentialLocatorDto,
   CurrentUserDto,
   InitializeAccountDto,
+  OperationRefDto,
   RecordSignupLocatorDto,
 } from "@repo/core/application/identity/gateway";
 import { initializeAccountProcedure } from "@repo/core/application/identity/initializeAccount";
+import {
+  beginLinkProcedure,
+  completeLinkProcedure,
+  finishLinkProcedure,
+} from "@repo/core/application/identity/linkSsoCredential";
 import { readCurrentUserProcedure } from "@repo/core/application/identity/readCurrentUser";
 import { fromCredentialLocator } from "@repo/core/application/identity/rebuild";
 import { recordSignupLocatorProcedure } from "@repo/core/application/identity/recordSignupLocator";
+import { revokeAllAiClientConnectionsProcedure } from "@repo/core/application/identity/revokeAllAiClientConnections";
+import {
+  beginUnlinkProcedure,
+  finishUnlinkProcedure,
+} from "@repo/core/application/identity/unlinkSsoCredential";
 import { createDocumentProcedure } from "@repo/core/application/knowledge/createDocument";
 import { createTopicProcedure } from "@repo/core/application/knowledge/createTopic";
 import { diffDocumentRevisionsProcedure } from "@repo/core/application/knowledge/diffDocumentRevisions";
@@ -112,6 +132,7 @@ import {
 import type { JobHandlerRegistry } from "./jobRunner";
 import { createPurgeTrashHandler } from "./jobs/purgeTrash";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
+import { readCallerToken } from "./stores/accountStore";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 
 /**
@@ -162,7 +183,7 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
             userId,
             operationId: input.operationId,
             callerToken: input.callerToken,
-            credentials: [input.credential],
+            credentials: input.credentials,
             locators: input.locators,
           },
           now,
@@ -206,6 +227,84 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
   async readCurrentUser(): Promise<RpcEnvelope<CurrentUserDto | null>> {
     return this.envelope(() =>
       this.runUnitOfWork((ctx) => readCurrentUserProcedure(ctx)),
+    );
+  }
+
+  /** Credential-change saga phase 2. */
+  async applyCredentialChange(
+    dto: ApplyCredentialChangeDto,
+  ): Promise<RpcEnvelope<ApplyCredentialChangeResult>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => applyCredentialChangeProcedure(ctx, dto)),
+    );
+  }
+
+  /** Link phase 0: the operation record and its `resume-link`; answers the caller token the bucket reservation needs. */
+  async beginLink(input: {
+    dto: BeginLinkDto;
+    resumeAt: Date;
+  }): Promise<RpcEnvelope<BeginLinkResult>> {
+    return this.envelope(async () => {
+      await this.runUnitOfWork((ctx) => {
+        beginLinkProcedure(ctx, input.dto, input.resumeAt);
+        return undefined;
+      });
+      const callerToken = readCallerToken(this.ctx.storage.sql);
+      if (callerToken === null) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "The account has no caller binding",
+        );
+      }
+      return { callerToken };
+    });
+  }
+
+  async completeLink(dto: CompleteLinkDto): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      await this.runUnitOfWork((ctx) => {
+        completeLinkProcedure(ctx, dto, now);
+        return undefined;
+      });
+    });
+  }
+
+  async finishLink(dto: OperationRefDto): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      await this.runUnitOfWork((ctx) => {
+        finishLinkProcedure(ctx, dto.operationId);
+        return undefined;
+      });
+    });
+  }
+
+  /** Unlink phase 1: the User Data side, final in one transaction. */
+  async beginUnlink(input: {
+    dto: BeginUnlinkDto;
+    resumeAt: Date;
+  }): Promise<RpcEnvelope<BeginUnlinkResult>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      const callerToken = readCallerToken(this.ctx.storage.sql);
+      return this.runUnitOfWork((ctx) =>
+        beginUnlinkProcedure(ctx, input.dto, now, input.resumeAt, callerToken),
+      );
+    });
+  }
+
+  async finishUnlink(dto: OperationRefDto): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      await this.runUnitOfWork((ctx) => {
+        finishUnlinkProcedure(ctx, dto.operationId);
+        return undefined;
+      });
+    });
+  }
+
+  async revokeAllAiClientConnections(): Promise<RpcEnvelope<number>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => revokeAllAiClientConnectionsProcedure(ctx)),
     );
   }
 

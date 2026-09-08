@@ -151,7 +151,38 @@ export interface CredentialMappingWriter {
    * transaction. Absent and mismatched are both "success".
    */
   cancelReservation(params: CancelReservationParams): void;
+  /** Holds the new verifier as pending; login refuses both passwords from here. Invalidates the credential's unused reset tokens. */
+  beginCredentialChange(params: BeginCredentialChangeParams): boolean;
+  /** Records that the User Data side applied phase 2 (`pending` → `advanced`). */
+  markCredentialChangeAdvanced(params: CredentialChangeParams): boolean;
+  /** `advanced` + same operation only: the pending verifier becomes the one, versions align, the lockout resets. */
+  promoteVerifier(params: PromoteVerifierParams): boolean;
+  /** The row of this user, bound by the caller token, with its reset tokens. "Absent is success". */
+  deleteMapping(params: DeleteMappingParams): void;
 }
+
+export type BeginCredentialChangeParams = Readonly<{
+  coordinate: CredentialCoordinate;
+  operationId: string;
+  pendingVerifier: PasswordHash;
+  origin: CredentialChangeOrigin;
+  /** Required for `origin: "reset"`: the bearer `verifyAndConsume` minted. */
+  changeAuthToken: string | null;
+}>;
+
+export type CredentialChangeParams = Readonly<{
+  coordinate: CredentialCoordinate;
+  operationId: string;
+}>;
+
+export type PromoteVerifierParams = CredentialChangeParams &
+  Readonly<{ credentialVersion: number }>;
+
+export type DeleteMappingParams = Readonly<{
+  coordinate: CredentialCoordinate;
+  userId: UserId;
+  callerToken: string;
+}>;
 
 export type CredentialAttemptOutcome =
   | Readonly<{ outcome: "success" }>

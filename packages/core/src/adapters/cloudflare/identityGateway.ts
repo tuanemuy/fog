@@ -13,6 +13,8 @@ import {
   type DerivedLocator,
   decodeMapping,
   deriveLocator,
+  encodeMapping,
+  ssoCanonical,
 } from "./crypto/locatorDerivation";
 import {
   callDurableObject,
@@ -21,6 +23,7 @@ import {
   userDataStub,
 } from "./doStubs";
 import type { IdentityDirectoryDurableObject } from "./identityDirectoryDurableObject";
+import { parseResetToken } from "./stores/passwordResetTokenStore";
 import type { UserDataDurableObject } from "./userDataDurableObject";
 
 export type IdentityGatewayDeps = Readonly<{
@@ -64,24 +67,32 @@ export function createIdentityGateway(
       locator,
     ) as unknown as IdentityDirectoryDurableObject;
 
-  const probe = async (
+  /** Generation order — active, previous, then active once more — and the locator that answered (the active one when none did). */
+  const locate = async (
     kind: CredentialKind,
     canonical: string,
-  ): Promise<LoginCredentialDto | null> => {
+  ): Promise<{ found: LoginCredentialDto | null; locator: DerivedLocator }> => {
     const entries = deps.keyring.entries;
     const probeOne = async (entry: (typeof entries)[number]) => {
       const locator = await deriveLocator(entry, kind, canonical);
-      return callDurableObject(() =>
+      const found = await callDurableObject(() =>
         directory(locator).resolveLoginCredential(locator),
       );
+      return { found, locator };
     };
     for (const entry of entries) {
-      const found = await probeOne(entry);
-      if (found !== null) return found;
+      const result = await probeOne(entry);
+      if (result.found !== null) return result;
     }
-    if (entries.length > 1) return probeOne(activeKey(deps.keyring));
-    return null;
+    return probeOne(activeKey(deps.keyring));
   };
+  const probe = async (
+    kind: CredentialKind,
+    canonical: string,
+  ): Promise<LoginCredentialDto | null> =>
+    (await locate(kind, canonical)).found;
+  const resumeAt = () =>
+    new Date(deps.clock.now().getTime() + deps.tuning.signupResumeDelayMs);
 
   return {
     async readAccountState(userId) {
@@ -165,6 +176,117 @@ export function createIdentityGateway(
     async changeTrashRetentionDays(userId, retentionDays) {
       await callDurableObject(() =>
         userData(userId).changeTrashRetentionDays({ retentionDays }),
+      );
+    },
+
+    async requestPasswordReset(canonicalEmail) {
+      const { locator } = await locate("email", canonicalEmail);
+      await callDurableObject(() =>
+        directory(locator).requestPasswordReset({
+          hmac: locator.hmac,
+          mapping: encodeMapping(locator),
+        }),
+      );
+    },
+
+    async consumeResetToken(token) {
+      const parts = parseResetToken(token);
+      if (parts === null) return null;
+      return callDurableObject(() => directory(parts).consumeResetToken(token));
+    },
+
+    async cancelReservation(locator, callerToken) {
+      await callDurableObject(() =>
+        directory(locator).cancelReservation({ locator, callerToken }),
+      );
+    },
+
+    async beginCredentialChange(coordinate, dto) {
+      return callDurableObject(() =>
+        directory(coordinateLocator(coordinate)).beginCredentialChange({
+          coordinate,
+          dto,
+          resumeAt: resumeAt(),
+        }),
+      );
+    },
+
+    async applyCredentialChange(userId, dto) {
+      return callDurableObject(() =>
+        userData(userId).applyCredentialChange(dto),
+      );
+    },
+
+    async markCredentialChangeAdvanced(coordinate, operationId) {
+      return callDurableObject(() =>
+        directory(coordinateLocator(coordinate)).markCredentialChangeAdvanced({
+          coordinate,
+          operationId,
+        }),
+      );
+    },
+
+    async promoteVerifier(coordinate, dto) {
+      return callDurableObject(() =>
+        directory(coordinateLocator(coordinate)).promoteVerifier({
+          coordinate,
+          dto,
+        }),
+      );
+    },
+
+    async readCredentialForChange(coordinate) {
+      const locator = coordinateLocator(coordinate);
+      return callDurableObject(() =>
+        directory(locator).resolveLoginCredential({
+          kind: coordinate.kind,
+          hmac: locator.hmac,
+          generation: locator.generation,
+          bucketIndex: locator.bucketIndex,
+        }),
+      );
+    },
+
+    async resolveSsoIdentity(provider, providerSubject) {
+      return probe("sso", ssoCanonical(provider, providerSubject));
+    },
+
+    async beginLink(userId, dto) {
+      return callDurableObject(() =>
+        userData(userId).beginLink({ dto, resumeAt: resumeAt() }),
+      );
+    },
+
+    async completeLink(userId, dto) {
+      await callDurableObject(() => userData(userId).completeLink(dto));
+    },
+
+    async finishLink(userId, dto) {
+      await callDurableObject(() => userData(userId).finishLink(dto));
+    },
+
+    async beginUnlink(userId, dto) {
+      return callDurableObject(() =>
+        userData(userId).beginUnlink({ dto, resumeAt: resumeAt() }),
+      );
+    },
+
+    async deleteMapping(coordinate, dto) {
+      await callDurableObject(() =>
+        directory(coordinateLocator(coordinate)).deleteMapping({
+          coordinate,
+          dto,
+        }),
+      );
+    },
+
+    async finishUnlink(userId, dto) {
+      await callDurableObject(() => userData(userId).finishUnlink(dto));
+    },
+
+    async revokeAllAiClientConnections(userId) {
+      return callDurableObject(() =>
+        userData(userId).revokeAllAiClientConnections(),
       );
     },
 

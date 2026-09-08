@@ -101,6 +101,20 @@ export function createCredentialMappingReader(
   };
 }
 
+/** The `(kind, hmac)` of a credential's row: what a coordinate needs beyond the bucket itself. */
+export function readMappingCoordinate(
+  sql: SqlStorage,
+  credentialId: string,
+): { kind: CredentialKind; hmac: string } | null {
+  const row = sql
+    .exec<{ kind: CredentialKind; hmac: string }>(
+      "SELECT kind, hmac FROM credential_mappings WHERE credential_id = ?",
+      credentialId,
+    )
+    .toArray()[0];
+  return row ?? null;
+}
+
 /** The bucket's own `userId` listing for the diagnostics entry and the withdrawal path. */
 export function listMappedUserIds(sql: SqlStorage): string[] {
   return sql
@@ -218,6 +232,125 @@ export function createCredentialMappingWriter(
         coordinate.credentialId,
         params.operationId,
         params.userId,
+      );
+    },
+
+    beginCredentialChange(params) {
+      const { coordinate } = params;
+      const hmac = hmacOf(coordinate.kind, coordinate.mapping);
+      const at = now();
+      let matched: boolean;
+      if (params.origin === "reset") {
+        // Bound to the one-shot bearer the token consumption minted:
+        // `value → NULL`, so a second change on the same consumption misses.
+        if (
+          params.changeAuthToken === null ||
+          params.changeAuthToken.length < CALLER_TOKEN_MIN_LENGTH
+        ) {
+          return false;
+        }
+        const authorised = updateMatchedRow(
+          sql,
+          `UPDATE password_reset_tokens SET change_auth_token = NULL
+           WHERE credential_id = ? AND change_auth_token = ?`,
+          coordinate.credentialId,
+          params.changeAuthToken,
+        );
+        if (!authorised) return false;
+        matched = updateMatchedRow(
+          sql,
+          `UPDATE credential_mappings
+             SET pending_verifier = ?, change_state = 'pending', change_origin = 'reset',
+                 operation_id = ?, updated_at = ?
+           WHERE kind = ? AND hmac = ? AND credential_id = ? AND status = 'active'
+             AND password_verifier IS NOT NULL`,
+          params.pendingVerifier,
+          params.operationId,
+          at,
+          coordinate.kind,
+          hmac,
+          coordinate.credentialId,
+        );
+      } else {
+        matched = updateMatchedRow(
+          sql,
+          `UPDATE credential_mappings
+             SET pending_verifier = ?, change_state = 'pending', change_origin = 'password-change',
+                 operation_id = ?, updated_at = ?
+           WHERE kind = ? AND hmac = ? AND credential_id = ? AND status = 'active'
+             AND password_verifier IS NOT NULL AND change_state IS NULL`,
+          params.pendingVerifier,
+          params.operationId,
+          at,
+          coordinate.kind,
+          hmac,
+          coordinate.credentialId,
+        );
+      }
+      if (!matched) return false;
+      // The credential's unused links die with the change; used rows keep
+      // their record but lose the bearer.
+      sql.exec(
+        "DELETE FROM password_reset_tokens WHERE credential_id = ? AND used_at IS NULL",
+        coordinate.credentialId,
+      );
+      sql.exec(
+        "UPDATE password_reset_tokens SET change_auth_token = NULL WHERE credential_id = ?",
+        coordinate.credentialId,
+      );
+      return true;
+    },
+
+    markCredentialChangeAdvanced(params) {
+      const { coordinate } = params;
+      return updateMatchedRow(
+        sql,
+        `UPDATE credential_mappings SET change_state = 'advanced', updated_at = ?
+         WHERE kind = ? AND hmac = ? AND credential_id = ?
+           AND change_state = 'pending' AND operation_id = ?`,
+        now(),
+        coordinate.kind,
+        hmacOf(coordinate.kind, coordinate.mapping),
+        coordinate.credentialId,
+        params.operationId,
+      );
+    },
+
+    promoteVerifier(params) {
+      const { coordinate } = params;
+      return updateMatchedRow(
+        sql,
+        `UPDATE credential_mappings
+           SET password_verifier = pending_verifier, pending_verifier = NULL,
+               change_state = NULL, change_origin = NULL,
+               credential_version = ?, failed_attempts = 0, next_attempt_allowed_at = NULL,
+               updated_at = ?
+         WHERE kind = ? AND hmac = ? AND credential_id = ?
+           AND change_state = 'advanced' AND operation_id = ? AND pending_verifier IS NOT NULL`,
+        params.credentialVersion,
+        now(),
+        coordinate.kind,
+        hmacOf(coordinate.kind, coordinate.mapping),
+        coordinate.credentialId,
+        params.operationId,
+      );
+    },
+
+    deleteMapping(params) {
+      const { coordinate } = params;
+      if (params.callerToken.length < CALLER_TOKEN_MIN_LENGTH) return;
+      sql.exec(
+        `DELETE FROM credential_mappings
+         WHERE kind = ? AND hmac = ? AND credential_id = ? AND user_id = ? AND caller_token = ?`,
+        coordinate.kind,
+        hmacOf(coordinate.kind, coordinate.mapping),
+        coordinate.credentialId,
+        params.userId,
+        params.callerToken,
+      );
+      sql.exec(
+        "DELETE FROM password_reset_tokens WHERE credential_id = ?",
+        coordinate.credentialId,
       );
     },
 

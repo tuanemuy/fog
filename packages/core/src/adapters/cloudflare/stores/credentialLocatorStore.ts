@@ -64,6 +64,16 @@ export function createCredentialLocatorStore(
       return row ? toLocator(row) : null;
     },
 
+    listByCredentialId(credentialId) {
+      return sql
+        .exec<LocatorRow>(
+          `${SELECT} WHERE credential_id = ? ORDER BY generation DESC`,
+          credentialId,
+        )
+        .toArray()
+        .map(toLocator);
+    },
+
     record(locator) {
       const derived = decodeMapping(locator.kind, locator.mapping);
       if (derived === null) {

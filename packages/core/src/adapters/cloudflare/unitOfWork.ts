@@ -8,12 +8,14 @@ import type {
   UserDataUnitOfWorkContext,
   UserDataUnitOfWorkProvider,
 } from "@repo/core/application/execution/unitOfWork";
+import type { IdentityTuning } from "@repo/core/application/identity/tuning";
 import type { Clock } from "@repo/core/application/ports/clock";
 import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
 import { EventId } from "@repo/core/domain/common/event";
 import { isRehydrationError } from "@repo/core/domain/error";
 import { isCodedError } from "@repo/core/lib/error";
 import { createAccountStore } from "./stores/accountStore";
+import { createAiClientConnectionRevoker } from "./stores/aiClientConnectionRevoker";
 import { createCredentialLocatorStore } from "./stores/credentialLocatorStore";
 import {
   createCredentialAttemptRecorder,
@@ -28,6 +30,8 @@ import {
   writeUpdatedOperation,
 } from "./stores/operationsStore";
 import { writeEnqueuedEvents } from "./stores/outboxWriter";
+import { createPasswordResetTokenStore } from "./stores/passwordResetTokenStore";
+import { createResetThrottleStore } from "./stores/resetRequestWindowStore";
 import { createSearchIndex } from "./stores/searchIndex";
 import { createTopicRepository } from "./stores/topicRepository";
 import { createTrashQueryPort } from "./stores/trashQueryPort";
@@ -133,6 +137,7 @@ export function createUserDataUnitOfWorkProvider(
       trashQueryPort: createTrashQueryPort(sql),
       accountStore: createAccountStore(sql, nowMs),
       credentialLocatorStore: createCredentialLocatorStore(sql, nowMs),
+      aiClientConnectionRevoker: createAiClientConnectionRevoker(sql, nowMs),
       recordOperation(input) {
         writeRecordedOperation(sql, input, nowMs());
       },
@@ -143,8 +148,17 @@ export function createUserDataUnitOfWorkProvider(
   );
 }
 
+export type IdentityDirectoryUnitOfWorkDeps = UnitOfWorkDeps &
+  Readonly<{
+    /** `IDENTITY_RESET_TOKEN_KEY`: never leaves the bucket. */
+    resetTokenKey: string;
+    bucket: { generation: number; bucketIndex: number };
+    identityTuning: IdentityTuning;
+    resetTokenTtlMs: number;
+  }>;
+
 export function createIdentityDirectoryUnitOfWorkProvider(
-  deps: UnitOfWorkDeps,
+  deps: IdentityDirectoryUnitOfWorkDeps,
 ): IdentityDirectoryUnitOfWorkProvider {
   return createProvider<IdentityDirectoryUnitOfWorkContext>(
     deps,
@@ -154,6 +168,17 @@ export function createIdentityDirectoryUnitOfWorkProvider(
       credentialMappingReader: createCredentialMappingReader(sql),
       credentialMappingWriter: createCredentialMappingWriter(sql, nowMs),
       credentialAttemptRecorder: createCredentialAttemptRecorder(sql, nowMs),
+      resetTokenStore: createPasswordResetTokenStore(sql, {
+        resetTokenKey: deps.resetTokenKey,
+        bucket: deps.bucket,
+        ttlMs: deps.resetTokenTtlMs,
+        now: nowMs,
+      }),
+      resetThrottleStore: createResetThrottleStore(sql, {
+        windowMs: deps.identityTuning.resetRequestWindowMs,
+        graceMs: deps.identityTuning.resetRequestWindowGraceMs,
+        keyGeneration: deps.bucket.generation,
+      }),
     }),
   );
 }
