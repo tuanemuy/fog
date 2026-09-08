@@ -94,6 +94,8 @@ function renderValidationMessage(code: string | null): string | null {
       return "現在のパスワードが正しくありません";
     case "TOO_MANY_ATTEMPTS":
       return "試行回数の上限に達しました。しばらくしてからお試しください";
+    case "AUTHORIZATION_REQUEST_INVALID":
+      return "認可リクエストが正しくありません。クライアントアプリからやり直してください";
     default:
       return null;
   }

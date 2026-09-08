@@ -21,6 +21,7 @@
 #   IDENTITY_MAIL_ENCRYPTION_KEY — state Worker (never leaves the Durable Object)
 #   PROVIDER_IDEMPOTENCY_KEY     — state Worker (never leaves the Durable Object)
 #   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
+#   AI_CLIENT_TOKEN_SECRET       — request Worker (the AI API's tokens, codes and client ids)
 #   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
 #   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
 #                                  from the MAIL_FROM_ADDRESS environment variable at render time
@@ -63,6 +64,7 @@
 #   wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.staging.toml
 #   wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
 #   wrangler secret put IDENTITY_RESET_TOKEN_KEY     --config wrangler.state.staging.toml
+#   wrangler secret put AI_CLIENT_TOKEN_SECRET       --config wrangler.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 #
@@ -158,3 +160,17 @@ PROVIDER_IDEMPOTENCY_KEY=""
 #
 # At least 32 characters.
 IDENTITY_RESET_TOKEN_KEY=""
+
+# HMAC secret of the AI API (OAuth 2.1 + MCP). Every signed value the
+# request Worker hands an AI client — access and refresh tokens, the
+# authorization code, the stateless `client_id`, the authorization
+# request the consent screen carries — is signed under a key derived from
+# this one secret with a per-use label, so no two uses share a key.
+# Owner: **request Worker** — the OAuth endpoints and the AI API run
+# there. Rotating it invalidates every issued token and client id at once.
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters. The request path refuses every request until
+# it is set.
+AI_CLIENT_TOKEN_SECRET=""

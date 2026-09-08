@@ -10,6 +10,7 @@ import { createServerFn } from "@tanstack/react-start";
 // payload are invisible to the production manifest unless a route module
 // imports them ("Server function info not found" at runtime, dev is
 // unaffected). These side-effect imports register them.
+import "@/components/aiClients/actions";
 import "@/components/auth/actions";
 import "@/components/documents/actions";
 import "@/components/memoHistory/actions";

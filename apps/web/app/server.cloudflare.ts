@@ -2,12 +2,15 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { OutboxQueueMessage } from "@repo/core/adapters/cloudflare/queueMessage";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
+  createAiRuntime,
   createRequestContainer,
   readRequestServerConfig,
   type ServerEnv,
 } from "@repo/core/application/di/serverCloudflare";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import defaultEntry from "@tanstack/react-start/server-entry";
+import { handleAiRoute, isAiRoute } from "./presentation/ai/router";
+import { attachAiRuntime } from "./presentation/ai/runtime";
 import { handleDiagnostics } from "./worker/cloudflare/diagnostics";
 import { runQueueBatch } from "./worker/cloudflare/queueHandlers";
 import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
@@ -21,6 +24,9 @@ import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
  * cookies, and the diagnostics route. `queue()` hosts the mail consumer
  * and the DLQ handler.
  */
+
+/** What `initialize` reports as `serverInfo.version`. */
+const APP_VERSION = "0.0.0";
 
 const ALS_SYMBOL: unique symbol = Symbol.for(
   "@tanstack-start-template/request-als",
@@ -45,6 +51,18 @@ export default {
     }
     const config = readRequestServerConfig(env);
     const container = createRequestContainer(config);
+    const aiRuntime = createAiRuntime(config);
+    attachAiRuntime(container, aiRuntime);
+    if (isAiRoute(url.pathname)) {
+      return storage.run(container, () =>
+        handleAiRoute(request, url.pathname, {
+          container,
+          runtime: aiRuntime,
+          appUrl: config.appUrl,
+          serverVersion: APP_VERSION,
+        }),
+      );
+    }
     return storage.run(container, () => defaultEntry.fetch(request));
   },
   async queue(batch: MessageBatch<unknown>, env: ServerEnv): Promise<void> {

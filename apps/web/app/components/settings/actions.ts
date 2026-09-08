@@ -4,12 +4,14 @@ import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
 import { validateInput } from "@/presentation/validator";
 import {
+  type ConnectionRevokedResult,
   type ConnectionsRevokedResult,
   type CredentialUnlinkedResult,
   changePasswordSchema,
   changeTrashRetentionDaysSchema,
   type PasswordChangedResult,
   type RetentionSavedResult,
+  revokeAiClientConnectionSchema,
   unlinkSsoCredentialSchema,
 } from "./schema";
 
@@ -63,6 +65,23 @@ export const unlinkSsoCredentialFn = createServerFn({ method: "POST" })
     const { startSession } = await import("@/presentation/session");
     await startSession(userId);
     return { credentialId: data.credentialId };
+  });
+
+/** S-AC-06: one connection, from P-13 or P-03. */
+export const revokeAiClientConnectionFn = createServerFn({ method: "POST" })
+  .middleware([errorResponseMiddleware, noStoreMiddleware])
+  .inputValidator(validateInput(revokeAiClientConnectionSchema))
+  .handler(async ({ data }): Promise<ConnectionRevokedResult> => {
+    const { requireUserId } = await import("@/presentation/currentUser");
+    const userId = await requireUserId();
+    const { container, module } = await loadServerDeps(
+      () => import("@repo/core/application/identity/revokeAiClientConnection"),
+    );
+    await module.revokeAiClientConnection({
+      container,
+      input: { userId, connectionId: data.connectionId },
+    });
+    return { connectionId: data.connectionId };
   });
 
 /** P-03's second action. */

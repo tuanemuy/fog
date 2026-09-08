@@ -1267,3 +1267,19 @@ li + li > .fog-revision-row {
 .fog-ai-connections .fog-secondary {
   align-self: flex-start;
 }
+
+.fog-authorize-list h2 {
+  margin: var(--space-md) 0 var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--color-neutral-600);
+}
+.fog-authorize-list ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+.fog-authorize-actions {
+  margin-top: var(--space-lg);
+}
+.fog-authorize-actions .fog-secondary {
+  margin-top: var(--space-sm);
+}

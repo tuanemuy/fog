@@ -21,6 +21,7 @@ import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppTopicsTopicIdRouteImport } from './routes/_app/topics_.$topicId'
 import { Route as AppPasswordResetDoneRouteImport } from './routes/_app/password-reset.done'
 import { Route as AppDocumentsDocumentIdRouteImport } from './routes/_app/documents_.$documentId'
+import { Route as AppAiClientsAuthorizeRouteImport } from './routes/_app/ai-clients.authorize'
 import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
 import { Route as AppDocumentsDocumentIdHistoryRouteImport } from './routes/_app/documents_.$documentId_.history'
 import { Route as AppDocumentsDocumentIdEditRouteImport } from './routes/_app/documents_.$documentId_.edit'
@@ -85,6 +86,11 @@ const AppDocumentsDocumentIdRoute = AppDocumentsDocumentIdRouteImport.update({
   path: '/documents/$documentId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAiClientsAuthorizeRoute = AppAiClientsAuthorizeRouteImport.update({
+  id: '/ai-clients/authorize',
+  path: '/ai-clients/authorize',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppMemosMemoIdHistoryRoute = AppMemosMemoIdHistoryRouteImport.update({
   id: '/memos_/$memoId/history',
   path: '/memos/$memoId/history',
@@ -118,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/trash': typeof AppTrashRoute
+  '/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
   '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/topics': typeof AppTopicsRoute
   '/trash': typeof AppTrashRoute
   '/': typeof AppIndexRoute
+  '/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
   '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/_app/topics': typeof AppTopicsRoute
   '/_app/trash': typeof AppTrashRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
   '/_app/documents_/$documentId': typeof AppDocumentsDocumentIdRoute
   '/_app/password-reset/done': typeof AppPasswordResetDoneRoute
   '/_app/topics_/$topicId': typeof AppTopicsTopicIdRoute
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/topics'
     | '/trash'
+    | '/ai-clients/authorize'
     | '/documents/$documentId'
     | '/password-reset/done'
     | '/topics/$topicId'
@@ -190,6 +200,7 @@ export interface FileRouteTypes {
     | '/topics'
     | '/trash'
     | '/'
+    | '/ai-clients/authorize'
     | '/documents/$documentId'
     | '/password-reset/done'
     | '/topics/$topicId'
@@ -208,6 +219,7 @@ export interface FileRouteTypes {
     | '/_app/topics'
     | '/_app/trash'
     | '/_app/'
+    | '/_app/ai-clients/authorize'
     | '/_app/documents_/$documentId'
     | '/_app/password-reset/done'
     | '/_app/topics_/$topicId'
@@ -310,6 +322,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocumentsDocumentIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/ai-clients/authorize': {
+      id: '/_app/ai-clients/authorize'
+      path: '/ai-clients/authorize'
+      fullPath: '/ai-clients/authorize'
+      preLoaderRoute: typeof AppAiClientsAuthorizeRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/memos_/$memoId/history': {
       id: '/_app/memos_/$memoId/history'
       path: '/memos/$memoId/history'
@@ -347,6 +366,7 @@ interface AppRouteChildren {
   AppTopicsRoute: typeof AppTopicsRoute
   AppTrashRoute: typeof AppTrashRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppAiClientsAuthorizeRoute: typeof AppAiClientsAuthorizeRoute
   AppDocumentsDocumentIdRoute: typeof AppDocumentsDocumentIdRoute
   AppPasswordResetDoneRoute: typeof AppPasswordResetDoneRoute
   AppTopicsTopicIdRoute: typeof AppTopicsTopicIdRoute
@@ -362,6 +382,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTopicsRoute: AppTopicsRoute,
   AppTrashRoute: AppTrashRoute,
   AppIndexRoute: AppIndexRoute,
+  AppAiClientsAuthorizeRoute: AppAiClientsAuthorizeRoute,
   AppDocumentsDocumentIdRoute: AppDocumentsDocumentIdRoute,
   AppPasswordResetDoneRoute: AppPasswordResetDoneRoute,
   AppTopicsTopicIdRoute: AppTopicsTopicIdRoute,

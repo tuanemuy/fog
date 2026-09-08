@@ -1,5 +1,8 @@
-import type { CurrentUserView } from "@repo/core/application/identity/view";
-import { AiConnectionsPanel } from "../AiConnectionsPanel";
+import type {
+  AiClientConnectionView,
+  CurrentUserView,
+} from "@repo/core/application/identity/view";
+import { AiConnectionsList } from "../AiConnectionsList";
 import { CredentialList } from "../CredentialList";
 import { LogoutButton } from "../LogoutButton";
 import { PasswordChangeForm } from "../PasswordChangeForm";
@@ -19,10 +22,14 @@ export function hasPasswordCredential(user: CurrentUserView): boolean {
 export function CurrentUserPanel({
   user,
   ssoProviders,
+  aiConnections,
+  mcpUrl,
 }: {
   user: CurrentUserView;
   /** `AppConfig.ssoProviders`: the link entries P-13 may offer. */
   ssoProviders: readonly string[];
+  aiConnections: readonly AiClientConnectionView[];
+  mcpUrl: string;
 }) {
   return (
     <div className="fog-content fog-settings">
@@ -68,7 +75,7 @@ export function CurrentUserPanel({
         <h2 id="settings-ai" className="fog-section-heading">
           AI クライアント接続
         </h2>
-        <AiConnectionsPanel />
+        <AiConnectionsList connections={aiConnections} mcpUrl={mcpUrl} />
       </section>
 
       <section aria-labelledby="settings-session">

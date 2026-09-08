@@ -47,3 +47,5 @@ wrangler.state.production.toml
 # anything, hence the repo-wide pattern; the test passes
 # `--vcs-use-ignore-file=false` so Biome still lints it.
 **/*.tmp.ts
+# State of apps/web/scripts/ai-client.ts (client id, tokens). Local only.
+apps/web/.ai-client.json

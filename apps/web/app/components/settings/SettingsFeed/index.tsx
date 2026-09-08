@@ -7,15 +7,35 @@ const loadCurrentUser = serverData(
   async ({ container }, { getCurrentUser }, userId: string) => ({
     user: await getCurrentUser({ container, input: { userId } }),
     ssoProviders: container.config.ssoProviders,
+    mcpUrl: new URL("/mcp", container.config.appUrl).toString(),
   }),
+);
+
+const loadAiConnections = serverData(
+  () => import("@repo/core/application/identity/listAiClientConnections"),
+  async ({ container }, { listAiClientConnections }, userId: string) =>
+    (await listAiClientConnections({ container, input: { userId } }))
+      .connections,
 );
 
 /** The streamed leaf of `/settings`. */
 export async function SettingsFeed() {
-  const { user, ssoProviders } = await guardStreamedRender(async () => {
-    const { requireUserId } = await import("@/presentation/currentUser");
-    const userId = await requireUserId();
-    return loadCurrentUser(userId);
-  });
-  return <CurrentUserPanel user={user} ssoProviders={ssoProviders} />;
+  const { user, ssoProviders, mcpUrl, aiConnections } =
+    await guardStreamedRender(async () => {
+      const { requireUserId } = await import("@/presentation/currentUser");
+      const userId = await requireUserId();
+      const [loaded, aiConnections] = await Promise.all([
+        loadCurrentUser(userId),
+        loadAiConnections(userId),
+      ]);
+      return { ...loaded, aiConnections };
+    });
+  return (
+    <CurrentUserPanel
+      user={user}
+      ssoProviders={ssoProviders}
+      aiConnections={aiConnections}
+      mcpUrl={mcpUrl}
+    />
+  );
 }

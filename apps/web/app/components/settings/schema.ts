@@ -29,6 +29,17 @@ export function isCredentialUnlinkedResult(
   return isRecord(value) && typeof value.credentialId === "string";
 }
 
+export const revokeAiClientConnectionSchema = z.object({
+  connectionId: z.string().min(1).max(128),
+});
+
+export type ConnectionRevokedResult = Readonly<{ connectionId: string }>;
+export function isConnectionRevokedResult(
+  value: unknown,
+): value is ConnectionRevokedResult {
+  return isRecord(value) && typeof value.connectionId === "string";
+}
+
 export type ConnectionsRevokedResult = Readonly<{
   revokedCount: number;
   failedCount: number;
