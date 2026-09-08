@@ -16,6 +16,12 @@ export const NAV_ITEMS = [
     match: (path: string) => path === "/" || path.startsWith("/memos"),
   },
   {
+    to: "/topics",
+    label: "トピック",
+    match: (path: string) =>
+      path.startsWith("/topics") || path.startsWith("/documents"),
+  },
+  {
     to: "/settings",
     label: "設定",
     match: (path: string) => path === "/settings",
@@ -29,6 +35,15 @@ const MEMO_HISTORY_PATH = /^\/memos\/[^/]+\/history$/;
 const TITLES: ReadonlyArray<readonly [(path: string) => boolean, string]> = [
   [(path) => path === "/", "タイムライン"],
   [(path) => MEMO_HISTORY_PATH.test(path), "メモ履歴"],
+  [(path) => path === "/topics", "トピック"],
+  [
+    (path) => /^\/topics\/[^/]+\/documents\/new$/.test(path),
+    "ドキュメント作成",
+  ],
+  [(path) => /^\/topics\/[^/]+$/.test(path), "トピック詳細"],
+  [(path) => /^\/documents\/[^/]+\/edit$/.test(path), "ドキュメント編集"],
+  [(path) => /^\/documents\/[^/]+\/history$/.test(path), "ドキュメント履歴"],
+  [(path) => /^\/documents\/[^/]+$/.test(path), "ドキュメント"],
   [(path) => path === "/settings", "設定"],
 ];
 

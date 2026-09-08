@@ -30,3 +30,6 @@
 }
 
 @import "./app.css";
+@import "./knowledge.css";
+@import "./topics.css";
+@import "./documents.css";

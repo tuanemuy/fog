@@ -289,7 +289,9 @@ export function TimelineBoard({
     const element = document.getElementById(`memo-${pivotId}`);
     if (!element || typeof element.scrollIntoView !== "function") return;
     // Already at the head of the list: scrolling would only hide the notice.
-    if (document.querySelector("article") === element) return;
+    if (document.querySelector("section.fog-timeline article") === element) {
+      return;
+    }
     const group = element.closest(".fog-day");
     const headsGroup = group?.querySelector("article") === element;
     (headsGroup && group ? group : element).scrollIntoView({ block: "start" });

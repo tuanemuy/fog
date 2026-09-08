@@ -13,8 +13,14 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppTopicsRouteImport } from './routes/_app/topics'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTopicsTopicIdRouteImport } from './routes/_app/topics_.$topicId'
+import { Route as AppDocumentsDocumentIdRouteImport } from './routes/_app/documents_.$documentId'
 import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
+import { Route as AppDocumentsDocumentIdHistoryRouteImport } from './routes/_app/documents_.$documentId_.history'
+import { Route as AppDocumentsDocumentIdEditRouteImport } from './routes/_app/documents_.$documentId_.edit'
+import { Route as AppTopicsTopicIdDocumentsNewRouteImport } from './routes/_app/topics_.$topicId_.documents.new'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -35,9 +41,24 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTopicsRoute = AppTopicsRouteImport.update({
+  id: '/topics',
+  path: '/topics',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTopicsTopicIdRoute = AppTopicsTopicIdRouteImport.update({
+  id: '/topics_/$topicId',
+  path: '/topics/$topicId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDocumentsDocumentIdRoute = AppDocumentsDocumentIdRouteImport.update({
+  id: '/documents_/$documentId',
+  path: '/documents/$documentId',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMemosMemoIdHistoryRoute = AppMemosMemoIdHistoryRouteImport.update({
@@ -45,20 +66,50 @@ const AppMemosMemoIdHistoryRoute = AppMemosMemoIdHistoryRouteImport.update({
   path: '/memos/$memoId/history',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDocumentsDocumentIdHistoryRoute =
+  AppDocumentsDocumentIdHistoryRouteImport.update({
+    id: '/documents_/$documentId_/history',
+    path: '/documents/$documentId/history',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppDocumentsDocumentIdEditRoute =
+  AppDocumentsDocumentIdEditRouteImport.update({
+    id: '/documents_/$documentId_/edit',
+    path: '/documents/$documentId/edit',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppTopicsTopicIdDocumentsNewRoute =
+  AppTopicsTopicIdDocumentsNewRouteImport.update({
+    id: '/topics_/$topicId_/documents/new',
+    path: '/topics/$topicId/documents/new',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/settings': typeof AppSettingsRoute
+  '/topics': typeof AppTopicsRoute
+  '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/topics/$topicId': typeof AppTopicsTopicIdRoute
+  '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
+  '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/topics/$topicId/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/settings': typeof AppSettingsRoute
+  '/topics': typeof AppTopicsRoute
   '/': typeof AppIndexRoute
+  '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/topics/$topicId': typeof AppTopicsTopicIdRoute
+  '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
+  '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/topics/$topicId/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -66,22 +117,56 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/topics': typeof AppTopicsRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/documents_/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/_app/topics_/$topicId': typeof AppTopicsTopicIdRoute
+  '/_app/documents_/$documentId_/edit': typeof AppDocumentsDocumentIdEditRoute
+  '/_app/documents_/$documentId_/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/_app/memos_/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/_app/topics_/$topicId_/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/signup' | '/settings' | '/memos/$memoId/history'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/signup'
+    | '/settings'
+    | '/topics'
+    | '/documents/$documentId'
+    | '/topics/$topicId'
+    | '/documents/$documentId/edit'
+    | '/documents/$documentId/history'
+    | '/memos/$memoId/history'
+    | '/topics/$topicId/documents/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/signup' | '/settings' | '/' | '/memos/$memoId/history'
+  to:
+    | '/login'
+    | '/signup'
+    | '/settings'
+    | '/topics'
+    | '/'
+    | '/documents/$documentId'
+    | '/topics/$topicId'
+    | '/documents/$documentId/edit'
+    | '/documents/$documentId/history'
+    | '/memos/$memoId/history'
+    | '/topics/$topicId/documents/new'
   id:
     | '__root__'
     | '/_app'
     | '/login'
     | '/signup'
     | '/_app/settings'
+    | '/_app/topics'
     | '/_app/'
+    | '/_app/documents_/$documentId'
+    | '/_app/topics_/$topicId'
+    | '/_app/documents_/$documentId_/edit'
+    | '/_app/documents_/$documentId_/history'
     | '/_app/memos_/$memoId/history'
+    | '/_app/topics_/$topicId_/documents/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -120,11 +205,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/topics': {
+      id: '/_app/topics'
+      path: '/topics'
+      fullPath: '/topics'
+      preLoaderRoute: typeof AppTopicsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/topics_/$topicId': {
+      id: '/_app/topics_/$topicId'
+      path: '/topics/$topicId'
+      fullPath: '/topics/$topicId'
+      preLoaderRoute: typeof AppTopicsTopicIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/documents_/$documentId': {
+      id: '/_app/documents_/$documentId'
+      path: '/documents/$documentId'
+      fullPath: '/documents/$documentId'
+      preLoaderRoute: typeof AppDocumentsDocumentIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/memos_/$memoId/history': {
@@ -134,19 +240,52 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMemosMemoIdHistoryRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/documents_/$documentId_/history': {
+      id: '/_app/documents_/$documentId_/history'
+      path: '/documents/$documentId/history'
+      fullPath: '/documents/$documentId/history'
+      preLoaderRoute: typeof AppDocumentsDocumentIdHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/documents_/$documentId_/edit': {
+      id: '/_app/documents_/$documentId_/edit'
+      path: '/documents/$documentId/edit'
+      fullPath: '/documents/$documentId/edit'
+      preLoaderRoute: typeof AppDocumentsDocumentIdEditRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/topics_/$topicId_/documents/new': {
+      id: '/_app/topics_/$topicId_/documents/new'
+      path: '/topics/$topicId/documents/new'
+      fullPath: '/topics/$topicId/documents/new'
+      preLoaderRoute: typeof AppTopicsTopicIdDocumentsNewRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
+  AppTopicsRoute: typeof AppTopicsRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppDocumentsDocumentIdRoute: typeof AppDocumentsDocumentIdRoute
+  AppTopicsTopicIdRoute: typeof AppTopicsTopicIdRoute
+  AppDocumentsDocumentIdEditRoute: typeof AppDocumentsDocumentIdEditRoute
+  AppDocumentsDocumentIdHistoryRoute: typeof AppDocumentsDocumentIdHistoryRoute
   AppMemosMemoIdHistoryRoute: typeof AppMemosMemoIdHistoryRoute
+  AppTopicsTopicIdDocumentsNewRoute: typeof AppTopicsTopicIdDocumentsNewRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
+  AppTopicsRoute: AppTopicsRoute,
   AppIndexRoute: AppIndexRoute,
+  AppDocumentsDocumentIdRoute: AppDocumentsDocumentIdRoute,
+  AppTopicsTopicIdRoute: AppTopicsTopicIdRoute,
+  AppDocumentsDocumentIdEditRoute: AppDocumentsDocumentIdEditRoute,
+  AppDocumentsDocumentIdHistoryRoute: AppDocumentsDocumentIdHistoryRoute,
   AppMemosMemoIdHistoryRoute: AppMemosMemoIdHistoryRoute,
+  AppTopicsTopicIdDocumentsNewRoute: AppTopicsTopicIdDocumentsNewRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

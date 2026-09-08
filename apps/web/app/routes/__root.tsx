@@ -11,8 +11,10 @@ import { createServerFn } from "@tanstack/react-start";
 // imports them ("Server function info not found" at runtime, dev is
 // unaffected). These side-effect imports register them.
 import "@/components/auth/actions";
+import "@/components/documents/actions";
 import "@/components/memoHistory/actions";
 import "@/components/timeline/actions";
+import "@/components/topics/actions";
 import type { ReactNode } from "react";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";

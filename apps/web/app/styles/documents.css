@@ -1,0 +1,83 @@
+/* --- fog: documents (P-08 / P-09 / P-10) ------------------------------- */
+.fog-document-context {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-sm);
+}
+.fog-document-context a {
+  color: var(--color-primary-dark);
+  text-decoration: none;
+}
+.fog-document-title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+.fog-document-meta {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-neutral-500);
+  font-variant-numeric: tabular-nums;
+}
+.fog-document-actions {
+  margin: var(--space-lg) 0;
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-neutral-100);
+}
+.fog-danger-text {
+  color: var(--color-error-dark);
+}
+.fog-document-body {
+  margin-top: var(--space-lg);
+  line-height: var(--leading-relaxed, 1.8);
+}
+.fog-document-body .fog-markdown h1,
+.fog-document-body .fog-markdown h2,
+.fog-document-body .fog-markdown h3 {
+  margin: var(--space-xl) 0 var(--space-sm);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+.fog-document-editor .fog-content-toolbar {
+  margin-bottom: var(--space-sm);
+}
+.fog-document-editor .fog-content-toolbar .fog-document-context {
+  flex: 1;
+  margin: 0;
+}
+.fog-document-editor .fog-title-input:focus,
+.fog-document-editor .fog-body-input:focus {
+  outline: none;
+}
+.fog-document-editor .fog-body-input {
+  min-height: 16rem;
+}
+.fog-source-candidates,
+.fog-source-selected-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fog-source-option .fog-meta {
+  display: block;
+  margin-bottom: 4px;
+}
+.fog-source-selected .fog-meta {
+  display: block;
+}
+.fog-diff-title {
+  margin: 0 0 var(--space-md);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.fog-diff-title del {
+  color: var(--color-error-dark);
+  background: var(--color-error-bg);
+  text-decoration: line-through;
+}
+.fog-diff-title ins {
+  color: var(--color-success-dark);
+  background: var(--color-success-bg);
+  text-decoration: none;
+}

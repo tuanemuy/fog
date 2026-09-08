@@ -24,6 +24,7 @@ import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDateTime, formatTime } from "@/presentation/time";
 import { editMemoFn } from "../actions";
 import { Markdown } from "../Markdown";
+import { SourceDocumentLinks } from "../SourceDocumentLinks";
 import { isEditMemoResult } from "../schema";
 
 export type DisplayMemo = TimelineItemView & { pending?: boolean };
@@ -269,7 +270,10 @@ export function MemoEntry({
           </div>
         </form>
       ) : (
-        <Markdown body={shownBody} />
+        <>
+          <Markdown body={shownBody} />
+          <SourceDocumentLinks documents={memo.sourceDocuments} />
+        </>
       )}
     </article>
   );
