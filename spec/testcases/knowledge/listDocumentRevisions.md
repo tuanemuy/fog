@@ -11,4 +11,4 @@
 | ドキュメントが存在しない ID（ハードデリート済み含む） | 履歴一覧を取得する | `NotFoundError`（ハードデリートで履歴ごと消えている） | |
 | 他ユーザー所有のドキュメント ID | 履歴一覧を取得する | 到達可能性により `NotFoundError`（自分の Durable Object の中に他ユーザーの行が存在しない） | |
 | — | `documentId` に空文字を渡す | `BusinessRuleError(InvalidDocumentId)` | |
-| active ドキュメントが存在する | `DocumentRepository.listRevisions` で DB 例外が発生する | `SystemError(DatabaseError)` | |
+| active ドキュメントが存在する | `DocumentRepository.listRevisionSummaries` で DB 例外が発生する | `SystemError(DatabaseError)` | |

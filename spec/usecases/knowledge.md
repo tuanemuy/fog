@@ -673,8 +673,8 @@ AI からの編集（MCP `edit_document`。S-AI-04）。入力は判別可能ユ
 
 1. `DocumentId.create(input.documentId)` で検索キーを構築する
 2. `DocumentRepository.findByIdIncludingTrashed(documentId)` で存在確認する（人間 UI の読み取り経路。ゴミ箱内ドキュメントの履歴も閲覧可）。`null` なら `NotFoundError`
-3. `DocumentRepository.listRevisions(documentId)` で全リビジョンを `revisionNumber` 昇順で取得する（ドキュメントが存在すれば必ず 1 件以上）
-4. メタデータのみをビューに射影して返す
+3. `DocumentRepository.listRevisionSummaries(documentId)` で全リビジョンのメタデータ（誰が・いつ・なぜ。本文を含まない読み取り射影）を `revisionNumber` 昇順で取得する（ドキュメントが存在すれば必ず 1 件以上）
+4. ビューに射影して返す
 
 ### エラーケース
 

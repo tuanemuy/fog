@@ -455,6 +455,15 @@ type DocumentSummaryFields = "id" | "topicId" | "title" | "updatedAt" | "status"
 export type ActiveDocumentSummary = Pick<ActiveDocument, DocumentSummaryFields>;
 export type DocumentSummary = Pick<Document, DocumentSummaryFields>;
 
+/**
+ * 履歴一覧が描く分の DocumentRevision（読み取り射影。規約は domains/index.md「読み取り射影（サマリ）」）。
+ * memo の MemoRevisionSummary と同じ形に「なぜ」を加えたもの。
+ */
+export type DocumentRevisionSummary = Pick<
+  DocumentRevision,
+  "revisionNumber" | "actor" | "changeReason" | "createdAt"
+>;
+
 export interface DocumentRepository {
   // --- 書き込み（TransactionalRepository と同じ OCC 規約。extends はしない） ---
   insert(document: ActiveDocument): void;
@@ -500,8 +509,12 @@ export interface DocumentRepository {
   /** リビジョンの追記（edit / rollback / create と同一 UoW で呼ぶ。不変・追記のみ） */
   insertRevision(revision: DocumentRevision): void;
 
-  /** リビジョン履歴（revisionNumber 昇順。履歴一覧・差分表示用） */
-  listRevisions(documentId: DocumentId): readonly DocumentRevision[];
+  /**
+   * リビジョン履歴（revisionNumber 昇順。履歴一覧用）。
+   * 読み取り射影（規約は domains/index.md「読み取り射影（サマリ）」）: 本文・タイトルを持たず、
+   * `documentId` は引数から決まるので含めない。差分・ロールバックは findRevision で本文込みの 1 件を引く
+   */
+  listRevisionSummaries(documentId: DocumentId): readonly DocumentRevisionSummary[];
 
   /** 特定リビジョンの取得（ロールバック・差分表示用） */
   findRevision(
