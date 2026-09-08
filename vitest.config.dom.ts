@@ -34,6 +34,7 @@ export default defineConfig({
     name: "dom",
     globals: true,
     environment: "jsdom",
+    setupFiles: ["apps/web/app/components/__tests__/domSetup.ts"],
     include: ["apps/web/app/**/__tests__/*.dom.test.{ts,tsx}"],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
   },

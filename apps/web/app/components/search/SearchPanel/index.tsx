@@ -66,8 +66,11 @@ export function SearchPanel({ topics, search, initial }: SearchPanelProps) {
     });
   };
 
+  // Not guarded on `loadingMore`: a transition stays pending until its
+  // async action settles, so a retry clicked right after the failure
+  // rendered would be dropped. The button itself is disabled while pending.
   const loadMore = () => {
-    if (keyword === undefined || nextCursor === null || loadingMore) return;
+    if (keyword === undefined || nextCursor === null) return;
     startMore(async () => {
       try {
         const page = readServerFnResult(

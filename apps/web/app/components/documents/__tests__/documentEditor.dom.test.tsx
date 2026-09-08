@@ -325,8 +325,12 @@ describe("DocumentEditor: edit", () => {
     expect(alert.textContent).toContain("AI が書いた本文");
     expect(alert.textContent).toContain("AI のタイトル");
     expect(navigate).not.toHaveBeenCalled();
-    const save = editorForm("ドキュメントを編集").save;
-    expect(save.textContent).toBe("そのまま保存");
+    // The alert lands while the action is still pending; the label follows.
+    await waitFor(() =>
+      expect(editorForm("ドキュメントを編集").save.textContent).toBe(
+        "そのまま保存",
+      ),
+    );
     fireEvent.submit(form);
     await waitFor(() => expect(mocks.editDocumentFn).toHaveBeenCalledTimes(2));
     expect(mocks.editDocumentFn).toHaveBeenLastCalledWith({
