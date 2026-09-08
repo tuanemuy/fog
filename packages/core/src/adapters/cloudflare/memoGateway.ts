@@ -32,6 +32,15 @@ export function createMemoGateway(
     editMemo(userId, input) {
       return callDurableObject(() => userData(userId).editMemo(input));
     },
+    updateMemoByAi(userId, input) {
+      return callDurableObject(() => userData(userId).updateMemoByAi(input));
+    },
+    recentMemos(userId, input) {
+      return callDurableObject(() => userData(userId).recentMemos(input));
+    },
+    getMemo(userId, memoId) {
+      return callDurableObject(() => userData(userId).getMemo(memoId));
+    },
     listMemoRevisions(userId, memoId) {
       return callDurableObject(() =>
         userData(userId).listMemoRevisions(memoId),

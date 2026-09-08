@@ -62,6 +62,25 @@ export type RevisionSummaryView = Readonly<{
 
 export type RevisionView = RevisionSummaryView & Readonly<{ body: string }>;
 
+/** What the AI faces see of a memo: no OCC token, no `updatedAt`. */
+export type AiMemoView = Readonly<{ id: string; body: string; postedAt: Date }>;
+
+export type UpdateMemoByAiView = Readonly<{
+  result: "saved" | "unchanged";
+  memo: Readonly<{
+    id: string;
+    body: string;
+    postedAt: Date;
+    latestRevisionNumber: number;
+  }>;
+}>;
+
+export type RecentMemosView = Readonly<{ items: readonly AiMemoView[] }>;
+
+export function toAiMemoView(memo: ActiveMemo): AiMemoView {
+  return { id: memo.id, body: memo.body, postedAt: memo.postedAt };
+}
+
 export type MemoRevisionsView = Readonly<{
   memoId: string;
   latestRevisionNumber: number;

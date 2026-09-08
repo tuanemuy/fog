@@ -1,18 +1,34 @@
+/** `UserActor` as primitives; the DO rebuilds the value objects. */
+import type {
+  ActorDto,
+  AiClientActorDto,
+  UserActorDto,
+} from "../identity/actorDto";
 import type {
   EditMemoView,
   MemoRevisionsView,
   MemoView,
   MemoWindowView,
+  RecentMemosView,
   RevisionDiffView,
   RollbackMemoView,
   TimelinePageView,
   TimelineWindowView,
+  UpdateMemoByAiView,
 } from "./view";
 
-/** `UserActor` as primitives; the DO rebuilds the value objects. */
-export type UserActorDto = Readonly<{ kind: "user"; userId: string }>;
+export type { ActorDto, AiClientActorDto, UserActorDto };
 
-export type PostMemoDto = Readonly<{ body: string; actor: UserActorDto }>;
+/** Both faces post through here; the request-side `postMemo` narrows its own input to a human. */
+export type PostMemoDto = Readonly<{ body: string; actor: ActorDto }>;
+
+export type UpdateMemoByAiDto = Readonly<{
+  memoId: string;
+  body: string;
+  actor: AiClientActorDto;
+}>;
+
+export type RecentMemosDto = Readonly<{ limit: number }>;
 
 export type TimelineQueryDto = Readonly<{
   cursor: string | null;
@@ -73,4 +89,13 @@ export interface MemoGateway {
     input: RollbackMemoDto,
   ): Promise<RollbackMemoView>;
   softDeleteMemo(userId: string, memoId: string): Promise<void>;
+  /** MCP `update_memo`: whole-body replacement on the latest state, no version. */
+  updateMemoByAi(
+    userId: string,
+    input: UpdateMemoByAiDto,
+  ): Promise<UpdateMemoByAiView>;
+  /** MCP `recent_memos`: the newest active memos, no cursor. */
+  recentMemos(userId: string, input: RecentMemosDto): Promise<RecentMemosView>;
+  /** MCP `get` for a memo: active only. */
+  getMemo(userId: string, memoId: string): Promise<MemoView>;
 }

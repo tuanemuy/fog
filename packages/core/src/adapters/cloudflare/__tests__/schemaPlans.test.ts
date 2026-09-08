@@ -9,8 +9,8 @@ import { USER_DATA_PLAN, USER_DATA_TABLE_NAMES } from "../schema/userDataPlan";
 // (sixteen plus the FTS5 virtual table) and seven Identity Directory tables.
 describe("schema plans", () => {
   it("declares the seventeen User Data tables", () => {
-    expect(USER_DATA_TABLE_NAMES).toHaveLength(17);
-    expect(new Set(USER_DATA_TABLE_NAMES).size).toBe(17);
+    expect(USER_DATA_TABLE_NAMES).toHaveLength(18);
+    expect(new Set(USER_DATA_TABLE_NAMES).size).toBe(18);
   });
 
   it("declares the seven Identity Directory tables", () => {

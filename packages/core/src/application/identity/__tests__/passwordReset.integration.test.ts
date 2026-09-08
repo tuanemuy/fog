@@ -643,10 +643,10 @@ describe("revokeAllAiClientConnections", () => {
     });
     expect(
       await revokeAllAiClientConnections({ container, input: { userId } }),
-    ).toEqual({ revokedCount: 2 });
+    ).toEqual({ revokedCount: 2, failedCount: 0 });
     expect(
       await revokeAllAiClientConnections({ container, input: { userId } }),
-    ).toEqual({ revokedCount: 0 });
+    ).toEqual({ revokedCount: 0, failedCount: 0 });
     // The stub still answers, so the object was not left half-written.
     expect(await userDataStubOf(userId).readAccountState()).toMatchObject({
       ok: true,

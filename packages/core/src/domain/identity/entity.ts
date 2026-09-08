@@ -1,6 +1,12 @@
 import { BusinessRuleError } from "@repo/core/domain/error";
 import { IdentityErrorCode } from "./errorCode";
-import { CredentialId, TrashRetentionDays, UserId } from "./valueObject";
+import {
+  AiClientConnectionId,
+  ClientName,
+  CredentialId,
+  TrashRetentionDays,
+  UserId,
+} from "./valueObject";
 
 /**
  * Non-PII summary of one credential the account holds. The settings screen may
@@ -175,4 +181,77 @@ export const User = {
     createdAt: params.createdAt,
     updatedAt: params.updatedAt,
   }),
+};
+
+/**
+ * The fact that the user let one AI client act for them (S-AC-05). The
+ * revocation is a sum type: `revokedAt` exists only on the revoked side, so
+ * an active connection with a revocation time cannot be represented.
+ */
+export type AiClientConnectionBase = Readonly<{
+  id: AiClientConnectionId;
+  userId: UserId;
+  clientName: ClientName;
+  connectedAt: Date;
+  lastUsedAt: Date | null;
+  /** The `resetVersion` at creation; fixed for the connection's life. */
+  createdAtResetVersion: number;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+}>;
+
+export type ActiveAiClientConnection = AiClientConnectionBase &
+  Readonly<{ status: "active" }>;
+
+export type RevokedAiClientConnection = AiClientConnectionBase &
+  Readonly<{ status: "revoked"; revokedAt: Date }>;
+
+export type AiClientConnection =
+  | ActiveAiClientConnection
+  | RevokedAiClientConnection;
+
+export const AiClientConnection = {
+  /** 「許可する」 on the authorization screen; a denial creates nothing. */
+  create: (
+    params: {
+      id: string;
+      userId: UserId;
+      clientName: string;
+      createdAtResetVersion: number;
+    },
+    now: Date,
+  ): ActiveAiClientConnection => ({
+    id: AiClientConnectionId.create(params.id),
+    userId: params.userId,
+    clientName: ClientName.create(params.clientName),
+    connectedAt: now,
+    lastUsedAt: null,
+    createdAtResetVersion: params.createdAtResetVersion,
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+    status: "active",
+  }),
+
+  /** Irreversible; only an active connection can be revoked (the type says so). */
+  revoke: (
+    connection: ActiveAiClientConnection,
+    now: Date,
+  ): RevokedAiClientConnection => ({
+    ...connection,
+    status: "revoked",
+    revokedAt: now,
+    version: connection.version + 1,
+    updatedAt: now,
+  }),
+
+  /** `lastUsedAt` only moves forward; persisted without OCC (`recordUsage` on the repository). */
+  recordUsage: (
+    connection: ActiveAiClientConnection,
+    now: Date,
+  ): ActiveAiClientConnection =>
+    connection.lastUsedAt !== null && connection.lastUsedAt >= now
+      ? connection
+      : { ...connection, lastUsedAt: now },
 };

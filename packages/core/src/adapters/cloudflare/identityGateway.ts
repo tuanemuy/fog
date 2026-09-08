@@ -290,6 +290,36 @@ export function createIdentityGateway(
       );
     },
 
+    async approveAiClientAuthorization(userId, dto) {
+      return callDurableObject(() =>
+        userData(userId).approveAiClientAuthorization(dto),
+      );
+    },
+
+    async listAiClientConnections(userId) {
+      return callDurableObject(() =>
+        userData(userId).listAiClientConnections(),
+      );
+    },
+
+    async revokeAiClientConnection(userId, connectionId) {
+      await callDurableObject(() =>
+        userData(userId).revokeAiClientConnection(connectionId),
+      );
+    },
+
+    async authorizeAiClient(userId, connectionId) {
+      return callDurableObject(() =>
+        userData(userId).authorizeAiClient({ connectionId }),
+      );
+    },
+
+    async consumeAuthorizationCode(userId, dto) {
+      return callDurableObject(() =>
+        userData(userId).consumeAuthorizationCode(dto),
+      );
+    },
+
     async revealCanonical(coordinate, userId) {
       const locator = coordinateLocator(coordinate);
       return callDurableObject(() =>

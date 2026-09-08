@@ -71,6 +71,18 @@ export function applyUserDataSchemaV1(sql: SqlStorage): void {
     "CREATE INDEX IF NOT EXISTS acc_connected_idx ON ai_client_connections (connected_at DESC)",
   );
 
+  // OAuth 2.1 authorization codes are signed, self-contained values; the
+  // only persistence is the `jti` of a code already exchanged, kept until
+  // the code's own expiry (`spec/database/index.md`). Adapter-owned: no
+  // store, no registration point — the token endpoint's facade writes it.
+  sql.exec(`CREATE TABLE IF NOT EXISTS oauth_consumed_codes (
+    jti TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  )`);
+  sql.exec(
+    "CREATE INDEX IF NOT EXISTS occ_expires_idx ON oauth_consumed_codes (expires_at)",
+  );
+
   sql.exec(`CREATE TABLE IF NOT EXISTS memos (
     id TEXT PRIMARY KEY,
     body TEXT NOT NULL,
@@ -254,6 +266,7 @@ export function applyUserDataSchemaV1(sql: SqlStorage): void {
 }
 
 export const USER_DATA_TABLE_NAMES = [
+  "oauth_consumed_codes",
   "_meta",
   "jobs",
   "outbox_events",
@@ -274,6 +287,7 @@ export const USER_DATA_TABLE_NAMES = [
 ] as const;
 
 export const USER_DATA_INDEX_NAMES = [
+  "occ_expires_idx",
   "jobs_runnable_idx",
   "jobs_lease_idx",
   "jobs_completed_idx",

@@ -1,9 +1,10 @@
-import type { UserActorDto } from "../memo/gateway";
+import type { ActorDto, UserActorDto } from "../identity/actorDto";
 import type {
   CreateDocumentView,
   DocumentDiffView,
   DocumentRevisionsView,
   DocumentView,
+  EditDocumentByAiView,
   EditDocumentView,
   ReferencingDocumentsView,
   RollbackDocumentView,
@@ -15,17 +16,7 @@ import type {
   TrashTopicView,
 } from "./view";
 
-export type { UserActorDto };
-
-/** `Actor` as primitives; both faces of `createDocument` pass through here. */
-export type ActorDto =
-  | UserActorDto
-  | Readonly<{
-      kind: "aiClient";
-      userId: string;
-      connectionId: string;
-      clientName: string;
-    }>;
+export type { ActorDto, UserActorDto };
 
 export type CreateTopicDto = Readonly<{
   name: string;
@@ -50,6 +41,19 @@ export type CreateDocumentDto = Readonly<{
   sourceMemoIds: readonly string[];
   /** `null` lets the application supply 「作成」. */
   changeReason: string | null;
+}>;
+
+export type EditDocumentByAiDto = Readonly<{
+  actor: ActorDto;
+  documentId: string;
+  edit:
+    | Readonly<{
+        mode: "patch";
+        patches: readonly Readonly<{ oldText: string; newText: string }>[];
+      }>
+    | Readonly<{ mode: "replaceAll"; body: string }>;
+  /** Already checked non-blank on the request side; the value object rules apply inside. */
+  changeReason: string;
 }>;
 
 export type EditDocumentDto = Readonly<{
@@ -92,6 +96,11 @@ export interface KnowledgeGateway {
     userId: string,
     input: EditDocumentDto,
   ): Promise<EditDocumentView>;
+  /** MCP `edit_document`: patch or replaceAll, reason required. */
+  editDocumentByAi(
+    userId: string,
+    input: EditDocumentByAiDto,
+  ): Promise<EditDocumentByAiView>;
   rollbackDocument(
     userId: string,
     input: RollbackDocumentDto,

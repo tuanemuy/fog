@@ -131,6 +131,11 @@ const IDENTITY_GATEWAY_METHODS = [
   "deleteMapping",
   "finishUnlink",
   "revokeAllAiClientConnections",
+  "approveAiClientAuthorization",
+  "listAiClientConnections",
+  "revokeAiClientConnection",
+  "authorizeAiClient",
+  "consumeAuthorizationCode",
 ] as const satisfies readonly (keyof IdentityGateway)[];
 
 type Exhaustive<T extends readonly (keyof IdentityGateway)[]> =

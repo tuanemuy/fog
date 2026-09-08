@@ -1,10 +1,7 @@
-import {
-  Actor,
-  type UserActor,
-  UserId,
-} from "@repo/core/domain/identity/valueObject";
+import type { UserActor } from "@repo/core/domain/identity/valueObject";
 import { Memo } from "@repo/core/domain/memo/entity";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
+import { rebuildActor } from "../identity/actorDto";
 import type { ServiceArgs } from "../types";
 import type { PostMemoDto } from "./gateway";
 import { type MemoView, toMemoView } from "./view";
@@ -41,7 +38,7 @@ export function postMemoProcedure(
   id: string,
   now: Date,
 ): MemoView {
-  const actor = Actor.user(UserId.create(input.actor.userId));
+  const actor = rebuildActor(input.actor);
   const { memo, initialRevision } = Memo.create(
     { id, userId: input.userId, body: input.body, actor },
     now,

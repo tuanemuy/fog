@@ -1,3 +1,4 @@
+import { AiClientConnection } from "@repo/core/domain/identity/entity";
 import {
   CredentialId,
   PasswordHash,
@@ -62,6 +63,7 @@ export function beginCredentialChangeProcedure(
 export function applyCredentialChangeProcedure(
   ctx: UserDataUnitOfWorkContext,
   dto: ApplyCredentialChangeDto,
+  now: Date,
 ): ApplyCredentialChangeResult {
   ctx.accountStore.advanceSessionEpoch();
   const credentialVersion = ctx.credentialLocatorStore.advanceCredentialVersion(
@@ -69,7 +71,22 @@ export function applyCredentialChangeProcedure(
   );
   if (dto.resetCompletion) {
     const advancedTo = ctx.accountStore.advanceResetVersion();
-    ctx.aiClientConnectionRevoker.revokeCreatedAtResetVersion(advancedTo - 1);
+    // The connections created under the reset version that just ended are
+    // the automatic revocation's whole reach; older ones stay for the
+    // user's own 「すべて失効」 (P-03).
+    for (const connection of ctx.aiClientConnectionRepository.listByUserId()) {
+      if (
+        connection.status === "active" &&
+        connection.createdAtResetVersion === advancedTo - 1
+      ) {
+        const found = ctx.aiClientConnectionRepository.findById(connection.id);
+        if (found === null || found.entity.status !== "active") continue;
+        ctx.aiClientConnectionRepository.save(
+          AiClientConnection.revoke(found.entity, now),
+          found.expectedVersion,
+        );
+      }
+    }
   }
   return { credentialVersion };
 }

@@ -5,6 +5,7 @@ import type {
 import type { DomainEvent, EventDraft } from "@repo/core/domain/common/event";
 import type { PasswordResetRequestedEvent } from "@repo/core/domain/identity/passwordResetRequested";
 import type { AccountStore } from "@repo/core/domain/identity/ports/accountStore";
+import type { AiClientConnectionRepository } from "@repo/core/domain/identity/ports/aiClientConnectionRepository";
 import type { CredentialLocatorStore } from "@repo/core/domain/identity/ports/credentialLocatorStore";
 import type {
   CredentialAttemptRecorder,
@@ -19,7 +20,6 @@ import type { TopicRepository } from "@repo/core/domain/knowledge/ports/topicRep
 import type { MemoRepository } from "@repo/core/domain/memo/ports/memoRepository";
 import type { SearchIndexPort } from "@repo/core/domain/search/ports/searchIndexPort";
 import type { TrashQueryPort } from "@repo/core/domain/trash/ports/trashQueryPort";
-import type { AiClientConnectionRevoker } from "../identity/aiClientConnectionRevoker";
 
 /**
  * The canonical unit-of-work contract.
@@ -174,8 +174,7 @@ export interface UserDataUnitOfWorkContext
   trashQueryPort: TrashQueryPort;
   accountStore: AccountStore;
   credentialLocatorStore: CredentialLocatorStore;
-  /** Interim write path into `ai_client_connections` until the AI slice's repository (PH-06 △-2). */
-  aiClientConnectionRevoker: AiClientConnectionRevoker;
+  aiClientConnectionRepository: AiClientConnectionRepository;
   recordOperation(input: RecordOperationInput): void;
   updateOperation(input: UpdateOperationInput): void;
 }

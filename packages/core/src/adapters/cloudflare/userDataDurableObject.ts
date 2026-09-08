@@ -1,21 +1,27 @@
 import type { RpcEnvelope } from "@repo/core/application/delivery/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { UserDataUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
+import { approveAiClientAuthorizationProcedure } from "@repo/core/application/identity/approveAiClientAuthorization";
+import { findActiveAiClientProcedure } from "@repo/core/application/identity/authorizeAiClient";
 import { changeTrashRetentionDaysProcedure } from "@repo/core/application/identity/changeTrashRetentionDays";
 import { applyCredentialChangeProcedure } from "@repo/core/application/identity/credentialChangeProcedures";
 import type {
   ApplyCredentialChangeDto,
   ApplyCredentialChangeResult,
+  ApproveAiClientAuthorizationDto,
   BeginLinkDto,
   BeginLinkResult,
   BeginUnlinkDto,
   BeginUnlinkResult,
   CompleteLinkDto,
+  ConsumeAuthorizationCodeDto,
+  ConsumeAuthorizationCodeResult,
   CredentialLocatorDto,
   CurrentUserDto,
   InitializeAccountDto,
   OperationRefDto,
   RecordSignupLocatorDto,
+  RevokeAllAiClientConnectionsResult,
 } from "@repo/core/application/identity/gateway";
 import { initializeAccountProcedure } from "@repo/core/application/identity/initializeAccount";
 import {
@@ -23,22 +29,27 @@ import {
   completeLinkProcedure,
   finishLinkProcedure,
 } from "@repo/core/application/identity/linkSsoCredential";
+import { listAiClientConnectionsProcedure } from "@repo/core/application/identity/listAiClientConnections";
 import { readCurrentUserProcedure } from "@repo/core/application/identity/readCurrentUser";
 import { fromCredentialLocator } from "@repo/core/application/identity/rebuild";
 import { recordSignupLocatorProcedure } from "@repo/core/application/identity/recordSignupLocator";
-import { revokeAllAiClientConnectionsProcedure } from "@repo/core/application/identity/revokeAllAiClientConnections";
+import { revokeAiClientConnectionProcedure } from "@repo/core/application/identity/revokeAiClientConnection";
+import { revokeAllAiClientConnectionsSteps } from "@repo/core/application/identity/revokeAllAiClientConnections";
 import {
   beginUnlinkProcedure,
   finishUnlinkProcedure,
 } from "@repo/core/application/identity/unlinkSsoCredential";
+import type { AiClientConnectionView } from "@repo/core/application/identity/view";
 import { createDocumentProcedure } from "@repo/core/application/knowledge/createDocument";
 import { createTopicProcedure } from "@repo/core/application/knowledge/createTopic";
 import { diffDocumentRevisionsProcedure } from "@repo/core/application/knowledge/diffDocumentRevisions";
 import { editDocumentProcedure } from "@repo/core/application/knowledge/editDocument";
+import { editDocumentByAiProcedure } from "@repo/core/application/knowledge/editDocumentByAi";
 import type {
   CreateDocumentDto,
   CreateTopicDto,
   DiffDocumentRevisionsDto,
+  EditDocumentByAiDto,
   EditDocumentDto,
   ListTopicsDto,
   RollbackDocumentDto,
@@ -60,6 +71,7 @@ import type {
   DocumentDiffView,
   DocumentRevisionsView,
   DocumentView,
+  EditDocumentByAiView,
   EditDocumentView,
   ReferencingDocumentsView,
   RollbackDocumentView,
@@ -77,26 +89,33 @@ import type {
   EditMemoDto,
   JumpToDateDto,
   PostMemoDto,
+  RecentMemosDto,
   RollbackMemoDto,
   ShowMemoDto,
   TimelineQueryDto,
+  UpdateMemoByAiDto,
 } from "@repo/core/application/memo/gateway";
+import { getMemoProcedure } from "@repo/core/application/memo/getMemo";
 import { getTimelineProcedure } from "@repo/core/application/memo/getTimeline";
 import { jumpToDateProcedure } from "@repo/core/application/memo/jumpToDate";
 import { listMemoRevisionsProcedure } from "@repo/core/application/memo/listMemoRevisions";
 import { postMemoProcedure } from "@repo/core/application/memo/postMemo";
+import { recentMemosProcedure } from "@repo/core/application/memo/recentMemos";
 import { rollbackMemoProcedure } from "@repo/core/application/memo/rollbackMemo";
 import { showMemoInTimelineProcedure } from "@repo/core/application/memo/showMemoInTimeline";
 import { softDeleteMemoProcedure } from "@repo/core/application/memo/softDeleteMemo";
+import { updateMemoByAiProcedure } from "@repo/core/application/memo/updateMemoByAi";
 import type {
   EditMemoView,
   MemoRevisionsView,
   MemoView,
   MemoWindowView,
+  RecentMemosView,
   RevisionDiffView,
   RollbackMemoView,
   TimelinePageView,
   TimelineWindowView,
+  UpdateMemoByAiView,
 } from "@repo/core/application/memo/view";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -123,7 +142,10 @@ import type {
   TrashListView,
 } from "@repo/core/application/trash/view";
 import type { AccountState } from "@repo/core/domain/identity/ports/accountStore";
-import { CredentialId } from "@repo/core/domain/identity/valueObject";
+import {
+  AiClientConnectionId,
+  CredentialId,
+} from "@repo/core/domain/identity/valueObject";
 import { rearm } from "./alarmSchedule";
 import {
   AsyncWorkDurableObject,
@@ -135,6 +157,8 @@ import { createResumeLinkHandler } from "./jobs/resumeLink";
 import { createSweepOrphanMappingHandler } from "./jobs/sweepOrphanMapping";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
 import { readCallerToken } from "./stores/accountStore";
+import { createAiClientConnectionRepository } from "./stores/aiClientConnectionRepository";
+import { consumeCodeJti } from "./stores/oauthConsumedCodes";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 
 /**
@@ -248,9 +272,12 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
   async applyCredentialChange(
     dto: ApplyCredentialChangeDto,
   ): Promise<RpcEnvelope<ApplyCredentialChangeResult>> {
-    return this.envelope(() =>
-      this.runUnitOfWork((ctx) => applyCredentialChangeProcedure(ctx, dto)),
-    );
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        applyCredentialChangeProcedure(ctx, dto, now),
+      );
+    });
   }
 
   /** Link phase 0: the operation record and its `resume-link`; answers the caller token the bucket reservation needs. */
@@ -316,10 +343,109 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     });
   }
 
-  async revokeAllAiClientConnections(): Promise<RpcEnvelope<number>> {
+  /** P-03: one transaction per connection; a conflict is counted, not fatal. */
+  async revokeAllAiClientConnections(): Promise<
+    RpcEnvelope<RevokeAllAiClientConnectionsResult>
+  > {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      const ids = await this.runUnitOfWork((ctx) =>
+        ctx.aiClientConnectionRepository
+          .listByUserId()
+          .filter((c) => c.status === "active")
+          .map((c) => c.id),
+      );
+      return revokeAllAiClientConnectionsSteps(
+        (fn) => this.runUnitOfWork(fn),
+        ids,
+        now,
+        this.config.logger,
+      );
+    });
+  }
+
+  /** S-AC-05 「許可する」. */
+  async approveAiClientAuthorization(
+    dto: ApproveAiClientAuthorizationDto,
+  ): Promise<RpcEnvelope<{ connectionId: string }>> {
+    return this.envelope(() => {
+      const userId = this.requireSelfLocator();
+      const now = this.config.clock.now();
+      const id = this.config.idGenerator.next();
+      return this.runUnitOfWork((ctx) =>
+        approveAiClientAuthorizationProcedure(
+          ctx,
+          { userId, clientName: dto.clientName },
+          id,
+          now,
+        ),
+      );
+    });
+  }
+
+  async listAiClientConnections(): Promise<
+    RpcEnvelope<{ connections: readonly AiClientConnectionView[] }>
+  > {
     return this.envelope(() =>
-      this.runUnitOfWork((ctx) => revokeAllAiClientConnectionsProcedure(ctx)),
+      this.runUnitOfWork((ctx) => listAiClientConnectionsProcedure(ctx)),
     );
+  }
+
+  async revokeAiClientConnection(
+    connectionId: string,
+  ): Promise<RpcEnvelope<void>> {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      await this.runUnitOfWork((ctx) => {
+        revokeAiClientConnectionProcedure(ctx, connectionId, now);
+        return undefined;
+      });
+    });
+  }
+
+  /**
+   * The AI API's guard (PH-07 △-4): the active read inside the unit of
+   * work, then `recordUsage` as the best-effort single UPDATE it is —
+   * outside the transaction, failure logged and swallowed by the store.
+   */
+  async authorizeAiClient(input: {
+    connectionId: string;
+  }): Promise<RpcEnvelope<{ clientName: string } | null>> {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      const client = await this.runUnitOfWork((ctx) =>
+        findActiveAiClientProcedure(ctx, input.connectionId),
+      );
+      if (client === null) return null;
+      createAiClientConnectionRepository(
+        this.ctx.storage.sql,
+        this.requireSelfLocator(),
+        this.config.logger,
+      ).recordUsage(AiClientConnectionId.create(input.connectionId), now);
+      return client;
+    });
+  }
+
+  /** The token endpoint's one write: the code's `jti` and the connection's liveness, one transaction. */
+  async consumeAuthorizationCode(
+    dto: ConsumeAuthorizationCodeDto,
+  ): Promise<RpcEnvelope<ConsumeAuthorizationCodeResult>> {
+    return this.envelope(async () => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) => {
+        const client = findActiveAiClientProcedure(ctx, dto.connectionId);
+        if (client === null) return { ok: false } as const;
+        const fresh = consumeCodeJti(
+          this.ctx.storage.sql,
+          dto.jti,
+          dto.expiresAt.getTime(),
+          now.getTime(),
+        );
+        return fresh
+          ? ({ ok: true, clientName: client.clientName } as const)
+          : ({ ok: false } as const);
+      });
+    });
   }
 
   async changeTrashRetentionDays(input: {
@@ -469,6 +595,31 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     });
   }
 
+  async updateMemoByAi(
+    input: UpdateMemoByAiDto,
+  ): Promise<RpcEnvelope<UpdateMemoByAiView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        updateMemoByAiProcedure(ctx, input, now),
+      );
+    });
+  }
+
+  async recentMemos(
+    input: RecentMemosDto,
+  ): Promise<RpcEnvelope<RecentMemosView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => recentMemosProcedure(ctx, input)),
+    );
+  }
+
+  async getMemo(memoId: string): Promise<RpcEnvelope<MemoView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => getMemoProcedure(ctx, memoId)),
+    );
+  }
+
   async softDeleteMemo(memoId: string): Promise<RpcEnvelope<void>> {
     return this.envelope(() => {
       const now = this.config.clock.now();
@@ -554,6 +705,18 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
       const now = this.config.clock.now();
       return this.runUnitOfWork((ctx) =>
         editDocumentProcedure(ctx, input, revisionId, now),
+      );
+    });
+  }
+
+  async editDocumentByAi(
+    input: EditDocumentByAiDto,
+  ): Promise<RpcEnvelope<EditDocumentByAiView>> {
+    return this.envelope(() => {
+      const revisionId = this.config.idGenerator.next();
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        editDocumentByAiProcedure(ctx, input, revisionId, now),
       );
     });
   }

@@ -9,6 +9,7 @@ const KNOWLEDGE_GATEWAY_METHODS = [
   "trashTopic",
   "createDocument",
   "editDocument",
+  "editDocumentByAi",
   "rollbackDocument",
   "trashDocument",
   "getDocument",

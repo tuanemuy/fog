@@ -161,6 +161,13 @@ export type EditDocumentView = Readonly<{
   conflict: DocumentConflictView | null;
 }>;
 
+/** `edit_document`'s answer (S-AI-04). */
+export type EditDocumentByAiView = Readonly<{
+  changed: boolean;
+  latestRevision: number;
+  updatedAt: Date;
+}>;
+
 export type RollbackDocumentView = Readonly<{
   changed: boolean;
   latestRevision: number;

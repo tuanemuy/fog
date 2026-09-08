@@ -37,6 +37,9 @@ export function createKnowledgeGateway(
     createDocument(userId, input) {
       return callDurableObject(() => userData(userId).createDocument(input));
     },
+    editDocumentByAi(userId, input) {
+      return callDurableObject(() => userData(userId).editDocumentByAi(input));
+    },
     editDocument(userId, input) {
       return callDurableObject(() => userData(userId).editDocument(input));
     },

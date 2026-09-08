@@ -11,11 +11,15 @@ import type {
 import type { IdentityTuning } from "@repo/core/application/identity/tuning";
 import type { Clock } from "@repo/core/application/ports/clock";
 import type { IdGenerator } from "@repo/core/application/ports/idGenerator";
+import {
+  ConsoleLogger,
+  type Logger,
+} from "@repo/core/application/ports/logger";
 import { EventId } from "@repo/core/domain/common/event";
 import { isRehydrationError } from "@repo/core/domain/error";
 import { isCodedError } from "@repo/core/lib/error";
 import { createAccountStore } from "./stores/accountStore";
-import { createAiClientConnectionRevoker } from "./stores/aiClientConnectionRevoker";
+import { createAiClientConnectionRepository } from "./stores/aiClientConnectionRepository";
 import { createCredentialLocatorStore } from "./stores/credentialLocatorStore";
 import {
   createCredentialAttemptRecorder,
@@ -43,6 +47,8 @@ export type UnitOfWorkDeps = Readonly<{
   idGenerator: IdGenerator;
   /** `_meta.self_locator`: the `userId` of a User Data DO, the bucket name of a directory bucket. */
   selfLocator: string;
+  /** For the best-effort writes that log instead of throwing; defaults to the console. */
+  logger?: Logger;
 }>;
 
 /**
@@ -137,7 +143,11 @@ export function createUserDataUnitOfWorkProvider(
       trashQueryPort: createTrashQueryPort(sql),
       accountStore: createAccountStore(sql, nowMs),
       credentialLocatorStore: createCredentialLocatorStore(sql, nowMs),
-      aiClientConnectionRevoker: createAiClientConnectionRevoker(sql, nowMs),
+      aiClientConnectionRepository: createAiClientConnectionRepository(
+        sql,
+        deps.selfLocator,
+        deps.logger ?? ConsoleLogger,
+      ),
       recordOperation(input) {
         writeRecordedOperation(sql, input, nowMs());
       },

@@ -5,6 +5,7 @@ import type {
   CredentialKind,
   MappingLocator,
 } from "@repo/core/domain/identity/ports/credentialMappingRepository";
+import type { AiClientConnectionView } from "./view";
 
 /** `CredentialCoordinate` as it crosses the request Worker ↔ DO boundary. */
 export type CredentialCoordinateDto = Readonly<{
@@ -146,6 +147,23 @@ export type DeleteMappingDto = Readonly<{
   callerToken: string;
 }>;
 
+export type ApproveAiClientAuthorizationDto = Readonly<{ clientName: string }>;
+
+export type ConsumeAuthorizationCodeDto = Readonly<{
+  jti: string;
+  expiresAt: Date;
+  connectionId: string;
+}>;
+
+export type ConsumeAuthorizationCodeResult =
+  | Readonly<{ ok: true; clientName: string }>
+  | Readonly<{ ok: false }>;
+
+export type RevokeAllAiClientConnectionsResult = Readonly<{
+  revokedCount: number;
+  failedCount: number;
+}>;
+
 export type RecordSignupLocatorDto = Readonly<{
   operationId: string;
   locator: CredentialLocatorDto;
@@ -257,7 +275,26 @@ export interface IdentityGateway {
     dto: DeleteMappingDto,
   ): Promise<void>;
   finishUnlink(userId: string, dto: OperationRefDto): Promise<void>;
-  revokeAllAiClientConnections(userId: string): Promise<number>;
+  revokeAllAiClientConnections(
+    userId: string,
+  ): Promise<RevokeAllAiClientConnectionsResult>;
+  approveAiClientAuthorization(
+    userId: string,
+    dto: ApproveAiClientAuthorizationDto,
+  ): Promise<{ connectionId: string }>;
+  listAiClientConnections(
+    userId: string,
+  ): Promise<{ connections: readonly AiClientConnectionView[] }>;
+  revokeAiClientConnection(userId: string, connectionId: string): Promise<void>;
+  /** The AI API's per-call guard; `null` is 401. Records usage best-effort. */
+  authorizeAiClient(
+    userId: string,
+    connectionId: string,
+  ): Promise<{ clientName: string } | null>;
+  consumeAuthorizationCode(
+    userId: string,
+    dto: ConsumeAuthorizationCodeDto,
+  ): Promise<ConsumeAuthorizationCodeResult>;
   /** S-ST-01: the setting plus the trash-wide `purge_after` recalculation and the wake-up. */
   changeTrashRetentionDays(
     userId: string,

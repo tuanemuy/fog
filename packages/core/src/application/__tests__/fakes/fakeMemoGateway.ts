@@ -10,6 +10,9 @@ const MEMO_GATEWAY_METHODS = [
   "diffMemoRevisions",
   "rollbackMemo",
   "softDeleteMemo",
+  "updateMemoByAi",
+  "recentMemos",
+  "getMemo",
 ] as const satisfies readonly (keyof MemoGateway)[];
 
 type Exhaustive<T extends readonly (keyof MemoGateway)[]> =

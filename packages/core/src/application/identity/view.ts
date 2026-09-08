@@ -8,6 +8,16 @@ export type CredentialView = Readonly<{
   usableForLogin: boolean;
 }>;
 
+/** S-AC-06's row; `revokedAt` is non-null exactly when `status` is `"revoked"`. */
+export type AiClientConnectionView = Readonly<{
+  connectionId: string;
+  clientName: string;
+  status: "active" | "revoked";
+  connectedAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}>;
+
 export type CurrentUserView = Readonly<{
   userId: string;
   email: string;

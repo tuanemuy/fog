@@ -29,11 +29,18 @@ export function isCredentialUnlinkedResult(
   return isRecord(value) && typeof value.credentialId === "string";
 }
 
-export type ConnectionsRevokedResult = Readonly<{ revokedCount: number }>;
+export type ConnectionsRevokedResult = Readonly<{
+  revokedCount: number;
+  failedCount: number;
+}>;
 export function isConnectionsRevokedResult(
   value: unknown,
 ): value is ConnectionsRevokedResult {
-  return isRecord(value) && typeof value.revokedCount === "number";
+  return (
+    isRecord(value) &&
+    typeof value.revokedCount === "number" &&
+    typeof value.failedCount === "number"
+  );
 }
 
 export type RetentionSavedResult = Readonly<{ retentionDays: number }>;
