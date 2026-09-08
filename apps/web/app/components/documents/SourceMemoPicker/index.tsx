@@ -3,7 +3,7 @@
 import type { TimelineItemView } from "@repo/core/application/memo/view";
 import { snippetOf } from "@repo/core/lib/text";
 import { useServerFn } from "@tanstack/react-start";
-import { type FormEvent, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { loadTimelinePageFn } from "@/components/timeline/actions";
 import { isTimelinePageResult } from "@/components/timeline/schema";
 import { displayError } from "@/presentation/errorDisplay";
@@ -40,8 +40,9 @@ export function SourceMemoPicker({
   const [searching, startSearch] = useTransition();
   const pickedIds = new Set(picked.map((memo) => memo.memoId));
 
-  const search = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // Not a <form>: the picker sits inside the editor's form, and a form may
+  // not nest another.
+  const search = () => {
     const keyword = query.trim();
     startSearch(async () => {
       try {
@@ -68,7 +69,7 @@ export function SourceMemoPicker({
   return (
     <section className="fog-source-picker" aria-label="出典を追加">
       <h3>出典を追加</h3>
-      <form className="fog-source-search" onSubmit={search}>
+      <search className="fog-source-search">
         <label className="fog-sr-only" htmlFor="source-memo-query">
           メモを検索
         </label>
@@ -79,11 +80,22 @@ export function SourceMemoPicker({
           onChange={(event) => setQuery(event.target.value)}
           placeholder="メモを検索（空欄で直近のメモ）"
           maxLength={500}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              search();
+            }
+          }}
         />
-        <button type="submit" className="fog-secondary" disabled={searching}>
+        <button
+          type="button"
+          className="fog-secondary"
+          disabled={searching}
+          onClick={search}
+        >
           {searching ? "検索中…" : "検索"}
         </button>
-      </form>
+      </search>
       {error && (
         <p className="fog-error" role="alert">
           {error}
