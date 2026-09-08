@@ -131,6 +131,8 @@ import {
 } from "./durableObjectBase";
 import type { JobHandlerRegistry } from "./jobRunner";
 import { createPurgeTrashHandler } from "./jobs/purgeTrash";
+import { createResumeLinkHandler } from "./jobs/resumeLink";
+import { createSweepOrphanMappingHandler } from "./jobs/sweepOrphanMapping";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
 import { readCallerToken } from "./stores/accountStore";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
@@ -155,6 +157,18 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     });
     // Filled after `super`: the handler needs this object's unit of work.
     jobRegistry["purge-trash"] = createPurgeTrashHandler({
+      provider: () => this.createUnitOfWorkProvider(),
+      logger: this.config.logger,
+    });
+    jobRegistry["resume-link"] = createResumeLinkHandler({
+      env,
+      userId: () => this.requireSelfLocator(),
+      provider: () => this.createUnitOfWorkProvider(),
+      now: () => this.config.clock.now(),
+    });
+    jobRegistry["sweep-orphan-mapping"] = createSweepOrphanMappingHandler({
+      env,
+      userId: () => this.requireSelfLocator(),
       provider: () => this.createUnitOfWorkProvider(),
       logger: this.config.logger,
     });

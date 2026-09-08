@@ -21,6 +21,13 @@ function opaque(): string {
   return randomBytes(OPAQUE_BYTES).toString("base64url");
 }
 
+/** 256 bits: the one-shot bearer `beginCredentialChange` requires at `CALLER_TOKEN_MIN_LENGTH` or more. */
+const CHANGE_AUTH_TOKEN_BYTES = 32;
+
+function changeAuthBearer(): string {
+  return randomBytes(CHANGE_AUTH_TOKEN_BYTES).toString("base64url");
+}
+
 /**
  * The raw token's secret half, derived from `tokenId` under the bucket's
  * reset-token key: never stored, re-derived by the send-materials RPC.
@@ -104,7 +111,7 @@ export function createPasswordResetTokenStore(
     verifyAndConsume(token, now) {
       const parts = parseResetToken(token);
       if (parts === null) return null;
-      const changeAuthToken = opaque();
+      const changeAuthToken = changeAuthBearer();
       const row = sql
         .exec<{ credential_id: string }>(
           `UPDATE password_reset_tokens SET used_at = ?, change_auth_token = ?

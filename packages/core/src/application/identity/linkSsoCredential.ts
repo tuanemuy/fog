@@ -54,6 +54,7 @@ export async function linkSsoCredential({
     operationId,
     credentialId,
     locator,
+    label: provider,
   });
   try {
     await gateway.reserveCredential(locator, {
@@ -109,7 +110,7 @@ export function beginLinkProcedure(
     kind: "link",
     payload: { credentialId: dto.credentialId, locator: dto.locator },
     phase: "reserving",
-    targetLocators: [dto.locator],
+    targetLocators: [{ ...dto.locator, label: dto.label }],
   });
   ctx.enqueueJob({
     operationKey: resumeLinkOperationKey(dto.operationId),

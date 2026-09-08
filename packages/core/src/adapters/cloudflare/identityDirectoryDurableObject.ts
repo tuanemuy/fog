@@ -45,8 +45,10 @@ import {
   AsyncWorkDurableObject,
   type StateWorkerEnv,
 } from "./durableObjectBase";
+import { createResumeCredentialChangeHandler } from "./jobs/resumeCredentialChange";
 import { createResumeSignupHandler } from "./jobs/resumeSignup";
 import { createSweepReservationsHandler } from "./jobs/sweepReservations";
+import { createSweepResetTokensHandler } from "./jobs/sweepResetTokens";
 import { IDENTITY_DIRECTORY_PLAN } from "./schema/identityDirectoryPlan";
 import {
   listMappedUserIds,
@@ -106,6 +108,22 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
             ),
         }),
         "sweep-reservations": createSweepReservationsHandler(),
+        "sweep-reset-tokens": createSweepResetTokensHandler(),
+        "resume-credential-change": createResumeCredentialChangeHandler({
+          env,
+          markAdvanced: (input) =>
+            this.runUnitOfWork((ctx) =>
+              markCredentialChangeAdvancedProcedure(
+                ctx,
+                input.coordinate,
+                input.operationId,
+              ),
+            ),
+          promote: (input) =>
+            this.runUnitOfWork((ctx) =>
+              promoteVerifierProcedure(ctx, input.coordinate, input.dto),
+            ),
+        }),
       },
     });
   }

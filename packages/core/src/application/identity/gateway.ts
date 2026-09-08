@@ -112,6 +112,8 @@ export type BeginLinkDto = Readonly<{
   operationId: string;
   credentialId: string;
   locator: MappingLocator;
+  /** The credential's label (the provider), kept on the record for `resume-link`. */
+  label: string;
 }>;
 
 export type BeginLinkResult = Readonly<{ callerToken: string }>;
