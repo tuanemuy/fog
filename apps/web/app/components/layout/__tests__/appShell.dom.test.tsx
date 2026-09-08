@@ -55,6 +55,7 @@ describe("NAV_ITEMS", () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       "タイムライン",
       "トピック",
+      "検索",
       "設定",
     ]);
   });
@@ -68,6 +69,7 @@ describe("titleFor", () => {
   });
 
   it("names the knowledge screens", () => {
+    expect(titleFor("/search")).toBe("検索");
     expect(titleFor("/topics")).toBe("トピック");
     expect(titleFor("/topics/abc")).toBe("トピック詳細");
     expect(titleFor("/topics/abc/documents/new")).toBe("ドキュメント作成");

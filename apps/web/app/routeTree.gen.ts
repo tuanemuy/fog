@@ -15,6 +15,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppTopicsRouteImport } from './routes/_app/topics'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppTopicsTopicIdRouteImport } from './routes/_app/topics_.$topicId'
 import { Route as AppDocumentsDocumentIdRouteImport } from './routes/_app/documents_.$documentId'
 import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
@@ -49,6 +50,11 @@ const AppTopicsRoute = AppTopicsRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSearchRoute = AppSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTopicsTopicIdRoute = AppTopicsTopicIdRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
@@ -101,6 +108,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/': typeof AppIndexRoute
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/_app/search': typeof AppSearchRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/topics': typeof AppTopicsRoute
   '/_app/': typeof AppIndexRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/search'
     | '/settings'
     | '/topics'
     | '/documents/$documentId'
@@ -144,6 +154,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/signup'
+    | '/search'
     | '/settings'
     | '/topics'
     | '/'
@@ -158,6 +169,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/signup'
+    | '/_app/search'
     | '/_app/settings'
     | '/_app/topics'
     | '/_app/'
@@ -219,6 +231,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/search': {
+      id: '/_app/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof AppSearchRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/topics_/$topicId': {
       id: '/_app/topics_/$topicId'
       path: '/topics/$topicId'
@@ -265,6 +284,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppSearchRoute: typeof AppSearchRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTopicsRoute: typeof AppTopicsRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -277,6 +297,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppSearchRoute: AppSearchRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTopicsRoute: AppTopicsRoute,
   AppIndexRoute: AppIndexRoute,

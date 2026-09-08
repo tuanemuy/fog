@@ -22,6 +22,11 @@ export const NAV_ITEMS = [
       path.startsWith("/topics") || path.startsWith("/documents"),
   },
   {
+    to: "/search",
+    label: "検索",
+    match: (path: string) => path === "/search",
+  },
+  {
     to: "/settings",
     label: "設定",
     match: (path: string) => path === "/settings",
@@ -44,6 +49,7 @@ const TITLES: ReadonlyArray<readonly [(path: string) => boolean, string]> = [
   [(path) => /^\/documents\/[^/]+\/edit$/.test(path), "ドキュメント編集"],
   [(path) => /^\/documents\/[^/]+\/history$/.test(path), "ドキュメント履歴"],
   [(path) => /^\/documents\/[^/]+$/.test(path), "ドキュメント"],
+  [(path) => path === "/search", "検索"],
   [(path) => path === "/settings", "設定"],
 ];
 

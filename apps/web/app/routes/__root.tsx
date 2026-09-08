@@ -13,6 +13,7 @@ import { createServerFn } from "@tanstack/react-start";
 import "@/components/auth/actions";
 import "@/components/documents/actions";
 import "@/components/memoHistory/actions";
+import "@/components/search/actions";
 import "@/components/timeline/actions";
 import "@/components/topics/actions";
 import type { ReactNode } from "react";
