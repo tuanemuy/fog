@@ -8,6 +8,10 @@ import { createConsoleMailSender } from "@repo/core/adapters/mail/consoleMailSen
 import { createResendMailSender } from "@repo/core/adapters/mail/resendMailSender";
 import { createDevStubSsoProvider } from "@repo/core/adapters/sso/devStubSsoProvider";
 import { createGoogleSsoProvider } from "@repo/core/adapters/sso/googleSsoProvider";
+import {
+  type AiTokenCodec,
+  createAiTokenCodec,
+} from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import {
@@ -26,6 +30,7 @@ import type { MailSender } from "../ports/mailSender";
 import type { SsoIdentityProvider } from "../ports/ssoIdentityProvider";
 import {
   type RequestSecrets,
+  requireAiClientTokenSecret,
   requireDirectoryRoutingKeyring,
   requireSessionSecret,
 } from "./secrets";
@@ -43,6 +48,8 @@ export type ServerEnv = Readonly<{
   DIAGNOSTICS_ENABLED?: string;
   SESSION_SECRET?: string;
   DIRECTORY_ROUTING_SECRET?: string;
+  /** The AI API's token / code / client-id key material (request Worker). */
+  AI_CLIENT_TOKEN_SECRET?: string;
   /** The mail consumer's provider credential (`.dev.vars.example`). */
   MAIL_PROVIDER_API_KEY?: string;
   /** The sender the provider is asked to use; a `[vars]` entry, not a secret. */
@@ -96,6 +103,9 @@ export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
     ssoProviders: configuredSsoProviders(env),
     secrets: {
       sessionSecret: requireSessionSecret(env.SESSION_SECRET),
+      aiClientTokenSecret: requireAiClientTokenSecret(
+        env.AI_CLIENT_TOKEN_SECRET,
+      ),
       directoryRoutingKeyring: requireDirectoryRoutingKeyring(
         env.DIRECTORY_ROUTING_SECRET,
       ),
@@ -257,5 +267,16 @@ function createConfiguredSsoProvider(
       }
       return unconfigured(provider);
     },
+  };
+}
+
+/** What the AI API handlers need beside the request container (PH-07 §1). */
+export type AiRuntime = Readonly<{ tokenCodec: AiTokenCodec }>;
+
+export function createAiRuntime(config: RequestServerConfig): AiRuntime {
+  return {
+    tokenCodec: createAiTokenCodec({
+      secret: config.secrets.aiClientTokenSecret,
+    }),
   };
 }

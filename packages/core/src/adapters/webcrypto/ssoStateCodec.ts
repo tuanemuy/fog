@@ -1,3 +1,4 @@
+import { deriveHmacKey } from "./derivedHmac";
 import { fromBase64Url, toBase64Url } from "./encoding";
 import { MIN_SESSION_SECRET_LENGTH } from "./hmacSessionCodec";
 
@@ -66,31 +67,7 @@ export function createSsoStateCodec(options: {
   }
   const ttlMs = options.ttlMs ?? DEFAULT_SSO_STATE_TTL_MS;
   const encoder = new TextEncoder();
-  let keyPromise: Promise<CryptoKey> | null = null;
-  const getKey = (): Promise<CryptoKey> => {
-    keyPromise ??= (async () => {
-      const root = await crypto.subtle.importKey(
-        "raw",
-        encoder.encode(options.sessionSecret),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"],
-      );
-      const derived = await crypto.subtle.sign(
-        "HMAC",
-        root,
-        encoder.encode(SSO_STATE_KEY_LABEL),
-      );
-      return crypto.subtle.importKey(
-        "raw",
-        derived,
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign", "verify"],
-      );
-    })();
-    return keyPromise;
-  };
+  const getKey = deriveHmacKey(options.sessionSecret, SSO_STATE_KEY_LABEL);
 
   return {
     async issue(payload, now) {

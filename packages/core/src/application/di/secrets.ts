@@ -9,6 +9,7 @@ import {
   type MappingKeyring,
   MIN_KEYRING_SECRET_LENGTH,
 } from "@repo/core/adapters/cloudflare/crypto/keyring";
+import { MIN_AI_CLIENT_TOKEN_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 
 /**
@@ -27,6 +28,8 @@ import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSes
  */
 export type RequestSecrets = Readonly<{
   sessionSecret: SessionSecret;
+  /** `AI_CLIENT_TOKEN_SECRET`: the AI API's tokens, codes and client ids derive their keys from it. */
+  aiClientTokenSecret: AiClientTokenSecret;
   /**
    * The routing keyring, already built and validated. It is a keyring
    * rather than a secret string for the same reason `sessionSecret` is
@@ -36,6 +39,26 @@ export type RequestSecrets = Readonly<{
 }>;
 
 declare const sessionSecretBrand: unique symbol;
+declare const aiClientTokenSecretBrand: unique symbol;
+
+export type AiClientTokenSecret = string & {
+  readonly [aiClientTokenSecretBrand]: true;
+};
+
+/** The same check as {@link requireSessionSecret}, for the AI API's secret. */
+export function requireAiClientTokenSecret(
+  secret: string | undefined,
+): AiClientTokenSecret {
+  if (
+    secret === undefined ||
+    secret.length < MIN_AI_CLIENT_TOKEN_SECRET_LENGTH
+  ) {
+    throw new Error(
+      `AI_CLIENT_TOKEN_SECRET is required on the request path and must be at least ${MIN_AI_CLIENT_TOKEN_SECRET_LENGTH} characters`,
+    );
+  }
+  return secret as AiClientTokenSecret;
+}
 
 /**
  * A session secret that has passed {@link requireSessionSecret}.
