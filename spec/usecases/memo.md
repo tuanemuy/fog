@@ -130,6 +130,7 @@ TimelineItemView = MemoView + 次のフィールド:
 | フィールド | 型 |
 |---|---|
 | items | TimelineItemView[]（postedAt 降順。getTimeline と同一射影） |
+| pivotId | string \| null（ジャンプ先として解決したメモ。画面はこの行の位置へスクロールする。0 件なら null） |
 | olderCursor | string \| null（古い側の続き） |
 | newerCursor | string \| null（新しい側の続き） |
 

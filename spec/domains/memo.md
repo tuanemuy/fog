@@ -299,6 +299,7 @@ export interface MemoRepository {
     query: Readonly<{ limit: number; keyword: string | null }>,
   ): Readonly<{
     items: readonly ActiveMemo[];        // アンカー位置を含む前後のメモ（postedAt 降順）
+    pivotId: MemoId | null;              // アンカーが解決した位置のメモ（items に含まれる）。画面はこの行へスクロールする。items が空なら null
     olderCursor: TimelineCursor | null;  // さらに古い側の続きを findTimelinePage(direction: "older") で読むためのカーソル
     newerCursor: TimelineCursor | null;  // さらに新しい側の続きを findTimelinePage(direction: "newer") で読むためのカーソル
   }>;
