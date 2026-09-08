@@ -1242,6 +1242,9 @@ li + li > .fog-revision-row {
   text-underline-offset: 0.2em;
 }
 .fog-credential-list > p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
   margin: var(--space-md) 0 0;
 }
 .fog-credential-list .fog-secondary {

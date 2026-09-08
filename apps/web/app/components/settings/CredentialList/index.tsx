@@ -19,7 +19,18 @@ export function credentialLabel(credential: CredentialView): string {
 }
 
 /** `/auth/sso/:provider/start?intent=link` — the only entry that creates something P-03 can unlink. */
-export const LINK_GOOGLE_HREF = "/auth/sso/google/start?intent=link";
+export function linkStartHref(provider: string): string {
+  return `/auth/sso/${provider}/start?intent=link`;
+}
+
+const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  google: "Google",
+  apple: "Apple",
+};
+
+export function linkProviderLabel(provider: string): string {
+  return `SSO 連携を追加（${PROVIDER_NAMES[provider] ?? provider}）`;
+}
 
 /**
  * The login methods (P-13 / P-03), owned as a list because unlinking is a
@@ -29,10 +40,11 @@ export const LINK_GOOGLE_HREF = "/auth/sso/google/start?intent=link";
  */
 export function CredentialList({
   credentials,
-  showAddLink,
+  linkProviders,
 }: {
   credentials: readonly CredentialView[];
-  showAddLink: boolean;
+  /** The providers to offer a link for (P-13: `AppConfig.ssoProviders`; P-03: none). */
+  linkProviders: readonly string[];
 }) {
   const router = useRouter();
   const unlink = useServerFn(unlinkSsoCredentialFn);
@@ -88,11 +100,17 @@ export function CredentialList({
           {error}
         </p>
       )}
-      {showAddLink && (
-        <p>
-          <a className="fog-secondary" href={LINK_GOOGLE_HREF}>
-            SSO 連携を追加（Google）
-          </a>
+      {linkProviders.length > 0 && (
+        <p className="fog-credential-links">
+          {linkProviders.map((provider) => (
+            <a
+              key={provider}
+              className="fog-secondary"
+              href={linkStartHref(provider)}
+            >
+              {linkProviderLabel(provider)}
+            </a>
+          ))}
         </p>
       )}
     </div>

@@ -67,7 +67,7 @@ function trip(what: string): never {
 function installContainer(): void {
   logger = new FakeLogger();
   const container = {
-    config: { ...content, appUrl: "https://app.example" },
+    config: { ...content, appUrl: "https://app.example", ssoProviders: [] },
     identityGateway: trippingIdentityGateway((name) => trip(`reach ${name}`)),
     identityTuning: createIdentityTuning(),
     memoGateway: trippingMemoGateway((name) => {

@@ -45,6 +45,7 @@ function makeContainer(gateway: IdentityGateway): UsecaseContainer {
       defaultTitle: "fog",
       defaultDescription: "",
       themeColor: "#000",
+      ssoProviders: [],
     },
     identityGateway: gateway,
     identityTuning: createIdentityTuning(),

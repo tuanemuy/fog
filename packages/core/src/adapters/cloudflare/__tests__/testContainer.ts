@@ -31,7 +31,7 @@ export const TEST_PBKDF2_ITERATIONS = 1000;
  */
 export function createTestContainer(): RequestContainer {
   return {
-    config: { ...content, appUrl: "http://localhost" },
+    config: { ...content, appUrl: "http://localhost", ssoProviders: [] },
     ...createTestGateways(),
     passwordHasher: createPbkdf2PasswordHasher({
       iterations: TEST_PBKDF2_ITERATIONS,

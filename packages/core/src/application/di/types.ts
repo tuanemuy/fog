@@ -1,4 +1,5 @@
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
+import type { SsoProvider } from "@repo/core/domain/identity/valueObject";
 import type { IdentityGateway } from "../identity/gateway";
 import type { IdentityTuning } from "../identity/tuning";
 import type { KnowledgeGateway } from "../knowledge/gateway";
@@ -18,6 +19,8 @@ export type AppConfig = Readonly<{
   defaultDescription: string;
   twitterHandle?: string;
   themeColor: string;
+  /** The SSO providers with an adapter configured: the only ones a screen may offer (P-01 / P-02 / P-13). */
+  ssoProviders: readonly SsoProvider[];
 }>;
 
 export type SharedDeps = Readonly<{

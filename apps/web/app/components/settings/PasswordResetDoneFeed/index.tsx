@@ -35,7 +35,7 @@ export async function PasswordResetDoneFeed() {
         <p className="fog-meta">
           覚えの無い外部アカウントの連携があれば、ここで解除してください。
         </p>
-        <CredentialList credentials={user.credentials} showAddLink={false} />
+        <CredentialList credentials={user.credentials} linkProviders={[]} />
       </section>
       <section aria-labelledby="reset-done-ai">
         <h2 id="reset-done-ai" className="fog-section-heading">

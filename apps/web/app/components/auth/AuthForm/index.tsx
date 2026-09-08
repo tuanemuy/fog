@@ -71,10 +71,12 @@ export function AuthForm({
   mode,
   redirectTo,
   ssoError,
+  ssoProviders,
 }: {
   mode: "login" | "signup";
   redirectTo: string | undefined;
   ssoError?: SsoErrorCode | undefined;
+  ssoProviders: readonly string[];
 }) {
   const signup = mode === "signup";
   const login = useServerFn(loginFn);
@@ -216,10 +218,16 @@ export function AuthForm({
             </p>
           )}
         </form>
-        <p className="fog-auth-divider" aria-hidden="true">
-          または
-        </p>
-        <SsoButtons mode={mode} redirectTo={redirectTo} />
+        {ssoProviders.length > 0 && (
+          <p className="fog-auth-divider" aria-hidden="true">
+            または
+          </p>
+        )}
+        <SsoButtons
+          mode={mode}
+          redirectTo={redirectTo}
+          providers={ssoProviders}
+        />
         <p className="fog-auth-footer">
           {signup ? "アカウントをお持ちの方は" : "はじめての方は"}{" "}
           {signup ? (

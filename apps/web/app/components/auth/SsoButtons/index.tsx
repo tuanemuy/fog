@@ -1,9 +1,14 @@
 import type { SsoErrorCode } from "../schema";
 
-const PROVIDERS = [
-  { name: "google", label: "Google で続行" },
-  { name: "apple", label: "Apple で続行" },
-] as const;
+/** Wording per provider name; a name the list carries but this table lacks falls back to the name itself. */
+const LABELS: Readonly<Record<string, string>> = {
+  google: "Google で続行",
+  apple: "Apple で続行",
+};
+
+export function ssoButtonLabel(provider: string): string {
+  return LABELS[provider] ?? `${provider} で続行`;
+}
 
 /** `/auth/sso/:provider/start` with the page it started from and the return path. */
 export function ssoStartHref(
@@ -41,24 +46,29 @@ export function renderSsoError(
 
 /**
  * The SSO half of P-01 / P-02: plain anchors, because the round trip is a
- * redirect chain the bare handler owns, not a server function.
+ * redirect chain the bare handler owns, not a server function. Drawn from
+ * `AppConfig.ssoProviders` — only a provider with an adapter is offered —
+ * and absent altogether when none is configured.
  */
 export function SsoButtons({
   mode,
   redirectTo,
+  providers,
 }: {
   mode: "login" | "signup";
   redirectTo: string | undefined;
+  providers: readonly string[];
 }) {
+  if (providers.length === 0) return null;
   return (
     <nav className="fog-auth-sso" aria-label="外部アカウントで続行">
-      {PROVIDERS.map((provider) => (
+      {providers.map((provider) => (
         <a
-          key={provider.name}
+          key={provider}
           className="fog-secondary"
-          href={ssoStartHref(provider.name, mode, redirectTo)}
+          href={ssoStartHref(provider, mode, redirectTo)}
         >
-          {provider.label}
+          {ssoButtonLabel(provider)}
         </a>
       ))}
     </nav>

@@ -48,7 +48,9 @@ const user: CurrentUserView = {
 
 describe("CurrentUserPanel", () => {
   it("draws the address, one row per credential, retention, AI panel and logout", async () => {
-    await renderWithRouter(<CurrentUserPanel user={user} />);
+    await renderWithRouter(
+      <CurrentUserPanel user={user} ssoProviders={["google"]} />,
+    );
     expect(screen.getByText("user@example.com")).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -82,6 +84,7 @@ describe("CurrentUserPanel", () => {
   it("hides the password change for an account whose email is a uniqueness hold only", async () => {
     await renderWithRouter(
       <CurrentUserPanel
+        ssoProviders={[]}
         user={{
           ...user,
           credentials: [
@@ -97,9 +100,23 @@ describe("CurrentUserPanel", () => {
     expect(screen.queryByRole("form", { name: "パスワードの変更" })).toBeNull();
   });
 
+  it("offers a link entry only for a configured provider", async () => {
+    await renderWithRouter(
+      <CurrentUserPanel user={user} ssoProviders={["google", "apple"]} />,
+    );
+    expect(
+      screen
+        .getAllByRole("link", { name: /SSO 連携を追加/ })
+        .map((a) => a.getAttribute("href")),
+    ).toEqual([
+      "/auth/sso/google/start?intent=link",
+      "/auth/sso/apple/start?intent=link",
+    ]);
+  });
+
   it("never draws a verifier-looking value or the user id", async () => {
     const { container } = await renderWithRouter(
-      <CurrentUserPanel user={user} />,
+      <CurrentUserPanel user={user} ssoProviders={["google"]} />,
     );
     // Present-side check first: the email credential's label is the only
     // carrier, and the row for it is drawn — so absence below is meaningful.

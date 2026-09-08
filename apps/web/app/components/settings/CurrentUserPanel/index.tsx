@@ -16,7 +16,14 @@ export function hasPasswordCredential(user: CurrentUserView): boolean {
  * the AI connections. The export joins with its slice. Never shows a
  * verifier or a provider subject: the view has none.
  */
-export function CurrentUserPanel({ user }: { user: CurrentUserView }) {
+export function CurrentUserPanel({
+  user,
+  ssoProviders,
+}: {
+  user: CurrentUserView;
+  /** `AppConfig.ssoProviders`: the link entries P-13 may offer. */
+  ssoProviders: readonly string[];
+}) {
   return (
     <div className="fog-content fog-settings">
       <section aria-labelledby="settings-account">
@@ -35,7 +42,10 @@ export function CurrentUserPanel({ user }: { user: CurrentUserView }) {
         <h2 id="settings-credentials" className="fog-section-heading">
           ログイン手段
         </h2>
-        <CredentialList credentials={user.credentials} showAddLink />
+        <CredentialList
+          credentials={user.credentials}
+          linkProviders={ssoProviders}
+        />
       </section>
 
       {hasPasswordCredential(user) && (

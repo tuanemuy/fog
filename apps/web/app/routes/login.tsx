@@ -25,5 +25,13 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const { redirect: redirectTo, sso_error: ssoError } = Route.useSearch();
-  return <AuthForm mode="login" redirectTo={redirectTo} ssoError={ssoError} />;
+  const { config } = Route.useRouteContext();
+  return (
+    <AuthForm
+      mode="login"
+      redirectTo={redirectTo}
+      ssoError={ssoError}
+      ssoProviders={config.ssoProviders}
+    />
+  );
 }

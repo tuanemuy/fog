@@ -6,4 +6,4 @@ export const content = {
   defaultTitle: "fog",
   defaultDescription: "雑に記録し、AIが整理するメモアプリ。",
   themeColor: "#f4f4f6",
-} as const satisfies Omit<AppConfig, "appUrl">;
+} as const satisfies Omit<AppConfig, "appUrl" | "ssoProviders">;

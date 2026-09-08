@@ -16,6 +16,7 @@ import {
 } from "@repo/core/adapters/webcrypto/ssoStateCodec";
 import { WebCryptoTokenGenerator } from "@repo/core/adapters/webcrypto/webCryptoTokenGenerator";
 import { content } from "@repo/core/config";
+import type { SsoProvider } from "@repo/core/domain/identity/valueObject";
 import { SystemError, SystemErrorCode } from "../errors";
 import { createIdentityTuning } from "../identity/tuning";
 import { SystemClock } from "../ports/clock";
@@ -61,9 +62,29 @@ export type ServerEnv = Readonly<{
  */
 export type RequestServerConfig = Readonly<{
   appUrl: string;
+  ssoProviders: readonly SsoProvider[];
   secrets: RequestSecrets;
   bindings: DurableObjectBindings;
 }>;
+
+/**
+ * The providers a screen may offer: exactly those with an adapter behind
+ * them. The dev stub serves every name; otherwise Google needs its client,
+ * and Apple has no adapter yet, so it is never offered in a deployment.
+ */
+export function configuredSsoProviders(env: ServerEnv): readonly SsoProvider[] {
+  if (env.SSO_DEV_STUB === "true") return ["google", "apple"];
+  return hasGoogleClient(env) ? ["google"] : [];
+}
+
+function hasGoogleClient(env: ServerEnv): boolean {
+  return (
+    env.GOOGLE_CLIENT_ID !== undefined &&
+    env.GOOGLE_CLIENT_ID.length > 0 &&
+    env.GOOGLE_CLIENT_SECRET !== undefined &&
+    env.GOOGLE_CLIENT_SECRET.length > 0
+  );
+}
 
 export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
   const appUrl = env.APP_URL;
@@ -72,6 +93,7 @@ export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
   }
   return {
     appUrl: new URL(appUrl).origin,
+    ssoProviders: configuredSsoProviders(env),
     secrets: {
       sessionSecret: requireSessionSecret(env.SESSION_SECRET),
       directoryRoutingKeyring: requireDirectoryRoutingKeyring(
@@ -174,6 +196,8 @@ function createProviderMailSender(env: ServerEnv, appUrl: string): MailSender {
 /** What the SSO handlers need beside the request container (design D-07). */
 export type SsoRuntime = Readonly<{
   provider: SsoIdentityProvider;
+  /** The same list `readRequestServerConfig` puts on `AppConfig.ssoProviders`. */
+  providers: readonly SsoProvider[];
   stateCodec: SsoStateCodec;
   /** The development authorize page exists only while this is `true`. */
   devStubEnabled: boolean;
@@ -195,6 +219,7 @@ export function createSsoRuntime(
     : createConfiguredSsoProvider(env, config.appUrl);
   return {
     provider,
+    providers: configuredSsoProviders(env),
     stateCodec: createSsoStateCodec({
       sessionSecret: config.secrets.sessionSecret,
     }),
@@ -206,17 +231,13 @@ function createConfiguredSsoProvider(
   env: ServerEnv,
   appUrl: string,
 ): SsoIdentityProvider {
-  const google =
-    env.GOOGLE_CLIENT_ID !== undefined &&
-    env.GOOGLE_CLIENT_ID.length > 0 &&
-    env.GOOGLE_CLIENT_SECRET !== undefined &&
-    env.GOOGLE_CLIENT_SECRET.length > 0
-      ? createGoogleSsoProvider({
-          clientId: env.GOOGLE_CLIENT_ID,
-          clientSecret: env.GOOGLE_CLIENT_SECRET,
-          redirectUri: new URL("/auth/sso/google/callback", appUrl).toString(),
-        })
-      : null;
+  const google = hasGoogleClient(env)
+    ? createGoogleSsoProvider({
+        clientId: env.GOOGLE_CLIENT_ID ?? "",
+        clientSecret: env.GOOGLE_CLIENT_SECRET ?? "",
+        redirectUri: new URL("/auth/sso/google/callback", appUrl).toString(),
+      })
+    : null;
   const unconfigured = (provider: string): never => {
     throw new SystemError(
       SystemErrorCode.ConfigurationError,

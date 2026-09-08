@@ -40,7 +40,7 @@ function installContainer(
   readAccountState: IdentityGateway["readAccountState"],
 ): void {
   const container = {
-    config: { ...content, appUrl: "http://localhost:3000" },
+    config: { ...content, appUrl: "http://localhost:3000", ssoProviders: [] },
     identityGateway: trippingIdentityGateway(
       (name) => {
         throw new Error(`getCurrentUserId must not reach ${name}`);

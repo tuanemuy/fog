@@ -78,6 +78,7 @@ function makeContainer(
       defaultTitle: "fog",
       defaultDescription: "",
       themeColor: "#000",
+      ssoProviders: [],
     },
     identityGateway: gateway,
     identityTuning: TUNING,

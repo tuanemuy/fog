@@ -72,6 +72,7 @@ const EMAIL_MESSAGE = "メールアドレスの形式が正しくありません
 const PASSWORD_MESSAGE = "パスワードは8文字以上128文字以下で入力してください";
 const CREDENTIALS_MESSAGE = "メールアドレスまたはパスワードが正しくありません";
 const PASSWORD_HINT = "8文字以上128文字以下で設定してください。";
+const PROVIDERS = ["google", "apple"] as const;
 
 describe("classifyAuthError", () => {
   it("attributes signup failures to their field", () => {
@@ -125,7 +126,7 @@ function fill(email: string, password: string) {
 describe("AuthForm — SSO and reset entries", () => {
   it("offers the providers with the origin and the redirect carried, and the reset link on login", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
-      <AuthForm mode="login" redirectTo="/topics" />,
+      <AuthForm mode="login" redirectTo="/topics" ssoProviders={PROVIDERS} />,
       { path: "/login" },
     );
     expect(
@@ -142,10 +143,42 @@ describe("AuthForm — SSO and reset entries", () => {
     expectInternalHrefsToResolve();
   });
 
+  // The buttons are the configured list and nothing else: a provider with
+  // no adapter (Apple in a deployment) is never offered, and no list means
+  // no SSO section at all.
+  it("offers only the configured providers, and nothing without any", async () => {
+    const { unmount } = await renderWithRouter(
+      <AuthForm
+        mode="login"
+        redirectTo={undefined}
+        ssoProviders={["google"]}
+      />,
+      { path: "/login" },
+    );
+    expect(screen.getByRole("link", { name: "Google で続行" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Apple で続行" })).toBeNull();
+    unmount();
+    await renderWithRouter(
+      <AuthForm mode="login" redirectTo={undefined} ssoProviders={[]} />,
+      { path: "/login" },
+    );
+    expect(
+      screen.queryByRole("navigation", { name: "外部アカウントで続行" }),
+    ).toBeNull();
+    expect(screen.queryByText("または")).toBeNull();
+  });
+
   it("signup carries its origin so an error returns here, and has no reset link", async () => {
-    await renderWithRouter(<AuthForm mode="signup" redirectTo={undefined} />, {
-      path: "/signup",
-    });
+    await renderWithRouter(
+      <AuthForm
+        mode="signup"
+        redirectTo={undefined}
+        ssoProviders={PROVIDERS}
+      />,
+      {
+        path: "/signup",
+      },
+    );
     expect(
       screen.getByRole("link", { name: "Google で続行" }).getAttribute("href"),
     ).toBe("/auth/sso/google/start?from=signup");
@@ -160,6 +193,7 @@ describe("AuthForm — SSO and reset entries", () => {
         mode="signup"
         redirectTo={undefined}
         ssoError="email_registered"
+        ssoProviders={PROVIDERS}
       />,
       { path: "/signup" },
     );
@@ -172,7 +206,12 @@ describe("AuthForm — SSO and reset entries", () => {
 
   it("draws a cancelled round trip as an interruption on login", async () => {
     await renderWithRouter(
-      <AuthForm mode="login" redirectTo={undefined} ssoError="cancelled" />,
+      <AuthForm
+        mode="login"
+        redirectTo={undefined}
+        ssoError="cancelled"
+        ssoProviders={PROVIDERS}
+      />,
       { path: "/login" },
     );
     expect(screen.getByRole("alert").textContent).toBe(
@@ -184,7 +223,11 @@ describe("AuthForm — SSO and reset entries", () => {
 describe("AuthForm", () => {
   it("signup shows the password hint and links to /login with the redirect", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
-      <AuthForm mode="signup" redirectTo="/settings" />,
+      <AuthForm
+        mode="signup"
+        redirectTo="/settings"
+        ssoProviders={PROVIDERS}
+      />,
       { path: "/signup" },
     );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
@@ -202,7 +245,7 @@ describe("AuthForm", () => {
 
   it("login links to /signup and omits the hint", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
-      <AuthForm mode="login" redirectTo={undefined} />,
+      <AuthForm mode="login" redirectTo={undefined} ssoProviders={PROVIDERS} />,
       { path: "/login" },
     );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
@@ -222,9 +265,12 @@ describe("AuthForm", () => {
 
   it("login navigates to the carried target once the session is confirmed", async () => {
     mocks.loginFn.mockResolvedValue({ userId: "u1" });
-    await renderWithRouter(<AuthForm mode="login" redirectTo="/settings" />, {
-      path: "/login",
-    });
+    await renderWithRouter(
+      <AuthForm mode="login" redirectTo="/settings" ssoProviders={PROVIDERS} />,
+      {
+        path: "/login",
+      },
+    );
     fill("user@example.com", "password1");
     fireEvent.click(screen.getByRole("button", { name: "ログイン" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/settings"));
@@ -235,9 +281,16 @@ describe("AuthForm", () => {
   // not a session, and navigating on it would loop through the guard.
   it("treats a resolved value of the wrong shape as a system error and stays", async () => {
     mocks.registerFn.mockResolvedValue({ status: 500, unhandled: true });
-    await renderWithRouter(<AuthForm mode="signup" redirectTo={undefined} />, {
-      path: "/signup",
-    });
+    await renderWithRouter(
+      <AuthForm
+        mode="signup"
+        redirectTo={undefined}
+        ssoProviders={PROVIDERS}
+      />,
+      {
+        path: "/signup",
+      },
+    );
     fill("user@example.com", "password1");
     fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
     const alert = await screen.findByRole("alert");
@@ -250,9 +303,12 @@ describe("AuthForm", () => {
 
   it("login draws a rejected attempt as one form message, no field error", async () => {
     mocks.loginFn.mockRejectedValue(new AppServerError(INVALID_CREDENTIALS));
-    await renderWithRouter(<AuthForm mode="login" redirectTo={undefined} />, {
-      path: "/login",
-    });
+    await renderWithRouter(
+      <AuthForm mode="login" redirectTo={undefined} ssoProviders={PROVIDERS} />,
+      {
+        path: "/login",
+      },
+    );
     fill("user@example.com", "password1");
     fireEvent.click(screen.getByRole("button", { name: "ログイン" }));
 
@@ -273,9 +329,16 @@ describe("AuthForm", () => {
 
   it("signup draws an invalid address next to the email field", async () => {
     mocks.registerFn.mockRejectedValue(new AppServerError(INVALID_EMAIL));
-    await renderWithRouter(<AuthForm mode="signup" redirectTo={undefined} />, {
-      path: "/signup",
-    });
+    await renderWithRouter(
+      <AuthForm
+        mode="signup"
+        redirectTo={undefined}
+        ssoProviders={PROVIDERS}
+      />,
+      {
+        path: "/signup",
+      },
+    );
     fill("bad@example.com", "password1");
     fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
 
@@ -296,7 +359,11 @@ describe("AuthForm", () => {
       new AppServerError(EMAIL_ALREADY_REGISTERED),
     );
     const { expectInternalHrefsToResolve } = await renderWithRouter(
-      <AuthForm mode="signup" redirectTo="/settings" />,
+      <AuthForm
+        mode="signup"
+        redirectTo="/settings"
+        ssoProviders={PROVIDERS}
+      />,
       { path: "/signup" },
     );
     fill("dup@example.com", "password1");

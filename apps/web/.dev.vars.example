@@ -22,6 +22,8 @@
 #   PROVIDER_IDEMPOTENCY_KEY     — state Worker (never leaves the Durable Object)
 #   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
 #   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
+#   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
+#                                  from the MAIL_FROM_ADDRESS environment variable at render time
 #   MAIL_DEV_SINK                — request Worker, **local only** (development mail sink)
 #   SSO_DEV_STUB                 — request Worker, **local only** (development identity provider)
 #

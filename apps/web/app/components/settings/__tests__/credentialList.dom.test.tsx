@@ -36,7 +36,7 @@ const credentials: readonly CredentialView[] = [
 describe("CredentialList", () => {
   it("offers unlink on SSO rows only, and the link entry when asked", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
-      <CredentialList credentials={credentials} showAddLink />,
+      <CredentialList credentials={credentials} linkProviders={["google"]} />,
     );
     expect(screen.getAllByRole("button", { name: /を解除$/ })).toHaveLength(1);
     expect(
@@ -45,9 +45,16 @@ describe("CredentialList", () => {
     expectInternalHrefsToResolve();
   });
 
+  it("offers no link for a provider outside the configured list", async () => {
+    await renderWithRouter(
+      <CredentialList credentials={credentials} linkProviders={["google"]} />,
+    );
+    expect(screen.queryByRole("link", { name: /Apple/ })).toBeNull();
+  });
+
   it("omits the link entry on P-03", async () => {
     await renderWithRouter(
-      <CredentialList credentials={credentials} showAddLink={false} />,
+      <CredentialList credentials={credentials} linkProviders={[]} />,
     );
     expect(screen.queryByRole("link", { name: /SSO 連携を追加/ })).toBeNull();
   });
@@ -60,7 +67,7 @@ describe("CredentialList", () => {
       }),
     );
     const { router } = await renderWithRouter(
-      <CredentialList credentials={credentials} showAddLink />,
+      <CredentialList credentials={credentials} linkProviders={["google"]} />,
     );
     const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(
@@ -101,7 +108,7 @@ describe("CredentialList", () => {
             usableForLogin: true,
           },
         ]}
-        showAddLink
+        linkProviders={["google"]}
       />,
     );
     fireEvent.click(

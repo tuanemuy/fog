@@ -65,6 +65,10 @@ export async function handleSso(
   const match = SSO_PATH.exec(url.pathname);
   if (match === null) return notFound();
   const provider = match[1] ?? "";
+  // A name with no adapter behind it is not a route, whatever the intent.
+  if (!(runtime.providers as readonly string[]).includes(provider)) {
+    return notFound();
+  }
   if (match[2] === "start") {
     return handleStart(request, url, provider, container, runtime, secure);
   }

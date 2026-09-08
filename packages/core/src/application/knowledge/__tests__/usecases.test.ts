@@ -43,6 +43,7 @@ function knowledgeContainer(
       defaultTitle: "fog",
       defaultDescription: "",
       themeColor: "#000",
+      ssoProviders: [],
     },
     identityGateway: trippingIdentityGateway((name) => {
       throw new Error(`unexpected identity gateway call: ${name}`);

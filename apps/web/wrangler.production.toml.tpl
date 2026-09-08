@@ -10,6 +10,8 @@
 # === Before first deploy =================================================
 #   1. `pulumi -C infra/cloudflare/pulumi/resources -s production up`
 #   2. `pnpm cf:render:production` (renders BOTH request and state configs)
+#      `${MAIL_FROM_ADDRESS}` is read from the MAIL_FROM_ADDRESS environment
+#      variable at render time (it is not a Pulumi output): export it first.
 #   3. `wrangler secret put SESSION_SECRET --config wrangler.production.toml`
 #      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.production.toml`
 #      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.production.toml`

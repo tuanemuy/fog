@@ -54,6 +54,7 @@ vi.mock("@repo/core/application/di/serverCloudflare", () => ({
   }),
   createSsoRuntime: () => ({
     provider: createDevStubSsoProvider(APP_URL),
+    providers: ["google"],
     stateCodec: createSsoStateCodec({ sessionSecret: SECRET }),
     devStubEnabled: mocks.devStubEnabled.value,
   }),
@@ -143,6 +144,14 @@ describe("start", () => {
       new Date(),
     );
     expect(payload).toMatchObject({ redirect: null, origin: "/signup" });
+  });
+
+  it("answers 404 for a provider outside the configured list", async () => {
+    const response = await handleSso(
+      new Request(`${APP_URL}/auth/sso/apple/start`),
+      env,
+    );
+    expect(response.status).toBe(404);
   });
 
   it("refuses a link intent without a session", async () => {

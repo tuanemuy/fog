@@ -90,7 +90,7 @@ describe("startSession", () => {
   ): void {
     issued = [];
     const container = {
-      config: { ...content, appUrl: "http://localhost:3000" },
+      config: { ...content, appUrl: "http://localhost:3000", ssoProviders: [] },
       // The account state is the one thing `startSession` reads: the
       // token has to carry the generation it was issued under, or the
       // revocation check on every later request has nothing to compare.
