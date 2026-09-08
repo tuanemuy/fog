@@ -774,7 +774,9 @@
 
 展示会の案内はトップに常設せず、期間中だけ掲載する。</textarea>
 
-            <!-- 出典 -->
+            <!-- 出典。「出典から外す」「出典を追加」は新規作成モードだけに出す。
+                 編集モードでは出典は読み取り専用（出典リンクの生成は作成時のみ。spec/domains/knowledge.md「SourceLink」）。
+                 このモックは両方の操作を見せるために新規作成モードの出典欄を描いている -->
             <div class="origin">
               <div class="o-label">出典</div>
               <div class="origin-row">
