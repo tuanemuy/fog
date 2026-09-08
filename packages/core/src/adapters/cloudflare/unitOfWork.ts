@@ -28,6 +28,7 @@ import {
   writeUpdatedOperation,
 } from "./stores/operationsStore";
 import { writeEnqueuedEvents } from "./stores/outboxWriter";
+import { createSearchIndex } from "./stores/searchIndex";
 import { createTopicRepository } from "./stores/topicRepository";
 import { createTrashQueryPort } from "./stores/trashQueryPort";
 import { createUserSettingsRepository } from "./stores/userSettingsRepository";
@@ -128,6 +129,7 @@ export function createUserDataUnitOfWorkProvider(
       memoRepository: createMemoRepository(sql, deps.selfLocator),
       topicRepository: createTopicRepository(sql, deps.selfLocator),
       documentRepository: createDocumentRepository(sql, deps.selfLocator),
+      searchIndex: createSearchIndex(sql, nowMs),
       trashQueryPort: createTrashQueryPort(sql),
       accountStore: createAccountStore(sql, nowMs),
       credentialLocatorStore: createCredentialLocatorStore(sql, nowMs),

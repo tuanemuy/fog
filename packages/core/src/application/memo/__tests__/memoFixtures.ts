@@ -44,6 +44,11 @@ export function setPostedAt(
       postedAt.getTime(),
       memoId,
     );
+    sql.exec(
+      "UPDATE search_entries SET timestamp = ? WHERE id = ?",
+      postedAt.getTime(),
+      memoId,
+    );
   });
 }
 

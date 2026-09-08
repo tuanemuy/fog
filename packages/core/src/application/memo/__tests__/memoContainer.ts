@@ -8,6 +8,7 @@ import {
   trippingIdentityGateway,
   trippingKnowledgeGateway,
   trippingMemoGateway,
+  trippingSearchGateway,
 } from "../../__tests__/fakes";
 import type { MemoGateway } from "../gateway";
 
@@ -42,6 +43,9 @@ export function memoContainer(
     }, overrides),
     knowledgeGateway: trippingKnowledgeGateway((name) => {
       throw new Error(`unexpected knowledge gateway call: ${name}`);
+    }),
+    searchGateway: trippingSearchGateway((name) => {
+      throw new Error(`unexpected search gateway call: ${name}`);
     }),
     passwordHasher: new FakePasswordHasher(),
   };

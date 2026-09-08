@@ -12,6 +12,7 @@ import type { IdentityDirectoryDurableObject } from "../identityDirectoryDurable
 import { createIdentityGateway } from "../identityGateway";
 import { createKnowledgeGateway } from "../knowledgeGateway";
 import { createMemoGateway } from "../memoGateway";
+import { createSearchGateway } from "../searchGateway";
 import type { UserDataDurableObject } from "../userDataDurableObject";
 
 let sequence = 0;
@@ -59,6 +60,7 @@ export function createTestGateways(now: () => Date = () => new Date()) {
     }),
     memoGateway: createMemoGateway(bindings),
     knowledgeGateway: createKnowledgeGateway(bindings),
+    searchGateway: createSearchGateway(bindings),
   };
 }
 

@@ -40,6 +40,7 @@ import { occConflict } from "./occ";
 import {
   activeSourceDocumentIds,
   removeSearchEntry,
+  reprojectCitingDocuments,
   upsertSearchEntry,
 } from "./searchProjection";
 
@@ -169,6 +170,9 @@ function versioned<T extends Memo>(entity: T, row: MemoRow): Versioned<T> {
 function projectMemo(sql: SqlStorage, memo: Memo): void {
   if (memo.status !== "active") {
     removeSearchEntry(sql, memo.id);
+    // The documents citing it drop its id from their entries (contract
+    // 「メモのソフトデリート」 in `spec/domains/search.md`).
+    reprojectCitingDocuments(sql, memo.id);
     return;
   }
   upsertSearchEntry(sql, {

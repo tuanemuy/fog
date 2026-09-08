@@ -15,6 +15,7 @@ import type { UserSettingsRepository } from "@repo/core/domain/identity/ports/us
 import type { DocumentRepository } from "@repo/core/domain/knowledge/ports/documentRepository";
 import type { TopicRepository } from "@repo/core/domain/knowledge/ports/topicRepository";
 import type { MemoRepository } from "@repo/core/domain/memo/ports/memoRepository";
+import type { SearchIndexPort } from "@repo/core/domain/search/ports/searchIndexPort";
 import type { TrashQueryPort } from "@repo/core/domain/trash/ports/trashQueryPort";
 
 /**
@@ -164,6 +165,8 @@ export interface UserDataUnitOfWorkContext
   memoRepository: MemoRepository;
   topicRepository: TopicRepository;
   documentRepository: DocumentRepository;
+  /** Read-only; the index whose entries the repositories above write (`spec/domains/search.md`). */
+  searchIndex: SearchIndexPort;
   /** Read-only; the wake-up material for `purge-trash` (`spec/domains/trash.md`). */
   trashQueryPort: TrashQueryPort;
   accountStore: AccountStore;

@@ -147,3 +147,39 @@ export function reprojectMemo(sql: SqlStorage, memoId: string): void {
     sourceIds: activeSourceDocumentIds(sql, memoId),
   });
 }
+
+type DocumentEntryRow = Readonly<{
+  id: string;
+  topic_id: string;
+  title: string;
+  body: string;
+  updated_at: number;
+}>;
+
+/**
+ * Rebuilds the entries of every active document citing the memo, so their
+ * `sourceIds` follow the memo's own state (trashed, restored or deleted).
+ * A trashed document has no entry to rebuild.
+ */
+export function reprojectCitingDocuments(
+  sql: SqlStorage,
+  memoId: string,
+): void {
+  const rows = sql
+    .exec<DocumentEntryRow>(
+      `SELECT d.id, d.topic_id, d.title, d.body, d.updated_at
+       FROM source_links sl JOIN documents d ON d.id = sl.document_id
+       WHERE sl.memo_id = ? AND d.status = 'active'`,
+      memoId,
+    )
+    .toArray();
+  for (const row of rows) {
+    projectDocument(sql, {
+      id: row.id,
+      topicId: row.topic_id,
+      title: row.title,
+      body: row.body,
+      updatedAt: new Date(row.updated_at),
+    });
+  }
+}

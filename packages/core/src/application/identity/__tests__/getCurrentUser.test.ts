@@ -9,6 +9,7 @@ import {
   trippingIdentityGateway,
   trippingKnowledgeGateway,
   trippingMemoGateway,
+  trippingSearchGateway,
 } from "../../__tests__/fakes";
 import {
   isNotFoundError,
@@ -51,6 +52,9 @@ function makeContainer(gateway: IdentityGateway): UsecaseContainer {
     }),
     knowledgeGateway: trippingKnowledgeGateway((name) => {
       throw new Error(`unexpected knowledge gateway call: ${name}`);
+    }),
+    searchGateway: trippingSearchGateway((name) => {
+      throw new Error(`unexpected search gateway call: ${name}`);
     }),
     passwordHasher: new FakePasswordHasher(),
   };

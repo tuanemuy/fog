@@ -80,6 +80,9 @@ import type {
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
+import type { SearchQueryDto } from "@repo/core/application/search/gateway";
+import { searchProcedure } from "@repo/core/application/search/search";
+import type { SearchOutputView } from "@repo/core/application/search/view";
 import type { AccountState } from "@repo/core/domain/identity/ports/accountStore";
 import { CredentialId } from "@repo/core/domain/identity/valueObject";
 import {
@@ -290,6 +293,12 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
   async getTopicName(topicId: string): Promise<RpcEnvelope<TopicNameView>> {
     return this.envelope(() =>
       this.runUnitOfWork((ctx) => getTopicNameProcedure(ctx, topicId)),
+    );
+  }
+
+  async search(input: SearchQueryDto): Promise<RpcEnvelope<SearchOutputView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => searchProcedure(ctx, input)),
     );
   }
 

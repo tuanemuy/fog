@@ -294,6 +294,10 @@ export const SystemErrorCode = {
   JobHandlerMissing: "JOB_HANDLER_MISSING",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
+  // The FTS5 index refused a query (a missing or corrupt `search_fts`, a
+  // statement the tokenizer could not run). Retryable: the base tables are
+  // intact and `reindex` rebuilds the index from them.
+  SearchIndexUnavailable: "SEARCH_INDEX_UNAVAILABLE",
 } as const;
 export type SystemErrorCode =
   (typeof SystemErrorCode)[keyof typeof SystemErrorCode];
@@ -302,6 +306,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
   new Set<SystemErrorCode>([
     SystemErrorCode.NetworkError,
     SystemErrorCode.ExternalApiError,
+    SystemErrorCode.SearchIndexUnavailable,
   ]);
 
 export class SystemError extends ApplicationError<SystemErrorCode> {

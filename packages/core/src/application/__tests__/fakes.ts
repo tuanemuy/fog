@@ -10,6 +10,7 @@ import type { TokenGenerator } from "../ports/tokenGenerator";
 
 export { trippingKnowledgeGateway } from "./fakes/fakeKnowledgeGateway";
 export { trippingMemoGateway } from "./fakes/fakeMemoGateway";
+export { trippingSearchGateway } from "./fakes/fakeSearchGateway";
 
 /**
  * Deterministic ids that still pass `IdGenerator.validate`. The `ffffffff`
