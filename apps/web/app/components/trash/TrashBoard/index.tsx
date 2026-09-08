@@ -141,6 +141,15 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [page, setPage] = useState(initial.page);
   const [totalCount, setTotalCount] = useState(initial.totalCount);
+  // `router.invalidate()` hands in a fresh page: the local view re-bases on it.
+  const [seed, setSeed] = useState(initial);
+  if (seed !== initial) {
+    setSeed(initial);
+    setExtra([]);
+    setRemoved(new Set());
+    setPage(initial.page);
+    setTotalCount(initial.totalCount);
+  }
   const base = [...initial.items, ...extra].filter(
     (i) => !removed.has(keyOf(i)),
   );
@@ -369,8 +378,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
             text: `ゴミ箱を空にしました（${result.deletedCount}件）`,
           });
         }
-        setExtra([]);
-        setRemoved(new Set());
+        setTotalCount((n) => Math.max(0, n - result.deletedCount));
         await settle();
       } catch (error) {
         setDialogBusy(false);
