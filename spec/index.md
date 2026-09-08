@@ -22,7 +22,7 @@
 - [pages/index.md](./pages/index.md) — ページ設計（P-01〜P-14）
 - [domains/index.md](./domains/index.md) — ドメイン設計（identity / memo / knowledge / search / trash / export）
 - spec/usecases/ — ユースケース設計（6ドメイン・55ユースケース）
-- [database/index.md](./database/index.md) — DB設計（ユーザー単位 SQLite-backed Durable Objects。User Data DO 17 テーブル / Identity Directory DO 7 テーブル）
+- [database/index.md](./database/index.md) — DB設計（ユーザー単位 SQLite-backed Durable Objects。User Data DO 18 テーブル / Identity Directory DO 7 テーブル）
 - [async/index.md](./async/index.md) — 非同期実行の設計（3類型の判定規則と全数表の正本。同期実行 / Outbox event / local job）
 - [rotation/index.md](./rotation/index.md) — 鍵ローテーションの設計（写像鍵の移送とメール暗号鍵の再暗号化。手順・2世代並存の規則・不変条件の正本）
 - [recovery/index.md](./recovery/index.md) — cross-DO saga の終端と自動回収の設計（終端モード・kind 別の後始末の段・材料の寿命・operator 経路への受け渡し・不変条件の正本）

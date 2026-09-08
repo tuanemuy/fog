@@ -53,6 +53,7 @@ fog の永続化スキーマ。**Cloudflare Workers + ユーザー単位 SQLite-
 | `operations` | User Data | 共通基盤 | saga / RPC の冪等キーと phase |
 | `migration_progress` | User Data | 共通基盤 | migration の部分適用カーソル |
 | `_meta` | User Data | 共通基盤 | `schema_version` と自 locator |
+| `oauth_consumed_codes` | User Data | identity（アダプター） | 交換済み OAuth 認可コードの `jti`（adapter-owned。定義は「本ファイルで定義しないテーブル」の節） |
 | `credential_mappings` | Identity Directory | identity（アダプター） | クレデンシャル → `userId` の写像・検証材料・予約 |
 | `password_reset_tokens` | Identity Directory | identity（アダプター） | `PasswordResetTokenPort` の永続化 |
 | `reset_request_windows` | Identity Directory | identity（アダプター） | `PasswordResetThrottlePort` の永続化（リセット依頼のスロットル窓） |
