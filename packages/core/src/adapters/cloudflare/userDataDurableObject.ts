@@ -1,6 +1,7 @@
 import type { RpcEnvelope } from "@repo/core/application/delivery/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import type { UserDataUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
+import type { ExportSourceDto } from "@repo/core/application/export/gateway";
 import { approveAiClientAuthorizationProcedure } from "@repo/core/application/identity/approveAiClientAuthorization";
 import { findActiveAiClientProcedure } from "@repo/core/application/identity/authorizeAiClient";
 import { changeTrashRetentionDaysProcedure } from "@repo/core/application/identity/changeTrashRetentionDays";
@@ -158,6 +159,10 @@ import { createSweepOrphanMappingHandler } from "./jobs/sweepOrphanMapping";
 import { USER_DATA_PLAN } from "./schema/userDataPlan";
 import { readCallerToken } from "./stores/accountStore";
 import { createAiClientConnectionRepository } from "./stores/aiClientConnectionRepository";
+import {
+  EXPORT_MAX_SOURCE_BYTES,
+  readExportSourceDto,
+} from "./stores/exportSourceReader";
 import { consumeCodeJti } from "./stores/oauthConsumedCodes";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 
@@ -462,6 +467,24 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
         return undefined;
       });
     });
+  }
+
+  /**
+   * S-ST-02's read: the whole live snapshot in one `transactionSync`, no
+   * write, no job, no event — it works on an object that has no room left
+   * to write. Over the cap it is `SystemError(ExportTooLarge)` before any
+   * body is read.
+   */
+  async readExportSource(): Promise<RpcEnvelope<ExportSourceDto>> {
+    return this.envelope(() =>
+      this.runUnitOfWork(() =>
+        readExportSourceDto(
+          this.ctx.storage.sql,
+          this.config.exportMaxSourceBytes ?? EXPORT_MAX_SOURCE_BYTES,
+          this.config.logger,
+        ),
+      ),
+    );
   }
 
   async listTrash(input: ListTrashDto): Promise<RpcEnvelope<TrashListView>> {

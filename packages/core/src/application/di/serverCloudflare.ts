@@ -1,4 +1,5 @@
 import type { DurableObjectBindings } from "@repo/core/adapters/cloudflare/doStubs";
+import { createExportGateway } from "@repo/core/adapters/cloudflare/exportGateway";
 import { createIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
 import { createKnowledgeGateway } from "@repo/core/adapters/cloudflare/knowledgeGateway";
 import { createMemoGateway } from "@repo/core/adapters/cloudflare/memoGateway";
@@ -136,6 +137,7 @@ export function createRequestContainer(
     knowledgeGateway: createKnowledgeGateway(bindings),
     searchGateway: createSearchGateway(bindings),
     trashGateway: createTrashGateway(bindings),
+    exportGateway: createExportGateway(bindings),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({ secret: secrets.sessionSecret }),
     tokenGenerator: WebCryptoTokenGenerator,

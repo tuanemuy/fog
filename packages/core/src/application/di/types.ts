@@ -1,5 +1,6 @@
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import type { SsoProvider } from "@repo/core/domain/identity/valueObject";
+import type { ExportGateway } from "../export/gateway";
 import type { IdentityGateway } from "../identity/gateway";
 import type { IdentityTuning } from "../identity/tuning";
 import type { KnowledgeGateway } from "../knowledge/gateway";
@@ -45,6 +46,7 @@ export type RequestContainer = SharedDeps &
     knowledgeGateway: KnowledgeGateway;
     searchGateway: SearchGateway;
     trashGateway: TrashGateway;
+    exportGateway: ExportGateway;
     passwordHasher: PasswordHasher;
     sessionCodec: SessionCodec;
     /** Opaque secrets minted on the request side: caller bindings, reset tokens, code `jti`s. */

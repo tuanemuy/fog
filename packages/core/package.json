@@ -11,6 +11,7 @@
     "typecheck": "tsgo"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "uuid": "^14.0.0",
     "zod": "^4.4.3"
   },

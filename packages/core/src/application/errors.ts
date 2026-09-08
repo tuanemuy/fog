@@ -298,6 +298,15 @@ export const SystemErrorCode = {
   // statement the tokenizer could not run). Retryable: the base tables are
   // intact and `reindex` rebuilds the index from them.
   SearchIndexUnavailable: "SEARCH_INDEX_UNAVAILABLE",
+  // The export snapshot is over the request-side byte cap
+  // (`spec/domains/export.md`: "上限があること、超過は拒否されること").
+  // Not retryable — the same data is the same size — and the one system
+  // code whose name a client may read, since the user is the one who can
+  // act on it.
+  ExportTooLarge: "EXPORT_TOO_LARGE",
+  // The zip encoder refused the archive. Not retryable: the same archive
+  // fails the same way.
+  ArchiveEncodingError: "ARCHIVE_ENCODING_ERROR",
 } as const;
 export type SystemErrorCode =
   (typeof SystemErrorCode)[keyof typeof SystemErrorCode];

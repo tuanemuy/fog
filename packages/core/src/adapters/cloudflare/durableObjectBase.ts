@@ -71,6 +71,8 @@ export type DurableObjectRuntimeConfig = Readonly<{
   idGenerator: IdGenerator;
   logger: Logger;
   tuningOverrides?: Partial<DeliveryTuning>;
+  /** The export snapshot's byte cap; `EXPORT_MAX_SOURCE_BYTES` when unset. */
+  exportMaxSourceBytes?: number;
   jobRegistry?: JobHandlerRegistry;
   terminalStage?: TerminalStageSelector;
 }>;
