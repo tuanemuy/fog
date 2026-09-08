@@ -66,9 +66,7 @@ export default {
       );
     }
     if (isExportRoute(url.pathname)) {
-      return storage.run(container, () =>
-        handleExport(request, { container, appUrl: config.appUrl }),
-      );
+      return storage.run(container, () => handleExport(request, { container }));
     }
     return storage.run(container, () => defaultEntry.fetch(request));
   },

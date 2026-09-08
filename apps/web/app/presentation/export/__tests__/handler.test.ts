@@ -76,7 +76,7 @@ function post(
   });
 }
 
-const deps = (c = container()) => ({ container: c, appUrl: APP_URL });
+const deps = (c = container()) => ({ container: c });
 
 describe("POST /export", () => {
   it("answers the zip as an attachment named after the day, uncached", async () => {

@@ -6,7 +6,6 @@ import { readSessionUserId } from "../requestSession";
 
 export type ExportHandlerDeps = Readonly<{
   container: RequestContainer;
-  appUrl: string;
 }>;
 
 export const EXPORT_PATH = "/export";
@@ -33,12 +32,14 @@ function refused(code: string, message: string, status: number): Response {
 
 /**
  * Whether a cookie-authenticated POST came from this app's own pages: an
- * `Origin` must be ours, and without one the fetch metadata must not say
- * another site sent it. A non-browser client sends neither.
+ * `Origin` must be the one the request itself was served on (not
+ * `APP_URL`, which a preview or a proxy can differ from), and without one
+ * the fetch metadata must not say another site sent it. A non-browser
+ * client sends neither.
  */
-function isSameOrigin(request: Request, appUrl: string): boolean {
+function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
-  if (origin !== null) return origin === new URL(appUrl).origin;
+  if (origin !== null) return origin === new URL(request.url).origin;
   const site = request.headers.get("sec-fetch-site");
   return site === null || site === "same-origin" || site === "none";
 }
@@ -60,7 +61,7 @@ export async function handleExport(
       headers: { allow: "POST" },
     });
   }
-  if (!isSameOrigin(request, deps.appUrl)) {
+  if (!isSameOrigin(request)) {
     return new Response("Forbidden", { status: 403 });
   }
   const userId = await readSessionUserId(request, deps.container);
