@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { OutboxQueueMessage } from "@repo/core/adapters/cloudflare/queueMessage";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   createRequestContainer,
@@ -8,12 +9,17 @@ import {
 import type { RequestContainer } from "@repo/core/application/di/types";
 import defaultEntry from "@tanstack/react-start/server-entry";
 import { handleDiagnostics } from "./worker/cloudflare/diagnostics";
+import { runQueueBatch } from "./worker/cloudflare/queueHandlers";
+import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
 
 /**
  * The request Worker. Builds one container per request, keeps it in an
  * `AsyncLocalStorage` scope that `getContainer()` reads, and hands the
- * request to TanStack Start. The queue consumers join this module with the
- * password-reset slice.
+ * request to TanStack Start. Two route families are answered before
+ * TanStack sees them: the SSO handlers (`/auth/sso/`, `/__dev/sso/`),
+ * which run outside the router because their outcome is a redirect with
+ * cookies, and the diagnostics route. `queue()` hosts the mail consumer
+ * and the DLQ handler.
  */
 
 const ALS_SYMBOL: unique symbol = Symbol.for(
@@ -34,8 +40,14 @@ export default {
     if (url.pathname.startsWith("/__diagnostics/")) {
       return handleDiagnostics(request, env);
     }
+    if (isSsoRoute(url.pathname)) {
+      return handleSso(request, env);
+    }
     const config = readRequestServerConfig(env);
     const container = createRequestContainer(config);
     return storage.run(container, () => defaultEntry.fetch(request));
+  },
+  async queue(batch: MessageBatch<unknown>, env: ServerEnv): Promise<void> {
+    await runQueueBatch(batch as MessageBatch<OutboxQueueMessage>, env);
   },
 };

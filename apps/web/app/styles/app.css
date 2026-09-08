@@ -1218,3 +1218,49 @@ li + li > .fog-revision-row {
   display: inline-block;
   text-decoration: none;
 }
+
+.fog-auth-divider {
+  margin: var(--space-lg) 0 var(--space-sm);
+  text-align: center;
+  color: var(--color-neutral-500);
+  font-size: var(--text-sm);
+}
+.fog-auth-sso {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.fog-auth-sso .fog-secondary {
+  text-align: center;
+  text-decoration: none;
+}
+.fog-credential-list .fog-settings-row .fog-text-button {
+  margin-left: auto;
+  padding: 0;
+  color: var(--color-primary-darker);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.fog-credential-list > p {
+  margin: var(--space-md) 0 0;
+}
+.fog-credential-list .fog-secondary {
+  display: inline-block;
+  text-decoration: none;
+}
+.fog-password-change,
+.fog-ai-connections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-width: 28rem;
+}
+.fog-password-change input {
+  padding: var(--space-sm);
+  border: 1px solid var(--color-neutral-300);
+  border-radius: var(--radius-sm);
+}
+.fog-password-change .fog-primary,
+.fog-ai-connections .fog-secondary {
+  align-self: flex-start;
+}

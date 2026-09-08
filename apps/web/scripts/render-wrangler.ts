@@ -17,6 +17,7 @@
  * substituted; unknown names abort the run so we never ship a half-rendered
  * config):
  *   ${APP_URL}            — public URL of the deployment
+ *   ${MAIL_FROM_ADDRESS}  — the mail sender, from the MAIL_FROM_ADDRESS environment variable
  *   ${D1_DATABASE_ID}     — D1 database id
  *   ${D1_DATABASE_NAME}   — D1 database name
  *   ${EVENTS_QUEUE_NAME}  — primary events queue name
@@ -83,6 +84,9 @@ const substitutions: Record<string, string | undefined> = {
   EVENTS_QUEUE_NAME: outputs.eventsQueueName,
   DLQ_QUEUE_NAME: outputs.dlqQueueName,
   RESOURCE_PREFIX: outputs.exportedPrefix,
+  // Not a Pulumi resource: the sender is a property of the mail provider's
+  // verified domain, so it is read from the environment at render time.
+  MAIL_FROM_ADDRESS: process.env.MAIL_FROM_ADDRESS,
 };
 
 for (const { templatePath, outPath } of targets) {

@@ -12,7 +12,8 @@ import {
 import { DEFAULT_REDIRECT_PATH } from "@/presentation/redirectSearch";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { loginFn, registerFn } from "../actions";
-import { isSessionStartedResult } from "../schema";
+import { renderSsoError, SsoButtons } from "../SsoButtons";
+import { isSessionStartedResult, type SsoErrorCode } from "../schema";
 
 type Field = "email" | "password";
 
@@ -69,9 +70,11 @@ export function classifyAuthError(
 export function AuthForm({
   mode,
   redirectTo,
+  ssoError,
 }: {
   mode: "login" | "signup";
   redirectTo: string | undefined;
+  ssoError?: SsoErrorCode | undefined;
 }) {
   const signup = mode === "signup";
   const login = useServerFn(loginFn);
@@ -116,6 +119,22 @@ export function AuthForm({
             ? "思いついたことを、気軽に残そう。"
             : "あなたのメモが待っています。"}
         </p>
+        {ssoError !== undefined && (
+          <p className="fog-error" role="alert">
+            {renderSsoError(ssoError, mode)}
+            {ssoError === "email_registered" && signup && (
+              <>
+                {" "}
+                <Link
+                  to="/login"
+                  search={redirectTo ? { redirect: redirectTo } : {}}
+                >
+                  ログインする
+                </Link>
+              </>
+            )}
+          </p>
+        )}
         <form className="fog-auth-form" action={action} aria-busy={pending}>
           <label htmlFor={`${id}-email`}>メールアドレス</label>
           <input
@@ -191,7 +210,16 @@ export function AuthForm({
                 ? "アカウント登録"
                 : "ログイン"}
           </button>
+          {!signup && (
+            <p className="fog-auth-footer">
+              <Link to="/password-reset">パスワードをお忘れの方</Link>
+            </p>
+          )}
         </form>
+        <p className="fog-auth-divider" aria-hidden="true">
+          または
+        </p>
+        <SsoButtons mode={mode} redirectTo={redirectTo} />
         <p className="fog-auth-footer">
           {signup ? "アカウントをお持ちの方は" : "はじめての方は"}{" "}
           {signup ? (

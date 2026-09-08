@@ -46,6 +46,10 @@ binding = "ASSETS"
 # local / preview affordance and is registered in no deployed stage.
 [vars]
 APP_URL = "${APP_URL}"
+# The sender the mail provider is asked to use; `MAIL_DEV_SINK` and
+# `SSO_DEV_STUB` are deliberately absent, so no deployed stage can select
+# the development sink or the stub identity provider.
+MAIL_FROM_ADDRESS = "${MAIL_FROM_ADDRESS}"
 
 
 [[durable_objects.bindings]]

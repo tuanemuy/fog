@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AuthForm } from "@/components/auth/AuthForm";
+import { ssoErrorSchema } from "@/components/auth/schema";
 import { readAuthStateFn } from "@/presentation/authState";
 import { routeHead } from "@/presentation/head";
 import {
@@ -8,7 +9,9 @@ import {
 } from "@/presentation/redirectSearch";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: redirectSearchSchema,
+  validateSearch: redirectSearchSchema.extend({
+    sso_error: ssoErrorSchema.optional(),
+  }),
   beforeLoad: async ({ search }) => {
     const { authenticated } = await readAuthStateFn();
     if (authenticated) {
@@ -21,6 +24,6 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { redirect: redirectTo } = Route.useSearch();
-  return <AuthForm mode="login" redirectTo={redirectTo} />;
+  const { redirect: redirectTo, sso_error: ssoError } = Route.useSearch();
+  return <AuthForm mode="login" redirectTo={redirectTo} ssoError={ssoError} />;
 }

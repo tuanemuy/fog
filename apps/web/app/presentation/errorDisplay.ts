@@ -11,6 +11,8 @@ function renderConflictMessage(code: string | null): string {
   switch (code) {
     case "EMAIL_ALREADY_REGISTERED":
       return "このメールアドレスは登録済みです";
+    case "SSO_IDENTITY_ALREADY_REGISTERED":
+      return "この外部アカウントは既に別のアカウントに連携されています";
     case "OPTIMISTIC_LOCK_FAILURE":
       return "他の操作と競合しました。もう一度お試しください";
     case "UNIQUE_VIOLATION":
@@ -38,6 +40,13 @@ function renderBusinessMessage(code: string | null): string | null {
       return "パスワードは8文字以上128文字以下で入力してください";
     case IdentityErrorCode.InvalidEmail:
       return "メールアドレスの形式が正しくありません";
+    case IdentityErrorCode.LastCredentialRemoval:
+    case IdentityErrorCode.LoginMethodRequired:
+      return "最後のログイン手段は解除できません";
+    case IdentityErrorCode.PasswordNotSupported:
+      return "このアカウントにはパスワードが設定されていません";
+    case IdentityErrorCode.UnsupportedSsoProvider:
+      return "対応していない外部アカウントです";
     case MemoErrorCode.BodyTooLong:
       return "メモは10,000文字以内で入力してください";
     case MemoErrorCode.EmptyBody:
@@ -79,6 +88,12 @@ function renderValidationMessage(code: string | null): string | null {
   switch (code) {
     case "INVALID_CREDENTIALS":
       return "メールアドレスまたはパスワードが正しくありません";
+    case "RESET_TOKEN_INVALID":
+      return "リンクが無効か期限切れです";
+    case "CURRENT_PASSWORD_MISMATCH":
+      return "現在のパスワードが正しくありません";
+    case "TOO_MANY_ATTEMPTS":
+      return "試行回数の上限に達しました。しばらくしてからお試しください";
     default:
       return null;
   }
@@ -89,6 +104,9 @@ function renderValidationMessage(code: string | null): string | null {
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   email: "メールアドレス",
   password: "パスワード",
+  currentPassword: "現在のパスワード",
+  newPassword: "新しいパスワード",
+  token: "リンク",
 };
 
 // The `""` key is `validateInput`'s flatten of an issue with an empty

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as PasswordResetRouteImport } from './routes/password-reset'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
@@ -18,6 +19,7 @@ import { Route as AppTopicsRouteImport } from './routes/_app/topics'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppTopicsTopicIdRouteImport } from './routes/_app/topics_.$topicId'
+import { Route as AppPasswordResetDoneRouteImport } from './routes/_app/password-reset.done'
 import { Route as AppDocumentsDocumentIdRouteImport } from './routes/_app/documents_.$documentId'
 import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
 import { Route as AppDocumentsDocumentIdHistoryRouteImport } from './routes/_app/documents_.$documentId_.history'
@@ -27,6 +29,11 @@ import { Route as AppTopicsTopicIdDocumentsNewRouteImport } from './routes/_app/
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PasswordResetRoute = PasswordResetRouteImport.update({
+  id: '/password-reset',
+  path: '/password-reset',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -68,6 +75,11 @@ const AppTopicsTopicIdRoute = AppTopicsTopicIdRouteImport.update({
   path: '/topics/$topicId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPasswordResetDoneRoute = AppPasswordResetDoneRouteImport.update({
+  id: '/password-reset/done',
+  path: '/password-reset/done',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDocumentsDocumentIdRoute = AppDocumentsDocumentIdRouteImport.update({
   id: '/documents_/$documentId',
   path: '/documents/$documentId',
@@ -100,12 +112,14 @@ const AppTopicsTopicIdDocumentsNewRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
   '/signup': typeof SignupRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/trash': typeof AppTrashRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
   '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
   '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
@@ -114,6 +128,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
   '/signup': typeof SignupRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
@@ -121,6 +136,7 @@ export interface FileRoutesByTo {
   '/trash': typeof AppTrashRoute
   '/': typeof AppIndexRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
   '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
   '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
@@ -131,6 +147,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/password-reset': typeof PasswordResetRoute
   '/signup': typeof SignupRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -138,6 +155,7 @@ export interface FileRoutesById {
   '/_app/trash': typeof AppTrashRoute
   '/_app/': typeof AppIndexRoute
   '/_app/documents_/$documentId': typeof AppDocumentsDocumentIdRoute
+  '/_app/password-reset/done': typeof AppPasswordResetDoneRoute
   '/_app/topics_/$topicId': typeof AppTopicsTopicIdRoute
   '/_app/documents_/$documentId_/edit': typeof AppDocumentsDocumentIdEditRoute
   '/_app/documents_/$documentId_/history': typeof AppDocumentsDocumentIdHistoryRoute
@@ -149,12 +167,14 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/password-reset'
     | '/signup'
     | '/search'
     | '/settings'
     | '/topics'
     | '/trash'
     | '/documents/$documentId'
+    | '/password-reset/done'
     | '/topics/$topicId'
     | '/documents/$documentId/edit'
     | '/documents/$documentId/history'
@@ -163,6 +183,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/password-reset'
     | '/signup'
     | '/search'
     | '/settings'
@@ -170,6 +191,7 @@ export interface FileRouteTypes {
     | '/trash'
     | '/'
     | '/documents/$documentId'
+    | '/password-reset/done'
     | '/topics/$topicId'
     | '/documents/$documentId/edit'
     | '/documents/$documentId/history'
@@ -179,6 +201,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/login'
+    | '/password-reset'
     | '/signup'
     | '/_app/search'
     | '/_app/settings'
@@ -186,6 +209,7 @@ export interface FileRouteTypes {
     | '/_app/trash'
     | '/_app/'
     | '/_app/documents_/$documentId'
+    | '/_app/password-reset/done'
     | '/_app/topics_/$topicId'
     | '/_app/documents_/$documentId_/edit'
     | '/_app/documents_/$documentId_/history'
@@ -196,6 +220,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PasswordResetRoute: typeof PasswordResetRoute
   SignupRoute: typeof SignupRoute
 }
 
@@ -206,6 +231,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/password-reset': {
+      id: '/password-reset'
+      path: '/password-reset'
+      fullPath: '/password-reset'
+      preLoaderRoute: typeof PasswordResetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -264,6 +296,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTopicsTopicIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/password-reset/done': {
+      id: '/_app/password-reset/done'
+      path: '/password-reset/done'
+      fullPath: '/password-reset/done'
+      preLoaderRoute: typeof AppPasswordResetDoneRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/documents_/$documentId': {
       id: '/_app/documents_/$documentId'
       path: '/documents/$documentId'
@@ -309,6 +348,7 @@ interface AppRouteChildren {
   AppTrashRoute: typeof AppTrashRoute
   AppIndexRoute: typeof AppIndexRoute
   AppDocumentsDocumentIdRoute: typeof AppDocumentsDocumentIdRoute
+  AppPasswordResetDoneRoute: typeof AppPasswordResetDoneRoute
   AppTopicsTopicIdRoute: typeof AppTopicsTopicIdRoute
   AppDocumentsDocumentIdEditRoute: typeof AppDocumentsDocumentIdEditRoute
   AppDocumentsDocumentIdHistoryRoute: typeof AppDocumentsDocumentIdHistoryRoute
@@ -323,6 +363,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTrashRoute: AppTrashRoute,
   AppIndexRoute: AppIndexRoute,
   AppDocumentsDocumentIdRoute: AppDocumentsDocumentIdRoute,
+  AppPasswordResetDoneRoute: AppPasswordResetDoneRoute,
   AppTopicsTopicIdRoute: AppTopicsTopicIdRoute,
   AppDocumentsDocumentIdEditRoute: AppDocumentsDocumentIdEditRoute,
   AppDocumentsDocumentIdHistoryRoute: AppDocumentsDocumentIdHistoryRoute,
@@ -335,6 +376,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PasswordResetRoute: PasswordResetRoute,
   SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport

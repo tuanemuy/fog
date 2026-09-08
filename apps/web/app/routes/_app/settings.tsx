@@ -2,7 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
+import { z } from "zod";
+import { ssoErrorSchema } from "@/components/auth/schema";
 import { SettingsSkeleton } from "@/components/settings/SettingsSkeleton";
+import { SsoNotice } from "@/components/settings/SsoNotice";
 import { Deferred } from "@/components/ui/Deferred";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
@@ -16,7 +19,13 @@ const renderSettings = createServerFn({ method: "GET" })
     return { Settings: renderServerComponent(<SettingsFeed />) };
   });
 
+const searchSchema = z.object({
+  sso: z.enum(["linked"]).optional(),
+  sso_error: ssoErrorSchema.optional(),
+});
+
 export const Route = createFileRoute("/_app/settings")({
+  validateSearch: searchSchema,
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async () => {
@@ -36,9 +45,17 @@ export const Route = createFileRoute("/_app/settings")({
 
 function SettingsPage() {
   const { Settings } = Route.useLoaderData();
+  const { sso, sso_error: ssoError } = Route.useSearch();
   return (
-    <Suspense fallback={<SettingsSkeleton />}>
-      <Deferred promise={Settings} />
-    </Suspense>
+    <>
+      {(sso !== undefined || ssoError !== undefined) && (
+        <div className="fog-content">
+          <SsoNotice sso={sso} ssoError={ssoError} />
+        </div>
+      )}
+      <Suspense fallback={<SettingsSkeleton />}>
+        <Deferred promise={Settings} />
+      </Suspense>
+    </>
   );
 }

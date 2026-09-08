@@ -3,7 +3,11 @@ import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware"
 import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
 import { validateInput } from "@/presentation/validator";
-import { credentialsSchema } from "./schema";
+import {
+  credentialsSchema,
+  executePasswordResetSchema,
+  requestPasswordResetSchema,
+} from "./schema";
 
 export const registerFn = createServerFn({ method: "POST" })
   .middleware([errorResponseMiddleware, noStoreMiddleware])
@@ -29,6 +33,35 @@ export const loginFn = createServerFn({ method: "POST" })
       () => import("@repo/core/application/identity/loginWithPassword"),
     );
     const { userId } = await module.loginWithPassword({
+      container,
+      input: data,
+    });
+    const { startSession } = await import("@/presentation/session");
+    await startSession(userId);
+    return { userId };
+  });
+
+/** S-AC-07, the request: the answer is the same for every address. */
+export const requestPasswordResetFn = createServerFn({ method: "POST" })
+  .middleware([errorResponseMiddleware, noStoreMiddleware])
+  .inputValidator(validateInput(requestPasswordResetSchema))
+  .handler(async ({ data }) => {
+    const { container, module } = await loadServerDeps(
+      () => import("@repo/core/application/identity/requestPasswordReset"),
+    );
+    await module.requestPasswordReset({ container, input: data });
+    return { ok: true as const };
+  });
+
+/** S-AC-07, the completion: the new session is the only one left alive. */
+export const executePasswordResetFn = createServerFn({ method: "POST" })
+  .middleware([errorResponseMiddleware, noStoreMiddleware])
+  .inputValidator(validateInput(executePasswordResetSchema))
+  .handler(async ({ data }) => {
+    const { container, module } = await loadServerDeps(
+      () => import("@repo/core/application/identity/executePasswordReset"),
+    );
+    const { userId } = await module.executePasswordReset({
       container,
       input: data,
     });

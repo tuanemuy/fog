@@ -20,6 +20,10 @@
 #   DIRECTORY_ROUTING_SECRET     — request Worker (canonical → full-length HMAC)
 #   IDENTITY_MAIL_ENCRYPTION_KEY — state Worker (never leaves the Durable Object)
 #   PROVIDER_IDEMPOTENCY_KEY     — state Worker (never leaves the Durable Object)
+#   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
+#   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
+#   MAIL_DEV_SINK                — request Worker, **local only** (development mail sink)
+#   SSO_DEV_STUB                 — request Worker, **local only** (development identity provider)
 #
 # **DIRECTORY_ROUTING_SECRET and IDENTITY_MAIL_ENCRYPTION_KEY are
 # distributed to opposite Workers on purpose.** The request Worker can
@@ -37,14 +41,17 @@
 # from staging onward, where each secret is installed with
 # `wrangler secret put --config` against one Worker's config only.
 #
-# **This table is not the complete roster of secrets.** Of the three keys
-# that never leave a Durable Object, the reset-token derivation key still
-# has its ownership declared by the password-reset slice (#12). The
+# **This table is not the complete roster of secrets.** The three keys
+# that never leave a Durable Object are all declared now; the
 # **previous** keyring entry and the rotation key commitment are added by
 # #67. `SESSION_SECRET` is listed above even though it predates this
 # table, so that the table reads as "the secrets declared so far" rather
 # than "all of them" — otherwise a later slice could take it for a
 # complete list and drop its own entry.
+#
+# The two `*_DEV_*` entries are not secrets and are not installed
+# anywhere: they are read from this file alone, and
+# `wranglerConfig.test.ts` fails if a deployed config ever declares them.
 #
 # Each secret is installed against the config of the Worker that owns it:
 #
@@ -53,6 +60,9 @@
 #   wrangler secret put DIRECTORY_ROUTING_SECRET     --config wrangler.staging.toml
 #   wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.staging.toml
 #   wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
+#   wrangler secret put IDENTITY_RESET_TOKEN_KEY     --config wrangler.state.staging.toml
+#   wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
+#   wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 #
 # (substitute `wrangler.production.toml` / `wrangler.state.production.toml`
 # for production.)
@@ -72,9 +82,31 @@ SESSION_SECRET=""
 # Worker** — the mail consumer runs in its `queue()` handler, so the
 # provider is called from there and not from a Durable Object.
 #
-# #51 wires a development `MailSender` that calls no provider, so this may
-# stay empty locally; the production provider adapter arrives with #12.
+# Locally `MAIL_DEV_SINK` below selects a sink that calls no provider, so
+# this may stay empty; from staging onward it is the Resend API key, and
+# the sender address is `MAIL_FROM_ADDRESS` in the stage's `[vars]`.
 MAIL_PROVIDER_API_KEY=""
+
+# Development mail sink. `"console"` makes the mail consumer print
+# `[dev-mail] to=<address> url=<reset link>` on the request Worker's log
+# instead of calling a provider — the declared exception to the payload
+# hygiene rule (`spec/async/index.md`), for the browser check of the
+# password reset only. Any other value is a configuration error; leave it
+# unset to use the provider. **Local only**: no deployed config declares it.
+MAIL_DEV_SINK="console"
+
+# Development identity provider. `"true"` replaces every SSO provider with
+# the in-app stub at `/__dev/sso/<provider>/authorize`, which asks for a
+# subject and an email instead of talking to Google. **Local only**: no
+# deployed config declares it, and the stub route answers 404 without it.
+SSO_DEV_STUB="true"
+
+# Google OAuth client for the real `google` provider (unused while
+# `SSO_DEV_STUB` is `"true"`). Owner: **request Worker** — the callback
+# handler exchanges the code there. Register
+# `${APP_URL}/auth/sso/google/callback` as the redirect URI.
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
 
 # HMAC key that maps a canonical credential to its full-length value, from
 # which the Identity Directory bucket is chosen. Owner: **request
@@ -114,3 +146,13 @@ IDENTITY_MAIL_ENCRYPTION_KEY=""
 #
 #   openssl rand -base64 48
 PROVIDER_IDEMPOTENCY_KEY=""
+
+# HMAC key from which each Identity Directory bucket derives the secret
+# half of a password-reset token from its `token_id`, so that the raw
+# token is never stored and can be re-derived for the send-materials RPC.
+# Owner: **state Worker**. It never leaves the Durable Object.
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters.
+IDENTITY_RESET_TOKEN_KEY=""

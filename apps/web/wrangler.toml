@@ -33,6 +33,10 @@ binding = "ASSETS"
 
 [vars]
 APP_URL = "http://localhost:3000"
+# The sender the mail provider is asked to use. Not a secret: it is what the
+# recipient sees. Locally the console sink (`MAIL_DEV_SINK` in `.dev.vars`)
+# never reads it.
+MAIL_FROM_ADDRESS = "fog <onboarding@resend.dev>"
 # Registers the diagnostic route that makes one round trip into a Durable
 # Object through the stub-selection adapter. Declared here and in no
 # deployed stage's config, so the route does not exist in staging or
