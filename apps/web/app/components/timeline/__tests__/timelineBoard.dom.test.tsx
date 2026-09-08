@@ -513,6 +513,25 @@ describe("TimelineBoard: date jump", () => {
     expect((scrollIntoView.mock.instances[0] as Element).id).toBe("memo-pivot");
   });
 
+  it("does not scroll when the pivot already heads the list", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    await renderWithRouter(
+      <TimelineBoard
+        initial={{
+          ...page([
+            memo("pivot", "newest", JAN_2_EARLY),
+            memo("older", "older", JAN_1_LATE),
+          ]),
+          pivotId: "pivot",
+        }}
+        search={{ date: "2030-01-01" }}
+      />,
+      { path: "/?date=2030-01-01" },
+    );
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
   it("does not scroll on the plain list or on a filter", async () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
