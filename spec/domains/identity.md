@@ -677,12 +677,20 @@ export interface PasswordResetTokenPort {
   mintDecoyTokenId(): string;
 
   /**
-   * トークンを検証し、有効なら消費（使い捨て）して対象ユーザーを返す。
+   * トークンを検証し、有効なら消費（使い捨て）して対象を返す。
+   * 対象ユーザーに加えて、後続のクレデンシャル変更手続き（beginCredentialChange）が要る
+   * 対象クレデンシャルと、その手続きの束縛材料（change_auth_token）を同じ戻り値で渡す —
+   * 消費とは別の読みで引き直すと「消費したが束縛材料が取れない」窓が生まれるためである。
    * 無効・期限切れ・使用済みは null
    */
-  verifyAndConsume(token: string, now: Date): UserId | null;
+  verifyAndConsume(
+    token: string,
+    now: Date,
+  ): { userId: UserId; credentialId: CredentialId; changeAuthToken: string } | null;
 }
 ```
+
+- **生トークンの形は `${generation}.${bucketIndex}.<secret>` である。** リセットリンクを踏んだ未認証リクエストは、この先頭 2 区画から Identity Directory の bucket を選んで `verifyAndConsume` を届ける（bucket 名は多数の利用者で共有される粒度なので個人を指さない）。`<secret>` は暗号論的乱数で、行にはその導出値（`token_hash`）だけを置く。形はアダプターの責務であり、ユースケースは相変わらず不透明文字列として扱う
 
 - **`issue` は生トークンと `tokenId` の両方を返す。** 生トークンは**アダプターの外へ出るが、ユースケースはこれを読まない・保持しない・どこへも渡さない**（現状の読み手は0件であり、送信時は送信材料 RPC が `tokenId` から導出し直す。**URL の組み立てとメール本文のレンダリングは RPC の側では行わない** — それは `MailSender` アダプターの責務である。下の `MailSender`）。返し続けるのは、payload の必須項目である `tokenId` を同じ戻り値で得るためである — **`tokenId` を返さない形にすると、ユースケースが payload の必須項目を手に入れる経路が無くなる**
 - **したがって `token` は「戻り値に居るが読み手が0件の値」である。** ログ・DTO・イベント payload・Queue メッセージのいずれにも載せない。**この禁止は signature が守ってくれないので、実装レビューの確認項目として残す**（`spec/async/index.md`「payload と `terminal_reason` の衛生規則」）
