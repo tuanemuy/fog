@@ -275,9 +275,11 @@ describe("MemoEntry inline edit", () => {
     fireEvent.submit(form);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Claude");
-    expect(alert.textContent).toContain("somebody else wrote this");
-    expect(save().textContent).toBe("そのまま保存");
+    await waitFor(() => {
+      expect(alert.textContent).toContain("Claude");
+      expect(alert.textContent).toContain("somebody else wrote this");
+      expect(save().textContent).toBe("そのまま保存");
+    });
     expect(screen.getByRole("form", { name: "メモを編集" })).toBeTruthy();
     expect(
       (within(form).getByLabelText("本文") as HTMLTextAreaElement).value,
@@ -307,7 +309,9 @@ describe("MemoEntry inline edit", () => {
     fireEvent.change(textarea, { target: { value: "will fail" } });
     fireEvent.submit(form);
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("メモを入力してください");
+    await waitFor(() =>
+      expect(alert.textContent).toBe("メモを入力してください"),
+    );
     expect(screen.getByRole("form", { name: "メモを編集" })).toBeTruthy();
     expect(
       (within(form).getByLabelText("本文") as HTMLTextAreaElement).value,

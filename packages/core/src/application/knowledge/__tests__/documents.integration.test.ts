@@ -204,6 +204,41 @@ describe("createDocument", () => {
     });
     expect(await readTopicRow(userId, t.id)).toMatchObject({ version: 0 });
   });
+  it("(k) links 100 sources across the 33-row insert chunks, in order, projected both ways", async () => {
+    const container = createTestContainer();
+    const { userId } = await registerTestUser(container);
+    const t = await topic(container, userId);
+    const memos: string[] = [];
+    for (let n = 0; n < 100; n += 1) {
+      memos.push((await post(container, userId, `source ${n}`)).id);
+    }
+    // Reverse of posting order, so link order is provably the input order
+    // and not the ids' natural (UUIDv7, ascending) order.
+    const sourceMemoIds = [...memos].reverse();
+    const created = await document(container, userId, t.id, {
+      sourceMemoIds,
+    });
+    expect(created.sourceMemoIds).toEqual(sourceMemoIds);
+    await inUserDataStorage(userId, (sql) => {
+      expect(
+        sql
+          .exec<{ memo_id: string }>(
+            "SELECT memo_id FROM source_links WHERE document_id = ? ORDER BY rowid",
+            created.id,
+          )
+          .toArray()
+          .map((r) => r.memo_id),
+      ).toEqual(sourceMemoIds);
+    });
+    expect((await searchEntry(userId, created.id))?.sourceIds).toEqual(
+      [...memos].sort(),
+    );
+    for (const memoId of memos) {
+      expect((await searchEntry(userId, memoId))?.sourceIds).toEqual([
+        created.id,
+      ]);
+    }
+  });
 });
 
 describe("getDocument / editDocument", () => {

@@ -221,20 +221,22 @@ describe("TimelineBoard", () => {
     fireEvent.click(submit);
 
     const status = await screen.findByRole("status");
-    expect(status.textContent).toBe("保存中…");
+    await waitFor(() => expect(status.textContent).toBe("保存中…"));
     const entry = status.closest("article");
     expect(entry?.getAttribute("aria-busy")).toBe("true");
     expect(entry?.textContent).toContain("optimistic body");
     expect(screen.getAllByRole("article")[0]).toBe(entry);
-    expect(mocks.postMemoFn).toHaveBeenCalledWith({
-      data: { body: "optimistic body" },
-    });
+    await waitFor(() =>
+      expect(mocks.postMemoFn).toHaveBeenCalledWith({
+        data: { body: "optimistic body" },
+      }),
+    );
     expect(invalidate).not.toHaveBeenCalled();
 
     post.resolve({ memo: memo("new", "optimistic body", JAN_2_EARLY) });
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(composer().textarea.value).toBe(""));
-    expect(screen.queryByRole("status")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
