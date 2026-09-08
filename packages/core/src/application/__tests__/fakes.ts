@@ -8,6 +8,7 @@ import type { IdGenerator } from "../ports/idGenerator";
 import type { Logger, LogMeta } from "../ports/logger";
 import type { TokenGenerator } from "../ports/tokenGenerator";
 
+export { trippingExportGateway } from "./fakes/fakeExportGateway";
 export { trippingKnowledgeGateway } from "./fakes/fakeKnowledgeGateway";
 export { trippingMemoGateway } from "./fakes/fakeMemoGateway";
 export { trippingSearchGateway } from "./fakes/fakeSearchGateway";

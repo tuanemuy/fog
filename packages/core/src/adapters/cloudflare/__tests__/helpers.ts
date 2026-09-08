@@ -8,6 +8,7 @@ import {
 } from "../crypto/keyring";
 import { directoryBucketLocator } from "../crypto/locatorDerivation";
 import type { DurableObjectBindings } from "../doStubs";
+import { createExportGateway } from "../exportGateway";
 import type { IdentityDirectoryDurableObject } from "../identityDirectoryDurableObject";
 import { createIdentityGateway } from "../identityGateway";
 import { createKnowledgeGateway } from "../knowledgeGateway";
@@ -63,6 +64,7 @@ export function createTestGateways(now: () => Date = () => new Date()) {
     knowledgeGateway: createKnowledgeGateway(bindings),
     searchGateway: createSearchGateway(bindings),
     trashGateway: createTrashGateway(bindings),
+    exportGateway: createExportGateway(bindings),
   };
 }
 

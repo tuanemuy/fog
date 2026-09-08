@@ -78,9 +78,11 @@ describe("CurrentUserPanel", () => {
       "ログイン手段",
       "パスワードの変更",
       "ゴミ箱の保持期限",
+      "データ",
       "AI クライアント接続",
       "セッション",
     ]);
+    expect(screen.getByRole("button", { name: "エクスポート" })).toBeTruthy();
     // P-13 is the only entry that creates something P-03 can unlink.
     expect(
       screen.getByRole("link", { name: /SSO 連携を追加/ }).getAttribute("href"),

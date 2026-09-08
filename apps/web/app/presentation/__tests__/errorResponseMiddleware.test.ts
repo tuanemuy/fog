@@ -3,6 +3,7 @@ import {
   FakeTokenGenerator,
   trippingIdentityGateway,
 } from "@repo/core/application/__tests__/fakes";
+import { trippingExportGateway } from "@repo/core/application/__tests__/fakes/fakeExportGateway";
 import { trippingKnowledgeGateway } from "@repo/core/application/__tests__/fakes/fakeKnowledgeGateway";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes/fakeMemoGateway";
 import { trippingSearchGateway } from "@repo/core/application/__tests__/fakes/fakeSearchGateway";
@@ -80,6 +81,9 @@ function installContainer(): void {
       throw new Error(`the presentation layer must not touch ${name}`);
     }),
     trashGateway: trippingTrashGateway((name) => {
+      throw new Error(`the presentation layer must not touch ${name}`);
+    }),
+    exportGateway: trippingExportGateway((name) => {
       throw new Error(`the presentation layer must not touch ${name}`);
     }),
     passwordHasher: {

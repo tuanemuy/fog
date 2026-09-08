@@ -60,6 +60,8 @@ const FORBIDDEN_FRAGMENTS = [
   "softDeleteMemo",
   "hardDelete",
   "emptyTrash",
+  "application/export/",
+  "exportAllData",
 ];
 
 function sourceFiles(dir: string): string[] {

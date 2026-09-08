@@ -41,7 +41,7 @@ export type StubPath = (typeof STUB_PATHS)[number];
  * these is a real link with nothing in the route tree behind it, so the
  * resolution check skips it rather than failing on a route it cannot have.
  */
-export const BARE_HANDLER_PREFIXES = ["/auth/sso/"] as const;
+export const BARE_HANDLER_PREFIXES = ["/auth/sso/", "/export"] as const;
 
 function buildRouter(element: ReactElement, path: string) {
   const rootRoute = createRootRoute({ component: () => element });

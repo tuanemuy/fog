@@ -6,6 +6,7 @@ import {
   FakeLogger,
   FakePasswordHasher,
   FakeTokenGenerator,
+  trippingExportGateway,
   trippingIdentityGateway,
   trippingKnowledgeGateway,
   trippingMemoGateway,
@@ -60,6 +61,9 @@ function makeContainer(gateway: IdentityGateway): UsecaseContainer {
     }),
     trashGateway: trippingTrashGateway((name) => {
       throw new Error(`unexpected trash gateway call: ${name}`);
+    }),
+    exportGateway: trippingExportGateway((name) => {
+      throw new Error(`unexpected export gateway call: ${name}`);
     }),
     passwordHasher: new FakePasswordHasher(),
   };

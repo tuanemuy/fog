@@ -486,6 +486,16 @@ describe("displayError", () => {
       { kind: "system", code: null, message: "System error" },
       "システムエラーが発生しました",
     ],
+    [
+      "an export over the byte cap",
+      { kind: "system", code: "EXPORT_TOO_LARGE", message: "System error" },
+      "データ量が上限を超えているためエクスポートできません。サポートに連絡してください",
+    ],
+    [
+      "a system error whose code is not public",
+      { kind: "system", code: "DATABASE_ERROR", message: "System error" },
+      "システムエラーが発生しました",
+    ],
   ] as ReadonlyArray<readonly [string, SerializedError, string]>)(
     "renders a %s payload the caller had already extracted",
     (_label, serialized, expected) => {
