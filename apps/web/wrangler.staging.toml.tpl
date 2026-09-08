@@ -16,6 +16,7 @@
 #      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.staging.toml`
 #      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.staging.toml`
 #      `wrangler secret put AI_CLIENT_TOKEN_SECRET --config wrangler.staging.toml`
+#      `wrangler secret put OPERATOR_TOKEN --config wrangler.staging.toml`
 #      `wrangler secret put PROVIDER_IDEMPOTENCY_KEY --config wrangler.state.staging.toml`
 #      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.staging.toml`
 #      The last two belong to the **state** Worker. Without the encryption

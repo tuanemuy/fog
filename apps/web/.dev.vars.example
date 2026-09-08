@@ -22,6 +22,7 @@
 #   PROVIDER_IDEMPOTENCY_KEY     — state Worker (never leaves the Durable Object)
 #   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
 #   AI_CLIENT_TOKEN_SECRET       — request Worker (the AI API's tokens, codes and client ids)
+#   OPERATOR_TOKEN               — request Worker (bearer of the maintenance surface `/__operator/*`)
 #   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
 #   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
 #                                  from the MAIL_FROM_ADDRESS environment variable at render time
@@ -65,6 +66,7 @@
 #   wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
 #   wrangler secret put IDENTITY_RESET_TOKEN_KEY     --config wrangler.state.staging.toml
 #   wrangler secret put AI_CLIENT_TOKEN_SECRET       --config wrangler.staging.toml
+#   wrangler secret put OPERATOR_TOKEN               --config wrangler.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 #
@@ -174,3 +176,15 @@ IDENTITY_RESET_TOKEN_KEY=""
 # At least 32 characters. The request path refuses every request until
 # it is set.
 AI_CLIENT_TOKEN_SECRET=""
+
+# Bearer token of the operator maintenance surface (`POST /__operator/<entry>`:
+# quarantined / poisoned rows, the withdrawal's last resort, diagnostics).
+# Owner: **request Worker**. While it is unset the surface does not exist
+# (every `/__operator/*` request is 404). In production Cloudflare Access
+# stands in front of the hostname as well (docs/runtime_cloudflare.md
+# §8.2); this token is the local check and the last line behind it.
+#
+#   openssl rand -base64 48
+#
+# At least 32 characters.
+OPERATOR_TOKEN=""

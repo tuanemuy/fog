@@ -14,6 +14,7 @@
     "start:cf": "wrangler dev -c wrangler.toml -c wrangler.state.toml",
     "preview": "vite preview --config vite.config.cloudflare.ts",
     "ai-client": "node scripts/ai-client.ts",
+    "operator": "node scripts/operator.ts",
     "typecheck": "tsgo && tsgo -p tsconfig.state.json",
     "cf:types": "wrangler types && wrangler types --config wrangler.state.toml --env-interface StateEnv --include-runtime=false worker-configuration.state.d.ts",
     "deploy:staging": "vite build --config vite.config.cloudflare.ts && wrangler deploy --config wrangler.staging.toml",

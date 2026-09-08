@@ -13,6 +13,10 @@ import { handleAiRoute, isAiRoute } from "./presentation/ai/router";
 import { attachAiRuntime } from "./presentation/ai/runtime";
 import { handleExport, isExportRoute } from "./presentation/export/handler";
 import { handleDiagnostics } from "./worker/cloudflare/diagnostics";
+import {
+  handleOperator,
+  isOperatorRoute,
+} from "./worker/cloudflare/operatorHandlers";
 import { runQueueBatch } from "./worker/cloudflare/queueHandlers";
 import { handleSso, isSsoRoute } from "./worker/cloudflare/ssoHandlers";
 
@@ -47,6 +51,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/__diagnostics/")) {
       return handleDiagnostics(request, env);
+    }
+    if (isOperatorRoute(url.pathname)) {
+      return handleOperator(request, { env });
     }
     if (isSsoRoute(url.pathname)) {
       return handleSso(request, env);

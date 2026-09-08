@@ -51,6 +51,8 @@ export type ServerEnv = Readonly<{
   DIRECTORY_ROUTING_SECRET?: string;
   /** The AI API's token / code / client-id key material (request Worker). */
   AI_CLIENT_TOKEN_SECRET?: string;
+  /** Bearer of `/__operator/*` (request Worker); unset means the surface does not exist. */
+  OPERATOR_TOKEN?: string;
   /** The mail consumer's provider credential (`.dev.vars.example`). */
   MAIL_PROVIDER_API_KEY?: string;
   /** The sender the provider is asked to use; a `[vars]` entry, not a secret. */
