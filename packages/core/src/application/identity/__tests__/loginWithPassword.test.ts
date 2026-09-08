@@ -6,6 +6,7 @@ import {
   FakePasswordHasher,
   FakeTokenGenerator,
   trippingIdentityGateway,
+  trippingKnowledgeGateway,
   trippingMemoGateway,
 } from "../../__tests__/fakes";
 import { isValidationError } from "../../errors";
@@ -80,6 +81,9 @@ function makeContainer(
     identityTuning: TUNING,
     memoGateway: trippingMemoGateway((name) => {
       throw new Error(`unexpected memo gateway call: ${name}`);
+    }),
+    knowledgeGateway: trippingKnowledgeGateway((name) => {
+      throw new Error(`unexpected knowledge gateway call: ${name}`);
     }),
     passwordHasher: hasher,
   };

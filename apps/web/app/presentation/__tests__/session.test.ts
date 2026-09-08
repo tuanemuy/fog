@@ -2,6 +2,7 @@ import {
   FakeTokenGenerator,
   trippingIdentityGateway,
 } from "@repo/core/application/__tests__/fakes";
+import { trippingKnowledgeGateway } from "@repo/core/application/__tests__/fakes/fakeKnowledgeGateway";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes/fakeMemoGateway";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import type { RequestContainer } from "@repo/core/application/di/types";
@@ -99,6 +100,9 @@ describe("startSession", () => {
       ),
       identityTuning: createIdentityTuning(),
       memoGateway: trippingMemoGateway((name) => {
+        throw new Error(`the presentation layer must not touch ${name}`);
+      }),
+      knowledgeGateway: trippingKnowledgeGateway((name) => {
         throw new Error(`the presentation layer must not touch ${name}`);
       }),
       passwordHasher: {

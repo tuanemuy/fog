@@ -7,6 +7,7 @@ import {
   FakePasswordHasher,
   FakeTokenGenerator,
   trippingIdentityGateway,
+  trippingKnowledgeGateway,
   trippingMemoGateway,
 } from "../../__tests__/fakes";
 import {
@@ -47,6 +48,9 @@ function makeContainer(gateway: IdentityGateway): UsecaseContainer {
     identityTuning: createIdentityTuning(),
     memoGateway: trippingMemoGateway((name) => {
       throw new Error(`unexpected memo gateway call: ${name}`);
+    }),
+    knowledgeGateway: trippingKnowledgeGateway((name) => {
+      throw new Error(`unexpected knowledge gateway call: ${name}`);
     }),
     passwordHasher: new FakePasswordHasher(),
   };

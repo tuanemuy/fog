@@ -38,3 +38,11 @@ describe("snippetOf", () => {
     expect([...snippet].length).toBe(141);
   });
 });
+
+describe("snippetOf folds line breaks", () => {
+  it("turns each LF or CRLF into one space before cutting", () => {
+    expect(snippetOf("a\nb\r\nc")).toBe("a b c");
+    const long = `${"x".repeat(139)}\n${"y".repeat(5)}`;
+    expect(snippetOf(long)).toBe(`${"x".repeat(139)} …`);
+  });
+});

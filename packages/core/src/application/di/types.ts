@@ -1,6 +1,7 @@
 import type { PasswordHasher } from "@repo/core/domain/identity/ports/passwordHasher";
 import type { IdentityGateway } from "../identity/gateway";
 import type { IdentityTuning } from "../identity/tuning";
+import type { KnowledgeGateway } from "../knowledge/gateway";
 import type { MemoGateway } from "../memo/gateway";
 import type { Clock } from "../ports/clock";
 import type { IdGenerator } from "../ports/idGenerator";
@@ -36,6 +37,7 @@ export type RequestContainer = SharedDeps &
     identityGateway: IdentityGateway;
     identityTuning: IdentityTuning;
     memoGateway: MemoGateway;
+    knowledgeGateway: KnowledgeGateway;
     passwordHasher: PasswordHasher;
     sessionCodec: SessionCodec;
     /** Opaque secrets minted on the request side: caller bindings, reset tokens, code `jti`s. */

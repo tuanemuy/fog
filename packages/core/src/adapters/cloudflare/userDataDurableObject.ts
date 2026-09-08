@@ -10,6 +10,45 @@ import { initializeAccountProcedure } from "@repo/core/application/identity/init
 import { readCurrentUserProcedure } from "@repo/core/application/identity/readCurrentUser";
 import { fromCredentialLocator } from "@repo/core/application/identity/rebuild";
 import { recordSignupLocatorProcedure } from "@repo/core/application/identity/recordSignupLocator";
+import { createDocumentProcedure } from "@repo/core/application/knowledge/createDocument";
+import { createTopicProcedure } from "@repo/core/application/knowledge/createTopic";
+import { diffDocumentRevisionsProcedure } from "@repo/core/application/knowledge/diffDocumentRevisions";
+import { editDocumentProcedure } from "@repo/core/application/knowledge/editDocument";
+import type {
+  CreateDocumentDto,
+  CreateTopicDto,
+  DiffDocumentRevisionsDto,
+  EditDocumentDto,
+  ListTopicsDto,
+  RollbackDocumentDto,
+  UpdateTopicDto,
+} from "@repo/core/application/knowledge/gateway";
+import { getDocumentProcedure } from "@repo/core/application/knowledge/getDocument";
+import { getTopicProcedure } from "@repo/core/application/knowledge/getTopic";
+import { getTopicNameProcedure } from "@repo/core/application/knowledge/getTopicName";
+import { listDocumentRevisionsProcedure } from "@repo/core/application/knowledge/listDocumentRevisions";
+import { listDocumentSourceMemosProcedure } from "@repo/core/application/knowledge/listDocumentSourceMemos";
+import { listDocumentsReferencingMemoProcedure } from "@repo/core/application/knowledge/listDocumentsReferencingMemo";
+import { listTopicsProcedure } from "@repo/core/application/knowledge/listTopics";
+import { rollbackDocumentProcedure } from "@repo/core/application/knowledge/rollbackDocument";
+import { trashDocumentProcedure } from "@repo/core/application/knowledge/trashDocument";
+import { trashTopicProcedure } from "@repo/core/application/knowledge/trashTopic";
+import { updateTopicProcedure } from "@repo/core/application/knowledge/updateTopic";
+import type {
+  CreateDocumentView,
+  DocumentDiffView,
+  DocumentRevisionsView,
+  DocumentView,
+  EditDocumentView,
+  ReferencingDocumentsView,
+  RollbackDocumentView,
+  SourceMemosView,
+  TopicDetailView,
+  TopicListView,
+  TopicNameView,
+  TopicView,
+  TrashTopicView,
+} from "@repo/core/application/knowledge/view";
 import { diffMemoRevisionsProcedure } from "@repo/core/application/memo/diffMemoRevisions";
 import { editMemoProcedure } from "@repo/core/application/memo/editMemo";
 import type {
@@ -216,5 +255,144 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
         return undefined;
       });
     });
+  }
+
+  async createTopic(input: CreateTopicDto): Promise<RpcEnvelope<TopicView>> {
+    return this.envelope(() => {
+      const id = this.config.idGenerator.next();
+      const now = this.config.clock.now();
+      const userId = this.requireSelfLocator();
+      return this.runUnitOfWork((ctx) =>
+        createTopicProcedure(ctx, { ...input, userId }, id, now),
+      );
+    });
+  }
+
+  async updateTopic(input: UpdateTopicDto): Promise<RpcEnvelope<TopicView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) => updateTopicProcedure(ctx, input, now));
+    });
+  }
+
+  async listTopics(input: ListTopicsDto): Promise<RpcEnvelope<TopicListView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => listTopicsProcedure(ctx, input)),
+    );
+  }
+
+  async getTopic(topicId: string): Promise<RpcEnvelope<TopicDetailView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => getTopicProcedure(ctx, topicId)),
+    );
+  }
+
+  async getTopicName(topicId: string): Promise<RpcEnvelope<TopicNameView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => getTopicNameProcedure(ctx, topicId)),
+    );
+  }
+
+  async trashTopic(topicId: string): Promise<RpcEnvelope<TrashTopicView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        trashTopicProcedure(ctx, topicId, now),
+      );
+    });
+  }
+
+  async createDocument(
+    input: CreateDocumentDto,
+  ): Promise<RpcEnvelope<CreateDocumentView>> {
+    return this.envelope(() => {
+      const ids = {
+        documentId: this.config.idGenerator.next(),
+        revisionId: this.config.idGenerator.next(),
+      };
+      const now = this.config.clock.now();
+      const userId = this.requireSelfLocator();
+      return this.runUnitOfWork((ctx) =>
+        createDocumentProcedure(ctx, { ...input, userId }, ids, now),
+      );
+    });
+  }
+
+  async editDocument(
+    input: EditDocumentDto,
+  ): Promise<RpcEnvelope<EditDocumentView>> {
+    return this.envelope(() => {
+      const revisionId = this.config.idGenerator.next();
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        editDocumentProcedure(ctx, input, revisionId, now),
+      );
+    });
+  }
+
+  async rollbackDocument(
+    input: RollbackDocumentDto,
+  ): Promise<RpcEnvelope<RollbackDocumentView>> {
+    return this.envelope(() => {
+      const revisionId = this.config.idGenerator.next();
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        rollbackDocumentProcedure(ctx, input, revisionId, now),
+      );
+    });
+  }
+
+  async trashDocument(documentId: string): Promise<RpcEnvelope<void>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) => {
+        trashDocumentProcedure(ctx, documentId, now);
+        return undefined;
+      });
+    });
+  }
+
+  async getDocument(documentId: string): Promise<RpcEnvelope<DocumentView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => getDocumentProcedure(ctx, documentId)),
+    );
+  }
+
+  async listDocumentRevisions(
+    documentId: string,
+  ): Promise<RpcEnvelope<DocumentRevisionsView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        listDocumentRevisionsProcedure(ctx, documentId),
+      ),
+    );
+  }
+
+  async diffDocumentRevisions(
+    input: DiffDocumentRevisionsDto,
+  ): Promise<RpcEnvelope<DocumentDiffView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => diffDocumentRevisionsProcedure(ctx, input)),
+    );
+  }
+
+  async listDocumentSourceMemos(
+    documentId: string,
+  ): Promise<RpcEnvelope<SourceMemosView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        listDocumentSourceMemosProcedure(ctx, documentId),
+      ),
+    );
+  }
+
+  async listDocumentsReferencingMemo(
+    memoId: string,
+  ): Promise<RpcEnvelope<ReferencingDocumentsView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        listDocumentsReferencingMemoProcedure(ctx, memoId),
+      ),
+    );
   }
 }

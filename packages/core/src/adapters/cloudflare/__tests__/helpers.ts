@@ -10,6 +10,7 @@ import { directoryBucketLocator } from "../crypto/locatorDerivation";
 import type { DurableObjectBindings } from "../doStubs";
 import type { IdentityDirectoryDurableObject } from "../identityDirectoryDurableObject";
 import { createIdentityGateway } from "../identityGateway";
+import { createKnowledgeGateway } from "../knowledgeGateway";
 import { createMemoGateway } from "../memoGateway";
 import type { UserDataDurableObject } from "../userDataDurableObject";
 
@@ -57,6 +58,7 @@ export function createTestGateways(now: () => Date = () => new Date()) {
       tuning: identityTuning,
     }),
     memoGateway: createMemoGateway(bindings),
+    knowledgeGateway: createKnowledgeGateway(bindings),
   };
 }
 

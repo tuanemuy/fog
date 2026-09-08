@@ -20,6 +20,7 @@ import {
   createCredentialMappingReader,
   createCredentialMappingWriter,
 } from "./stores/credentialMappingStore";
+import { createDocumentRepository } from "./stores/documentRepository";
 import { writeEnqueuedJob } from "./stores/jobWriter";
 import { createMemoRepository } from "./stores/memoRepository";
 import {
@@ -27,6 +28,7 @@ import {
   writeUpdatedOperation,
 } from "./stores/operationsStore";
 import { writeEnqueuedEvents } from "./stores/outboxWriter";
+import { createTopicRepository } from "./stores/topicRepository";
 import { createTrashQueryPort } from "./stores/trashQueryPort";
 import { createUserSettingsRepository } from "./stores/userSettingsRepository";
 
@@ -124,6 +126,8 @@ export function createUserDataUnitOfWorkProvider(
       enqueueEvent: common.enqueueEvent,
       userSettingsRepository: createUserSettingsRepository(sql),
       memoRepository: createMemoRepository(sql, deps.selfLocator),
+      topicRepository: createTopicRepository(sql, deps.selfLocator),
+      documentRepository: createDocumentRepository(sql, deps.selfLocator),
       trashQueryPort: createTrashQueryPort(sql),
       accountStore: createAccountStore(sql, nowMs),
       credentialLocatorStore: createCredentialLocatorStore(sql, nowMs),

@@ -1,5 +1,6 @@
 import type { DurableObjectBindings } from "@repo/core/adapters/cloudflare/doStubs";
 import { createIdentityGateway } from "@repo/core/adapters/cloudflare/identityGateway";
+import { createKnowledgeGateway } from "@repo/core/adapters/cloudflare/knowledgeGateway";
 import { createMemoGateway } from "@repo/core/adapters/cloudflare/memoGateway";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
@@ -77,6 +78,7 @@ export function createRequestContainer(
     }),
     identityTuning,
     memoGateway: createMemoGateway(bindings),
+    knowledgeGateway: createKnowledgeGateway(bindings),
     passwordHasher: createPbkdf2PasswordHasher(),
     sessionCodec: createHmacSessionCodec({ secret: secrets.sessionSecret }),
     tokenGenerator: WebCryptoTokenGenerator,

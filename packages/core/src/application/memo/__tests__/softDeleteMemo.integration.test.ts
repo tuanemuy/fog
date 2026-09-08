@@ -5,10 +5,8 @@ import {
 } from "@repo/core/adapters/cloudflare/__tests__/testContainer";
 import { isNotFoundError } from "@repo/core/application/errors";
 import { getTimeline } from "@repo/core/application/memo/getTimeline";
-import {
-  PURGE_TRASH_OPERATION_KEY,
-  softDeleteMemo,
-} from "@repo/core/application/memo/softDeleteMemo";
+import { softDeleteMemo } from "@repo/core/application/memo/softDeleteMemo";
+import { PURGE_TRASH_OPERATION_KEY } from "@repo/core/application/trash/armPurgeTrash";
 import { isBusinessRuleError } from "@repo/core/domain/error";
 import { describe, expect, it } from "vitest";
 import {

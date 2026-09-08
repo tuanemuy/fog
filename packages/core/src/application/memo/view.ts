@@ -1,6 +1,6 @@
-import type { Actor } from "@repo/core/domain/identity/valueObject";
 import type { ActiveMemo, MemoRevision } from "@repo/core/domain/memo/entity";
 import type { MemoRevisionSummary } from "@repo/core/domain/memo/ports/memoRepository";
+import { type ActorView, toActorView } from "../identity/view";
 
 export type MemoView = Readonly<{
   id: string;
@@ -26,9 +26,7 @@ export type TimelinePageView = Readonly<{
   nextCursor: string | null;
 }>;
 
-export type ActorView =
-  | Readonly<{ kind: "user" }>
-  | Readonly<{ kind: "aiClient"; clientName: string }>;
+export type { ActorView };
 
 export function toMemoView(memo: ActiveMemo): MemoView {
   return {
@@ -95,13 +93,6 @@ export type RollbackMemoView = Readonly<{
   memo: MemoView;
 }>;
 
-/** Only the client name crosses; the connection id and the user id stay inside. */
-export function toActorView(actor: Actor): ActorView {
-  return actor.kind === "user"
-    ? { kind: "user" }
-    : { kind: "aiClient", clientName: actor.clientName };
-}
-
 export function toRevisionSummaryView(
   summary: MemoRevisionSummary,
 ): RevisionSummaryView {
@@ -114,9 +105,4 @@ export function toRevisionSummaryView(
 
 export function toRevisionView(revision: MemoRevision): RevisionView {
   return { ...toRevisionSummaryView(revision), body: revision.body };
-}
-
-/** The timeline projection. The source-document trail joins with the knowledge slice. */
-export function toTimelineItemView(memo: ActiveMemo): TimelineItemView {
-  return { ...toMemoView(memo), sourceDocuments: [] };
 }

@@ -24,7 +24,9 @@ const ELLIPSIS = "…";
  * lone surrogate.
  */
 export function snippetOf(body: string): string {
-  const characters = [...body];
-  if (characters.length <= SNIPPET_MAX_LENGTH) return body;
+  // Line breaks are folded so a preview reads as one or two lines.
+  const flat = body.replace(/\r?\n/g, " ");
+  const characters = [...flat];
+  if (characters.length <= SNIPPET_MAX_LENGTH) return flat;
   return `${characters.slice(0, SNIPPET_MAX_LENGTH).join("")}${ELLIPSIS}`;
 }

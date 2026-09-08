@@ -3,7 +3,8 @@ import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import type { ServiceArgs } from "../types";
 import type { ShowMemoDto } from "./gateway";
 import { normalizeLimit } from "./getTimeline";
-import { type MemoWindowView, toTimelineItemView } from "./view";
+import { attachSourceDocuments } from "./sourceDocuments";
+import type { MemoWindowView } from "./view";
 
 export type ShowMemoInTimelineInput = Readonly<{
   userId: string;
@@ -48,7 +49,7 @@ export function showMemoInTimelineProcedure(
     { limit: input.limit, keyword: null },
   );
   return {
-    items: window.items.map(toTimelineItemView),
+    items: attachSourceDocuments(ctx, window.items),
     pivotId: window.pivotId,
     olderCursor: window.olderCursor,
     newerCursor: window.newerCursor,

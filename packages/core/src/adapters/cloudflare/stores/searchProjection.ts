@@ -82,3 +82,68 @@ export function activeSourceDocumentIds(
     .toArray()
     .map((row) => row.id);
 }
+
+/** Active memos a document cites — the only ids a document entry may expose. */
+export function activeSourceMemoIds(
+  sql: SqlStorage,
+  documentId: string,
+): string[] {
+  return sql
+    .exec<{ id: string }>(
+      `SELECT m.id FROM source_links sl JOIN memos m ON m.id = sl.memo_id
+       WHERE sl.document_id = ? AND m.status = 'active' ORDER BY m.id`,
+      documentId,
+    )
+    .toArray()
+    .map((row) => row.id);
+}
+
+export type DocumentEntrySource = Readonly<{
+  id: string;
+  topicId: string;
+  title: string;
+  body: string;
+  updatedAt: Date;
+}>;
+
+/** The entry of an active document; `sourceIds` are its active source memos. */
+export function projectDocument(
+  sql: SqlStorage,
+  document: DocumentEntrySource,
+): void {
+  upsertSearchEntry(sql, {
+    id: document.id,
+    type: "document",
+    topicId: document.topicId,
+    title: document.title,
+    body: document.body,
+    timestamp: document.updatedAt.getTime(),
+    sourceIds: activeSourceMemoIds(sql, document.id),
+  });
+}
+
+type MemoEntryRow = Readonly<{ body: string; posted_at: number }>;
+
+/**
+ * Rebuilds a memo's entry from its row so `sourceIds` follows the documents
+ * citing it (a document created, trashed, restored or deleted). A memo that
+ * is trashed or gone has no entry to rebuild.
+ */
+export function reprojectMemo(sql: SqlStorage, memoId: string): void {
+  const row = sql
+    .exec<MemoEntryRow>(
+      "SELECT body, posted_at FROM memos WHERE id = ? AND status = 'active'",
+      memoId,
+    )
+    .toArray()[0];
+  if (!row) return;
+  upsertSearchEntry(sql, {
+    id: memoId,
+    type: "memo",
+    topicId: null,
+    title: "",
+    body: row.body,
+    timestamp: row.posted_at,
+    sourceIds: activeSourceDocumentIds(sql, memoId),
+  });
+}

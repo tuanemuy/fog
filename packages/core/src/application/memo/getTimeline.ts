@@ -3,7 +3,8 @@ import { ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import type { ServiceArgs } from "../types";
 import type { TimelineQueryDto } from "./gateway";
-import { type TimelinePageView, toTimelineItemView } from "./view";
+import { attachSourceDocuments } from "./sourceDocuments";
+import type { TimelinePageView } from "./view";
 
 export const TIMELINE_DEFAULT_LIMIT = 50;
 export const TIMELINE_MAX_LIMIT = 100;
@@ -78,7 +79,7 @@ export function getTimelineProcedure(
     keyword: query.keyword,
   });
   return {
-    items: page.items.map(toTimelineItemView),
+    items: attachSourceDocuments(ctx, page.items),
     nextCursor: page.nextCursor,
   };
 }

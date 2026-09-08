@@ -3,7 +3,8 @@ import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import type { ServiceArgs } from "../types";
 import type { JumpToDateDto } from "./gateway";
 import { normalizeKeyword, normalizeLimit } from "./getTimeline";
-import { type TimelineWindowView, toTimelineItemView } from "./view";
+import { attachSourceDocuments } from "./sourceDocuments";
+import type { TimelineWindowView } from "./view";
 
 export type JumpToDateInput = Readonly<{
   userId: string;
@@ -54,7 +55,7 @@ export function jumpToDateProcedure(
     { limit: input.limit, keyword: input.keyword },
   );
   return {
-    items: window.items.map(toTimelineItemView),
+    items: attachSourceDocuments(ctx, window.items),
     pivotId: window.pivotId,
     olderCursor: window.olderCursor,
     newerCursor: window.newerCursor,
