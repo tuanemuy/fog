@@ -286,6 +286,42 @@ describe("renderErrorMessage", () => {
       "変更理由は200文字以内で入力してください",
     ],
     [
+      "a patch whose target is not in the document",
+      {
+        kind: "business",
+        code: KnowledgeErrorCode.PatchTargetNotFound,
+        message: "The patch target was not found in the document",
+      },
+      "パッチの置換元が本文に見つかりません",
+    ],
+    [
+      "a patch whose target appears more than once",
+      {
+        kind: "business",
+        code: KnowledgeErrorCode.PatchTargetAmbiguous,
+        message: "The patch target appears more than once",
+      },
+      "パッチの置換元が本文に複数あります",
+    ],
+    [
+      "an AI client name the domain refuses",
+      {
+        kind: "business",
+        code: IdentityErrorCode.InvalidClientName,
+        message: "Client name must be 1 to 100 characters",
+      },
+      "クライアント名が正しくありません",
+    ],
+    [
+      "an authorization request that no longer verifies",
+      {
+        kind: "validation",
+        code: "AUTHORIZATION_REQUEST_INVALID",
+        message: "The authorization request is invalid or has expired",
+      },
+      "認可リクエストが正しくありません。クライアントアプリからやり直してください",
+    ],
+    [
       "an already-registered address",
       {
         kind: "conflict",

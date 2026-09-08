@@ -47,6 +47,8 @@ function renderBusinessMessage(code: string | null): string | null {
       return "このアカウントにはパスワードが設定されていません";
     case IdentityErrorCode.UnsupportedSsoProvider:
       return "対応していない外部アカウントです";
+    case IdentityErrorCode.InvalidClientName:
+      return "クライアント名が正しくありません";
     case MemoErrorCode.BodyTooLong:
       return "メモは10,000文字以内で入力してください";
     case MemoErrorCode.EmptyBody:
@@ -79,6 +81,16 @@ function renderBusinessMessage(code: string | null): string | null {
       return "変更理由に改行は使えません";
     case KnowledgeErrorCode.ChangeReasonTooLong:
       return "変更理由は200文字以内で入力してください";
+    // The patch codes reach an AI client as JSON, never a screen; the
+    // wording is here so the table stays whole.
+    case KnowledgeErrorCode.EmptyPatch:
+      return "パッチを指定してください";
+    case KnowledgeErrorCode.EmptyPatchOldText:
+      return "パッチの置換元を指定してください";
+    case KnowledgeErrorCode.PatchTargetNotFound:
+      return "パッチの置換元が本文に見つかりません";
+    case KnowledgeErrorCode.PatchTargetAmbiguous:
+      return "パッチの置換元が本文に複数あります";
     default:
       return null;
   }
