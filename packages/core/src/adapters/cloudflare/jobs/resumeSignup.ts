@@ -14,6 +14,7 @@ type CoordinatorRow = Readonly<{
   status: "reserved" | "active";
   user_id: string | null;
   candidate_user_id: string | null;
+  saga_committed: number | null;
   caller_token: string;
   locators: string | null;
   password_verifier: string | null;
@@ -68,13 +69,21 @@ function ssoLabelOf(canonical: string): string {
  * with all of them, each is activated in its own bucket, and each gets its
  * reverse-index row. Only the coordinator can hold a verifier, so a member
  * is usable for login only when it is an SSO subject.
+ *
+ * A coordinator row that is already `active` with the saga mark is a saga
+ * whose CAS phases (2 and 3) completed: they are skipped rather than
+ * re-issued, because `credential_mappings.operation_id` is a mutable
+ * column — a credential change that lands before this job wakes up
+ * overwrites it (`spec/database/index.md`), and a CAS on the signup's
+ * operation id would then miss on a row that needs nothing. The idempotent
+ * phases (account initialisation, reverse-index rows) still run.
  */
 export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
   return async ({ storage, payload }) => {
     const { operationId, locator } = payload as ResumeSignupPayload;
     const row = storage.sql
       .exec<CoordinatorRow>(
-        `SELECT credential_id, kind, status, user_id, candidate_user_id, caller_token, locators, password_verifier, credential_version,
+        `SELECT credential_id, kind, status, user_id, candidate_user_id, saga_committed, caller_token, locators, password_verifier, credential_version,
                 encrypted_canonical, encryption_generation, encryption_nonce
          FROM credential_mappings WHERE kind = ? AND hmac = ?`,
         locator.kind,
@@ -113,6 +122,10 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
     ) as readonly MappingLocator[];
     const isCoordinator = (l: MappingLocator) =>
       l.credentialId === locator.credentialId;
+    const coordinatorCompleted =
+      row.status === "active" &&
+      row.saga_committed === 1 &&
+      row.user_id === userId;
     const coordinatorLabel =
       row.kind === "sso"
         ? ssoLabelOf(
@@ -146,16 +159,19 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
         locators,
       }),
     );
-    const committed = await deps.commit({ locator, operationId });
-    if (!committed) {
-      throw new SystemError(
-        SystemErrorCode.DataIntegrityError,
-        "resume-signup: reservation lost before the saga mark",
-      );
+    if (!coordinatorCompleted) {
+      const committed = await deps.commit({ locator, operationId });
+      if (!committed) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "resume-signup: reservation lost before the saga mark",
+        );
+      }
     }
     for (const target of locators) {
       const activated = isCoordinator(target)
-        ? await deps.activate({ locator: target, operationId, userId })
+        ? coordinatorCompleted ||
+          (await deps.activate({ locator: target, operationId, userId }))
         : await callDurableObject(() =>
             (
               directoryStub(

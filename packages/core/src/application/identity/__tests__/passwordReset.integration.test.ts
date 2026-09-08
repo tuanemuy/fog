@@ -25,6 +25,7 @@ import {
 import { loginWithPassword } from "../loginWithPassword";
 import { registerOrLoginWithSso } from "../registerOrLoginWithSso";
 import { requestPasswordReset } from "../requestPasswordReset";
+import { resumeSignupOperationKey } from "../reserveSignupCredential";
 import { revokeAllAiClientConnections } from "../revokeAllAiClientConnections";
 
 type OutboxRow = Readonly<{
@@ -459,6 +460,110 @@ describe("resume-credential-change — the fallback re-drives a change the reque
         await loginWithPassword({
           container,
           input: { email, password: "job-driven-password" },
+        })
+      ).userId,
+    ).toBe(userId);
+  });
+});
+
+describe("resume-credential-change — the `advanced` branch", () => {
+  it("re-reads the version the User Data side holds and promotes", async () => {
+    const container = createTestContainer();
+    const email = uniqueEmail();
+    const { userId } = await registerTestUser(container, { email });
+    const bucket = await bucketOfEmail(email);
+    const mapping = (await bucketState(email)).mapping;
+    if (!mapping) throw new Error("unreachable");
+    const coordinate = {
+      credentialId: mapping.credential_id,
+      kind: "email" as const,
+      mapping: `g${bucket.generation}:b${bucket.bucketIndex}:${bucket.hmac}`,
+    };
+    const operationId = container.idGenerator.next();
+    const pendingVerifier = await container.passwordHasher.hash(
+      (
+        await import("@repo/core/domain/identity/valueObject")
+      ).PlainPassword.create("advanced-password"),
+    );
+    expect(
+      await container.identityGateway.beginCredentialChange(coordinate, {
+        operationId,
+        userId,
+        pendingVerifier,
+        origin: "password-change",
+        changeAuthToken: null,
+      }),
+    ).toBe(true);
+    // Phase 2 applied and phase 3a recorded; the request died before 3b.
+    const applied = await container.identityGateway.applyCredentialChange(
+      userId,
+      { credentialId: mapping.credential_id, resetCompletion: false },
+    );
+    expect(
+      await container.identityGateway.markCredentialChangeAdvanced(
+        coordinate,
+        operationId,
+      ),
+    ).toBe(true);
+    expect((await bucketState(email)).mapping?.change_state).toBe("advanced");
+
+    const job = await runBucketJob(
+      email,
+      resumeCredentialChangeOperationKey(operationId),
+    );
+    expect(job?.status).toBe("done");
+    expect(job?.terminal_reason).toBeNull();
+    const after = await bucketState(email);
+    expect(after.mapping?.change_state).toBeNull();
+    expect(after.mapping?.password_verifier).toBe(pendingVerifier);
+    expect(after.mapping?.credential_version).toBe(applied.credentialVersion);
+    // Phase 2 ran once: the job did not apply it again.
+    expect((await accountOf(userId)).session_epoch).toBe(1);
+  });
+});
+
+describe("resume-signup after a credential change (B-2)", () => {
+  // `credential_mappings.operation_id` is mutable: a change that completes
+  // before the signup's re-drive wakes overwrites it. The re-drive must
+  // then find nothing to do rather than lose its CAS and run to `poison`.
+  it("stays `done` when a password change completed before the re-drive woke up", async () => {
+    const container = createTestContainer();
+    const email = uniqueEmail();
+    const { userId } = await registerTestUser(container, { email });
+    await changePassword({
+      container,
+      input: {
+        userId,
+        currentPassword: TEST_PASSWORD,
+        newPassword: "changed-before-resume",
+      },
+    });
+    const signupOperationId = (
+      await inUserDataStorage(userId, (sql) =>
+        sql
+          .exec<{ operation_id: string }>(
+            "SELECT operation_id FROM operations WHERE kind = 'signup'",
+          )
+          .one(),
+      )
+    ).operation_id;
+    const signup = (await bucketState(email)).jobs.find(
+      (job) =>
+        job.operation_key === resumeSignupOperationKey(signupOperationId),
+    );
+    expect(signup?.status).toBe("pending");
+    const job = await runBucketJob(email, signup?.operation_key ?? "");
+    expect(job?.status).toBe("done");
+    expect(job?.terminal_reason).toBeNull();
+    // Nothing moved on either side.
+    const mapping = (await bucketState(email)).mapping;
+    expect(mapping?.status).toBe("active");
+    expect(mapping?.change_state).toBeNull();
+    expect(
+      (
+        await loginWithPassword({
+          container,
+          input: { email, password: "changed-before-resume" },
         })
       ).userId,
     ).toBe(userId);

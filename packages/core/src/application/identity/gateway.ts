@@ -48,6 +48,12 @@ export type AttemptOutcomeDto =
     }>;
 
 export type ReserveCredentialDto = Readonly<{
+  /**
+   * Which saga the reservation belongs to. Only a `signup` coordinator
+   * enqueues `resume-signup`; a `link` reservation is re-driven by the
+   * User Data side's `resume-link` (`spec/async/index.md`).
+   */
+  saga: "signup" | "link";
   operationId: string;
   candidateUserId: string;
   callerToken: string;

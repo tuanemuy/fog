@@ -58,6 +58,7 @@ export async function linkSsoCredential({
   });
   try {
     await gateway.reserveCredential(locator, {
+      saga: "link",
       operationId,
       candidateUserId: input.userId,
       callerToken,

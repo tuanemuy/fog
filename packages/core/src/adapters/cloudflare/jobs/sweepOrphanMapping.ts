@@ -1,4 +1,8 @@
-import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import {
+  isSystemError,
+  SystemError,
+  SystemErrorCode,
+} from "@repo/core/application/errors";
 import type {
   UnitOfWorkProvider,
   UserDataUnitOfWorkContext,
@@ -93,6 +97,14 @@ export function createSweepOrphanMappingHandler(
           return undefined;
         });
       } catch (error) {
+        // A record whose material cannot be read never completes by
+        // retrying: that is the runner's poison path, not a re-arm.
+        if (
+          isSystemError(error) &&
+          error.code === SystemErrorCode.DataIntegrityError
+        ) {
+          throw error;
+        }
         // Per-record tolerance, like the runner's per-job one: one bucket
         // that cannot be reached must not hold the other records back.
         remaining += 1;

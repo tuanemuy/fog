@@ -333,6 +333,23 @@ describe("linkSsoCredential / unlinkSsoCredential", () => {
     // The epoch does not move on a link.
     expect(linked.epoch).toBe((await userSide(userId)).epoch);
     expect((await ssoMapping("google", subject))?.user_id).toBe(userId);
+    // B-1: a link's reservation is not a signup — the bucket re-drives
+    // nothing for it (a `resume-signup` here would run against an existing
+    // account and end `poison`); only its expiry sweep is enqueued.
+    const linkBucket = await ssoBucket("google", subject);
+    const bucketJobs = await inDirectoryStorage(
+      linkBucket.generation,
+      linkBucket.bucketIndex,
+      (sql) =>
+        sql
+          .exec<JobRow>(
+            "SELECT operation_key, kind, status, terminal_reason FROM jobs WHERE kind = 'sweep-reservations' OR json_extract(payload, '$.locator.hmac') = ?",
+            linkBucket.hmac,
+          )
+          .toArray(),
+    );
+    expect(bucketJobs.some((j) => j.kind === "resume-signup")).toBe(false);
+    expect(bucketJobs.some((j) => j.kind === "sweep-reservations")).toBe(true);
     const linkJob = linked.jobs.find((j) => j.kind === "resume-link");
     expect(linkJob?.status).toBe("pending");
     // The subject now logs in as this account.
@@ -438,6 +455,7 @@ describe("linkSsoCredential / unlinkSsoCredential", () => {
       label: "google",
     });
     await gateway.reserveCredential(locator, {
+      saga: "link",
       operationId,
       candidateUserId: userId,
       callerToken,

@@ -23,7 +23,6 @@ export const executePasswordResetSchema = z.object({
 export const ssoErrorSchema = z.enum([
   "email_registered",
   "already_used",
-  "cancelled",
   "unverified",
   "failed",
 ]);

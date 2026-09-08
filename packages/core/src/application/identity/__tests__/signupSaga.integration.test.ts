@@ -395,6 +395,7 @@ describe("sweep-reservations against the saga mark", () => {
     );
     const now = Date.now();
     await gateway.reserveCredential(locator, {
+      saga: "signup",
       operationId,
       candidateUserId: userId,
       callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),
@@ -506,6 +507,7 @@ describe("sweep-reservations against the saga mark", () => {
     );
     const now = Date.now();
     await gateway.reserveCredential(locator, {
+      saga: "signup",
       operationId,
       candidateUserId: userId,
       callerToken: "x".repeat(CALLER_TOKEN_MIN_LENGTH),

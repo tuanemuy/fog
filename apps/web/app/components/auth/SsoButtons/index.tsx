@@ -35,8 +35,6 @@ export function renderSsoError(
         : "このメールアドレスはパスワードで登録されています。パスワードでログインしてください";
     case "already_used":
       return "この外部アカウントは既に別のアカウントに連携されています";
-    case "cancelled":
-      return "外部アカウントでの認証が中断されました";
     case "unverified":
       return "外部アカウントのメールアドレスが確認されていません";
     case "failed":

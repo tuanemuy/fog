@@ -204,18 +204,18 @@ describe("AuthForm — SSO and reset entries", () => {
     ).toBeTruthy();
   });
 
-  it("draws a cancelled round trip as an interruption on login", async () => {
+  it("draws an unverified provider address as an error on login", async () => {
     await renderWithRouter(
       <AuthForm
         mode="login"
         redirectTo={undefined}
-        ssoError="cancelled"
+        ssoError="unverified"
         ssoProviders={PROVIDERS}
       />,
       { path: "/login" },
     );
     expect(screen.getByRole("alert").textContent).toBe(
-      "外部アカウントでの認証が中断されました",
+      "外部アカウントのメールアドレスが確認されていません",
     );
   });
 });

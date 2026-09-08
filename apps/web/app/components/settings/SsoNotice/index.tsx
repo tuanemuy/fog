@@ -16,8 +16,6 @@ export function renderSettingsSsoNotice(
         kind: "alert",
         text: "この外部アカウントは既に別のアカウントに連携されています",
       };
-    case "cancelled":
-      return { kind: "alert", text: "外部アカウントの連携が中断されました" };
     case "email_registered":
     case "unverified":
     case "failed":

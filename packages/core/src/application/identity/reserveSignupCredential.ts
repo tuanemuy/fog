@@ -26,12 +26,16 @@ export type ReserveSignupCredentialInput = Readonly<{
 }>;
 
 /**
- * Registration saga phase 1 inside the Identity Directory bucket: the
- * reservation row, the `sweep-reservations` job for its expiry, and — for the
- * coordinator bucket only — the `resume-signup` job that re-drives the saga.
- * All three land in the one transaction that writes the row.
+ * Reservation inside the Identity Directory bucket, for both the
+ * registration saga (phase 1) and a link: the reservation row, the
+ * `sweep-reservations` job for its expiry, and — for the coordinator of a
+ * **signup** only — the `resume-signup` job that re-drives the saga. A
+ * link's reservation enqueues no re-drive here: its saga is owned by the
+ * User Data record and `resume-link` (`spec/async/index.md` names the
+ * signup reservation as `resume-signup`'s only entry point). All writes
+ * land in the one transaction that writes the row.
  */
-export function reserveSignupCredentialProcedure(
+export function reserveCredentialProcedure(
   ctx: IdentityDirectoryUnitOfWorkContext,
   input: ReserveSignupCredentialInput,
 ): void {
@@ -59,7 +63,7 @@ export function reserveSignupCredentialProcedure(
     payload: {},
     nextRunAt: dto.reservedUntil,
   });
-  if (dto.coordinator.role === "coordinator") {
+  if (dto.saga === "signup" && dto.coordinator.role === "coordinator") {
     ctx.enqueueJob({
       operationKey: resumeSignupOperationKey(dto.operationId),
       kind: "resume-signup",

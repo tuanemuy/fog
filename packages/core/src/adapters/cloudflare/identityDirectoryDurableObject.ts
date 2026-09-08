@@ -24,7 +24,7 @@ import {
   type ResetRequestProcedureInput,
   requestPasswordResetProcedure,
 } from "@repo/core/application/identity/requestPasswordReset";
-import { reserveSignupCredentialProcedure } from "@repo/core/application/identity/reserveSignupCredential";
+import { reserveCredentialProcedure } from "@repo/core/application/identity/reserveSignupCredential";
 import { createIdentityTuning } from "@repo/core/application/identity/tuning";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -212,7 +212,7 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
         input.dto.canonical,
       );
       await this.runUnitOfWork((ctx) => {
-        reserveSignupCredentialProcedure(ctx, {
+        reserveCredentialProcedure(ctx, {
           locator: input.locator,
           mapping: encodeMapping(input.locator),
           sealedCanonical,

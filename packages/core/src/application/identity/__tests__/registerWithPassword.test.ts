@@ -163,6 +163,7 @@ describe("registerWithPassword", () => {
     ];
     expect(reserveLocator).toEqual(locator);
     expect(reserveInput).toEqual({
+      saga: "signup",
       operationId,
       candidateUserId: userId,
       callerToken: expect.stringMatching(/^[0-9a-f]{32}$/),

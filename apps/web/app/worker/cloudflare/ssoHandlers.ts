@@ -31,7 +31,6 @@ const DEV_PATH = /^\/__dev\/sso\/([a-z]+)\/authorize$/;
 export type SsoErrorCode =
   | "email_registered"
   | "already_used"
-  | "cancelled"
   | "unverified"
   | "failed";
 
@@ -91,6 +90,19 @@ function redirectTo(
 function withError(path: string, code: SsoErrorCode): string {
   const url = new URL(path, "http://placeholder");
   url.searchParams.set("sso_error", code);
+  return `${url.pathname}${url.search}`;
+}
+
+/**
+ * Where a provider-side cancel returns to: the page the flow started from,
+ * with its carried redirect and no message — a cancel is not an error
+ * (P-01 「SSO中断: 初期状態に戻る」).
+ */
+function cancelTarget(payload: SsoStatePayload): string {
+  if (payload.intent === "link") return "/settings";
+  const url = new URL(payload.origin, "http://placeholder");
+  if (payload.redirect !== null)
+    url.searchParams.set("redirect", payload.redirect);
   return `${url.pathname}${url.search}`;
 }
 
@@ -222,7 +234,7 @@ async function handleCallback(
   const providerError = url.searchParams.get("error");
   const code = url.searchParams.get("code");
   if (providerError !== null || code === null) {
-    return redirectTo(withError(origin, "cancelled"), [clear]);
+    return redirectTo(cancelTarget(payload), [clear]);
   }
   try {
     const assertion = await runtime.provider.exchangeCode(
@@ -230,7 +242,7 @@ async function handleCallback(
       code,
     );
     if (assertion === "cancelled") {
-      return redirectTo(withError(origin, "cancelled"), [clear]);
+      return redirectTo(cancelTarget(payload), [clear]);
     }
     if (payload.intent === "link") {
       const userId = await readSessionUserId(request, container);

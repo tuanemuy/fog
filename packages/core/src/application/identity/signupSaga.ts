@@ -81,6 +81,7 @@ export async function runSignupSaga(
   for (const credential of input.credentials) {
     try {
       await gateway.reserveCredential(credential.locator, {
+        saga: "signup",
         operationId: input.operationId,
         candidateUserId: input.userId,
         callerToken: input.callerToken,

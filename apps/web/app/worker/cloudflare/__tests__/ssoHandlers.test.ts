@@ -176,7 +176,9 @@ describe("callback", () => {
     expect(mocks.registerOrLoginWithSso).not.toHaveBeenCalled();
   });
 
-  it("treats a provider cancel as an interruption, back at the origin page", async () => {
+  // P-01: a cancel is not an error — the origin page comes back as it was,
+  // with its carried redirect and no `sso_error`.
+  it("returns a provider cancel to the origin page with no message", async () => {
     const { state, cookie } = await start("?from=signup");
     const response = await handleSso(
       new Request(
@@ -185,10 +187,18 @@ describe("callback", () => {
       ),
       env,
     );
-    expect(response.headers.get("location")).toBe(
-      "/signup?sso_error=cancelled",
-    );
+    expect(response.headers.get("location")).toBe("/signup");
     expect(cookiesOf(response)[0]).toContain("Max-Age=0");
+
+    const carried = await start("?redirect=%2Ftopics");
+    const back = await handleSso(
+      new Request(
+        `${APP_URL}/auth/sso/google/callback?error=access_denied&state=${carried.state}`,
+        { headers: { cookie: carried.cookie } },
+      ),
+      env,
+    );
+    expect(back.headers.get("location")).toBe("/login?redirect=%2Ftopics");
   });
 
   it("runs the usecase, starts the session and returns to the carried target", async () => {
