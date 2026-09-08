@@ -338,6 +338,35 @@ describe("the development sink and the stub provider are local affordances only"
   });
 });
 
+// The AI API's tokens, codes and client ids are all signed with one
+// secret the request Worker holds (PH-07 §1.1). `.dev.vars.example` is
+// where a secret's owner is declared, and a secret is never a `[vars]`
+// entry: the deploy checklist in every request template names it for
+// `wrangler secret put`, and no config declares it as a variable.
+describe("the AI client token secret belongs to the request Worker", () => {
+  it(".dev.vars.example declares it and attributes it to the request Worker", () => {
+    const example = read(".dev.vars.example");
+    expect(example).toMatch(/^AI_CLIENT_TOKEN_SECRET=/m);
+    expect(example).toMatch(/^#\s+AI_CLIENT_TOKEN_SECRET\s+— request Worker/m);
+  });
+
+  it.each(REQUEST_CONFIGS.slice(1))(
+    "%s lists it for wrangler secret put",
+    (file) => {
+      expect(read(file)).toContain(
+        "wrangler secret put AI_CLIENT_TOKEN_SECRET",
+      );
+    },
+  );
+
+  it.each([...REQUEST_CONFIGS, ...STATE_CONFIGS])(
+    "%s does not declare it as a variable",
+    (file) => {
+      expect(read(file)).not.toMatch(/^\s*AI_CLIENT_TOKEN_SECRET\s*=/m);
+    },
+  );
+});
+
 // The sender address is what the mail provider is asked to send as, so
 // every request Worker config that could reach a provider carries it as a
 // `[vars]` entry, and the deployed ones read it from the Pulumi output.

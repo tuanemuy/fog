@@ -13,6 +13,7 @@ vi.mock("@/components/settings/actions", () => ({
   changeTrashRetentionDaysFn: vi.fn(),
   changePasswordFn: vi.fn(),
   unlinkSsoCredentialFn: vi.fn(),
+  revokeAiClientConnectionFn: vi.fn(),
   revokeAllAiClientConnectionsFn: vi.fn(),
 }));
 
@@ -49,7 +50,12 @@ const user: CurrentUserView = {
 describe("CurrentUserPanel", () => {
   it("draws the address, one row per credential, retention, AI panel and logout", async () => {
     await renderWithRouter(
-      <CurrentUserPanel user={user} ssoProviders={["google"]} />,
+      <CurrentUserPanel
+        user={user}
+        ssoProviders={["google"]}
+        aiConnections={[]}
+        mcpUrl="http://localhost:3000/mcp"
+      />,
     );
     expect(screen.getByText("user@example.com")).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
@@ -61,7 +67,9 @@ describe("CurrentUserPanel", () => {
       (screen.getByLabelText("削除した項目を保持する日数") as HTMLInputElement)
         .value,
     ).toBe("30");
-    expect(screen.getByRole("button", { name: "すべて失効" })).toBeTruthy();
+    // P-13 lists and revokes one connection at a time; 「すべて失効」 is P-03's.
+    expect(screen.queryByRole("button", { name: "すべて失効" })).toBeNull();
+    expect(screen.getByText(/接続はありません/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
@@ -85,6 +93,8 @@ describe("CurrentUserPanel", () => {
     await renderWithRouter(
       <CurrentUserPanel
         ssoProviders={[]}
+        aiConnections={[]}
+        mcpUrl="http://localhost:3000/mcp"
         user={{
           ...user,
           credentials: [
@@ -102,7 +112,12 @@ describe("CurrentUserPanel", () => {
 
   it("offers a link entry only for a configured provider", async () => {
     await renderWithRouter(
-      <CurrentUserPanel user={user} ssoProviders={["google", "apple"]} />,
+      <CurrentUserPanel
+        user={user}
+        ssoProviders={["google", "apple"]}
+        aiConnections={[]}
+        mcpUrl="http://localhost:3000/mcp"
+      />,
     );
     expect(
       screen
@@ -116,7 +131,12 @@ describe("CurrentUserPanel", () => {
 
   it("never draws a verifier-looking value or the user id", async () => {
     const { container } = await renderWithRouter(
-      <CurrentUserPanel user={user} ssoProviders={["google"]} />,
+      <CurrentUserPanel
+        user={user}
+        ssoProviders={["google"]}
+        aiConnections={[]}
+        mcpUrl="http://localhost:3000/mcp"
+      />,
     );
     // Present-side check first: the email credential's label is the only
     // carrier, and the row for it is drawn — so absence below is meaningful.

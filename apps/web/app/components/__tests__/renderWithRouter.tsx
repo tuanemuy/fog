@@ -21,6 +21,7 @@ export const STUB_PATHS = [
   "/signup",
   "/password-reset",
   "/password-reset/done",
+  "/ai-clients/authorize",
   "/memos/$memoId/history",
   "/topics",
   "/topics/$topicId",
