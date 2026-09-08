@@ -27,6 +27,7 @@ import {
   writeUpdatedOperation,
 } from "./stores/operationsStore";
 import { writeEnqueuedEvents } from "./stores/outboxWriter";
+import { createTrashQueryPort } from "./stores/trashQueryPort";
 import { createUserSettingsRepository } from "./stores/userSettingsRepository";
 
 export type UnitOfWorkDeps = Readonly<{
@@ -123,6 +124,7 @@ export function createUserDataUnitOfWorkProvider(
       enqueueEvent: common.enqueueEvent,
       userSettingsRepository: createUserSettingsRepository(sql),
       memoRepository: createMemoRepository(sql, deps.selfLocator),
+      trashQueryPort: createTrashQueryPort(sql),
       accountStore: createAccountStore(sql, nowMs),
       credentialLocatorStore: createCredentialLocatorStore(sql, nowMs),
       recordOperation(input) {

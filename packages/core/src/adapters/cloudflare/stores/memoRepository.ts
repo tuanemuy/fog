@@ -70,6 +70,18 @@ const MEMO_COLUMNS =
 
 type CursorPayload = Readonly<{ p: number; i: string }>;
 
+/**
+ * `keyword` as a `LIKE` pattern: a substring match with `%` / `_` / `\`
+ * in the keyword taken literally (`ESCAPE '\'`). `LIKE` folds ASCII case
+ * and nothing else; no normalisation is applied to either side
+ * (`spec/database/index.md`, keyword 絞り込み).
+ */
+export function keywordLikePattern(keyword: string): string {
+  return `%${keyword.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+const KEYWORD_CLAUSE = "body LIKE ? ESCAPE '\\'";
+
 /** `(posted_at, id)` as base64url JSON; undecodable is the transport's `ValidationError`. */
 export function encodeTimelineCursor(
   postedAt: number,
@@ -170,45 +182,60 @@ function projectMemo(sql: SqlStorage, memo: Memo): void {
   });
 }
 
+type PivotRow = Readonly<{ posted_at: number; id: string }>;
+
 /**
- * The row the window is centred on. A memo anchor is the memo itself; a date
- * anchor is the newest memo posted at or before that instant, or — when none
- * is older — the oldest memo, which is then the nearest one.
+ * The row the window is centred on. A memo anchor is the memo itself. A
+ * date anchor is the newest memo of the day; for an empty day it is the
+ * nearer of the newest memo before the day and the oldest memo after it,
+ * each measured from its own edge of the day, the past winning a tie
+ * (`spec/domains/memo.md`, findTimelineAround).
  */
 function resolvePivot(
   sql: SqlStorage,
   anchor: TimelineAnchor,
   keyword: string | null,
 ): CursorPayload | null {
-  const keywordClause = keyword === null ? "" : " AND instr(body, ?) > 0";
-  const keywordBindings: SqlStorageValue[] = keyword === null ? [] : [keyword];
+  const keywordClause = keyword === null ? "" : ` AND ${KEYWORD_CLAUSE}`;
+  const keywordBindings: SqlStorageValue[] =
+    keyword === null ? [] : [keywordLikePattern(keyword)];
+  const toPivot = (row: PivotRow | undefined): CursorPayload | null =>
+    row ? { p: row.posted_at, i: row.id } : null;
   if (anchor.kind === "memo") {
-    const row = sql
-      .exec<{ posted_at: number; id: string }>(
-        `SELECT posted_at, id FROM memos WHERE id = ? AND status = 'active'${keywordClause}`,
-        anchor.memoId,
-        ...keywordBindings,
-      )
-      .toArray()[0];
-    return row ? { p: row.posted_at, i: row.id } : null;
+    return toPivot(
+      sql
+        .exec<PivotRow>(
+          `SELECT posted_at, id FROM memos WHERE id = ? AND status = 'active'${keywordClause}`,
+          anchor.memoId,
+          ...keywordBindings,
+        )
+        .toArray()[0],
+    );
   }
+  const from = anchor.from.getTime();
+  const toExclusive = anchor.toExclusive.getTime();
   const before = sql
-    .exec<{ posted_at: number; id: string }>(
-      `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at <= ?${keywordClause}
+    .exec<PivotRow>(
+      `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at < ?${keywordClause}
        ORDER BY posted_at DESC, id DESC LIMIT 1`,
-      anchor.date.getTime(),
+      toExclusive,
       ...keywordBindings,
     )
     .toArray()[0];
-  if (before) return { p: before.posted_at, i: before.id };
-  const oldest = sql
-    .exec<{ posted_at: number; id: string }>(
-      `SELECT posted_at, id FROM memos WHERE status = 'active'${keywordClause}
+  if (before && before.posted_at >= from) return toPivot(before);
+  const after = sql
+    .exec<PivotRow>(
+      `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at >= ?${keywordClause}
        ORDER BY posted_at ASC, id ASC LIMIT 1`,
+      toExclusive,
       ...keywordBindings,
     )
     .toArray()[0];
-  return oldest ? { p: oldest.posted_at, i: oldest.id } : null;
+  if (!before) return toPivot(after);
+  if (!after) return toPivot(before);
+  const pastDistance = toExclusive - before.posted_at;
+  const futureDistance = after.posted_at - from;
+  return toPivot(futureDistance < pastDistance ? after : before);
 }
 
 /**
@@ -242,8 +269,8 @@ export function createMemoRepository(
       bindings.push(position.p, position.p, position.i);
     }
     if (query.keyword !== null) {
-      conditions.push("instr(body, ?) > 0");
-      bindings.push(query.keyword);
+      conditions.push(KEYWORD_CLAUSE);
+      bindings.push(keywordLikePattern(query.keyword));
     }
     const order =
       direction === "older"
@@ -395,8 +422,10 @@ export function createMemoRepository(
       if (pivot === null) {
         return { items: [], olderCursor: null, newerCursor: null };
       }
-      const newerLimit = Math.max(1, Math.floor(query.limit / 2));
-      const olderLimit = Math.max(1, query.limit - newerLimit);
+      // The pivot counts against `limit` on the older side, so the window
+      // never exceeds `limit` rows: 1 → the pivot alone, 2 → one newer + it.
+      const newerLimit = Math.floor(query.limit / 2);
+      const olderLimit = query.limit - newerLimit;
       const older = timelinePage(
         {
           cursor: null,
@@ -421,17 +450,17 @@ export function createMemoRepository(
       );
       const rows = [...newer.rows, ...older.rows];
       const oldest = older.rows[older.rows.length - 1];
-      const newest = newer.rows[0];
+      // An empty newer half (`limit: 1`) continues from the pivot itself.
+      const newest = newer.rows[0] ?? { posted_at: pivot.p, id: pivot.i };
       return {
         items: rows.map((row) => rehydrate(row, userId) as ActiveMemo),
         olderCursor:
           older.hasMore && oldest
             ? encodeTimelineCursor(oldest.posted_at, oldest.id)
             : null,
-        newerCursor:
-          newer.hasMore && newest
-            ? encodeTimelineCursor(newest.posted_at, newest.id)
-            : null,
+        newerCursor: newer.hasMore
+          ? encodeTimelineCursor(newest.posted_at, newest.id)
+          : null,
       };
     },
 

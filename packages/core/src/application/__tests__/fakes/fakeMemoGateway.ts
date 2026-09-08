@@ -3,6 +3,13 @@ import type { MemoGateway } from "../../memo/gateway";
 const MEMO_GATEWAY_METHODS = [
   "postMemo",
   "getTimeline",
+  "jumpToDate",
+  "showMemoInTimeline",
+  "editMemo",
+  "listMemoRevisions",
+  "diffMemoRevisions",
+  "rollbackMemo",
+  "softDeleteMemo",
 ] as const satisfies readonly (keyof MemoGateway)[];
 
 type Exhaustive<T extends readonly (keyof MemoGateway)[]> =

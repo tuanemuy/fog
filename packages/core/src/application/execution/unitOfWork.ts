@@ -13,6 +13,7 @@ import type {
 } from "@repo/core/domain/identity/ports/credentialMappingRepository";
 import type { UserSettingsRepository } from "@repo/core/domain/identity/ports/userSettingsRepository";
 import type { MemoRepository } from "@repo/core/domain/memo/ports/memoRepository";
+import type { TrashQueryPort } from "@repo/core/domain/trash/ports/trashQueryPort";
 
 /**
  * The canonical unit-of-work contract.
@@ -159,6 +160,8 @@ export interface UserDataUnitOfWorkContext
   extends CommonUnitOfWorkContext<UserDataJobKind> {
   userSettingsRepository: UserSettingsRepository;
   memoRepository: MemoRepository;
+  /** Read-only; the wake-up material for `purge-trash` (`spec/domains/trash.md`). */
+  trashQueryPort: TrashQueryPort;
   accountStore: AccountStore;
   credentialLocatorStore: CredentialLocatorStore;
   recordOperation(input: RecordOperationInput): void;

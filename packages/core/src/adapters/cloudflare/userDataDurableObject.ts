@@ -10,15 +10,33 @@ import { initializeAccountProcedure } from "@repo/core/application/identity/init
 import { readCurrentUserProcedure } from "@repo/core/application/identity/readCurrentUser";
 import { fromCredentialLocator } from "@repo/core/application/identity/rebuild";
 import { recordSignupLocatorProcedure } from "@repo/core/application/identity/recordSignupLocator";
+import { diffMemoRevisionsProcedure } from "@repo/core/application/memo/diffMemoRevisions";
+import { editMemoProcedure } from "@repo/core/application/memo/editMemo";
 import type {
+  DiffRevisionsDto,
+  EditMemoDto,
+  JumpToDateDto,
   PostMemoDto,
+  RollbackMemoDto,
+  ShowMemoDto,
   TimelineQueryDto,
 } from "@repo/core/application/memo/gateway";
 import { getTimelineProcedure } from "@repo/core/application/memo/getTimeline";
+import { jumpToDateProcedure } from "@repo/core/application/memo/jumpToDate";
+import { listMemoRevisionsProcedure } from "@repo/core/application/memo/listMemoRevisions";
 import { postMemoProcedure } from "@repo/core/application/memo/postMemo";
+import { rollbackMemoProcedure } from "@repo/core/application/memo/rollbackMemo";
+import { showMemoInTimelineProcedure } from "@repo/core/application/memo/showMemoInTimeline";
+import { softDeleteMemoProcedure } from "@repo/core/application/memo/softDeleteMemo";
 import type {
+  EditMemoView,
+  MemoRevisionsView,
   MemoView,
+  MemoWindowView,
+  RevisionDiffView,
+  RollbackMemoView,
   TimelinePageView,
+  TimelineWindowView,
 } from "@repo/core/application/memo/view";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -138,5 +156,65 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     return this.envelope(() =>
       this.runUnitOfWork((ctx) => getTimelineProcedure(ctx, query)),
     );
+  }
+
+  async jumpToDate(
+    input: JumpToDateDto,
+  ): Promise<RpcEnvelope<TimelineWindowView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => jumpToDateProcedure(ctx, input)),
+    );
+  }
+
+  async showMemoInTimeline(
+    input: ShowMemoDto,
+  ): Promise<RpcEnvelope<MemoWindowView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => showMemoInTimelineProcedure(ctx, input)),
+    );
+  }
+
+  async editMemo(input: EditMemoDto): Promise<RpcEnvelope<EditMemoView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) => editMemoProcedure(ctx, input, now));
+    });
+  }
+
+  async listMemoRevisions(
+    memoId: string,
+  ): Promise<RpcEnvelope<MemoRevisionsView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => listMemoRevisionsProcedure(ctx, memoId)),
+    );
+  }
+
+  async diffMemoRevisions(
+    input: DiffRevisionsDto,
+  ): Promise<RpcEnvelope<RevisionDiffView>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => diffMemoRevisionsProcedure(ctx, input)),
+    );
+  }
+
+  async rollbackMemo(
+    input: RollbackMemoDto,
+  ): Promise<RpcEnvelope<RollbackMemoView>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) =>
+        rollbackMemoProcedure(ctx, input, now),
+      );
+    });
+  }
+
+  async softDeleteMemo(memoId: string): Promise<RpcEnvelope<void>> {
+    return this.envelope(() => {
+      const now = this.config.clock.now();
+      return this.runUnitOfWork((ctx) => {
+        softDeleteMemoProcedure(ctx, memoId, now);
+        return undefined;
+      });
+    });
   }
 }

@@ -38,10 +38,36 @@ function matches(source: string, pattern: RegExp): string[] {
 // A `jobs.kind` literal appears in three syntactic positions: the `kind`
 // of an `enqueueJob` input, a job-registry key, and a `JobKind` array or
 // union in `types.ts` (excluded — that is the module under comparison).
-const ENQUEUE_JOB_KIND = /enqueueJob\(\{[^}]*?kind:\s*"([^"]+)"/gs;
+// The argument object may hold a nested one before `kind:` (`payload: {}`),
+// so the scan tolerates a single level of braces rather than stopping at the
+// first `}`.
+const ENQUEUE_JOB_KIND =
+  /enqueueJob\(\{(?:[^{}]|\{[^{}]*\})*?kind:\s*"([^"]+)"/gs;
 const REGISTRY_KEY = /"([a-z]+(?:-[a-z]+)+)":\s*create\w+Handler\(/g;
-// An `event.type` literal has the shape `<domain>.<camelCaseName>`.
-const EVENT_TYPE_LITERAL = /"([a-z]+\.[a-z][A-Za-z]+)"/g;
+// An `event.type` literal has the shape `<domain>.<camelCaseName>`: the name
+// after the dot must carry an interior capital, which is what keeps a
+// lower-case dotted string such as a file name out of the match.
+const EVENT_TYPE_LITERAL = /"([a-z]+\.[a-z]+[A-Z][A-Za-z]*)"/g;
+
+describe("the roster patterns themselves", () => {
+  it("reads a kind that sits after a nested payload object", () => {
+    expect(
+      matches(
+        'ctx.enqueueJob({ operationKey: k, payload: {}, kind: "purge-trash", nextRunAt: at });',
+        ENQUEUE_JOB_KIND,
+      ),
+    ).toEqual(["purge-trash"]);
+  });
+
+  it("does not read a lower-case dotted string as an event type", () => {
+    expect(
+      matches('see "index.md" and "spec/async/index.md"', EVENT_TYPE_LITERAL),
+    ).toEqual([]);
+    expect(
+      matches('"identity.passwordResetRequested"', EVENT_TYPE_LITERAL),
+    ).toEqual(["identity.passwordResetRequested"]);
+  });
+});
 
 describe("roster grep: no jobs.kind / event.type outside spec/async/index.md", () => {
   const files = ROOTS.flatMap((root) => sourceFiles(resolve(root)));

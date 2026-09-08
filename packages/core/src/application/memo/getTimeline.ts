@@ -3,7 +3,7 @@ import { ValidationError } from "../errors";
 import type { UserDataUnitOfWorkContext } from "../execution/unitOfWork";
 import type { ServiceArgs } from "../types";
 import type { TimelineQueryDto } from "./gateway";
-import { type TimelinePageView, toMemoView } from "./view";
+import { type TimelinePageView, toTimelineItemView } from "./view";
 
 export const TIMELINE_DEFAULT_LIMIT = 50;
 export const TIMELINE_MAX_LIMIT = 100;
@@ -16,17 +16,31 @@ export type GetTimelineInput = Readonly<{
   keyword?: string | null;
 }>;
 
-/** Shape checks the transport may have skipped; the DO repeats none of them. */
-export function normalizeTimelineQuery(
-  input: GetTimelineInput,
-): TimelineQueryDto {
-  const limit = input.limit ?? TIMELINE_DEFAULT_LIMIT;
-  if (!Number.isInteger(limit) || limit < 1 || limit > TIMELINE_MAX_LIMIT) {
+/** `limit` defaulted and bounded; shared by every timeline read. */
+export function normalizeLimit(limit: number | undefined): number {
+  const value = limit ?? TIMELINE_DEFAULT_LIMIT;
+  if (!Number.isInteger(value) || value < 1 || value > TIMELINE_MAX_LIMIT) {
     throw new ValidationError(
       "INVALID_LIMIT",
       `limit must be an integer between 1 and ${TIMELINE_MAX_LIMIT}`,
     );
   }
+  return value;
+}
+
+/** `keyword` trimmed; blank is no filter. */
+export function normalizeKeyword(
+  keyword: string | null | undefined,
+): string | null {
+  const trimmed = keyword?.trim() ?? "";
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+/** Shape checks the transport may have skipped; the DO repeats none of them. */
+export function normalizeTimelineQuery(
+  input: GetTimelineInput,
+): TimelineQueryDto {
+  const limit = normalizeLimit(input.limit);
   const direction = input.direction ?? "older";
   const cursor = input.cursor ?? null;
   if (direction === "newer" && cursor === null) {
@@ -35,13 +49,7 @@ export function normalizeTimelineQuery(
       "A cursor is required when reading newer memos",
     );
   }
-  const keyword = input.keyword?.trim() ?? "";
-  return {
-    cursor,
-    direction,
-    limit,
-    keyword: keyword.length === 0 ? null : keyword,
-  };
+  return { cursor, direction, limit, keyword: normalizeKeyword(input.keyword) };
 }
 
 /** S-TL-02 / S-TL-03 / S-TL-07, request side. */
@@ -70,10 +78,7 @@ export function getTimelineProcedure(
     keyword: query.keyword,
   });
   return {
-    items: page.items.map((memo) => ({
-      ...toMemoView(memo),
-      sourceDocuments: [],
-    })),
+    items: page.items.map(toTimelineItemView),
     nextCursor: page.nextCursor,
   };
 }

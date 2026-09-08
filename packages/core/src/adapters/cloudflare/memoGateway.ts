@@ -21,5 +21,30 @@ export function createMemoGateway(
     getTimeline(userId, query) {
       return callDurableObject(() => userData(userId).getTimeline(query));
     },
+    jumpToDate(userId, input) {
+      return callDurableObject(() => userData(userId).jumpToDate(input));
+    },
+    showMemoInTimeline(userId, input) {
+      return callDurableObject(() =>
+        userData(userId).showMemoInTimeline(input),
+      );
+    },
+    editMemo(userId, input) {
+      return callDurableObject(() => userData(userId).editMemo(input));
+    },
+    listMemoRevisions(userId, memoId) {
+      return callDurableObject(() =>
+        userData(userId).listMemoRevisions(memoId),
+      );
+    },
+    diffMemoRevisions(userId, input) {
+      return callDurableObject(() => userData(userId).diffMemoRevisions(input));
+    },
+    rollbackMemo(userId, input) {
+      return callDurableObject(() => userData(userId).rollbackMemo(input));
+    },
+    softDeleteMemo(userId, memoId) {
+      return callDurableObject(() => userData(userId).softDeleteMemo(memoId));
+    },
   };
 }

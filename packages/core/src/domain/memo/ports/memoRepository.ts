@@ -29,8 +29,14 @@ export type TimelinePage = Readonly<{
   nextCursor: TimelineCursor | null;
 }>;
 
+/**
+ * Where a window is centred. The date anchor is a day as the display time
+ * zone sees it — `[from, toExclusive)` — because the interpretation of a
+ * calendar date belongs to the presentation; the repository only compares
+ * instants (`spec/domains/memo.md`, findTimelineAround).
+ */
 export type TimelineAnchor =
-  | Readonly<{ kind: "date"; date: Date }>
+  | Readonly<{ kind: "date"; from: Date; toExclusive: Date }>
   | Readonly<{ kind: "memo"; memoId: MemoId }>;
 
 export type TimelineWindow = Readonly<{
@@ -58,6 +64,13 @@ export interface MemoRepository {
   listActiveByIds(ids: readonly MemoId[]): readonly Versioned<ActiveMemo>[];
 
   findTimelinePage(query: TimelineQuery): TimelinePage;
+  /**
+   * The window around an anchor. A date anchor pivots on the newest memo of
+   * that day; when the day is empty, on whichever of the newest memo before
+   * `toExclusive` and the oldest memo at or after `from` lies closer to its
+   * own edge (ties go to the past). A memo anchor pivots on that memo and
+   * answers an empty window when it is absent or trashed.
+   */
   findTimelineAround(
     anchor: TimelineAnchor,
     query: Readonly<{ limit: number; keyword: string | null }>,
