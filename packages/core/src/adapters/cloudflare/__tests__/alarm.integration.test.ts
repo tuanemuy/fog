@@ -29,7 +29,7 @@ describe("alarm(): one relay pass and one jobs pass per wake-up", () => {
   it("publishes the due outbox row and finishes the due job in a single wake-up", async () => {
     const stub = directoryStubOf(BUCKET.generation, BUCKET.bucketIndex);
     // The first gated RPC initialises the bucket's schema.
-    expect(await stub.listBucketUserIds()).toEqual({ ok: true, value: [] });
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
 
     const now = Date.now();
     const past = now - 1_000;

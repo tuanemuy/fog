@@ -138,7 +138,7 @@ describe("PH-06 job kinds: failure → backoff → confirmation", () => {
       BROKEN_BUCKET.generation,
       BROKEN_BUCKET.bucketIndex,
     );
-    expect(await stub.listBucketUserIds()).toEqual({ ok: true, value: [] });
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
     await inDirectoryStorage(
       BROKEN_BUCKET.generation,
       BROKEN_BUCKET.bucketIndex,

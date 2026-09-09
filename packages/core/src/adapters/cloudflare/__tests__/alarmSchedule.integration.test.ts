@@ -35,7 +35,7 @@ function assertMinimaPlans(sql: SqlStorage): void {
 describe("alarm re-arm minima: each statement seeks its declared index", () => {
   it("Identity Directory DO", async () => {
     const stub = directoryStubOf(BUCKET.generation, BUCKET.bucketIndex);
-    expect(await stub.listBucketUserIds()).toEqual({ ok: true, value: [] });
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
     await inDirectoryStorage(BUCKET.generation, BUCKET.bucketIndex, (sql) => {
       assertMinimaPlans(sql);
     });

@@ -44,7 +44,7 @@ function assertRunnerPlans(sql: SqlStorage): void {
 describe("row runner: claim and finalize statements seek their declared indexes", () => {
   it("Identity Directory DO", async () => {
     const stub = directoryStubOf(BUCKET.generation, BUCKET.bucketIndex);
-    expect(await stub.listBucketUserIds()).toEqual({ ok: true, value: [] });
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
     await inDirectoryStorage(BUCKET.generation, BUCKET.bucketIndex, (sql) => {
       assertRunnerPlans(sql);
     });

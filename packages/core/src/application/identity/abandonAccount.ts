@@ -54,8 +54,11 @@ export function abandonAccountProcedure(
     dto.callerToken.length < CALLER_TOKEN_MIN_LENGTH ||
     !constantTimeEqual(bound, dto.callerToken)
   ) {
+    // Not a configuration fault: the material this cleanup carries names
+    // another saga's account, or the binding is gone. The code is what an
+    // operator triages on, so it says so.
     throw new SystemError(
-      SystemErrorCode.ConfigurationError,
+      SystemErrorCode.DataIntegrityError,
       "abandon-account: the caller binding does not match",
     );
   }

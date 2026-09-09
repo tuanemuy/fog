@@ -63,12 +63,18 @@ describe("Identity Directory schema v1", () => {
     const { generation, bucketIndex } = freshBucket();
     const stub = directoryStubOf(generation, bucketIndex);
 
-    // The diagnostic entry deliberately does not initialise the object.
+    // Neither diagnostic initialises the object: both are outside the
+    // gate's scope and answer an uninitialised bucket as such.
     const before = await stub.readSchemaVersion();
     expect(before).toEqual({ ok: true, value: { schemaVersion: null } });
+    expect(await stub.listBucketUserIds()).toEqual({ ok: true, value: [] });
+    expect(await stub.readSchemaVersion()).toEqual({
+      ok: true,
+      value: { schemaVersion: null },
+    });
 
-    const listed = await stub.listBucketUserIds();
-    expect(listed).toEqual({ ok: true, value: [] });
+    // The first gated RPC does.
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
 
     await inDirectoryStorage(generation, bucketIndex, (sql) => {
       expect(schemaVersion(sql)).toBe(1);

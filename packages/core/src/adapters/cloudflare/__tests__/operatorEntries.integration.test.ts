@@ -280,7 +280,8 @@ describe("purge-user-mappings and list-bucket-user-ids", () => {
 describe("fail-closed: a schema ahead of the code", () => {
   it("every entry answers SCHEMA_VERSION_AHEAD, the alarm is kept at the fixed interval, and the next deploy recovers it", async () => {
     const container = createTestContainer();
-    const { userId } = await registerTestUser(container);
+    const email = uniqueEmail();
+    const { userId } = await registerTestUser(container, { email });
     const stub = userDataStubOf(userId);
     await inUserDataStorage(userId, async (sql, _i, state) => {
       sql.exec("UPDATE _meta SET schema_version = 99");
@@ -306,6 +307,23 @@ describe("fail-closed: a schema ahead of the code", () => {
     expect(await stub.readSchemaVersion()).toEqual({
       ok: true,
       value: { schemaVersion: 99 },
+    });
+    const bucket = await bucketOfEmail(email);
+    const bucketStub = directoryStubOf(bucket.generation, bucket.bucketIndex);
+    await inDirectoryStorage(bucket.generation, bucket.bucketIndex, (sql) => {
+      sql.exec("UPDATE _meta SET schema_version = 99");
+    });
+    expect(await bucketStub.readDeliveryBacklog()).toMatchObject({
+      ok: false,
+      error: { code: "SCHEMA_VERSION_AHEAD" },
+    });
+    // `list-bucket-user-ids` is outside the gate: a fail-closed bucket
+    // still names its accounts, which is how an operator maps the blast
+    // radius (`spec/database/index.md`, PITR).
+    const named = await bucketStub.listBucketUserIds();
+    expect(named.ok && named.value).toContain(userId);
+    await inDirectoryStorage(bucket.generation, bucket.bucketIndex, (sql) => {
+      sql.exec("UPDATE _meta SET schema_version = 1");
     });
 
     const before = Date.now();

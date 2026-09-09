@@ -54,6 +54,7 @@ import { createResumeCredentialChangeHandler } from "./jobs/resumeCredentialChan
 import { createResumeSignupHandler } from "./jobs/resumeSignup";
 import { createSweepReservationsHandler } from "./jobs/sweepReservations";
 import { createSweepResetTokensHandler } from "./jobs/sweepResetTokens";
+import { isInitialized } from "./migrationGate";
 import { IDENTITY_DIRECTORY_PLAN } from "./schema/identityDirectoryPlan";
 import {
   listMappedUserIds,
@@ -525,11 +526,23 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
     });
   }
 
-  /** Diagnostics: the `userId`s that hold a mapping in this bucket. Passes the gate, writes nothing. */
+  /**
+   * Diagnostics: the `userId`s that hold a mapping in this bucket.
+   *
+   * The second of the two entries outside the gate's scope
+   * (`spec/database/index.md`, fail-closed; `spec/recovery/index.md`,
+   * exception group (a)): it neither initialises an object nor refuses a
+   * bucket whose `schema_version` is ahead of this build, because it is
+   * how an operator maps the blast radius of a fail-closed deploy — the
+   * PITR procedure walks every bucket through it. A bucket that was never
+   * initialised answers `[]` and stays at zero bytes; the read depends on
+   * two columns that exist in every version of the table.
+   */
   async listBucketUserIds(): Promise<RpcEnvelope<readonly string[]>> {
     return this.envelope(async () => {
-      await this.enterRpc();
-      return listMappedUserIds(this.ctx.storage.sql);
+      const sql = this.ctx.storage.sql;
+      if (!isInitialized(sql)) return [];
+      return listMappedUserIds(sql);
     });
   }
 }
