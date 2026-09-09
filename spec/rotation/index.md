@@ -255,4 +255,4 @@ echo "saga=$saga rows=$rows"; [ $((rows - 1)) -eq $((saga + 4)) ] && echo OK || 
 
 - 2 世代を運ぶ変数は JSON の配列 3 つである: `DIRECTORY_ROUTING_KEYRING`（request Worker。`[{ role, generation, key, bucketCount }]`）、`DIRECTORY_KEY_COMMITMENT`（state Worker。`[{ role, generation, keyDigest, bucketCount }]`）、`IDENTITY_MAIL_ENCRYPTION_KEYRING`（state Worker。`[{ role, generation, key }]`）。`role` は `active` / `previous`。
 - 未設定なら従来の単一変数（`DIRECTORY_ROUTING_SECRET` / `IDENTITY_MAIL_ENCRYPTION_KEY`）から `active` の generation 1 だけを組む。配列が設定されていれば単一変数は読まない。
-- 世代ガードで拒否された予約は、request 経路では `SystemError(ConfigurationError)`（利用者には一様なエラー）、ジョブ経路（`resume-signup` の非コーディネーター予約 / `resume-link` の再予約）では `ConflictError("GENERATION_MISMATCH")` として前進不能を確定し、終端モードへ入る（recovery/index.md）。
+- 世代ガードで拒否された予約は `SystemError(ConfigurationError)` になる（利用者には一様なエラー）。予約を書くのは request 経路（新規登録 saga の各 credential と SSO 連携）だけで、`resume-signup` / `resume-link` の再駆動は予約を書き直さず activate / commit / record を再実行するので、ジョブ経路が世代ガードに当たる経路は無い。
