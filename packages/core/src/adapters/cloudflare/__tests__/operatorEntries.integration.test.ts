@@ -256,10 +256,24 @@ describe("purge-user-mappings and list-bucket-user-ids", () => {
         Date.now() + 60_000,
         Date.now(),
       );
+      // A link reservation of the same account: `reserved`, bound to the user.
+      sql.exec(
+        `INSERT INTO credential_mappings
+           (credential_id, kind, hmac, generation, user_id, status, password_verifier, pending_verifier, change_state, change_origin,
+            credential_version, encrypted_canonical, encryption_generation, encryption_nonce, failed_attempts, next_attempt_allowed_at,
+            operation_id, candidate_user_id, reserved_until, saga_committed, locators, coordinator_locator, caller_token, created_at, updated_at)
+         SELECT 'cred-purge-reserved', 'sso', ?, generation, user_id, 'reserved', NULL, NULL, NULL, NULL,
+                0, encrypted_canonical, encryption_generation, encryption_nonce, 0, NULL,
+                'op-purge-link', NULL, ?, NULL, NULL, NULL, caller_token, created_at, updated_at
+         FROM credential_mappings WHERE user_id = ?`,
+        "f".repeat(64),
+        Date.now() + 60_000,
+        userId,
+      );
     });
     expect(await stub.purgeUserMappings(userId)).toEqual({
       ok: true,
-      value: { deletedMappings: 1, deletedTokens: 1 },
+      value: { deletedMappings: 2, deletedTokens: 1 },
     });
     const after = await stub.listBucketUserIds();
     expect(after.ok && after.value).not.toContain(userId);

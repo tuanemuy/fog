@@ -78,7 +78,7 @@ export function emptyTrashInDurableObject(
         failedCount += 1;
         logger.warn("emptyTrash: an item was deferred", {
           kind: target.kind,
-          cause: error instanceof Error ? error.message : String(error),
+          cause: error instanceof Error ? error.name : typeof error,
         });
       }
     }

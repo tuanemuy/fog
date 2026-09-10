@@ -302,6 +302,34 @@ describe("AI client connections — approve, list, authorize, revoke", () => {
     ).toEqual({ clientName: "new" });
   });
 
+  it("an account that is not active neither authorizes a call nor exchanges a code", async () => {
+    const container = createTestContainer();
+    const { userId } = await registerTestUser(container);
+    const { connectionId } = await approveAiClientAuthorization({
+      container,
+      input: { userId, clientName: "c" },
+    });
+    const expiresAt = new Date(Date.now() + 600_000);
+    await inUserDataStorage(userId, (sql) => {
+      sql.exec("UPDATE account SET status = 'deleting'");
+    });
+    expect(
+      await authorizeAiClient({ container, input: { userId, connectionId } }),
+    ).toBeNull();
+    expect(
+      await consumeAuthorizationCode({
+        container,
+        input: { userId, jti: "jti-deleting", expiresAt, connectionId },
+      }),
+    ).toEqual({ ok: false });
+    await inUserDataStorage(userId, (sql) => {
+      sql.exec("UPDATE account SET status = 'active'");
+    });
+    expect(
+      await authorizeAiClient({ container, input: { userId, connectionId } }),
+    ).toEqual({ clientName: "c" });
+  });
+
   it("consumeAuthorizationCode spends a jti once and refuses a revoked connection", async () => {
     const container = createTestContainer();
     const { userId } = await registerTestUser(container);

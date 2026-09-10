@@ -301,19 +301,51 @@ function ResultRow({
   );
 }
 
-/** Marks the keyword in the snippet when it can be found as typed, case-insensitively. */
+const graphemeSegmenter =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter("ja", { granularity: "grapheme" })
+    : null;
+
+function graphemesOf(text: string): string[] {
+  if (graphemeSegmenter === null) return Array.from(text);
+  const out: string[] = [];
+  for (const { segment } of graphemeSegmenter.segment(text)) out.push(segment);
+  return out;
+}
+
+const fold = (value: string) => value.normalize("NFKC").toLowerCase();
+
+/**
+ * Marks the keyword in the snippet. The match is found on the NFKC
+ * lower-cased text, grapheme by grapheme — the same folding the index and
+ * the snippet use — so a half-width keyword marks its full-width original;
+ * what is marked is the original text, never the folded one.
+ */
 export function Highlighted({
   text,
   keyword,
 }: Readonly<{ text: string; keyword: string }>) {
-  const needle = keyword.trim().toLowerCase();
-  const at = needle.length === 0 ? -1 : text.toLowerCase().indexOf(needle);
-  if (at < 0) return <>{text}</>;
+  const needle = fold(keyword.trim());
+  if (needle.length === 0) return <>{text}</>;
+  const graphemes = graphemesOf(text);
+  const starts: number[] = [];
+  let folded = "";
+  for (const grapheme of graphemes) {
+    starts.push(folded.length);
+    folded += fold(grapheme);
+  }
+  const hit = folded.indexOf(needle);
+  if (hit < 0) return <>{text}</>;
+  let from = starts.length - 1;
+  while (from > 0 && (starts[from] as number) > hit) from -= 1;
+  let to = from;
+  while (to < graphemes.length && (starts[to] as number) < hit + needle.length)
+    to += 1;
   return (
     <>
-      {text.slice(0, at)}
-      <mark>{text.slice(at, at + needle.length)}</mark>
-      {text.slice(at + needle.length)}
+      {graphemes.slice(0, from).join("")}
+      <mark>{graphemes.slice(from, to).join("")}</mark>
+      {graphemes.slice(to).join("")}
     </>
   );
 }

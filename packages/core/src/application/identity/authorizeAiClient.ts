@@ -35,6 +35,10 @@ export function findActiveAiClientProcedure(
   ctx: UserDataUnitOfWorkContext,
   rawConnectionId: string,
 ): AuthorizedAiClient | null {
+  // An account on its way out (or gone) mints and exchanges nothing, even
+  // while its connections are still `active` ahead of `finalize-withdrawal`.
+  const account = ctx.accountStore.find();
+  if (account === null || account.status !== "active") return null;
   const found = ctx.aiClientConnectionRepository.findActiveById(
     AiClientConnectionId.create(rawConnectionId),
   );

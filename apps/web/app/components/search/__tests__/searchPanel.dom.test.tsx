@@ -153,6 +153,25 @@ describe("SearchPanel", () => {
     expect(screen.queryByRole("button", { name: "もっと読む" })).toBeNull();
   });
 
+  it("marks a full-width original found by a half-width keyword, on the original text", async () => {
+    await draw({
+      initial: {
+        kind: "results",
+        page: page([
+          { ...MEMO, snippet: "全角の ｆｏｇｓｅａｒｃｈ を含むメモ" },
+        ]),
+      },
+    });
+    const memo = within(
+      screen.getByRole("region", { name: "検索結果" }),
+    ).getAllByRole("link")[0] as HTMLElement;
+    const mark = memo.querySelector("mark");
+    expect(mark?.textContent).toBe("ｆｏｇｓｅａｒｃｈ");
+    expect(memo.querySelector(".fog-result-snippet")?.textContent).toBe(
+      "全角の ｆｏｇｓｅａｒｃｈ を含むメモ",
+    );
+  });
+
   it("says nothing was found for zero results", async () => {
     await draw({ initial: { kind: "results", page: page([]) } });
     const status = screen.getByRole("status");

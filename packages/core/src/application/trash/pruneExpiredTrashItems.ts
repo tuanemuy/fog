@@ -117,7 +117,7 @@ export function pruneExpiredTrashItems(
         failedCount += 1;
         deps.logger.warn("purge-trash: an item was deferred", {
           kind: item.kind,
-          cause: error instanceof Error ? error.message : String(error),
+          cause: error instanceof Error ? error.name : typeof error,
         });
       }
     }

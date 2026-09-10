@@ -372,6 +372,9 @@ describe("resume-signup in terminal mode: S1〜S4 and the withdrawal it starts",
       caller_token: null,
     });
     expect(done.account?.deleted_at).not.toBeNull();
+    // The withdrawal counts once among the epoch advances: `abandon-account`
+    // moved it, the tombstone does not move it again.
+    expect(done.account?.session_epoch).toBe(abandoned.account?.session_epoch);
     expect(done.locators).toBe(0);
     // The records stay (the withdrawal never deletes `operations`), the
     // withdrawal's own — its stashed coordinates — among them.

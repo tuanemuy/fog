@@ -30,4 +30,11 @@ export interface AccountStore {
    * success. Flips to `deleting` and advances `sessionEpoch`.
    */
   beginDeletion(): void;
+  /**
+   * The tombstone: conditional on `status = 'deleting'`; matching zero rows
+   * is idempotent success. Writes `deleted`, `deleted_at` and clears the
+   * caller binding. Does not advance `sessionEpoch` — `beginDeletion`
+   * already did, and withdrawal counts once among the four advances.
+   */
+  finishDeletion(): void;
 }

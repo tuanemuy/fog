@@ -110,11 +110,12 @@ export function createFinalizeWithdrawalHandler(
           bucketOf(locator).cancelReservation({ locator, callerToken }),
         );
       }
-      storage.transactionSync(() => {
-        sql.exec(
-          "UPDATE operations SET phase = 'done' WHERE operation_id = ? AND phase != 'done'",
-          record.operation_id,
-        );
+      deps.provider().run((ctx) => {
+        ctx.updateOperation({
+          operationId: record.operation_id,
+          phase: "done",
+        });
+        return undefined;
       });
     }
 
@@ -178,12 +179,7 @@ export function createFinalizeWithdrawalHandler(
         now,
       );
       sql.exec("DELETE FROM oauth_consumed_codes");
-      sql.exec(
-        `UPDATE account SET status = 'deleted', caller_token = NULL, deleted_at = ?, session_epoch = session_epoch + 1, updated_at = ?
-         WHERE status = 'deleting'`,
-        now,
-        now,
-      );
+      ctx.accountStore.finishDeletion();
       ctx.updateOperation({
         operationId: WITHDRAWAL_OPERATION_ID,
         phase: "done",

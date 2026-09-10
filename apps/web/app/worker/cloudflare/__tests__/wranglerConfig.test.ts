@@ -438,6 +438,24 @@ describe("the rotation variables have their declared owners", () => {
   });
 });
 
+// The two request-Worker `[vars]` beside the sender address are in the
+// ownership table too, as non-secrets, so the table is the whole roster.
+describe("the non-secret request Worker vars are in the ownership table", () => {
+  it.each(["APP_URL", "DIAGNOSTICS_ENABLED"])(
+    ".dev.vars.example lists %s as a [vars] entry of the request Worker",
+    (name) => {
+      const example = read(".dev.vars.example");
+      expect(example).toMatch(
+        new RegExp(
+          `^#\\s+${name}\\s+— not a secret: a \\[vars\\] entry of the request Worker`,
+          "m",
+        ),
+      );
+      expect(example).not.toMatch(new RegExp(`^${name}=`, "m"));
+    },
+  );
+});
+
 // The sender address is what the mail provider is asked to send as, so
 // every request Worker config that could reach a provider carries it as a
 // `[vars]` entry, and the deployed ones read it from the Pulumi output.

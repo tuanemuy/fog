@@ -146,6 +146,6 @@ describe("AiConnectionsList", () => {
     fireEvent.click(screen.getByRole("button", { name: "解除する" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("システムエラーが発生しました");
-    expect(screen.getByText("Cursor")).toBeTruthy();
+    expect(await screen.findByText("Cursor")).toBeTruthy();
   });
 });

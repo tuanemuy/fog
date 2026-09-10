@@ -56,7 +56,12 @@ export function trashTopicProcedure(
   ctx.topicRepository.save(set.topic, found.expectedVersion);
   set.documents.forEach((document, index) => {
     const token = documents[index]?.expectedVersion;
-    if (token === undefined) throw new Error("unreachable");
+    if (token === undefined) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "trashTopic: a document lost its OCC token between read and save",
+      );
+    }
     ctx.documentRepository.save(document, token);
   });
   armPurgeTrash(ctx);

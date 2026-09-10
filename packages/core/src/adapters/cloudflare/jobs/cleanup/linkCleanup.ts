@@ -4,6 +4,7 @@ import type { StateWorkerEnv } from "../../durableObjectBase";
 import type { IdentityDirectoryDurableObject } from "../../identityDirectoryDurableObject";
 import type { JobHandler } from "../../jobRunner";
 import { readCallerToken } from "../../stores/accountStore";
+import { writeUpdatedOperation } from "../../stores/operationsStore";
 import type { LinkTarget } from "../resumeLink";
 
 type LinkOperationRow = Readonly<{
@@ -64,10 +65,7 @@ export function createLinkCleanupHandler(deps: LinkCleanupDeps): JobHandler {
     return {
       kind: "finished",
       commit: (tx) => {
-        tx.exec(
-          "UPDATE operations SET phase = 'done' WHERE operation_id = ? AND kind = 'link' AND phase != 'done'",
-          operationId,
-        );
+        writeUpdatedOperation(tx, { operationId, phase: "done" });
         return undefined;
       },
     };

@@ -92,6 +92,7 @@ function fakeEnv(
   return {
     USER_DATA: namespace("user"),
     IDENTITY_DIRECTORY: namespace("dir"),
+    DIRECTORY_ROUTING_SECRET: "test-directory-routing-secret-0123456789abcdef",
     ...(token === null ? {} : { OPERATOR_TOKEN: token }),
   } as ServerEnv;
 }
@@ -379,6 +380,24 @@ describe("POST /__operator/<entry>", () => {
     expect((await send(IMPORT_ROWS_PER_CALL)).status).toBe(200);
     expect((await send(IMPORT_ROWS_PER_CALL + 1)).status).toBe(400);
     expect(calls).toHaveLength(1);
+  });
+
+  it("answers 500 without echoing the value when the keyring variable cannot be read", async () => {
+    const calls: Call[] = [];
+    const broken = deps({
+      ...fakeEnv(calls),
+      DIRECTORY_ROUTING_KEYRING:
+        '[{"role":"active","generation":2,"key":"leaked-key-material-0123456789abcdef","bucketCount":12}]',
+    } as ServerEnv);
+    const response = await handleOperator(
+      post("read-schema-version", { locator: "dir:g1:b0" }),
+      broken,
+    );
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).toContain("DIRECTORY_ROUTING_KEYRING is not usable");
+    expect(text).not.toContain("leaked-key-material");
+    expect(calls).toHaveLength(0);
   });
 
   it("addresses the buckets of both keyring generations while a rotation is open, and generation 1 alone otherwise", async () => {

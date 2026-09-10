@@ -16,6 +16,10 @@ export type ZipArchiveWriterOptions = Readonly<{
  * `rootDirName/`, UTF-8, deflate level 6, and `mtime` fixed to
  * `exportedAt` so the archive's determinism reaches the zip bytes
  * (D-15 △-5). Pure JS; runs on the request Worker.
+ *
+ * Limit: fflate converts `mtime` to the DOS timestamp in the process
+ * time zone, so the zip bytes are deterministic per zone; workerd runs
+ * in UTC, and a Node process elsewhere would encode a different local time.
  */
 export function createZipArchiveWriter(
   options: ZipArchiveWriterOptions = {},

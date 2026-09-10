@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
+import { userActorOf } from "@/presentation/userActor";
 import { validateInput } from "@/presentation/validator";
 import {
   createDocumentSchema,
@@ -11,13 +12,6 @@ import {
   type TrashDocumentResult,
   trashDocumentSchema,
 } from "./schema";
-
-async function userActorOf(userId: string) {
-  const { Actor, UserId } = await import(
-    "@repo/core/domain/identity/valueObject"
-  );
-  return Actor.user(UserId.create(userId));
-}
 
 /** S-DT-04. The change reason is not posted: the application writes 「作成」 (△-3). */
 export const createDocumentFn = createServerFn({ method: "POST" })

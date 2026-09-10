@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -32,15 +33,19 @@ const BIOME = createRequire(import.meta.url).resolve(
 // all three at once. `.tmp.ts` is `.gitignore`d so an abandoned fixture cannot
 // reach a commit, and `banList.test.ts` skips that suffix so a parallel worker
 // cannot read it mid-delete. The pid keeps two vitest runs in one worktree from
-// deleting each other's fixture.
+// deleting each other's fixture, the run id two workers of the same run.
 const FIXTURE_ROOTS: ReadonlyArray<readonly string[]> = [
   ["packages", "core", "src"],
   ["apps", "web", "app"],
   ["infra", "cloudflare", "pulumi"],
 ];
 
+// The pid alone collides when vitest runs two workers of one run in one
+// process tree; the run id keeps each worker's fixture its own.
+const FIXTURE_RUN = randomUUID();
+
 const fixturePath = (root: readonly string[]): string =>
-  join(REPO_ROOT, ...root, `pluginWiring.${process.pid}.tmp.ts`);
+  join(REPO_ROOT, ...root, `pluginWiring.${process.pid}.${FIXTURE_RUN}.tmp.ts`);
 
 // `ConflictError` is on the ban list. `declare` keeps the fixture free of a class
 // declaration, which `banList.test.ts`'s scan would otherwise have to reason about.

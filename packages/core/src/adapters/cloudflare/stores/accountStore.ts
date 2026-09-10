@@ -88,6 +88,17 @@ export function createAccountStore(
         now(),
       );
     },
+
+    finishDeletion() {
+      const at = now();
+      updateMatchedRow(
+        sql,
+        `UPDATE account SET status = 'deleted', caller_token = NULL, deleted_at = ?, updated_at = ?
+         WHERE status = 'deleting'`,
+        at,
+        at,
+      );
+    },
   };
 }
 

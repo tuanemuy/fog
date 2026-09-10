@@ -117,7 +117,7 @@ function restoreAlone(
   }
   // Touch: serialises with a concurrent trashTopic (the same device as createDocument).
   ctx.topicRepository.save(
-    { ...live.entity, version: live.entity.version + 1, updatedAt: now },
+    { ...live.entity, version: live.entity.version + 1 },
     live.expectedVersion,
   );
   const { document, expectedVersion } = takeTrashed(ctx, item.id);
@@ -184,7 +184,7 @@ function restoreTo(
       );
     }
     ctx.topicRepository.save(
-      { ...live.entity, version: live.entity.version + 1, updatedAt: now },
+      { ...live.entity, version: live.entity.version + 1 },
       live.expectedVersion,
     );
     destinationTopicId = topicId;

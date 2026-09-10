@@ -1,5 +1,4 @@
 import {
-  INITIAL_DIRECTORY_BUCKET_COUNT,
   type MappingKeyring,
   mappingKeyringFromEnv,
 } from "@repo/core/adapters/cloudflare/crypto/keyring";
@@ -254,20 +253,16 @@ export const OPERATOR_ENTRIES: Readonly<Record<string, EntrySpec>> = {
  * both entries of the request Worker's keyring while a rotation is open,
  * so the retiring generation's buckets stay addressable for `remap-chunk`
  * and `read-rotation-checkpoint`. A keyring the request path cannot
- * build leaves the surface at generation 1 alone.
+ * build is an error, not a fallback: the surface answers 500 rather than
+ * silently addressing generation 1 alone.
  */
 export function operatorBuckets(
   env: ServerEnv,
 ): readonly { generation: number; bucketCount: number }[] {
-  let keyring: MappingKeyring;
-  try {
-    keyring = mappingKeyringFromEnv(
-      env.DIRECTORY_ROUTING_KEYRING,
-      env.DIRECTORY_ROUTING_SECRET,
-    );
-  } catch {
-    return [{ generation: 1, bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT }];
-  }
+  const keyring: MappingKeyring = mappingKeyringFromEnv(
+    env.DIRECTORY_ROUTING_KEYRING,
+    env.DIRECTORY_ROUTING_SECRET,
+  );
   return keyring.entries.map((entry) => ({
     generation: entry.generation,
     bucketCount: entry.bucketCount,
@@ -373,7 +368,13 @@ export async function handleOperator(
     return json({ error: "The body must be an object" }, 400);
   }
   const { locator, ...rest } = body as Record<string, unknown>;
-  const buckets = deps.buckets ?? operatorBuckets(deps.env);
+  let buckets: readonly { generation: number; bucketCount: number }[];
+  try {
+    buckets = deps.buckets ?? operatorBuckets(deps.env);
+  } catch {
+    // The variable's value never reaches the answer or the log.
+    return json({ error: "DIRECTORY_ROUTING_KEYRING is not usable" }, 500);
+  }
   const target = parseLocator(locator, buckets);
   if (target === null || !entry.targets.includes(target.kind)) {
     return json({ error: "locator is not one this entry accepts" }, 400);

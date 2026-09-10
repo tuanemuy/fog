@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { noStoreMiddleware } from "@/presentation/noStoreMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
+import { userActorOf } from "@/presentation/userActor";
 import { validateInput } from "@/presentation/validator";
 import {
   editMemoSchema,
@@ -10,13 +11,6 @@ import {
   softDeleteMemoSchema,
   timelinePageSchema,
 } from "./schema";
-
-async function userActorOf(userId: string) {
-  const { Actor, UserId } = await import(
-    "@repo/core/domain/identity/valueObject"
-  );
-  return Actor.user(UserId.create(userId));
-}
 
 export const postMemoFn = createServerFn({ method: "POST" })
   .middleware([errorResponseMiddleware, noStoreMiddleware])
