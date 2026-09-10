@@ -14,12 +14,12 @@ Every section that describes a procedure carries a **Reality** marker, and the m
 
 Two rules follow from that question, and both are easy to get wrong:
 
-- **The marker is not decided by whether code exists.** Two maintenance RPCs — `list-quarantined-events` and `requeue-quarantined-event` — are implemented and have no caller anywhere in the tree; they are **None**, not Available. A third, `read-schema-version`, is implemented *and* has a caller, but that caller is the local diagnostic route only, so it is **Local only**.
+- **The marker is not decided by whether code exists.** A maintenance RPC is **Available** because `POST /__operator/<entry>` (8.2) reaches it, not because its method is defined on the Durable Object; a capability that only `sqlite3` against `.wrangler/state` provides is **Local only** however complete the code behind it is.
 - **The marker is not lowered because a later step is blocked.** `wrangler secret put`, `wrangler queues update` and `pulumi up` are commands you can run today, so they are **Available** even though the deploy they prepare for stops at #73. Where that boundary falls is shown by section headings — "before the deploy" versus "after the deploy" — not by the marker.
 
-**A section whose reality is `None` still carries its full procedure, and says so at the top.** The alternative — leaving it out — reads as "there is a way and we did not write it down". Where a section describes something unimplemented, the first line names the issue that receives it and states what the current workaround is, or that there is none.
+**A section whose reality is `None` still carries its full procedure, and says so at the top.** The alternative — leaving it out — reads as "there is a way and we did not write it down".
 
-**This document records what is, not the gap between what is and what a spec says.** Where the two disagree, the disagreement is tracked on an issue and referenced by number here.
+**This document records what is, not the gap between what is and what a spec says.** Where the two disagree, the disagreement is tracked on an issue and referenced by number here. Where a behaviour is a limit of the implementation rather than a gap — something the code does on purpose and the spec does not name — it is written as a limit, in the section it belongs to.
 
 ## 1. Topology
 
@@ -60,16 +60,9 @@ Two Workers, one Queue plus its dead-letter queue, and Durable Objects that hold
 - **The consumers run in the request Worker's `queue()` handler** — the mail consumer and the DLQ handler both. That is `apps/web/app/worker/cloudflare/queueHandlers.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`. Hosting them there is what puts the mail provider's secret on the request Worker.
 - **Pruning is not a job kind.** The job runner deletes retention-expired `done` and `published` rows at the tail of each wake-up.
 
-**D1 is not coming back.** The binding is still declared in the request Worker's config and in Pulumi, and the migration scripts still exist, but **nothing in the runtime reads it** — every piece of user data lives in that user's Durable Object. Removing the remains is [#79](https://github.com/tuanemuy/fog/issues/79).
+**D1 is not in the runtime.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. What remains is outside the runtime: the Pulumi `resources` stack still provisions a protected D1 database, and `apps/web/scripts/render-wrangler.ts` still substitutes `D1_DATABASE_ID` / `D1_DATABASE_NAME`, which no template uses. Retiring those two is [#79](https://github.com/tuanemuy/fog/issues/79); it changes nothing the runtime reads.
 
-Two places under `docs/` mention D1 legitimately, and they are the reason "does the word D1 appear" cannot be used as a staleness check:
-
-| File | What it says about D1 | Why it is correct |
-| ---- | --------------------- | ----------------- |
-| `docs/test.md` | Describes the `d1` Vitest project and its integration setup | The project exists in `vitest.config.integration.ts` and runs |
-| `docs/backend_implementation_example.md` | Mentions the D1 adapter group as an adapter example | The adapter group exists under `packages/core/src/adapters/d1/` |
-
-Neither describes D1 as the runtime's system of record. The staleness check is therefore not the word D1 but four English literals — the shared table of processed events, and standalone Workers for relaying, pruning and dead-lettering:
+The staleness check for this chapter is therefore not the word D1 but four English literals — the shared table of processed events, and standalone Workers for relaying, pruning and dead-lettering:
 
 ```bash
 # from the repo root
@@ -154,7 +147,7 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
 
-`{ protect: true }` is set on the **D1 database and nothing else**. It stops `pulumi destroy` and stops a resource-replacing edit from deleting the database. Keep it: D1 is still declared as a persistent resource, and an accidental destroy is not recoverable through Pulumi.
+`{ protect: true }` is set on the **D1 database and nothing else**. It stops `pulumi destroy` and stops a resource-replacing edit from deleting the database. The database holds nothing the runtime reads (chapter 1); the protection stays until [#79](https://github.com/tuanemuy/fog/issues/79) removes the resource, so that the removal is an explicit step and not a side effect.
 
 **Reality: Available.** To remove the protection when [#79](https://github.com/tuanemuy/fog/issues/79) retires D1:
 
@@ -171,30 +164,33 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> state unprotect \
 
 **Reality: Available** (installing a secret is a command you can run today; the deploy it prepares for is blocked by #73).
 
-`apps/web/.dev.vars.example` is the authority for ownership. Five secrets are declared there:
+`apps/web/.dev.vars.example` is the authority for ownership; its header table is the roster and `wranglerConfig.test.ts` pins every secret row of it. Fifteen secrets and three `[vars]` entries:
 
 | Secret | Owner | What it is |
 | ------ | ----- | ---------- |
-| `SESSION_SECRET` | **request** | HMAC key signing session cookies. Empty by default; the Worker refuses every request until it is set |
+| `SESSION_SECRET` | **request** | HMAC key signing session cookies. The Worker refuses every request until it is set |
 | `MAIL_PROVIDER_API_KEY` | **request** | Mail provider credential. The consumer runs in `queue()` on this Worker, so the provider is called from here |
-| `DIRECTORY_ROUTING_SECRET` | **request** | HMAC key mapping a canonical address to its Identity Directory bucket. Bucket selection happens in the stub-selection adapter, *before* any DO is entered |
-| `IDENTITY_MAIL_ENCRYPTION_KEY` | **state** | AES-256-GCM key protecting `credential_mappings.encrypted_canonical`. Never leaves the DO |
+| `DIRECTORY_ROUTING_SECRET` | **request** | HMAC key mapping a canonical address to its Identity Directory bucket (generation 1, 16 buckets). Bucket selection happens in the stub-selection adapter, *before* any DO is entered. Not read while `DIRECTORY_ROUTING_KEYRING` is set |
+| `DIRECTORY_ROUTING_KEYRING` | **request** | The two-generation form of the routing key — a JSON array of `{ role, generation, key, bucketCount }`, one `active` and at most one `previous` — deployed for the duration of a mapping-key rotation (below) |
+| `AI_CLIENT_TOKEN_SECRET` | **request** | Key material of the AI API's tokens, authorization codes and client ids |
+| `OPERATOR_TOKEN` | **request** | Bearer of the maintenance surface `/__operator/*` (8.2); at least 32 characters, and the surface does not exist while it is unset |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **request** | The SSO callback runs there |
+| `IDENTITY_MAIL_ENCRYPTION_KEY` | **state** | AES-256-GCM key protecting `credential_mappings.encrypted_canonical` (generation 1). Never leaves the DO. Not read while `IDENTITY_MAIL_ENCRYPTION_KEYRING` is set |
+| `IDENTITY_MAIL_ENCRYPTION_KEYRING` | **state** | The two-generation form of the encryption key — `{ role, generation, key }` × (active + at most one previous) — deployed for the duration of an encryption-key rotation |
+| `DIRECTORY_KEY_COMMITMENT` | **state** | What a bucket verifies an injected routing key against: the same role-tagged generation set as `DIRECTORY_ROUTING_KEYRING` with `keyDigest = SHA-256(key)` in place of each key. Digests, never keys — the state Worker still cannot compute where a credential lives |
 | `PROVIDER_IDEMPOTENCY_KEY` | **state** | HMAC key each DO derives `providerIdempotencyKey` from. Never leaves the DO |
+| `IDENTITY_RESET_TOKEN_KEY` | **state** | The reset-token derivation key. Never leaves the DO |
+| `MAIL_DEV_SINK`, `SSO_DEV_STUB` | request, **local only** | The development mail sink (`"console"`, chapter 13) and the development identity provider (`"true"`). Not secrets; `wranglerConfig.test.ts` fails if a deployed config declares them |
+| `APP_URL`, `MAIL_FROM_ADDRESS`, `DIAGNOSTICS_ENABLED` | `[vars]` of the request config | Not secrets. The templates take the first two from the environment at render time; the third is declared in `wrangler.toml` only (chapter 6) |
 
-**`DIRECTORY_ROUTING_SECRET` and `IDENTITY_MAIL_ENCRYPTION_KEY` are deliberately given to opposite Workers.** The request Worker can compute *where* a credential lives but cannot read the address back; the state Worker can read the address back but cannot compute where it lives. Handing either key to both Workers collapses that split, and no code notices.
+**`DIRECTORY_ROUTING_SECRET` and `IDENTITY_MAIL_ENCRYPTION_KEY` are deliberately given to opposite Workers.** The request Worker can compute *where* a credential lives but cannot read the address back; the state Worker can read the address back but cannot compute where it lives. Handing either key to both Workers collapses that split, and no code notices. The commitment keeps the split during a rotation: the state Worker verifies an injected key by its digest and never holds the key.
 
-**So do not write "the derivation keys never leave the DO" without qualification.** Of the two derivation keys declared here, both do stay inside the DO (`IDENTITY_MAIL_ENCRYPTION_KEY`, `PROVIDER_IDEMPOTENCY_KEY`). `DIRECTORY_ROUTING_SECRET` is a *mapping* key and lives on the request Worker by design — it is not one of them. Stating the rule too broadly is how it ends up copied into the state Worker "for consistency".
-
-**This table is not the full roster of secrets.** Three known gaps:
-
-- The **third derivation key**, the reset-token key, is declared by the password-reset slice ([#12](https://github.com/tuanemuy/fog/issues/12)).
-- The **`previous` keyring entries and the rotation key commitment** arrive with [#67](https://github.com/tuanemuy/fog/issues/67).
-- `apps/web/worker-configuration.d.ts` already declares **two secrets whose ownership nothing states** — `AI_CLIENT_TOKEN_SECRET` and `IDENTITY_RESET_TOKEN_KEY`. That file is generated by `wrangler types`, which fills secret entries from the local git-ignored `.dev.vars`; it is a per-machine artefact and cannot be read as a roster. Whoever lands those two owns writing them into `.dev.vars.example`.
+**So do not write "the derivation keys never leave the DO" without qualification.** The three derivation keys do stay inside the DO (`IDENTITY_MAIL_ENCRYPTION_KEY` and its keyring, `PROVIDER_IDEMPOTENCY_KEY`, `IDENTITY_RESET_TOKEN_KEY`). `DIRECTORY_ROUTING_SECRET` is a *mapping* key and lives on the request Worker by design — it is not one of them. Stating the rule too broadly is how it ends up copied into the state Worker "for consistency".
 
 ### Generating and installing
 
 ```bash
-openssl rand -base64 48        # any of the five
+openssl rand -base64 48        # any of the single-value secrets
 ```
 
 Install each secret **against the config of the Worker that owns it** — the `--config` flag is the whole of the ownership enforcement:
@@ -206,9 +202,19 @@ Install each secret **against the config of the Worker that owns it** — the `-
 wrangler secret put SESSION_SECRET               --config wrangler.staging.toml
 wrangler secret put MAIL_PROVIDER_API_KEY        --config wrangler.staging.toml
 wrangler secret put DIRECTORY_ROUTING_SECRET     --config wrangler.staging.toml
-wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
 wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.staging.toml
+wrangler secret put PROVIDER_IDEMPOTENCY_KEY     --config wrangler.state.staging.toml
+wrangler secret put IDENTITY_RESET_TOKEN_KEY     --config wrangler.state.staging.toml
+wrangler secret put AI_CLIENT_TOKEN_SECRET       --config wrangler.staging.toml
+wrangler secret put OPERATOR_TOKEN               --config wrangler.staging.toml
+wrangler secret put DIRECTORY_ROUTING_KEYRING    --config wrangler.staging.toml
+wrangler secret put DIRECTORY_KEY_COMMITMENT     --config wrangler.state.staging.toml
+wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.staging.toml
+wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
+wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 ```
+
+The three rotation variables are installed only for the duration of a rotation and removed again after retirement (below).
 
 Getting one wrong **works locally and breaks first in staging** — see below.
 
@@ -218,13 +224,28 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 | ------ | -------- | ----------------------- |
 | `SESSION_SECRET` | rotate freely | every session cookie is invalidated; users log in again |
 | `MAIL_PROVIDER_API_KEY` | rotate freely, provider-side | none |
-| `DIRECTORY_ROUTING_SECRET` | **never rotate in place** | the bucket of every existing credential changes and nothing is findable; rotating it is the mapping-key transfer, [#67](https://github.com/tuanemuy/fog/issues/67) |
-| `IDENTITY_MAIL_ENCRYPTION_KEY` | **never rotate in place** | every `encrypted_canonical` becomes undecryptable; rotating it is the `rotate-encryption` procedure, [#67](https://github.com/tuanemuy/fog/issues/67) |
+| `DIRECTORY_ROUTING_SECRET` | **never rotate in place** | the bucket of every existing credential changes and nothing is findable; rotating it is the mapping-key transfer below |
+| `IDENTITY_MAIL_ENCRYPTION_KEY` | **never rotate in place** | every `encrypted_canonical` becomes undecryptable; rotating it is the `rotate-encryption` procedure below |
 | `PROVIDER_IDEMPOTENCY_KEY` | rotate freely | in-flight deliveries derive a different key and the provider may send one duplicate; delivery is at-least-once already |
+| `IDENTITY_RESET_TOKEN_KEY` | rotate with care | tokens derived under the old key stop resolving; unused reset links die |
+| `AI_CLIENT_TOKEN_SECRET` | rotate with care | every AI client's tokens and codes are invalidated; clients re-authorise |
+| `OPERATOR_TOKEN` | rotate freely | operators pick up the new value |
+
+### Rotating the two keys that cannot be rotated in place
+
+**Reality: Available** as a procedure (`spec/rotation/index.md` is the authority on the rules; this is the operator's sequence). Both rotations run through the maintenance surface (8.2) and never at the same time — `remap-chunk` refuses while the encryption keyring holds a `previous` entry, and `start-rotate-encryption` refuses while the commitment holds a `previous` mapping generation.
+
+**Mapping key.** (1) Deploy, as a pair, `DIRECTORY_ROUTING_KEYRING` (request: `active` = the new generation g+1, `previous` = the current generation g) and `DIRECTORY_KEY_COMMITMENT` (state: the same set with digests). From that moment new reservations land in g+1 and lookups probe active → previous → active once more. (2) For every bucket `0 .. bucketCount-1` of generation g, call `remap-chunk` with the two keyring entries in the body until it answers `lastCredentialId: null` — the CLI does this as `node apps/web/scripts/operator.ts remap-chunk --locator dir:g<g>:b<n> --inject-keyring --limit 100 [--after <id>]`, reading the entries from `.dev.vars` so that no key is typed on a command line. (3) Read `read-rotation-checkpoint` with `{ "rotationKind": "remap", "generation": <g> }` on every one of those buckets; retirement holds only when every bucket answers `previousCount: 0` (a bucket answering `null` has not been scanned). (4) Deploy the pair again without the `previous` entries; generation g's buckets are no longer addressable. The JSON shapes are in `.dev.vars.example`. Measured locally on PH-09B: one chunk over 0–4 rows takes 121–146 ms including its two RPCs per row — an observation, not a figure to plan by.
+
+**Encryption key.** (1) Deploy `IDENTITY_MAIL_ENCRYPTION_KEYRING` (state) with `active` = the new generation and `previous` = the current key. (2) Call `start-rotate-encryption` on every bucket of the **active mapping generation**; it enqueues the `rotate-encryption` job and the Alarm rewrites the rows. (3) `read-rotation-checkpoint` with `{ "rotationKind": "encryption", "generation": <retiring> }` on every one of those buckets; all `previousCount: 0` is the retirement condition. (4) Remove the `previous` entry.
+
+**Order between the two.** Start a mapping-key rotation only after an encryption-key rotation has retired, and the reverse — the guards make a violation harmless but wedge whichever started second until the other side is rolled back.
+
+**Limits.** `read-rotation-checkpoint` and `remap-chunk` pass through the migration gate, so a bucket nobody has addressed before is initialised by the read (it holds no rows, so the checkpoint it then writes is `previousCount: 0`). A `rotate-encryption` chunk in which not one row decrypts ends `SystemError(DataIntegrityError)`, is backed off by the runner and turns `poison` after `jobsMaxAttempts` — the spec does not name this case; it is the runner's answer to a chunk that could not otherwise make progress.
 
 ### The split does not hold locally
 
-`wrangler dev -c wrangler.toml -c wrangler.state.toml` resolves `.dev.vars` relative to the config directory, and both configs sit in `apps/web/`. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where `wrangler secret put --config` puts each secret on one Worker.
+`wrangler dev -c wrangler.toml -c wrangler.state.toml` resolves `.dev.vars` relative to the config directory, and both configs sit in `apps/web/`. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where `wrangler secret put --config` puts each secret on one Worker. The same holds for the rotation pair: locally the commitment and the keyring sit side by side, so the non-overlap the design relies on cannot be observed under `pnpm dev`.
 
 **A misattributed secret is invisible locally for exactly this reason.** Do not use `pnpm dev` to confirm ownership.
 
@@ -249,7 +270,7 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> up
 pnpm cf:render:<stage>
 
 # from apps/web
-# 3. install the five secrets against their owning config (see chapter 3)
+# 3. install the secrets against their owning config (see chapter 3)
 
 # 4. set the DLQ retention out of band — it is not a wrangler key
 wrangler queues update <prefix>-events-dlq --message-retention-period-secs 600
@@ -284,7 +305,7 @@ Code can be rolled back, but a DO whose `_meta.schema_version` is ahead of what 
 
 > **A release that advances the schema is a release that cannot be rolled back.** Treat it as one-way at plan time, not at incident time.
 
-**A fail-closed DO also burns the messages already published from it.** The consumer picks one up and calls that DO's send-materials RPC; the RPC runs behind the migration gate, the gate answers `SystemError`, the consumer retries until `max_retries` is exhausted, and the message lands in the DLQ. **The DLQ handler acks it. There is no way to get it back.** The only exit is the user asking again.
+**A fail-closed DO also burns the messages already published from it.** The consumer picks one up and calls that DO's send-materials RPC; the RPC runs behind the migration gate, the gate answers `SystemError`, the consumer retries until `max_retries` is exhausted, and the message lands in the DLQ. **The DLQ handler re-drives it once and acks it** (8.6) — if the DO is still fail-closed at that moment, that one delivery is gone and the only exit is the user asking again.
 
 The fallback for a bad schema release is PITR (chapter 11), which restores **one DO at a time** and cannot restore several to a common point.
 
@@ -292,7 +313,7 @@ The fallback for a bad schema release is PITR (chapter 11), which restores **one
 
 Deploys are not atomic across the two Workers, and the deploy order decides which side is ahead.
 
-> **The state Worker lands first, so the emitter runs ahead of the consumer.** A DO on the new bundle may publish an `event.type` — or a routing key — that the deployed request Worker cannot route. `handleEventsBatch` answers both with `message.retry()` rather than `ack()`, the retries are exhausted, and the message lands in the DLQ. **The DLQ handler acks it. There is no way to get it back.** The only exit is the user asking again.
+> **The state Worker lands first, so the emitter runs ahead of the consumer.** A DO on the new bundle may publish an `event.type` — or a routing key — that the deployed request Worker cannot route. `handleEventsBatch` answers both with `message.retry()` rather than `ack()`, the retries are exhausted, and the message lands in the DLQ. **The DLQ handler re-drives it once and acks it** (8.6); unless the request deploy landed in between, that delivery is gone and the only exit is the user asking again.
 
 Retrying rather than acking is deliberate: an ack would discard a message against an at-least-once contract, and the DLQ is the disposition `spec/async/index.md` gives a consumer failure. The window stays open for exactly as long as the two deploys are apart, which is one more reason not to leave `deploy:<stage>:all` half-run.
 
@@ -311,7 +332,9 @@ Section 8.6 refers back to this paragraph rather than restating it.
 
 `pnpm preview` serves the build output through `vite preview`, so `pnpm build` (= `build:cf`) must have run first; it reads `.wrangler/deploy/config.json` to find that output. **`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, and `vite preview` picks its own port — so `og:url` and the canonical link will disagree with the address in the browser bar. That is expected in preview and is not a signal of a misconfiguration.
 
-`pnpm start` (`wrangler dev` over both configs) does not boot — [#73](https://github.com/tuanemuy/fog/issues/73), same cause as the failing deploy.
+`pnpm start` (`wrangler dev` over both configs) — see `README.md` for its current status; [#73](https://github.com/tuanemuy/fog/issues/73) is the same cause as the failing deploy.
+
+**`pnpm dev` and `pnpm preview` share `apps/web/.wrangler/state`.** Run one at a time: two processes over the same Durable Object files compete for the same Alarms, and a job may run in whichever process fires first. Preview's `[dev-mail]` lines carry `APP_URL`'s host (`:3000`), so a reset link printed by preview has to be opened against preview's own port by hand.
 
 ## 5. Out-of-band settings nothing here can observe
 
@@ -349,7 +372,9 @@ A DO whose `schema_version` is **greater** than the code's target refuses work a
 
 Recovery is simply deploying code that understands the version. Nothing needs to be re-run by hand.
 
-**Reality of detecting it: Local only.** `GET /__diagnostics/schema-version?locator=dir:g1:b0` answers the version for one bucket, and the route only exists where `DIAGNOSTICS_ENABLED = "true"` — declared in `wrangler.toml` and deliberately absent from all four templates. In production there is no diagnostic route and no cross-DO sweep; see 7.4.
+**Reality of detecting it: Available.** `POST /__operator/read-schema-version` (8.2) answers the stored version for one bucket or one User Data DO, is outside the gate, and reaches production with `OPERATOR_TOKEN`. `GET /__diagnostics/schema-version?locator=dir:g1:b0` is the local counterpart — the route only exists where `DIAGNOSTICS_ENABLED = "true"`, declared in `wrangler.toml` and deliberately absent from all four templates. The sweep that builds a blast radius is 7.4.
+
+**Local workerd and the Alarm's `id.name`.** After `pnpm dev` restarts, workerd fires pending Alarms on Durable Objects it restores without handing them `ctx.id.name`. `requireSelfLocator()` falls back to `_meta.self_locator`, the copy the gate wrote at initialisation, so the relay and the jobs pass run on such an object; an object that was addressed but never initialised has neither, and its wake-up logs `Alarm stopped at the schema gate` and re-arms at the fail-closed interval. The production runtime carries the name on every activation. Treat that log line right after a restart as this, not as a schema problem.
 
 ### Discarding local DO state
 
@@ -400,7 +425,7 @@ sqlite3 <file> "SELECT name FROM sqlite_master WHERE type IN ('table','index') O
 
 **Those tables are split across the two classes, never gathered in one file.** An Identity Directory file carries `credential_mappings`, `jobs`, `outbox_events` and `_meta`; a User Data file carries `account`, `user_settings`, `credential_locators`, `operations`, `jobs`, `outbox_events` and `_meta`. A single sign-up therefore populates two files, one of each class.
 
-**The limit is production, and it is total.** There is no way to touch a deployed DO's storage. The only thing observable from outside is the single number `read-schema-version` returns — and that entry has no caller in production either (8.2).
+**The limit is production, and it is total.** There is no way to touch a deployed DO's storage. What is observable from outside is what the maintenance entries return (chapter 10): the schema version, the delivery backlog, the quarantined and poisoned rows, a bucket's user ids and its rotation checkpoints — projections, never the rows.
 
 ## 7. The Alarm
 
@@ -479,19 +504,17 @@ Lateness is what to look for instead.
 - a rising `attempt` on the same row — publishes are failing and backoff is pushing it out
 - rows in `quarantined` — attempts are exhausted; see 8.4
 
-Locally, read them from the DO's SQLite file (chapter 6). **In production none of this is observable**: `read-delivery-backlog` is unimplemented and no maintenance entry has a caller. Active notification of stuck delivery is [#23](https://github.com/tuanemuy/fog/issues/23).
+Locally, read them from the DO's SQLite file (chapter 6). In production, `read-delivery-backlog` (8.3) answers the first three as counts and the oldest `created_at`, and `list-quarantined-events` (8.4) the fourth — for one object per call. Active notification of stuck delivery is [#23](https://github.com/tuanemuy/fog/issues/23).
 
 ### 7.4 Finding a fail-closed DO
 
-**Reality: Local only, and even locally only one at a time.**
+**Reality: Available, one object per call.**
 
-`GET /__diagnostics/schema-version?locator=dir:g1:b0` answers for the bucket you name. It takes bucket-shaped locators only — accepting the `userId` form would answer "does this account hold data", which is exactly the disclosure the restriction exists to prevent.
-
-**There is no cross-DO sweep, in production or locally.** Durable Objects cannot be enumerated by the platform, `list-bucket-user-ids` is unimplemented, and the reverse map from a DO's internal id to a `userId` does not exist. In production even the single-bucket check is gone, because the diagnostic route is not registered in any deployed stage. **A fail-closed DO is found by a user reporting an error, or not at all.** Chapter 14 tracks it.
+`read-schema-version` (8.2) answers for the bucket or the `userId` you name, and it does so on a fail-closed object because it does not pass the gate. **Durable Objects cannot be enumerated by the platform**, and the reverse map from a DO's internal id to a `userId` does not exist, so a sweep is built from the buckets: `list-bucket-user-ids` on each of the active generation's `bucketCount` buckets — also outside the gate, so a fail-closed bucket still names its accounts, and an uninitialised one answers `[]` without being initialised — then `read-schema-version` per `userId`. That is `bucketCount + N` calls for N accounts, and it is the only way to find a stopped object short of a user reporting an error. The local diagnostic route (`GET /__diagnostics/schema-version`) takes bucket-shaped locators only — accepting the `userId` form there would answer "does this account hold data" on an unauthenticated route.
 
 ### 7.5 `sweep-reset-tokens` keeps a bucket armed
 
-**Reality: None ([#12](https://github.com/tuanemuy/fog/issues/12)).** This is a consequence of the design, not something observable today: the kind is declared, no handler is registered for it, and no usecase enqueues it — nothing below happens until the password-reset request path lands.
+**Reality: Available.** The handler is registered on the Identity Directory class and the password-reset request path enqueues it.
 
 `sweep-reset-tokens` is enqueued unconditionally on every password-reset request, whether or not the address is registered — the whole point of the throttle-window design is that a registered and an unregistered address produce identical writes.
 
@@ -512,67 +535,55 @@ The ack is missing on purpose. Writing one back would itself be at-least-once an
 
 That is why there are two operator paths, not one: **the DO's maintenance entries** (8.3–8.5) and **the DLQ handler** (8.6). Neither sees the other's half.
 
-### 8.2 The operator path (design; not a procedure)
+### 8.2 The operator path
 
-> **Reality: None ([#80](https://github.com/tuanemuy/fog/issues/80)). Every entry described in 8.3–8.5 is unreachable — all seven of them, including the two that are implemented. There is no workaround.** `wrangler` has no command that calls a Durable Object RPC; the state Worker's `fetch` answers 404 unconditionally and routes nothing; and the request Worker's only DO call that reaches a maintenance entry is the local-only schema-version diagnostic — its business RPCs and the mail consumer's send-materials RPC (4.3) do call Durable Objects, and reach none of the entries in chapter 10. Outside a test process, no code path invokes them.
+**Reality: Available.** `POST /__operator/<entry>` on the request Worker reaches every maintenance entry of chapter 10, on both Durable Object classes. The handler is `apps/web/app/worker/cloudflare/operatorHandlers.ts` — a bare Worker handler that goes through no TanStack Start code, the same shape as `queueHandlers.ts` — and `apps/web/app/server.cloudflare.ts`'s `fetch` routes to it right after the diagnostic route. The body is `{ "locator": …, ...args }`, validated with Zod per entry; the DO stub is taken from `doStubs.ts`; the RPC envelope is unwrapped by `callDurableObject`, and the answer is `{ ok: true, result }` or `{ ok: false, error }` with the Durable Object's serialized error verbatim and the status its `kind` maps to — the operator is who reads internals.
 
-The design below is settled so that #80 implements a contract rather than inventing one.
+**(a) Reach.** The surface exists only while the request Worker holds `OPERATOR_TOKEN` (chapter 3; at least 32 characters). The answers, in the order they are decided: **404** when the secret is unset or shorter than that — the surface is absent, not open; **404** for an entry name not in chapter 10; **405** for anything but `POST`; **401** when the bearer does not match, compared in constant time; **400** for a locator the entry does not accept, a body that is not an object, or arguments that fail the entry's schema. `DIAGNOSTICS_ENABLED` is not reused for this: its containment is what keeps the diagnostic route out of production.
 
-**(a) Shape.** `POST /__operator/<entry>` on the request Worker. **The handler module goes in `apps/web/app/worker/cloudflare/`** — a bare Worker handler that goes through no TanStack Start code, the same shape as `queueHandlers.ts`. **The wiring point is separate**: `apps/web/app/server.cloudflare.ts`'s `fetch` calls it beside the diagnostic handler, which is defined in that file itself rather than in `worker/cloudflare/`. The body is validated at the transport boundary with Zod; the DO stub is taken from the existing `doStubs.ts` seam; the RPC envelope is unwrapped by `callDurableObject` and its `SerializedError` mapped to a status.
+**Locator validation is per entry and is not just a regular expression.** `dir:g<generation>:b<bucket>` is accepted only for a generation the request Worker's keyring declares and a bucket index below that generation's `bucketCount` — both entries of the keyring while a rotation is open, so the retiring generation's buckets stay addressable for `remap-chunk` and `read-rotation-checkpoint`, and generation 1's sixteen otherwise. The Identity Directory class initialises on first contact, so an unchecked `dir:g9:b999` would create an empty object nothing can ever find. A `userId` locator is accepted by the entries that target User Data.
 
-**Locator validation is per entry and is not just a regular expression.** `DIRECTORY_LOCATOR` (`^dir:g\d+:b\d+$`) admits any generation and any bucket number, and `IdentityDirectoryDurableObject` is constructed with `allowInitialize: true` — so a request for `dir:g9:b999` would **permanently create a new, empty Identity Directory DO** that nothing can ever find again. Each entry declares which locator forms it accepts, and bucket-shaped locators are additionally checked against the generations and bucket counts the keyring declares.
+**(b) Who operates it.** Cloudflare Access in front of the request Worker's hostname is the operational control — per-operator identity, rate limiting and an audit trail at the edge, configured outside this repository (`infra/` does not carry it). `OPERATOR_TOKEN` is the surface's own gate and holds where Access is not in front of it; on its own it cannot say *which* operator acted, which is why the two are used together. Chapter 14 tracks the identity limit.
 
-**(b) Access control — three options, evaluated.**
+**(c) Audit log — an allow-list.** One `info` line per call, `operator { entry, locator, outcome, id? }`: `outcome` is `ok` or the error's `code`; `id` is the acted-on identifier where the entry has one — `eventId` for the quarantine re-drive and deletion, `operationKey` for the poison ones, `userId` for `purge-user-mappings`, `afterCredentialId` for `remap-chunk`, `credentialId` for `record-remapped-locator` — and nothing else. **The request and response bodies are never copied**: not `payload`, not `owner_token`, not `terminal_reason`, not a keyring entry, not a verifier, not a caller token. The unit test pins that none of those reaches the line.
 
-| Option | Verdict |
-| ------ | ------- |
-| **(i) Cloudflare Access (Zero Trust)** | **Adopted.** Authentication terminates at the edge, and rate limiting, per-operator identity and an audit trail come with it rather than being written. Cost: it reaches the Pulumi routes stack, and adds one more out-of-band setting |
-| **(ii) Dedicated hostname + route separation** | **Adopted alongside (i).** Narrows the surface itself rather than guarding it. Composes with (i) |
-| **(iii) `OPERATOR_TOKEN` bearer + constant-time compare** | **Not adopted on its own.** No rate limiting, brute-force resistance is only the secret's length, and it cannot identify *which* operator acted. Kept as the fallback where (i) is unavailable |
-
-**Do not reuse the `DIAGNOSTICS_ENABLED` var gate.** Its containment — deliberately absent from both stage templates, pinned by `wranglerConfig.test.ts` — is what keeps the diagnostic route out of production, and widening it to carry operator entries destroys that.
-
-**(c) Audit log — write it as an allow-list.** Exactly four fields: `entry`, `locator`, `outcome`, and `eventId` for the entries that take one. **Written as "these four and nothing else"**, because an exclusion list silently leaks the next field somebody adds. **The response body is never copied**: not `payload`, not `owner_token`, not `terminal_reason`, not a recipient, not a raw token. The log belongs on the request Worker, which knows who called; a DO-side log can only record what happened and is not an audit trail. The hygiene rules of chapter 9 apply to it in full.
-
-**(d) Which entries are exposed.** The maintenance entries in chapter 10 and nothing else. Business RPCs are not reachable through this path.
+**(d) The CLI.** `node apps/web/scripts/operator.ts <entry> --locator <dir:gN:bM | userId> [--json '{…}'] [--inject-keyring] [--limit N] [--after <credentialId>] [--base http://localhost:3000]`, run from `apps/web` (also `pnpm --filter @repo/web operator …`). The bearer comes from `OPERATOR_TOKEN` in the environment or from `.dev.vars`; `--inject-keyring` reads `DIRECTORY_ROUTING_KEYRING` (or `DIRECTORY_ROUTING_SECRET` as generation 1) from the same file and adds the `active` / `previous` entries to the body, so a key is never typed on a command line. Against a deployed stage the same body goes through Access.
 
 **(e) Escalation.** Fail-closed DOs (7.4) and `poison` rows (8.5) escalate through this same path. There is no separate channel for them.
 
 ### 8.3 Watching the backlog
 
-> **Reality: None ([#80](https://github.com/tuanemuy/fog/issues/80)).** The entry is not implemented and, when it is, it will still need 8.2 to be reachable. There is no workaround in production; locally, read the DO's SQLite file (chapter 6).
-
-`read-delivery-backlog` — name and contract settled:
+**Reality: Available.** `read-delivery-backlog`, both classes:
 
 - **Reads only.** Writes no row, does not call `rearm()`.
-- **Behind the migration gate** (it goes through `enterRpc()`). **On a fail-closed DO this RPC itself answers `SystemError`** — it does not pass through and report zero. That property is what makes the next paragraph work.
+- **Behind the migration gate.** **On a fail-closed DO this RPC itself answers `SystemError`** — it does not pass through and report zero. That property is what makes the next paragraph work.
 - **Returns three values**: `pendingCount`, `publishingCount`, and `oldestCreatedAt` (the minimum `created_at` over `status IN ('pending','publishing')`, or `null`).
 - **Does not count `quarantined`.** Those are terminal and have their own listing.
 - Returns no `payload`, no `owner_token`, no `aggregate_id`, no `event.id`.
 
-**A fail-closed DO does not present as a growing backlog. It presents as a backlog you cannot read.** The counts come back as an error, not as numbers. To tell the two apart, call `read-schema-version`, which is outside the gate: it answers a version on a fail-closed DO and answers on an uninitialised one too.
+**A fail-closed DO does not present as a growing backlog. It presents as a backlog you cannot read.** The counts come back as an error, not as numbers. To tell the two apart, call `read-schema-version`, which is outside the gate: it answers a version on a fail-closed DO and `null` on an uninitialised one.
 
 ### 8.4 The DO side: quarantined events
 
-> **Reality: None ([#80](https://github.com/tuanemuy/fog/issues/80)).** Two of the three entries are implemented in `durableObjectBase.ts` and neither has a caller; the third is not implemented. There is no workaround.
+**Reality: Available.** Three entries, both classes.
 
 A row reaches `quarantined` when the relay's publish attempts are exhausted (`relayMaxAttempts`, 5). It is terminal, it is **never pruned**, and it only leaves that state by operator action.
 
-**`list-quarantined-events`** — implemented, unreachable.
+**`list-quarantined-events`.**
 
-- Six columns: `event.id`, `type`, `attempt`, `created_at`, `completed_at`, `terminal_reason`. Each omission has its own reason: `owner_token` is a bearer credential for the send-materials guard; `aggregate_id` is the throttle-window key and would correlate messages to one recipient; `payload` is not what explains a quarantine — `terminal_reason` is.
+- Six columns: `eventId`, `type`, `attempt`, `createdAt`, `completedAt`, `terminalReason`. Each omission has its own reason: `owner_token` is a bearer credential for the send-materials guard; `aggregate_id` is the throttle-window key and would correlate messages to one recipient; `payload` is not what explains a quarantine — `terminal_reason` is.
 - **Page size 50** (`listQuarantinedEventsLimit`). A cap is required rather than nice to have: quarantine is permanent and happens *en masse* — a failed queue producer binding quarantines everything at once — so an uncapped listing would be the one path in the system that grows with row count.
-- **Keyset cursor on `(completed_at, id)`**, ascending by `completed_at`. **Not an offset**: mass quarantine is the case this listing exists for, and operators page through it while re-drives are removing rows underneath, which makes an offset skip whatever shifted down. `outbox_completed_idx` is `(status, completed_at)`, so this order needs no sort; only the `id` tie-break within one `completed_at` does.
+- **Keyset cursor on `(completed_at, id)`**, ascending by `completed_at`, returned as `nextCursor` and passed back as `cursor`. **Not an offset**: mass quarantine is the case this listing exists for, and operators page through it while re-drives are removing rows underneath, which makes an offset skip whatever shifted down. `outbox_completed_idx` is `(status, completed_at)`, so this order needs no sort; only the `id` tie-break within one `completed_at` does.
 
 **Paging through a mass quarantine.** Take a page, act on every row in it, then request the next page **with the cursor from the page you took, not from the page you would have taken after acting**. Re-driven rows leave the set, so a re-driven page shrinks the remainder rather than shifting it; the keyset cursor stays valid across that. When the cursor comes back `null` the set is drained. If new quarantines are arriving faster than you re-drive, the cause is upstream (see 8.8) and paging will not converge — fix the cause first.
 
-**`requeue-quarantined-event`** — implemented, unreachable.
+**`requeue-quarantined-event`** (`{ "eventId": … }`).
 
-Writes five columns in one statement: the four state columns — `status = 'pending'`, `next_run_at = now`, `attempt = 0`, `completed_at = NULL` — and a **re-minted `owner_token`**. `terminal_reason` is **kept** — it is the only record of why the row was quarantined. Re-minting the token is the only thing that closes the exposure window: any `(event.id, owner_token)` pair that reached the queue or the DLQ before the quarantine stops passing the send-materials guard. The transaction is followed by a `rearm()`, which is not optional — a DO holding only quarantined rows is by definition disarmed, and that is precisely the situation an operator is re-driving from.
+Writes five columns in one statement: the four state columns — `status = 'pending'`, `next_run_at = now`, `attempt = 0`, `completed_at = NULL` — and a **re-minted `owner_token`**. `terminal_reason` is **kept** — it is the only record of why the row was quarantined. Re-minting the token is the only thing that closes the exposure window: any `(event.id, owner_token)` pair that reached the queue or the DLQ before the quarantine stops passing the send-materials guard. The transaction is followed by a `rearm()`, which is not optional — a DO holding only quarantined rows is by definition disarmed, and that is precisely the situation an operator is re-driving from. Answers `{ requeued: boolean }`.
 
 **Try the re-drive before anything else.** It is the only action that closes the token window, and it is safe to run twice.
 
-**`delete-quarantined-event`** — name and contract settled, **not implemented** ([#80](https://github.com/tuanemuy/fog/issues/80)).
+**`delete-quarantined-event`** (`{ "eventId": … }`).
 
 - One RPC deletes one row. `WHERE id = ? AND status = 'quarantined'` — two equality conditions, no range, no bulk form.
 - Reads the matched row count back and returns `{ deleted: boolean }`.
@@ -583,22 +594,23 @@ Writes five columns in one statement: the four state columns — `status = 'pend
 
 ### 8.5 The DO side: poisoned jobs
 
-> **Reality: None ([#74](https://github.com/tuanemuy/fog/issues/74) implements all three; [#80](https://github.com/tuanemuy/fog/issues/80) makes them reachable).** None of the three exists. There is no workaround.
+**Reality: Available.** Three entries, both classes.
 
 A job reaches `poison` when forward progress is exhausted — or, for a row that has a rollback stage, when that rollback ends without completing. **`poison` rows are never pruned**, for the same reason quarantined rows are not: the row is the only record of the residue, and it is the thing a re-drive acts on. Deleting it on a retention timer would leave the residue and remove the record.
 
 **`list-poisoned-jobs`.**
 
-- Five columns: `operation_key`, `kind`, `attempt`, `completed_at`, `terminal_reason`. `payload` is omitted for the same reason as above.
-- **Page size 50** and **keyset cursor on `(completed_at, operation_key)`**, ascending by `completed_at` — matching the quarantine listing deliberately, so an operator learns one paging discipline. The tie-break is `operation_key` rather than `id` because `jobs` is keyed on `operation_key` and the five returned columns contain no `id`. `jobs_completed_idx` is `(status, completed_at)`, so the order needs no sort.
+- Five columns: `operationKey`, `kind`, `attempt`, `completedAt`, `terminalReason`. `payload` is omitted for the same reason as above.
+- **Page size 50** (`listPoisonedJobsLimit`) and **keyset cursor on `(completed_at, operation_key)`**, ascending by `completed_at` — matching the quarantine listing deliberately, so an operator learns one paging discipline. The tie-break is `operation_key` rather than `id` because `jobs` is keyed on `operation_key` and the five returned columns contain no `id`. `jobs_completed_idx` is `(status, completed_at)`, so the order needs no sort.
+- `terminalReason` is the six-value vocabulary of `spec/database/index.md` — `forward-exhausted`, `forward-conflict`, `cleanup-exhausted:<forward>`, `cleanup-material-lost:<forward>` and their kin — followed by a space and the `operationId` where the job has one.
 
-**`requeue-poisoned-job`.**
+**`requeue-poisoned-job`** (`{ "operationKey": … }`).
 
-Writes the same four state columns as the quarantine re-drive — `status = 'pending'`, `next_run_at = now`, `attempt = 0`, `completed_at = NULL` — keeps `terminal_reason`, and re-arms. `payload` and `payload_digest` are **not** replaced: this is a re-drive of the same work, not a re-submission of different work.
+Writes the same four state columns as the quarantine re-drive — `status = 'pending'`, `next_run_at = now`, `attempt = 0`, `completed_at = NULL` — keeps `terminal_reason`, and re-arms. `payload` and `payload_digest` are **not** replaced: this is a re-drive of the same work, not a re-submission of different work. A row with a rollback stage resumes at that stage; one without resumes forward. Answers `{ requeued: boolean }`.
 
 **Rows whose `terminal_reason` starts with `cleanup-material-lost:` are not re-drive candidates.** That reason means the rollback found its materials already gone; re-driving can never make progress, and doing it in bulk turns a bounded incident into an unbounded loop. Those rows are what explicit deletion is for.
 
-**`delete-poisoned-job`** — name and contract settled, **not implemented**.
+**`delete-poisoned-job`** (`{ "operationKey": … }`).
 
 - One RPC deletes one row. `WHERE operation_key = ? AND status = 'poison'` — two equality conditions.
 - Returns `{ deleted: boolean }`.
@@ -607,21 +619,23 @@ Writes the same four state columns as the quarantine re-drive — `status = 'pen
 
 ### 8.6 The queue side: the DLQ
 
-> **Reality: None.** Not "unimplemented" — **the operations do not exist**.
+**Reality: Available, automatic, and once.** There is no manual re-drive and no listing.
 
-**The DLQ handler records and discards.** `handleDlqBatch` in `apps/web/app/worker/cloudflare/queueHandlers.ts` logs one line per message and calls `message.ack()` on every one of them, with no `retry()` anywhere; when the batch itself fails, `runQueueBatch` calls `ackAll()` for a DLQ batch. A consumer *is* bound to the DLQ in every config. **So "a message sits in the DLQ" and "re-drive the DLQ" both describe things that do not happen here.**
+**The DLQ handler re-drives each message once, then acks it.** `handleDlqBatch` in `apps/web/app/worker/cloudflare/queueHandlers.ts` runs every message through the same `deliverOnce` the events consumer uses, logs one line — `dlq { eventId, type, outcome }` with `outcome` one of `sent`, `nothing-to-send`, `unserved`, `failed` — and calls `message.ack()` whatever the outcome; the batch is acked as a whole afterwards. The DLQ has no DLQ of its own, so there is no second attempt. A message is in the DLQ because the events consumer failed it three times; the one further attempt catches the case where the cause has cleared in between — a request deploy that landed, a DO that is no longer fail-closed.
 
-**What you get is one log line, carrying `event.id` and `type` and nothing else.** That is the whole of what the hygiene rules allow about a queue message, and it is the whole of what survives. **In production, not even that is retained**: no wrangler config in this repository declares an `[observability]` block, so nothing keeps the line past the invocation that wrote it — see 8.7.
+**That single re-drive cannot send twice.** The send-materials guard checks the message's `(event.id, owner_token)` pair against the row: a row the relay re-claimed since carries a new token and answers `nothing-to-send`, and so does one an operator re-drove through `requeue-quarantined-event`. Running the two paths against the same event is safe.
 
-**What is lost and what remains when a message reaches the DLQ:**
+**What you get in the log is `event.id`, `type` and the outcome, and nothing else.** That is the whole of what the hygiene rules allow about a queue message. **In production, not even that is retained**: no wrangler config in this repository declares an `[observability]` block, so nothing keeps the line past the invocation that wrote it — see 8.7.
+
+**What is lost and what remains when the re-drive also fails:**
 
 - **Lost**: that message — one delivery attempt of that event.
 - **Remains**: the `published` row in the emitting DO, and the log line.
 - **The row cannot be used to recover it.** It is `published`, not `quarantined`, so `requeue-quarantined-event` does not apply to it and there is no DO-side entry that does.
 
-**The typical way a message ends up here is the deploy skew window** described in 4.4 — the deployed consumer cannot route the type or the routing key and burns its retries. The other way is a fail-closed emitting DO (4.3), whose send-materials RPC answers `SystemError` behind the migration gate. In both, the user asking again is the only exit.
+**The typical way a message ends up here is the deploy skew window** described in 4.4 — the deployed consumer cannot route the type or the routing key and burns its retries. The other way is a fail-closed emitting DO (4.3), whose send-materials RPC answers `SystemError` behind the migration gate. In both, if the re-drive misses too, the user asking again is the only exit.
 
-**On the queue side an operator gets one log line and nothing else.** Reconsidering that design — retaining messages, using a pull consumer, or dropping the guarantee — is [#83](https://github.com/tuanemuy/fog/issues/83).
+**On the queue side an operator gets one log line and one automatic attempt.** Retaining messages for a manual re-drive, or a pull consumer, is [#83](https://github.com/tuanemuy/fog/issues/83).
 
 Do not raise `message_retention_period` in response to any of this — see chapter 5 for why it buys nothing.
 
@@ -718,81 +732,75 @@ Vite's development error overlay renders thrown values with full stacks and capt
 
 ## 10. The maintenance entries, in full
 
-| Entry | Target | Implemented | Reachable | Receives it |
-| ----- | ------ | ----------- | --------- | ----------- |
-| `read-schema-version` | both classes | **yes** | local only (diagnostic route) | — |
-| `list-quarantined-events` | both classes | **yes** | **no** | [#80](https://github.com/tuanemuy/fog/issues/80) |
-| `requeue-quarantined-event` | both classes | **yes** | **no** | [#80](https://github.com/tuanemuy/fog/issues/80) |
-| `read-delivery-backlog` | both classes | no — **name and contract settled** (8.3) | no | [#80](https://github.com/tuanemuy/fog/issues/80) |
-| `delete-quarantined-event` | both classes | no — **name and contract settled** (8.4) | no | [#80](https://github.com/tuanemuy/fog/issues/80) |
-| `delete-poisoned-job` | both classes | no — **name and contract settled** (8.5) | no | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| `list-poisoned-jobs` | both classes | no | no | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| `requeue-poisoned-job` | both classes | no | no | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| `purge-user-mappings` | Identity Directory | no | no | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| `list-bucket-user-ids` | Identity Directory | no | no | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| `rotate-encryption` (start) | Identity Directory | no | no | [#67](https://github.com/tuanemuy/fog/issues/67) |
-| `remap-chunk` | Identity Directory | no | no | [#67](https://github.com/tuanemuy/fog/issues/67) ¹ |
-| `import-remapped-mappings` | Identity Directory | no | no | [#67](https://github.com/tuanemuy/fog/issues/67) ¹ |
-| `record-remapped-locator` | **User Data** | no | no | [#67](https://github.com/tuanemuy/fog/issues/67) ¹ |
-| `read-rotation-checkpoint` | Identity Directory | no | no | [#67](https://github.com/tuanemuy/fog/issues/67) ¹ |
+All fifteen are implemented and reachable through `POST /__operator/<entry>` while `OPERATOR_TOKEN` is set (8.2). Reach control for every row is the same; no entry gets its own.
 
-¹ The four rotation entries are listed here for completeness only. **Their operational substance — pre-execution approval and audit format, chunk sizing, the deploy ordering of the two rotations, the ordering to use when both keys leak at once, and notifying users that links to the old bucket die — is written by [#67](https://github.com/tuanemuy/fog/issues/67), not here.** The one piece of rotation operations that stays in this document is the PITR interaction in 11.3 (c), because it is a step of the PITR procedure and leaving it out would make a leaked key look retired when it is not.
+| Entry | Target | Gate | Re-arms | Body (besides `locator`) |
+| ----- | ------ | ---- | ------- | ------------------------ |
+| `read-schema-version` | both classes | **outside** — answers a fail-closed or uninitialised object | no | — |
+| `read-delivery-backlog` | both classes | inside | no | — |
+| `list-quarantined-events` | both classes | inside | no | `cursor?` |
+| `requeue-quarantined-event` | both classes | inside | **yes** | `eventId` |
+| `delete-quarantined-event` | both classes | inside | no | `eventId` |
+| `list-poisoned-jobs` | both classes | inside | no | `cursor?` |
+| `requeue-poisoned-job` | both classes | inside | **yes** | `operationKey` |
+| `delete-poisoned-job` | both classes | inside | no | `operationKey` |
+| `list-bucket-user-ids` | Identity Directory | **outside** — a fail-closed bucket still names its accounts; an uninitialised one answers `[]` and stays uninitialised | no | — |
+| `purge-user-mappings` | Identity Directory | inside | no | `userId` |
+| `start-rotate-encryption` | Identity Directory | inside | **yes** (enqueues `rotate-encryption`) | — |
+| `remap-chunk` | Identity Directory (the retiring generation's bucket) | inside | no | `active`, `previous` (keyring entries), `limit`, `afterCredentialId?` |
+| `import-remapped-mappings` | Identity Directory (the active generation's bucket) | inside | no | `active`, `rows` (at most 3) |
+| `record-remapped-locator` | **User Data** | inside | no | `callerToken`, `credentialLocator` |
+| `read-rotation-checkpoint` | Identity Directory | inside | no | `rotationKind`, `generation` |
 
-**Three entries have a settled name and contract with no implementation**: `read-delivery-backlog`, `delete-quarantined-event`, `delete-poisoned-job`.
-
-**Reach control for every row above is the design in 8.2.** No entry gets its own.
+**The rotation entries are operated as chapter 3 describes**; `remap-chunk` drives `record-remapped-locator` and `import-remapped-mappings` itself, one row at a time, so an operator calls those two directly only to repair a single row by hand. The PITR interaction is 11.3 (c).
 
 **`cancel-reservation` is not on this list and is not an operator entry.** It requires a `callerToken`, and the only path that returns that value needs the user's own valid session — so an operator cannot execute it. Its callers are the automatic rollback stages (the coordinator bucket and the User Data DO). **The operator's entry into a terminated saga is `requeue-poisoned-job`.**
 
-**Entries that only read do not re-arm the Alarm**: `read-schema-version`, `list-bucket-user-ids`, `list-quarantined-events`, `list-poisoned-jobs`, `read-rotation-checkpoint`, `read-delivery-backlog`. The two deletion entries do not either — removing a row adds no runnable work. Everything that writes a runnable row re-arms.
+**Entries that only read do not re-arm the Alarm**, and the three deletion / purge entries do not either — removing a row adds no runnable work. Everything that writes a runnable row re-arms: the two re-drives and the rotation start. `remap-chunk` writes rows and a checkpoint but no runnable row, so it does not.
 
 ## 11. Data lifecycle
 
 ### 11.1 Per-user export
 
-**Reality: None ([#15](https://github.com/tuanemuy/fog/issues/15)).**
+**Reality: Available.** `POST /export` from the settings page's data section (S-ST-02); the handler is `apps/web/app/presentation/export/handler.ts` and it accepts only a same-origin request (`Origin`, else `Sec-Fetch-Site`) from a logged-in session — 405 for other methods, 401 without a session, 403 across origins.
 
 All of a user's data is inside one Durable Object, so an export is one `transactionSync` in one place — no cross-object join, no consistency problem. **The read is not split**, because splitting it would lose the snapshot's consistency.
 
-Not splitting means the size has to be bounded instead. **The derivation rule is settled; the number is not:**
-
-> The cap is the largest total byte count that can be read out in one `transactionSync` and then rendered and zipped in the request Worker within its CPU budget — whichever of the two binds first. Reading is bounded by the DO's per-query result-set ceiling; rendering and zipping are bounded by the Worker's CPU time. Exceeding the cap is rejected with a `SystemError`; no partial archive is ever produced.
-
-**Fixing the number belongs to [#15](https://github.com/tuanemuy/fog/issues/15)**, which is also where the export feature itself lands. It cannot be derived today because neither side of the "whichever binds first" has an implementation to measure.
+Not splitting means the size is bounded instead. **The cap is `EXPORT_MAX_SOURCE_BYTES` = 24 MiB of body bytes** (`packages/core/src/adapters/cloudflare/stores/exportSourceReader.ts`), summed inside the DO before any body is read; exceeding it is `SystemError(ExportTooLarge)` and the settings page shows its own message. No partial archive is ever produced. The number is a judgement against the Worker's CPU budget for rendering and zipping, not a measurement; the zip is deterministic (`mtime = exportedAt`) so two exports of unchanged data are byte-identical.
 
 **Export is not a backup.** It excludes the trash and returns only current revisions, so it cannot stand in for PITR.
 
 ### 11.2 Withdrawal and complete deletion
 
-**Reality: None ([#74](https://github.com/tuanemuy/fog/issues/74)).**
+**Reality: Available for the part that exists; a user-initiated withdrawal is out of scope of the spec.** The one path that puts an account into `deleting` is `abandon-account` — the rollback stage of a registration saga that could not complete — and it is what enqueues `finalize-withdrawal`.
 
-Two objects hold a user, and they are deleted in one order:
+Two objects hold a user, and the job removes the account's **reach**, not its content:
 
-1. **User Data DO** — all domain data and the FTS5 index. Deleting the object deletes the storage.
-2. **Identity Directory bucket** — the user's `credential_mappings` rows. **The bucket is shared, so it is not deleted; rows are.**
+1. **Identity Directory buckets** — every `credential_mappings` row of the account in every generation, issued to the stashed coordinates (the buckets are shared, so rows are deleted and the buckets stay). A round that deleted nothing across two generations is issued once more after `deleteNoopReissueDelayMs` (chapter 12) before it counts as done, so a copy still landing from a mapping-key transfer cannot survive it.
+2. **User Data DO** — `credential_locators`, the `ai_client_connections` (revoked), the spent authorization codes, and then the tombstone: `account.status = 'deleted'`, `caller_token = NULL`, `deleted_at` set, the session epoch advanced. **The object is not deleted**; memos, topics, documents and the `operations` records — including the `withdrawal` record the job writes on its first run to stash the coordinates — stay behind the tombstone, which every entry refuses.
 
-The `finalize-withdrawal` saga coordinates this. Partial failure is normal and is handled by the saga's own retry and rollback, not by an operator. What an operator sees when it cannot converge is a `poison` row (8.5), and the first response is `requeue-poisoned-job`.
+Partial failure is normal and is handled by the job's own retry, not by an operator. What an operator sees when it cannot converge is a `poison` row (8.5), and the first response is `requeue-poisoned-job`.
 
-**`purge-user-mappings` is the last resort**, for when the saga cannot converge because the mapping rows themselves are the obstruction. It deletes residue directly and is the only entry that does; treat it as a manual override with no undo, run it after `requeue-poisoned-job` has been tried, and audit it.
+**`purge-user-mappings` is the last resort**, for when the job cannot converge because the mapping rows themselves are the obstruction. It deletes an account's rows in one bucket directly, reservations included, with their reset tokens, and is the only entry that does; treat it as a manual override with no undo, run it after `requeue-poisoned-job` has been tried, and audit it. **Do not run it against a live account.** The bucket cannot see the account's status, so the entry will happily delete the mappings of an account that is `active`: its sessions stay valid, the settings page can no longer resolve the address and shows its error state (the logout control stays), and the same address can be registered again as a new `userId` while the old User Data DO remains as residue nothing can find. It is the last resort of a withdrawal, not a tool for anything else.
 
 **Withdrawal only becomes irreversible once the PITR retention window has passed** — until then, restoring both the User Data DO and its bucket would bring the account back. That is why PITR against a withdrawn account is forbidden (11.3 (d)).
 
 ### 11.3 Point-in-time recovery
 
-**Reality: None ([#81](https://github.com/tuanemuy/fog/issues/81)) for the mandatory steps**, and the four are blocked for two different reasons. **Two of them have no storage to act on**: `ai_client_connections` is not a table anywhere in the tree, and `password_reset_tokens` belongs to [#12](https://github.com/tuanemuy/fog/issues/12). **The other two have their storage and no way to reach it**: `account.session_epoch` and `credential_mappings.failed_attempts` / `next_attempt_allowed_at` are columns of v1 schemas that exist today, and what is missing is an operator path that writes them ([#80](https://github.com/tuanemuy/fog/issues/80)). **Running a restore today would leave revoked sessions, revoked connections and consumed reset tokens alive with no way to clear them** — but only half of that is a schema problem.
+**Reality: the restore itself is a platform operation; the four mandatory steps below have their storage and no operator entry that writes it.** Every table and column they name exists in the v1 schemas; what does not exist is a maintenance entry that advances an epoch, revokes connections, deletes tokens or clears a lockout, so the steps are done locally with `sqlite3` (chapter 6) and in production not at all until an entry for them is written ([#81](https://github.com/tuanemuy/fog/issues/81)). **Running a restore today would leave revoked sessions, revoked connections and consumed reset tokens alive** — the default below, cutting everything, is not yet executable in production.
 
 - **Retention: 30 days**, per Durable Object.
 - **The unit of recovery is one DO.** There is no way to restore several objects to a common instant.
-- **PITR finds nothing.** A DO's internal id does not map back to a `userId`, so the blast radius of an incident can only be built by sweeping a bucket (`list-bucket-user-ids`, then `read-schema-version` one at a time) — both of which are unimplemented. **It is a way to recover a target you already know, not a way to find one.**
+- **PITR finds nothing.** A DO's internal id does not map back to a `userId`, so the blast radius of an incident is built by the sweep in 7.4 — `list-bucket-user-ids` on every bucket of the active generation, then `read-schema-version` per `userId`, both outside the gate. **It is a way to recover a target you already know, not a way to find one.**
 
 **Mandatory steps — all four, every time:**
 
 | # | Object | Step | Why |
 | - | ------ | ---- | --- |
-| 1 | User Data DO — the `account.session_epoch` **column**, which exists | advance it to a monotonic value derived from the current time | restoring rolls it back and revoked sessions become valid again |
-| 2 | User Data DO — the `ai_client_connections` **table**, which does not exist | set every row to `revoked` | same — revoked connections come back alive |
-| 3 | Identity Directory bucket — the `password_reset_tokens` **table**, which does not exist ([#12](https://github.com/tuanemuy/fog/issues/12)) | delete every row | consumed and deleted reset tokens reappear |
-| 4 | Identity Directory bucket — the `credential_mappings.failed_attempts` and `.next_attempt_allowed_at` **columns**, which exist | set the first to 0 and clear the second | the restore may reinstate a lockout the user has already served |
+| 1 | User Data DO — the `account.session_epoch` **column** | advance it to a monotonic value derived from the current time | restoring rolls it back and revoked sessions become valid again |
+| 2 | User Data DO — the `ai_client_connections` **table** | set every row to `revoked` | same — revoked connections come back alive |
+| 3 | Identity Directory bucket — the `password_reset_tokens` **table** | delete every row | consumed and deleted reset tokens reappear |
+| 4 | Identity Directory bucket — the `credential_mappings.failed_attempts` and `.next_attempt_allowed_at` **columns** | set the first to 0 and clear the second | the restore may reinstate a lockout the user has already served |
 
 **The default is to cut everything.** If a step cannot be completed, revoke rather than leave it.
 
@@ -818,9 +826,9 @@ The `finalize-withdrawal` saga coordinates this. Partial failure is normal and i
 
 This is the ordinary procedure for a permitted restore. The withdrawn-account case in (d) is a ban with its own exception, approved on stricter terms.
 
-**(b) `reset_request_windows` rolls back as well, and its effect does not depend on ordering.** Restoring returns the throttle windows to a past state, so `claimWindow` answers `true` again for a window that had already been consumed. The consequence is a fresh reset token issued — **which replaces every unused token, killing the link already in the user's hands** — plus a second email. Steps 1–4 do not prevent this: it fires whether they ran before or after. **Reality: none — the table is unimplemented ([#12](https://github.com/tuanemuy/fog/issues/12))**, so there is nothing to clear today and nothing to roll back; when it lands, clearing it belongs with the four steps.
+**(b) `reset_request_windows` rolls back as well, and its effect does not depend on ordering.** Restoring returns the throttle windows to a past state, so `claimWindow` answers `true` again for a window that had already been consumed. The consequence is a fresh reset token issued — **which replaces every unused token, killing the link already in the user's hands** — plus a second email. Steps 1–4 do not prevent this: it fires whether they ran before or after. Clearing the table belongs with the four steps, on the same terms (locally with `sqlite3`; no entry in production).
 
-**(c) A restored bucket's rotation checkpoint is void.** A checkpoint asserting `previousCount = 0` is permanently true only because no path can write rows into a previous generation — and **PITR is outside that argument**, since it restores rows that were deleted. So: **treat any checkpoint on a restored bucket as invalid, re-drive the transfer for that bucket, and only then judge retirement.** Re-read the checkpoints immediately before the retirement deploy, as part of the same procedure. Skipping this retires a key whose old-generation rows are still readable.
+**(c) A restored bucket's rotation checkpoint is void.** A checkpoint asserting `previousCount = 0` is permanently true only because no path can write rows into a previous generation — and **PITR is outside that argument**, since it restores rows that were deleted. So: **treat any checkpoint on a restored bucket as invalid, run `remap-chunk` against that bucket again until it answers `lastCredentialId: null`, and only then read `read-rotation-checkpoint` and judge retirement.** Re-read the checkpoints of every bucket immediately before the retirement deploy, as part of the same procedure. Skipping this retires a key whose old-generation rows are still readable.
 
 **(d) PITR against a withdrawn account is forbidden.** Restoring the User Data DO and the bucket's `credential_mappings` rows together brings the account back, which is precisely why a withdrawal is not irreversible until the retention window has passed (11.2). The ban is what stops that window from being used to undo a completed withdrawal.
 
@@ -840,7 +848,7 @@ Every field of `DELIVERY_TUNING_DEFAULTS` (`packages/core/src/application/delive
 
 **These are settled, and four forms of reason recur — neither exhaustive nor disjoint** — a platform ceiling, a constraint `createDeliveryTuning` checks at construction, the one measurement recorded on [#37](https://github.com/tuanemuy/fog/issues/37), and a copy of a value the wrangler config states. **A value that matches none of the four is a judgement made against the shape the machinery requires, and not a derivation**; the "What fixes it" column says which, one row at a time, and a row that gives a reason rather than a source is one of those judgements.
 
-**No value here comes from a spike on a real workload, and none can today**: **no `jobs.kind` handler is registered yet**, so there is nothing whose per-wake-up cost could be timed. That is the trigger — **the spike runs once the first handler lands** (tracked on [#12](https://github.com/tuanemuy/fog/issues/12); [#74](https://github.com/tuanemuy/fog/issues/74) would satisfy it too), and **tiers 1 and 2 of the three-tier job bound are what to revisit** then; tier 3 is the bind ceiling and moves only with SQLite.
+**No value here comes from a spike on a real workload.** All eleven `jobs.kind` handlers are registered (six on the User Data class, five on the Identity Directory class), so a spike is possible; none has been run on production-shaped data. **Tiers 1 and 2 of the three-tier job bound are what such a spike would revisit**; tier 3 is the bind ceiling and moves only with SQLite. The one local timing on record is the rotation chunk in chapter 3.
 
 ### 12.1 Delivery
 
@@ -872,7 +880,9 @@ Every field of `DELIVERY_TUNING_DEFAULTS` (`packages/core/src/application/delive
 | `queueMaxBatchCount` | 100 | a constant of miniflare's queues broker (`MAX_MESSAGE_BATCH_COUNT`). **Unverified against the production Queue** |
 | `queueMaxBatchBytes` | 288,000 | the same broker's `MAX_MESSAGE_BATCH_SIZE`. **Unverified against the production Queue** |
 | `queueMaxMessageBytes` | 128,000 | the same broker's `MAX_MESSAGE_SIZE_BYTES`, **unverified against the production Queue**; the only one of the three that can bite today, since the relay publishes row by row |
-| `listQuarantinedEventsLimit` | 50 | page size for the quarantine and `poison` listings; keyset continuation (8.4) |
+| `listQuarantinedEventsLimit` | 50 | page size of the quarantine listing; keyset continuation (8.4) |
+| `listPoisonedJobsLimit` | 50 | page size of the `poison` listing, matched to the quarantine one so an operator learns one paging discipline (8.5) |
+| `deleteNoopReissueDelayMs` | 60,000 | how long a deletion job waits before re-issuing a round of `deleteMapping` that was a no-op over two generations (11.2). **A judgement, not a derivation**: the spec asks for "longer than the upper bound on a cross-DO RPC's lifetime", and no platform figure for that bound can be cited from this repository; one minute sits well above a Worker invocation's 30 s and above the 60 s leases here |
 
 ### 12.2 Identity
 
@@ -901,15 +911,9 @@ The four lockout values are chosen against the shape the domain requires, not ag
 
 | Value | Where it goes | Receives it |
 | ----- | ------------- | ----------- |
-| **Throttle window length**, and the grace added to a window row's `expires_at` | `IdentityTuning` in `packages/core/src/application/identity/tuning.ts`, as `resetRequestWindowMs` and `resetRequestWindowGraceMs` | [#12](https://github.com/tuanemuy/fog/issues/12) |
-| **Export total-byte cap** | the export tuning the feature introduces; the derivation rule is in 11.1 | [#15](https://github.com/tuanemuy/fog/issues/15) |
 | **Per-origin rate limit** (paths, key, window) | a WAF rule, not this repository; see 9.4 | [#18](https://github.com/tuanemuy/fog/issues/18) |
 
-**On the throttle window: one configured value, read by two layers.** The usecase reads it to compose `windowKey` (the HMAC combined with the window), and the adapter reads it to compute the window row's `expires_at` (window end **plus a grace**). **Do not place two constants.** If the adapter's is shorter, `sweep-reset-tokens` deletes a window row that is still live, `claimWindow` answers `true` a second time inside the same window, **and the user's existing link dies while a second email goes out**. The single root is the DI container: both the usecase and the adapter that writes the row take the value from the same container.
-
-**Settled values, pending a reader:** window length **900,000 ms** (15 minutes), grace **300,000 ms** (5 minutes) on top of it. The grace exists so that clock skew between the composing layer and the sweeping layer cannot delete a window that is still being counted against.
-
-**The window length carries one inequality — the third value named in 12.3, not a third delivery constraint.** `spec/database/index.md` requires the **window length to be strictly below `resetTokenTtlMs`**; break it and a user whose link has expired gets no resend until the window opens, which collides with the reset flow's own "the link expired, send another" path. The settled pair satisfies it — 900,000 < 3,600,000. **Its limit is that nothing checks the arithmetic**: `createIdentityTuning` validates every field it holds and the window is not one of them, so the inequality is held by a reader of this document until [#12](https://github.com/tuanemuy/fog/issues/12) lands the field, at which point it becomes a construction-time check alongside the others.
+The throttle window and its grace are read: `IdentityTuning` holds `resetRequestWindowMs` (900,000) and `resetRequestWindowGraceMs` (300,000), the usecase composes `windowKey` from the first and the adapter computes the window row's `expires_at` from both — **one configured value, read by two layers from the same container**, which is what keeps `sweep-reset-tokens` from deleting a window that is still being counted against. The window length is held strictly below `resetTokenTtlMs` (900,000 < 3,600,000), as `spec/database/index.md` requires; `createIdentityTuning` checks its own fields, and that inequality is one of them. The export cap is `EXPORT_MAX_SOURCE_BYTES` (11.1).
 
 ### 12.5 What the count limits do not bound
 
@@ -930,7 +934,7 @@ The sort is accepted deliberately: ordering by `next_run_at` is what stops rows 
 
 ### 12.6 The per-query result-set ceiling
 
-**A Durable Object caps the total size of one query's result set.** The value comes from Cloudflare's published limits, is **not measurable from this repository**, and **no design here depends on it today** — the export path, which is the one thing that would, is unimplemented (11.1).
+**A Durable Object caps the total size of one query's result set.** The value comes from Cloudflare's published limits and is **not measurable from this repository**. The export path (11.1) is the one design that leans on it, and it bounds itself first — 24 MiB of body bytes, summed before any body is read — so the platform ceiling is never the first thing to bind.
 
 ### 12.7 Measured: occupancy of a shared bucket
 
@@ -952,48 +956,48 @@ Enumerated from **every file under `spec/manual-tests/`** — `index.md`, `accou
 
 | # | Capability | Required by | Reality |
 | - | ---------- | ----------- | ------- |
-| 1 | Seed memos with past posting dates directly into a DO | `timeline.md` (TC-03/07/08/24/25), `settings.md` (TC-03) | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
-| 2 | Seed trash rows whose `purge_after` is in the past | `trash.md` (TC-13/23/24) | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
-| 3 | A development write RPC (the stated alternative to 1 and 2) | `timeline.md`, `settings.md` | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
-| 4 | Move the clock backwards, or equivalent | `trash.md` (TC-13/24) | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
-| 5 | Fire `purge-trash` without waiting for the Alarm | `trash.md` (TC-13/24) | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
-| 6 | Fast-forward DO-side backoff / retry | `account.md` (TC-45/47) | **None ([#82](https://github.com/tuanemuy/fog/issues/82))** |
+| 1 | Seed memos with past posting dates directly into a DO | `timeline.md` (TC-03/07/08/24/25), `settings.md` (TC-03) | **Local only** — stop `pnpm dev`, edit `memos.posted_at` with `sqlite3` (chapter 6), restart. No write RPC exists for it |
+| 2 | Seed trash rows whose `purge_after` is in the past | `trash.md` (TC-13/23/24) | **Local only** — the same `sqlite3` edit on `purge_after` |
+| 3 | A development write RPC (the stated alternative to 1 and 2) | `timeline.md`, `settings.md` | **None, by design** — the AI test client (row 26) posts memos; dates are seeded as in row 1 |
+| 4 | Move the clock backwards, or equivalent | `trash.md` (TC-13/24) | **None** — the clock is not moved; rows 2 and 5 stand in |
+| 5 | Fire `purge-trash` without waiting for the Alarm | `trash.md` (TC-13/24) | **Local only** — pull the row's `next_run_at` into the past with `sqlite3` and re-arm the Alarm (any write through the maintenance surface re-arms; `requeue-poisoned-job` on a seeded row does too) |
+| 6 | Fast-forward DO-side backoff / retry | `account.md` (TC-45/47) | **Local only** — edit `next_run_at` with `sqlite3`; the same for a seeded `terminal_reason` |
 | 7 | Shorten the time the queue takes to burn its retries | `account.md` (TC-46) | **Local only** — edit `max_retries` in `wrangler.toml` and the matching declared value, then restart |
-| 8 | Observe the Outbox backlog | `account.md` (TC-44) | **None ([#80](https://github.com/tuanemuy/fog/issues/80))** — `read-delivery-backlog` is unimplemented |
-| 9 | `list-quarantined-events` | `account.md` (TC-45) | **None ([#80](https://github.com/tuanemuy/fog/issues/80))** — implemented, no caller |
-| 10 | `requeue-quarantined-event` | `account.md` (TC-45) | **None ([#80](https://github.com/tuanemuy/fog/issues/80))** — implemented, no caller |
-| 11 | `list-poisoned-jobs` | `account.md` (TC-47) | **None ([#74](https://github.com/tuanemuy/fog/issues/74))** |
-| 12 | `requeue-poisoned-job` | `account.md` (TC-47) | **None ([#74](https://github.com/tuanemuy/fog/issues/74))** |
-| 13 | Observe terminal mode (`status` runnable **and** `terminal_reason` set) | `account.md` (TC-47) | **None ([#74](https://github.com/tuanemuy/fog/issues/74))** |
-| 14 | Confirm a `poison` row survives the retention window | `account.md` (TC-47) | **None ([#74](https://github.com/tuanemuy/fog/issues/74))** — same reader as 11/13 |
-| 15 | `read-schema-version`, to separate fail-closed from a real backlog | `account.md` (TC-44) | **Local only** — the diagnostic route (chapter 6) |
-| 16 | List the DLQ's messages and read one | `account.md` (TC-46) | **None ([#83](https://github.com/tuanemuy/fog/issues/83))** — messages are acked and gone (8.6) |
-| 17 | Re-drive from the DLQ | `account.md` (TC-46) | **None ([#83](https://github.com/tuanemuy/fog/issues/83))** — **the operation does not exist** |
-| 18 | Break and restore the queue producer binding, to force quarantine | `account.md` (TC-45) | **Local only** — comment out `[[queues.producers]]` in `wrangler.state.toml` and restart |
-| 19 | Break and restore the mail provider, to force a DLQ landing | `account.md` (TC-46) | **None ([#12](https://github.com/tuanemuy/fog/issues/12))** — the only `MailSender` is the console adapter, which always succeeds |
-| 20 | Open a throttle window (clear `reset_request_windows`) | `account.md` (TC-44/45/46) | **None ([#12](https://github.com/tuanemuy/fog/issues/12))** — the table does not exist |
-| 21 | Fail a cross-DO RPC for one specific bucket | `account.md` (TC-47) | **Local only, and too coarse** — breaking `script_name` disables *all* DO calls, not one bucket |
-| 22 | Receive mail (a development mailbox) | `account.md` (many), `timeline.md` | **None ([#12](https://github.com/tuanemuy/fog/issues/12))** — nothing is sent, and the console adapter deliberately logs neither recipient nor token |
-| 23 | Shorten the reset-token TTL | `account.md` (TC-30) | **Local only** — edit `resetTokenTtlMs`; there is no env override. **Editing it alone floors at 900,001 ms**, because constraint 1 (12.3) is checked at construction against `queueMaxRetryPeriodMs + dlqRetentionMs`; lowering those two as well — to 90,000 (their own floor) and 0 — takes the TTL down to 90,001 ms. Below that `createDeliveryTuning` throws `CONFIGURATION_ERROR` and the container never builds |
-| 24 | Produce an expired authorization URL | `account.md` (TC-25) | **None ([#13](https://github.com/tuanemuy/fog/issues/13))** |
+| 8 | Observe the Outbox backlog | `account.md` (TC-44) | **Available** — `read-delivery-backlog` (8.3) |
+| 9 | `list-quarantined-events` | `account.md` (TC-45) | **Available** (8.4) |
+| 10 | `requeue-quarantined-event` | `account.md` (TC-45) | **Available** (8.4) |
+| 11 | `list-poisoned-jobs` | `account.md` (TC-47) | **Available** (8.5) |
+| 12 | `requeue-poisoned-job` | `account.md` (TC-47) | **Available** (8.5) |
+| 13 | Observe terminal mode (`status` runnable **and** `terminal_reason` set) | `account.md` (TC-47) | **Local only** — `sqlite3` on the `jobs` row; the listing shows `poison` rows only |
+| 14 | Confirm a `poison` row survives the retention window | `account.md` (TC-47) | **Available** — `list-poisoned-jobs` after the window; the prune never touches `poison` |
+| 15 | `read-schema-version`, to separate fail-closed from a real backlog | `account.md` (TC-44) | **Available** (8.3); locally also the diagnostic route (chapter 6) |
+| 16 | List the DLQ's messages and read one | `account.md` (TC-46) | **None** — messages are re-driven once and acked (8.6); the log line is what remains |
+| 17 | Re-drive from the DLQ | `account.md` (TC-46) | **Automatic, once** (8.6); a manual re-drive is [#83](https://github.com/tuanemuy/fog/issues/83) |
+| 18 | Break and restore the queue producer binding, to force quarantine | `account.md` (TC-45) | **Local only** — comment out `[[queues.producers]]` in `wrangler.state.toml` and restart, or seed a `quarantined` row with `sqlite3` |
+| 19 | Break and restore the mail provider, to force a DLQ landing | `account.md` (TC-46) | **Local only** — unset `MAIL_DEV_SINK` without a provider key and the consumer fails; restore it afterwards |
+| 20 | Open a throttle window (clear `reset_request_windows`) | `account.md` (TC-44/45/46) | **Local only** — `sqlite3` on the bucket's table |
+| 21 | Fail a cross-DO RPC for one specific bucket | `account.md` (TC-47) | **Local only, and too coarse** — breaking `script_name` disables *all* DO calls, not one bucket; the terminal-mode entry itself is pinned by the integration suites |
+| 22 | Receive mail (a development mailbox) | `account.md` (many), `timeline.md` | **Local only** — `MAIL_DEV_SINK="console"` prints `[dev-mail] to=… url=…` on the request Worker's log (the declared exception to the hygiene rule, `spec/async/index.md`); no deployed config carries it |
+| 23 | Shorten the reset-token TTL | `account.md` (TC-30) | **Local only** — edit `resetTokenTtlMs`; there is no env override. **Editing it alone floors at 900,001 ms**, because constraint 1 (12.3) is checked at construction against `queueMaxRetryPeriodMs + dlqRetentionMs`; lowering those two as well — to 90,000 (their own floor) and 0 — takes the TTL down to 90,001 ms. Below that `createDeliveryTuning` throws `CONFIGURATION_ERROR` and the container never builds. Alternatively, `sqlite3` on `password_reset_tokens.expires_at` |
+| 24 | Produce an expired authorization URL | `account.md` (TC-25) | **Local only** — the AI test client (row 26) prints the URL; wait out the code's TTL before opening it |
 | 25 | Read and adjust the lockout settings | `account.md` (TC-40) | **Local only** — edit `IDENTITY_TUNING_DEFAULTS`; there is no env override |
-| 26 | A real MCP-capable AI client connected to the app | `ai.md` (all), `account.md`, `timeline.md`, `document.md` | **None ([#13](https://github.com/tuanemuy/fog/issues/13) / [#14](https://github.com/tuanemuy/fog/issues/14))** |
-| 27 | Call the REST API directly with `curl` under an AI token | `ai.md` | **None ([#14](https://github.com/tuanemuy/fog/issues/14))** |
-| 28 | Read the AI client's tool-execution log | `ai.md` | **None ([#13](https://github.com/tuanemuy/fog/issues/13) / [#14](https://github.com/tuanemuy/fog/issues/14))** |
-| 29 | Two real Google accounts and a registered OAuth client | `account.md` (SSO cases) | **None ([#12](https://github.com/tuanemuy/fog/issues/12))** |
-| 30 | A Google account sharing an address with a password account | `account.md` (TC-18) | **None ([#12](https://github.com/tuanemuy/fog/issues/12))** |
+| 26 | A real MCP-capable AI client connected to the app | `ai.md` (all), `account.md`, `timeline.md`, `document.md` | **Available as a test client** — `pnpm --filter @repo/web ai-client -- register / authorize / mcp <method> / call <tool>` runs the OAuth 2.1 round trip against a loopback redirect and speaks MCP and REST; a real LLM application is **None** (no credentials, out of the spec's scope) |
+| 27 | Call the REST API directly with `curl` under an AI token | `ai.md` | **Available** — the test client's `call` does exactly that; `whoami` shows the state file without its secrets |
+| 28 | Read the AI client's tool-execution log | `ai.md` | **Available** — the test client prints each call and its answer |
+| 29 | Two real Google accounts and a registered OAuth client | `account.md` (SSO cases) | **Local only** — `SSO_DEV_STUB="true"` serves `/__dev/sso/:provider/authorize`, which takes a subject and an email and bounces back with a code; any two subjects are two accounts. Real Google needs `GOOGLE_CLIENT_ID` / `_SECRET` and is unverified here; Apple has no real adapter |
+| 30 | A Google account sharing an address with a password account | `account.md` (TC-18) | **Local only** — the stub takes any email |
 | 31 | A second browser session (private window / second browser) | `account.md`, `timeline.md`, `document.md`, `trash.md`, `search.md`, `settings.md` | **Available** |
 | 32 | Throttle the network from devtools (Offline / Slow 3G) | `timeline.md` (TC-17/18) | **Available** |
-| 33 | Bulk-post 51+ memos | `timeline.md` (TC-04), `search.md` (TC-22) | **None ([#2](https://github.com/tuanemuy/fog/issues/2))** — memo posting is unimplemented |
+| 33 | Bulk-post 51+ memos | `timeline.md` (TC-04), `search.md` (TC-22) | **Available** — the UI, or the test client's `call post_memo` in a loop |
 | 34 | Generate long text locally and save it to a file | `timeline.md`, `document.md`, `ai.md`, `search.md` | **Available** |
-| 35 | Unzip an archive and inspect it with `find` / `grep` | `settings.md` (TC-03/04/05/06/11) | **Available** as a technique; **there is no archive to inspect** until [#15](https://github.com/tuanemuy/fog/issues/15) |
+| 35 | Unzip an archive and inspect it with `find` / `grep` | `settings.md` (TC-03/04/05/06/11) | **Available** — the export (11.1). **macOS's bundled `unzip` fails on the archive's non-ASCII entry names**; the archive is correct (UTF-8 flag set), and Python's `zipfile`, `ditto -x -k` or Finder extract it |
 | 36 | Set the browser timezone to `Asia/Tokyo` | `settings.md` | **Available** |
 | 37 | A second, empty user account | `settings.md`, `timeline.md`, `document.md`, `trash.md` | **Available** — sign-up works |
-| 38 | Run SQL against a database shared by all users | `timeline.md` names it as *not existing* | **None, by design** — every user's data is inside their own DO. `db:execute:<stage>` reaches D1, which holds no business data |
+| 38 | Run SQL against a database shared by all users | `timeline.md` names it as *not existing* | **None, by design** — every user's data is inside their own DO |
 
 **Three things about running these tests that are easy to get wrong:**
 
-- **There is no shared database to reach for** (row 38). Data is per-DO by construction. `wrangler d1 execute` succeeds and touches nothing that matters.
+- **There is no shared database to reach for** (row 38). Data is per-DO by construction; locally it is one SQLite file per object (chapter 6), and a file can only be read while `pnpm dev` is stopped.
 - **Fast-forwarding the DO does not advance the queue** (rows 6 and 7 are different capabilities). The queue's redelivery interval and `max_retries` are platform settings; no amount of poking the Alarm moves them. Observing a retry burn-through needs a separate queue configured with a smaller `max_retries`.
 - **Delivery is asynchronous and at-least-once.** Expect to wait, and expect the same email more than once. **A duplicate is not a bug** — a test that fails on the second copy is testing the wrong thing.
 
@@ -1001,16 +1005,12 @@ Enumerated from **every file under `spec/manual-tests/`** — `index.md`, `accou
 
 | Limit | Tracked in |
 | ----- | ---------- |
-| The request Worker cannot be deployed, and `pnpm start` does not boot | [#73](https://github.com/tuanemuy/fog/issues/73) |
-| D1 remains as a binding, a config block and migration scripts with no runtime reader; the per-stage D1 script names do not match what Pulumi creates | [#79](https://github.com/tuanemuy/fog/issues/79) |
-| No operator path exists — two implemented maintenance RPCs have no caller, and two more are unimplemented | [#80](https://github.com/tuanemuy/fog/issues/80) |
-| The `poison` operator path (list / requeue / delete) does not exist | [#74](https://github.com/tuanemuy/fog/issues/74) |
-| **Re-driving the DLQ does not exist** — the handler acks every message | [#83](https://github.com/tuanemuy/fog/issues/83) |
+| The request Worker cannot be deployed; whether `pnpm start` boots is recorded in `README.md` | [#73](https://github.com/tuanemuy/fog/issues/73) |
+| The Pulumi `resources` stack still provisions a D1 database, and the render script still substitutes its two placeholders, with no runtime reader | [#79](https://github.com/tuanemuy/fog/issues/79) |
+| **The DLQ has no manual re-drive** — one automatic attempt, then the ack (8.6) | [#83](https://github.com/tuanemuy/fog/issues/83) |
 | **The DLQ's one log line is not retained in production** — no wrangler config declares `[observability]`, so Workers Logs is off and only a live `wrangler tail` sees it | [#22](https://github.com/tuanemuy/fog/issues/22) |
-| PITR's mandatory steps cannot be executed — two of the four have no storage, and two have storage with no operator path to it | [#81](https://github.com/tuanemuy/fog/issues/81) |
-| Manual testing has no seeding, no forced Alarm, no backoff fast-forward | [#82](https://github.com/tuanemuy/fog/issues/82) |
+| PITR's four mandatory steps have no maintenance entry; in production they cannot be executed | [#81](https://github.com/tuanemuy/fog/issues/81) |
 | Stuck delivery is not actively notified | [#23](https://github.com/tuanemuy/fog/issues/23) |
 | No per-origin rate limiting | [#18](https://github.com/tuanemuy/fog/issues/18) |
-| **Fail-closed DOs cannot be found across the fleet** — DOs cannot be enumerated, `list-bucket-user-ids` is unimplemented, and the diagnostic route does not exist in production | [#74](https://github.com/tuanemuy/fog/issues/74) (the entry) / [#22](https://github.com/tuanemuy/fog/issues/22) (observability) |
-| **Individual operators cannot be told apart.** Nothing today identifies who performed an action; option (iii) in 8.2 could not fix this even if adopted, which is why (i) is | [#80](https://github.com/tuanemuy/fog/issues/80) |
+| **Individual operators cannot be told apart by the surface itself.** `OPERATOR_TOKEN` is one bearer; identity comes from Cloudflare Access in front of it (8.2), which this repository does not configure | operations — Access is the control |
 | The three out-of-band settings (DLQ retention, queue retry period, WAF) cannot be read back from the repository | chapter 5 — inherent, not scheduled |
