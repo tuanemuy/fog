@@ -29,6 +29,10 @@
 #   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
 #   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
 #                                  from the MAIL_FROM_ADDRESS environment variable at render time
+#   APP_URL                      — not a secret: a [vars] entry of the request Worker (the public origin;
+#                                  the deploy templates take it from the APP_URL environment variable)
+#   DIAGNOSTICS_ENABLED          — not a secret: a [vars] entry of the request Worker, **local only**
+#                                  (enables /__diagnostics/*; absent from the deploy templates)
 #   MAIL_DEV_SINK                — request Worker, **local only** (development mail sink)
 #   SSO_DEV_STUB                 — request Worker, **local only** (development identity provider)
 #
