@@ -111,10 +111,10 @@ describe("MemoEntry", () => {
     );
     expect(container.querySelector("script")).toBeNull();
     expect(container.innerHTML).not.toContain("<script");
-    // `skipHtml` drops the tags and keeps inline text; a block-level script
-    // is dropped whole.
+    // Without rehype-raw the tags stay visible as text — inline and
+    // block-level alike — so the author's input is neither run nor lost.
     expect(container.querySelector(".fog-markdown")?.textContent?.trim()).toBe(
-      "before alert(1) after",
+      "before <script>alert(1)</script> after\n<script>alert(2)</script>",
     );
   });
 
