@@ -256,3 +256,4 @@ echo "saga=$saga rows=$rows"; [ $((rows - 1)) -eq $((saga + 4)) ] && echo OK || 
 - 2 世代を運ぶ変数は JSON の配列 3 つである: `DIRECTORY_ROUTING_KEYRING`（request Worker。`[{ role, generation, key, bucketCount }]`）、`DIRECTORY_KEY_COMMITMENT`（state Worker。`[{ role, generation, keyDigest, bucketCount }]`）、`IDENTITY_MAIL_ENCRYPTION_KEYRING`（state Worker。`[{ role, generation, key }]`）。`role` は `active` / `previous`。
 - 未設定なら従来の単一変数（`DIRECTORY_ROUTING_SECRET` / `IDENTITY_MAIL_ENCRYPTION_KEY`）から `active` の generation 1 だけを組む。配列が設定されていれば単一変数は読まない。
 - 世代ガードで拒否された予約は `SystemError(ConfigurationError)` になる（利用者には一様なエラー）。予約を書くのは request 経路（新規登録 saga の各 credential と SSO 連携）だけで、`resume-signup` / `resume-link` の再駆動は予約を書き直さず activate / commit / record を再実行するので、ジョブ経路が世代ガードに当たる経路は無い。
+- 削除の no-op 確定は 1 巡（対象座標の全世代への `deleteMapping` 一式）を単位に判定する。2 世代を含む巡で 1 つでも no-op があれば `deleteNoopReissueDelayMs` 後に巡全体を 1 回だけ再発行し、その巡で確定する。世代ごとに個別に確定するより再発行が 1 回多くなりうるが、安全側である。
