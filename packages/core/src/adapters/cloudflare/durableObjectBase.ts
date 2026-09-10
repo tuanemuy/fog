@@ -56,6 +56,10 @@ export type StateWorkerEnv = Readonly<{
   EVENTS_QUEUE: Queue<OutboxQueueMessage>;
   PROVIDER_IDEMPOTENCY_KEY?: string;
   IDENTITY_MAIL_ENCRYPTION_KEY?: string;
+  /** The two-generation form of the encryption keyring (JSON); wins over the single key when set. */
+  IDENTITY_MAIL_ENCRYPTION_KEYRING?: string;
+  /** The key commitment (JSON) the buckets verify injected mapping keys against; unset while single-generation. */
+  DIRECTORY_KEY_COMMITMENT?: string;
   /** The reset-token derivation key; state Worker only (`spec/async/index.md` 衛生規則). */
   IDENTITY_RESET_TOKEN_KEY?: string;
   /**

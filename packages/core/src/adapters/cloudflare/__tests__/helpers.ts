@@ -5,6 +5,8 @@ import {
   createMappingKeyring,
   INITIAL_DIRECTORY_BUCKET_COUNT,
   INITIAL_KEY_GENERATION,
+  keyDigestOf,
+  type MappingKeyEntry,
 } from "../crypto/keyring";
 import { directoryBucketLocator } from "../crypto/locatorDerivation";
 import type { DurableObjectBindings } from "../doStubs";
@@ -107,5 +109,86 @@ export function inDirectoryStorage<T>(
     directoryStubOf(generation, bucketIndex),
     (instance, state) =>
       fn(state.storage.sql, instance as IdentityDirectoryDurableObject, state),
+  );
+}
+
+/**
+ * Overrides entries of a live Durable Object instance's `env` — the
+ * rotation suites deploy a commitment or a two-generation encryption
+ * keyring to one bucket at a time this way, in either direction.
+ *
+ * `env` is the plain property `DurableObject`'s constructor assigns, and
+ * the buckets read their keyring / commitment from it on every use rather
+ * than caching, which is what makes this take effect at once. **Limit**:
+ * the override lives on the instance and does not survive an eviction or
+ * a reset; the pool keeps an instance alive for the duration of a test
+ * file, which is the scope these suites need.
+ */
+export async function overrideDirectoryEnv(
+  generation: number,
+  bucketIndex: number,
+  overrides: Record<string, string | undefined>,
+): Promise<void> {
+  await runInDurableObject(
+    directoryStubOf(generation, bucketIndex),
+    (instance) => {
+      const target = instance as unknown as { env: Record<string, unknown> };
+      target.env = { ...target.env, ...overrides };
+    },
+  );
+}
+
+/** The same seam for the migration plan a User Data object runs under: "deploying" a later version to one object. */
+export async function overrideUserDataPlan(
+  userId: string,
+  plan: unknown,
+): Promise<void> {
+  await runInDurableObject(userDataStubOf(userId), (instance) => {
+    (instance as unknown as { migrationPlan: unknown }).migrationPlan = plan;
+  });
+}
+
+/** Generation 2 of the mapping key, for the rotation suites; the same bucket count as generation 1. */
+export const TEST_ROUTING_SECRET_G2 =
+  "test-directory-routing-secret-generation-2-abcdef";
+
+/** What `vitest.config.do.ts` binds as `IDENTITY_MAIL_ENCRYPTION_KEY`; the suites that seal rows by hand need the same value. */
+export const TEST_ENCRYPTION_KEY = env.IDENTITY_MAIL_ENCRYPTION_KEY;
+
+export const TEST_ENCRYPTION_KEY_G2 =
+  "test-identity-mail-encryption-key-generation-2-abcdef";
+
+/** A two-generation keyring: `active` generation 2, `previous` generation 1 (the forward direction), or the reverse. */
+export function twoGenerationKeyring(direction: "forward" | "rollback") {
+  const g1 = {
+    generation: INITIAL_KEY_GENERATION,
+    key: TEST_ROUTING_SECRET,
+    bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT,
+  };
+  const g2 = {
+    generation: 2,
+    key: TEST_ROUTING_SECRET_G2,
+    bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT,
+  };
+  const [active, previous] = direction === "forward" ? [g2, g1] : [g1, g2];
+  return createMappingKeyring([
+    { role: "active", ...active },
+    { role: "previous", ...previous },
+  ]);
+}
+
+/** The commitment JSON for a keyring: digests in place of keys, the same role-tagged set. */
+export async function commitmentJsonFor(keyring: {
+  entries: readonly MappingKeyEntry[];
+}): Promise<string> {
+  return JSON.stringify(
+    await Promise.all(
+      keyring.entries.map(async (entry) => ({
+        role: entry.role,
+        generation: entry.generation,
+        keyDigest: await keyDigestOf(entry.key),
+        bucketCount: entry.bucketCount,
+      })),
+    ),
   );
 }

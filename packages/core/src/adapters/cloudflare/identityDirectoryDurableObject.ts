@@ -3,7 +3,11 @@ import type {
   SendMailMaterials,
 } from "@repo/core/application/delivery/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
-import type { IdentityDirectoryUnitOfWorkContext } from "@repo/core/application/execution/unitOfWork";
+import type {
+  IdentityDirectoryUnitOfWorkContext,
+  RotationCheckpoint,
+  RotationKind,
+} from "@repo/core/application/execution/unitOfWork";
 import {
   beginCredentialChangeProcedure,
   markCredentialChangeAdvancedProcedure,
@@ -19,12 +23,17 @@ import type {
   PromoteVerifierDto,
   ReserveCredentialDto,
 } from "@repo/core/application/identity/gateway";
+import { ROTATE_ENCRYPTION_OPERATION_KEY } from "@repo/core/application/identity/jobKeys";
 import { toCredentialCoordinate } from "@repo/core/application/identity/rebuild";
 import {
   type ResetRequestProcedureInput,
   requestPasswordResetProcedure,
 } from "@repo/core/application/identity/requestPasswordReset";
 import { reserveCredentialProcedure } from "@repo/core/application/identity/reserveSignupCredential";
+import type {
+  ImportOutcome,
+  RemapChunkResult,
+} from "@repo/core/application/identity/rotation/transfer";
 import { createIdentityTuning } from "@repo/core/application/identity/tuning";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
@@ -36,11 +45,16 @@ import type {
 import { CredentialId, UserId } from "@repo/core/domain/identity/valueObject";
 import { openCanonical, sealCanonical } from "./crypto/canonicalCipher";
 import {
+  activeKey,
   type EncryptionKeyring,
+  encryptionKeyringFromEnv,
+  type KeyCommitment,
+  keyCommitmentFromEnv,
   MIN_KEYRING_SECRET_LENGTH,
-  requireEmailEncryptionKeyring,
+  previousKey,
 } from "./crypto/keyring";
 import { encodeMapping } from "./crypto/locatorDerivation";
+import { callDurableObject, directoryStub, userDataStub } from "./doStubs";
 import {
   AsyncWorkDurableObject,
   type StateWorkerEnv,
@@ -52,16 +66,24 @@ import {
 import { createSignupCleanupHandler } from "./jobs/cleanup/signupCleanup";
 import { createResumeCredentialChangeHandler } from "./jobs/resumeCredentialChange";
 import { createResumeSignupHandler } from "./jobs/resumeSignup";
+import { createRotateEncryptionHandler } from "./jobs/rotateEncryption";
 import { createSweepReservationsHandler } from "./jobs/sweepReservations";
 import { createSweepResetTokensHandler } from "./jobs/sweepResetTokens";
 import { isInitialized } from "./migrationGate";
+import {
+  type ImportRemappedMappingsInput,
+  importRemappedMappings,
+} from "./rotation/importRemappedMappings";
+import { type RemapChunkInput, runRemapChunk } from "./rotation/remapChunk";
 import { IDENTITY_DIRECTORY_PLAN } from "./schema/identityDirectoryPlan";
 import {
   listMappedUserIds,
   readMappingCoordinate,
 } from "./stores/credentialMappingStore";
+import { readRotationCheckpoint } from "./stores/rotationCheckpointStore";
 import { readResetMailMaterials } from "./stores/sendMailMaterials";
 import { createIdentityDirectoryUnitOfWorkProvider } from "./unitOfWork";
+import type { UserDataDurableObject } from "./userDataDurableObject";
 
 export type ReserveCredentialRpcInput = Readonly<{
   locator: MappingLocator;
@@ -88,8 +110,6 @@ export type ActivateReservationRpcInput = Readonly<{
  * key never leaves the state Worker.
  */
 export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<IdentityDirectoryUnitOfWorkContext> {
-  private keyring: EncryptionKeyring | null = null;
-
   constructor(ctx: DurableObjectState, env: StateWorkerEnv) {
     const signupCleanup = createSignupCleanupHandler({
       env,
@@ -133,6 +153,11 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
         }),
         "sweep-reservations": createSweepReservationsHandler(),
         "sweep-reset-tokens": createSweepResetTokensHandler(),
+        "rotate-encryption": createRotateEncryptionHandler({
+          encryptionKeyring: () => this.encryptionKeyring(),
+          bucket: () => this.bucket(),
+          runUnitOfWork: (fn) => this.runUnitOfWork(fn),
+        }),
         "resume-credential-change": createResumeCredentialChangeHandler({
           env,
           markAdvanced: (input) =>
@@ -188,11 +213,27 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
     return key;
   }
 
+  /**
+   * Read from the environment on every use rather than cached: the two
+   * variables change with a deploy, and the integration suites swap them
+   * on a live instance to drive a rotation in both directions.
+   */
   private encryptionKeyring(): EncryptionKeyring {
-    this.keyring ??= requireEmailEncryptionKeyring(
+    return encryptionKeyringFromEnv(
+      this.env.IDENTITY_MAIL_ENCRYPTION_KEYRING,
       this.env.IDENTITY_MAIL_ENCRYPTION_KEY,
     );
-    return this.keyring;
+  }
+
+  /** The key commitment, or `null` while the deployment is single-generation. */
+  private keyCommitment(): KeyCommitment | null {
+    return keyCommitmentFromEnv(this.env.DIRECTORY_KEY_COMMITMENT);
+  }
+
+  /** The commitment's `active` mapping generation; `null` degrades the generation guard to the identity. */
+  private activeMappingGeneration(): number | null {
+    const commitment = this.keyCommitment();
+    return commitment === null ? null : activeKey(commitment).generation;
   }
 
   private commitLocally(input: CommitSagaRpcInput): Promise<boolean> {
@@ -235,6 +276,7 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
         { kind: input.locator.kind, credentialId: input.locator.credentialId },
         input.dto.canonical,
       );
+      const activeGeneration = this.activeMappingGeneration();
       await this.runUnitOfWork((ctx) => {
         reserveCredentialProcedure(ctx, {
           locator: input.locator,
@@ -242,6 +284,7 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
           sealedCanonical,
           dto: input.dto,
           resumeAt: input.resumeAt,
+          activeGeneration,
         });
         return undefined;
       });
@@ -440,21 +483,38 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
     });
   }
 
-  /** Unlink: the row and its tokens go, only for the owner presenting the caller token. */
+  /**
+   * Unlink / withdrawal: the row and its tokens go, only for the owner
+   * presenting the caller token. Absent is success, and the answer says
+   * which of the two it was — `deleted: false` is the no-op the deletion
+   * sagas must re-issue once when the coordinates span two generations
+   * (`spec/rotation/index.md`, 削除の no-op 確定). The domain port keeps
+   * its `void`; the distinction is read here, around it, from the row's
+   * presence before and after.
+   */
   async deleteMapping(input: {
     coordinate: CredentialCoordinateDto;
     dto: DeleteMappingDto;
-  }): Promise<RpcEnvelope<void>> {
-    return this.envelope(async () => {
-      await this.runUnitOfWork((ctx) => {
+  }): Promise<RpcEnvelope<{ deleted: boolean }>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) => {
+        const coordinate = toCredentialCoordinate(input.coordinate);
+        const before = ctx.credentialMappingReader.findByLocator(
+          coordinate.kind,
+          coordinate.mapping,
+        );
         ctx.credentialMappingWriter.deleteMapping({
-          coordinate: toCredentialCoordinate(input.coordinate),
+          coordinate,
           userId: UserId.create(input.dto.userId),
           callerToken: input.dto.callerToken,
         });
-        return undefined;
-      });
-    });
+        const after = ctx.credentialMappingReader.findByLocator(
+          coordinate.kind,
+          coordinate.mapping,
+        );
+        return { deleted: before !== null && after === null };
+      }),
+    );
   }
 
   /** The send-materials RPC; the guard lives in `readResetMailMaterials`. Passes the gate, writes nothing. */
@@ -523,6 +583,136 @@ export class IdentityDirectoryDurableObject extends AsyncWorkDurableObject<Ident
           .toArray().length;
         return { deletedMappings, deletedTokens };
       });
+    });
+  }
+
+  /**
+   * `remap-chunk` (`spec/rotation/index.md`): one chunk of the transfer
+   * out of this bucket. The keys arrive as arguments and are kept
+   * nowhere; the guards and the per-row order are `runRemapChunk`'s.
+   * Adds no runnable row, so the Alarm is not re-armed.
+   */
+  async remapChunk(
+    input: RemapChunkInput,
+  ): Promise<RpcEnvelope<RemapChunkResult>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      const userData = this.env.USER_DATA;
+      const directory = this.env.IDENTITY_DIRECTORY;
+      if (userData === undefined || directory === undefined) {
+        throw new SystemError(
+          SystemErrorCode.ConfigurationError,
+          "remap-chunk: the Durable Object bindings are not configured",
+        );
+      }
+      return runRemapChunk(
+        {
+          storage: this.ctx.storage,
+          bucket: this.bucket(),
+          encryptionKeyring: this.encryptionKeyring(),
+          commitment: this.keyCommitment(),
+          runUnitOfWork: (fn) => this.runUnitOfWork(fn),
+          recordRemappedLocator: (userId, dto) =>
+            callDurableObject(() =>
+              (
+                userDataStub(
+                  userData,
+                  userId,
+                ) as unknown as UserDataDurableObject
+              ).recordRemappedLocator(dto),
+            ),
+          importRow: async (destination, active, row) => {
+            const outcomes = await callDurableObject(() =>
+              (
+                directoryStub(
+                  directory,
+                  destination,
+                ) as unknown as IdentityDirectoryDurableObject
+              ).importRemappedMappings({ active, rows: [row] }),
+            );
+            return outcomes[0] ?? "rejected";
+          },
+          now: () => this.config.clock.now().getTime(),
+          logger: this.config.logger,
+        },
+        input,
+      );
+    });
+  }
+
+  /** `import-remapped-mappings`: the destination side of the transfer. No runnable row is added; no re-arm. */
+  async importRemappedMappings(
+    input: ImportRemappedMappingsInput,
+  ): Promise<RpcEnvelope<ImportOutcome[]>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      return importRemappedMappings(
+        {
+          sql: this.ctx.storage.sql,
+          bucket: this.bucket(),
+          encryptionKeyring: this.encryptionKeyring(),
+          commitment: this.keyCommitment(),
+          runUnitOfWork: (fn) => this.runUnitOfWork(fn),
+          logger: this.config.logger,
+        },
+        input,
+      );
+    });
+  }
+
+  /** `read-rotation-checkpoint`: this bucket's row for the kind and generation, or `null` for "not yet scanned". Read-only. */
+  async readRotationCheckpoint(input: {
+    rotationKind: RotationKind;
+    generation: number;
+  }): Promise<RpcEnvelope<RotationCheckpoint | null>> {
+    return this.envelope(async () => {
+      await this.enterRpc();
+      return readRotationCheckpoint(
+        this.ctx.storage.sql,
+        input.rotationKind,
+        this.bucket().bucketIndex,
+        input.generation,
+      );
+    });
+  }
+
+  /**
+   * `start-rotate-encryption` (`spec/rotation/index.md`, 直列化): the one
+   * entry point of the `rotate-encryption` job. Refused while the key
+   * commitment carries a `previous` mapping generation — the two
+   * rotations never run at once — and while the encryption keyring
+   * carries no `previous` to retire. The unit of work's enqueue re-arms
+   * the Alarm.
+   */
+  async startRotateEncryption(): Promise<
+    RpcEnvelope<{ retiringGeneration: number }>
+  > {
+    return this.envelope(async () => {
+      const commitment = this.keyCommitment();
+      if (commitment !== null && previousKey(commitment) !== null) {
+        throw new SystemError(
+          SystemErrorCode.ConfigurationError,
+          "A mapping-key rotation is open: the commitment carries a previous generation",
+        );
+      }
+      const previous = previousKey(this.encryptionKeyring());
+      if (previous === null) {
+        throw new SystemError(
+          SystemErrorCode.ConfigurationError,
+          "The encryption keyring carries no previous generation to retire",
+        );
+      }
+      const now = this.config.clock.now();
+      await this.runUnitOfWork((ctx) => {
+        ctx.enqueueJob({
+          operationKey: ROTATE_ENCRYPTION_OPERATION_KEY,
+          kind: "rotate-encryption",
+          payload: { retiringGeneration: previous.generation },
+          nextRunAt: now,
+        });
+        return undefined;
+      });
+      return { retiringGeneration: previous.generation };
     });
   }
 

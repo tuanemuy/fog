@@ -6,6 +6,10 @@ import type { ServiceArgs } from "../types";
 import type { BeginUnlinkDto, BeginUnlinkResult } from "./gateway";
 import { SWEEP_ORPHAN_MAPPING_OPERATION_KEY } from "./jobKeys";
 import { fromCredentialLocator } from "./rebuild";
+import {
+  type DeletionTarget,
+  deletionRoundConfirms,
+} from "./rotation/deletionConfirmation";
 
 export type UnlinkSsoCredentialInput = Readonly<{
   userId: string;
@@ -29,17 +33,27 @@ export async function unlinkSsoCredential({
     operationId,
     credentialId: input.credentialId,
   });
+  const outcomes: DeletionTarget[] = [];
   for (const locator of begun.locators) {
-    await gateway.deleteMapping(
-      {
-        credentialId: locator.credentialId,
-        kind: locator.kind,
-        mapping: locator.mapping,
-      },
-      { userId: input.userId, callerToken: begun.callerToken },
+    outcomes.push(
+      await gateway.deleteMapping(
+        {
+          credentialId: locator.credentialId,
+          kind: locator.kind,
+          mapping: locator.mapping,
+        },
+        { userId: input.userId, callerToken: begun.callerToken },
+      ),
     );
   }
-  await gateway.finishUnlink(input.userId, { operationId });
+  // A no-op round over two generations is not the end of the record: the
+  // sweep re-issues it after the interval and closes it then.
+  await gateway.finishUnlink(
+    input.userId,
+    deletionRoundConfirms(outcomes)
+      ? { operationId }
+      : { operationId, noopSince: container.clock.now().getTime() },
+  );
 }
 
 /**
@@ -93,9 +107,29 @@ export function beginUnlinkProcedure(
   return { locators, callerToken };
 }
 
+/**
+ * Closes the unlink record — or, given the deferral, keeps it `deleting`
+ * with `noopSince` on its stashed coordinates so that
+ * `sweep-orphan-mapping` re-issues the round once after the interval.
+ */
 export function finishUnlinkProcedure(
   ctx: UserDataUnitOfWorkContext,
   operationId: string,
+  deferral?: Readonly<{
+    noopSince: number;
+    targetLocators: readonly Record<string, unknown>[];
+  }>,
 ): void {
-  ctx.updateOperation({ operationId, phase: "done" });
+  if (deferral === undefined) {
+    ctx.updateOperation({ operationId, phase: "done" });
+    return;
+  }
+  ctx.updateOperation({
+    operationId,
+    phase: "deleting",
+    targetLocators: deferral.targetLocators.map((target) => ({
+      ...target,
+      noopSince: deferral.noopSince,
+    })),
+  });
 }

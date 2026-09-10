@@ -64,6 +64,15 @@ export interface UnitOfWorkProvider<TCtx> {
 }
 
 /**
+ * The shape a Durable Object's `runUnitOfWork` has when handed to an
+ * adapter module as a dependency: the same synchronous-callback contract
+ * as {@link UnitOfWorkProvider.run}, behind the gate and the re-arm.
+ */
+export type UnitOfWorkRunner<TCtx> = <T>(
+  fn: (ctx: TCtx) => T extends Promise<unknown> ? never : T,
+) => Promise<T>;
+
+/**
  * Input to `enqueueJob`.
  *
  * `operationKey` is derived deterministically by the caller — it is the
@@ -116,6 +125,59 @@ export type UpdateOperationInput = Readonly<{
    * (`spec/recovery/index.md`), so there is no clearing form for them.
    */
   targetLocators?: readonly Record<string, unknown>[];
+}>;
+
+/** `rotation_checkpoints.rotation_kind`: which of the two rotations a row records (`spec/database/index.md`). */
+export type RotationKind = "remap" | "encryption";
+
+/**
+ * One `rotation_checkpoints` row. `generation` means the retiring
+ * generation of whichever kind the row is — the mapping-key one for
+ * `remap`, the encryption one for `encryption`; the two are independent
+ * numberings. The three conflict columns are used by `remap` alone and
+ * hold the count re-detected in the chunk that wrote the row, not a total.
+ */
+export type RotationCheckpoint = Readonly<{
+  rotationKind: RotationKind;
+  bucketIndex: number;
+  generation: number;
+  previousCount: number;
+  scannedAt: number;
+  conflictCount: number;
+  lastConflictAt: number | null;
+  lastConflictCredentialId: string | null;
+}>;
+
+/**
+ * The one write path into `rotation_checkpoints` (`spec/database/index.md`).
+ * Two writers replace a snapshot — the mapping-key transfer and
+ * `rotate-encryption` — and every write that adds a mapping row to this
+ * bucket deletes, in its own transaction, the checkpoint of the generation
+ * that row belongs to: that is the "invalidation of the retirement
+ * proof" of `spec/rotation/index.md`, and it is what lets the retirement
+ * condition ask for neither freshness nor a round id.
+ */
+export interface RotationCheckpointStore {
+  /** Snapshot replacement on the key `(rotationKind, bucketIndex, generation)`. */
+  replace(checkpoint: RotationCheckpoint): void;
+  /** Point deletion; absent is success. */
+  delete(
+    rotationKind: RotationKind,
+    bucketIndex: number,
+    generation: number,
+  ): void;
+  read(
+    rotationKind: RotationKind,
+    bucketIndex: number,
+    generation: number,
+  ): RotationCheckpoint | null;
+}
+
+/** Input to `setMigrationCursor` — the resume point of one `(target_version, step)`. */
+export type SetMigrationCursorInput = Readonly<{
+  targetVersion: number;
+  step: string;
+  cursor: string;
 }>;
 
 /**
@@ -177,11 +239,13 @@ export interface UserDataUnitOfWorkContext
   aiClientConnectionRepository: AiClientConnectionRepository;
   recordOperation(input: RecordOperationInput): void;
   updateOperation(input: UpdateOperationInput): void;
+  /** `migration_progress`: the one write, the cursor of `reindex` / `migrate-bulk` (`spec/database/index.md`). */
+  setMigrationCursor(input: SetMigrationCursorInput): void;
 }
 
 /**
  * Identity Directory DO context. `credential_mappings` and the two reset
- * tables are the business side; `rotation_checkpoints` is #67.
+ * tables are the business side; `rotation_checkpoints` the rotation's.
  *
  * **The three members below are the complete set of ways that table is
  * read and written.** `credentialMappingWriter` holds the six procedure
@@ -202,6 +266,8 @@ export interface IdentityDirectoryUnitOfWorkContext
   resetTokenStore: PasswordResetTokenPort;
   /** `reset_request_windows`: the one write, `claimWindow` (`PasswordResetThrottlePort`). */
   resetThrottleStore: PasswordResetThrottlePort;
+  /** `rotation_checkpoints`: snapshot replacement and the proof-invalidating deletion. */
+  rotationCheckpointStore: RotationCheckpointStore;
 }
 
 export type UserDataUnitOfWorkProvider =

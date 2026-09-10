@@ -222,6 +222,21 @@ export type DeliveryTuning = Readonly<{
   listQuarantinedEventsLimit: number;
   /** Page size of `list-poisoned-jobs`; the same discipline as the quarantine listing. */
   listPoisonedJobsLimit: number;
+
+  /**
+   * How long a deletion saga waits before re-issuing a round of
+   * `deleteMapping` that was a no-op over two generations, and only then
+   * confirms (`spec/rotation/index.md`, 削除の no-op 確定). The spec's
+   * constraint is "longer than the upper bound on a cross-DO RPC's
+   * lifetime", so that an import overtaken by the no-op has landed by the
+   * time of the second round. **Limit: that bound is not documented as a
+   * platform figure anywhere this repository can cite**, so the value is
+   * a judgement — comfortably above the 30 s a Worker invocation is
+   * allowed and above the DO lease used here — and not a derivation; the
+   * exit the spec provides for that case (bounded re-issues under the
+   * saga's own backoff) is not taken.
+   */
+  deleteNoopReissueDelayMs: number;
 }>;
 
 /**
@@ -266,6 +281,8 @@ export const DELIVERY_TUNING_DEFAULTS: DeliveryTuning = {
 
   listQuarantinedEventsLimit: 50,
   listPoisonedJobsLimit: 50,
+
+  deleteNoopReissueDelayMs: 60_000,
 };
 
 /**

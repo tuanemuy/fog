@@ -29,6 +29,7 @@ import {
 import { createDocumentRepository } from "./stores/documentRepository";
 import { writeEnqueuedJob } from "./stores/jobWriter";
 import { createMemoRepository } from "./stores/memoRepository";
+import { writeMigrationCursor } from "./stores/migrationProgressStore";
 import {
   writeRecordedOperation,
   writeUpdatedOperation,
@@ -36,6 +37,7 @@ import {
 import { writeEnqueuedEvents } from "./stores/outboxWriter";
 import { createPasswordResetTokenStore } from "./stores/passwordResetTokenStore";
 import { createResetThrottleStore } from "./stores/resetRequestWindowStore";
+import { createRotationCheckpointStore } from "./stores/rotationCheckpointStore";
 import { createSearchIndex } from "./stores/searchIndex";
 import { createTopicRepository } from "./stores/topicRepository";
 import { createTrashQueryPort } from "./stores/trashQueryPort";
@@ -154,6 +156,9 @@ export function createUserDataUnitOfWorkProvider(
       updateOperation(input) {
         writeUpdatedOperation(sql, input);
       },
+      setMigrationCursor(input) {
+        writeMigrationCursor(sql, input, nowMs());
+      },
     }),
   );
 }
@@ -189,6 +194,7 @@ export function createIdentityDirectoryUnitOfWorkProvider(
         graceMs: deps.identityTuning.resetRequestWindowGraceMs,
         keyGeneration: deps.bucket.generation,
       }),
+      rotationCheckpointStore: createRotationCheckpointStore(sql),
     }),
   );
 }

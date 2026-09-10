@@ -100,3 +100,18 @@ export function writeUpdatedOperation(
     );
   }
 }
+
+/** The stashed coordinates of a record, as stored; `[]` when the record has none or does not exist. */
+export function readTargetLocators(
+  sql: SqlStorage,
+  operationId: string,
+): Record<string, unknown>[] {
+  const raw = sql
+    .exec<{ target_locators: string | null }>(
+      "SELECT target_locators FROM operations WHERE operation_id = ?",
+      operationId,
+    )
+    .toArray()[0]?.target_locators;
+  if (raw === undefined || raw === null) return [];
+  return JSON.parse(raw) as Record<string, unknown>[];
+}

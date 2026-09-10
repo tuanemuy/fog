@@ -3,11 +3,8 @@
 // but not the codec's would pass the brand and then fail at container
 // construction — outside the error middleware.
 import {
-  createMappingKeyring,
-  INITIAL_DIRECTORY_BUCKET_COUNT,
-  INITIAL_KEY_GENERATION,
   type MappingKeyring,
-  MIN_KEYRING_SECRET_LENGTH,
+  mappingKeyringFromEnv,
 } from "@repo/core/adapters/cloudflare/crypto/keyring";
 import { MIN_AI_CLIENT_TOKEN_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { MIN_SESSION_SECRET_LENGTH } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
@@ -112,29 +109,17 @@ export function requireSessionSecret(
  * in the stub-selection adapter — before any Durable Object exists. It is
  * deliberately not one of the three keys that stay inside a DO.
  *
- * **This is the minimal form: one active generation, no previous.** The
- * shape is already the collection a rotation needs (see
- * {@link createMappingKeyring}), but the machinery around it — the key
- * commitment, the generation guard on reservations, the second probe —
- * is not here, so the deployment cannot actually rotate this key yet.
+ * Two variables carry it (`spec/rotation/index.md`, 鍵材料の配布形): the
+ * JSON array `DIRECTORY_ROUTING_KEYRING` — active plus at most one
+ * previous, which is what a rotation deploys — and, when that is unset,
+ * `DIRECTORY_ROUTING_SECRET` as a single active generation 1.
  *
  * Like {@link requireSessionSecret}, the check runs while the request
  * config is built and the message names only the variable.
  */
 export function requireDirectoryRoutingKeyring(
   secret: string | undefined,
+  keyringJson?: string | undefined,
 ): MappingKeyring {
-  if (secret === undefined || secret.length < MIN_KEYRING_SECRET_LENGTH) {
-    throw new Error(
-      `DIRECTORY_ROUTING_SECRET is required on the request path and must be at least ${MIN_KEYRING_SECRET_LENGTH} characters`,
-    );
-  }
-  return createMappingKeyring([
-    {
-      role: "active",
-      generation: INITIAL_KEY_GENERATION,
-      key: secret,
-      bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT,
-    },
-  ]);
+  return mappingKeyringFromEnv(keyringJson, secret);
 }

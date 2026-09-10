@@ -2,12 +2,20 @@ import { isSystemError } from "@repo/core/application/errors";
 import { describe, expect, it } from "vitest";
 import {
   activeKey,
+  createKeyCommitment,
   createMappingKeyring,
+  encryptionKeyringFromEnv,
   INITIAL_DIRECTORY_BUCKET_COUNT,
   INITIAL_KEY_GENERATION,
+  type KeyCommitment,
+  keyCommitmentFromEnv,
+  keyDigestOf,
   type MappingKeyEntry,
   MIN_KEYRING_SECRET_LENGTH,
+  mappingKeyringFromEnv,
+  previousKey,
   requireEmailEncryptionKeyring,
+  verifyKeyEntryAgainstCommitment,
 } from "../keyring";
 import { bucketIndexOf } from "../locatorDerivation";
 
@@ -159,4 +167,208 @@ describe("requireEmailEncryptionKeyring", () => {
     expect(activeKey(keyring).generation).toBe(INITIAL_KEY_GENERATION);
     expect(activeKey(keyring).key).toBe(SECRET);
   });
+});
+
+// The JSON variables of `spec/rotation/index.md` (鍵材料の配布形) and the
+// commitment's four-point check (TC-keyRotation-001, the unit half): a
+// forged key, a forged generation, a forged bucket count, and the two
+// correct keys with their labels swapped are each refused, and the
+// refusal names none of the four.
+describe("the keyring variables and the commitment", () => {
+  const ACTIVE = "active-directory-routing-secret-0123456789";
+  const PREVIOUS = "previous-directory-routing-secret-0123456789";
+  const keyringJson = JSON.stringify([
+    { role: "active", generation: 2, key: ACTIVE, bucketCount: 16 },
+    { role: "previous", generation: 1, key: PREVIOUS, bucketCount: 16 },
+  ]);
+
+  async function commitment(
+    overrides: Partial<{
+      activeDigest: string;
+      previousDigest: string;
+      activeGeneration: number;
+      activeBucketCount: number;
+    }> = {},
+  ): Promise<KeyCommitment> {
+    return createKeyCommitment([
+      {
+        role: "active",
+        generation: overrides.activeGeneration ?? 2,
+        keyDigest: overrides.activeDigest ?? (await keyDigestOf(ACTIVE)),
+        bucketCount: overrides.activeBucketCount ?? 16,
+      },
+      {
+        role: "previous",
+        generation: 1,
+        keyDigest: overrides.previousDigest ?? (await keyDigestOf(PREVIOUS)),
+        bucketCount: 16,
+      },
+    ]);
+  }
+
+  it("reads the JSON keyring, in probe order, and ignores the single variable while it is set", () => {
+    const keyring = mappingKeyringFromEnv(keyringJson, "x".repeat(40));
+    expect(keyring.entries.map((e) => [e.role, e.generation])).toEqual([
+      ["active", 2],
+      ["previous", 1],
+    ]);
+    expect(activeKey(keyring).key).toBe(ACTIVE);
+    expect(previousKey(keyring)?.key).toBe(PREVIOUS);
+  });
+
+  it("falls back to a single generation 1 from the single variable, with no previous", () => {
+    const keyring = mappingKeyringFromEnv(undefined, SECRET);
+    expect(keyring.entries).toHaveLength(1);
+    expect(activeKey(keyring)).toEqual({
+      role: "active",
+      generation: INITIAL_KEY_GENERATION,
+      key: SECRET,
+      bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT,
+    });
+    expect(previousKey(keyring)).toBeNull();
+    expect(mappingKeyringFromEnv("", SECRET).entries).toHaveLength(1);
+  });
+
+  it.each([
+    ["not JSON", "{nope"],
+    ["not an array", '{"role":"active"}'],
+    [
+      "two actives",
+      JSON.stringify([
+        { role: "active", generation: 1, key: ACTIVE, bucketCount: 16 },
+        { role: "active", generation: 2, key: PREVIOUS, bucketCount: 16 },
+      ]),
+    ],
+    [
+      "a short key",
+      JSON.stringify([
+        { role: "active", generation: 1, key: "short", bucketCount: 16 },
+      ]),
+    ],
+    [
+      "a bucket count that is not a power of two",
+      JSON.stringify([
+        { role: "active", generation: 1, key: ACTIVE, bucketCount: 12 },
+      ]),
+    ],
+  ])(
+    "refuses a keyring variable that is %s, without echoing it",
+    (_l, json) => {
+      let caught: unknown;
+      try {
+        mappingKeyringFromEnv(json, undefined);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(String((caught as Error).message)).toContain(
+        "DIRECTORY_ROUTING_KEYRING",
+      );
+      expect(String((caught as Error).message)).not.toContain(ACTIVE);
+    },
+  );
+
+  it("reads the encryption keyring the same way, as a SystemError on the state side", () => {
+    const keyring = encryptionKeyringFromEnv(
+      JSON.stringify([
+        { role: "previous", generation: 1, key: PREVIOUS },
+        { role: "active", generation: 2, key: ACTIVE },
+      ]),
+      undefined,
+    );
+    expect(activeKey(keyring).generation).toBe(2);
+    expect(previousKey(keyring)?.generation).toBe(1);
+    let caught: unknown;
+    try {
+      encryptionKeyringFromEnv("[]", undefined);
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSystemError(caught) && caught.code).toBe("CONFIGURATION_ERROR");
+  });
+
+  it("reads the commitment, and null while it is unset", async () => {
+    expect(keyCommitmentFromEnv(undefined)).toBeNull();
+    expect(keyCommitmentFromEnv("")).toBeNull();
+    const parsed = keyCommitmentFromEnv(
+      JSON.stringify([
+        {
+          role: "active",
+          generation: 2,
+          keyDigest: await keyDigestOf(ACTIVE),
+          bucketCount: 16,
+        },
+      ]),
+    );
+    expect(parsed?.entries).toHaveLength(1);
+    let caught: unknown;
+    try {
+      keyCommitmentFromEnv(
+        '[{"role":"active","generation":2,"keyDigest":"nope","bucketCount":16}]',
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSystemError(caught) && caught.code).toBe("CONFIGURATION_ERROR");
+  });
+
+  it("accepts the entries the commitment was built from", async () => {
+    const c = await commitment();
+    await expect(
+      verifyKeyEntryAgainstCommitment(
+        { role: "active", generation: 2, key: ACTIVE, bucketCount: 16 },
+        c,
+        "active",
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyKeyEntryAgainstCommitment(
+        { role: "previous", generation: 1, key: PREVIOUS, bucketCount: 16 },
+        c,
+        "previous",
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  const active: MappingKeyEntry = {
+    role: "active",
+    generation: 2,
+    key: ACTIVE,
+    bucketCount: 16,
+  };
+
+  it.each([
+    [
+      "a forged key",
+      { ...active, key: "forged-directory-routing-secret-0123456789" },
+      "active",
+    ],
+    ["a forged generation", { ...active, generation: 3 }, "active"],
+    ["a forged bucket count", { ...active, bucketCount: 32 }, "active"],
+    [
+      "the previous key labelled active",
+      { ...active, role: "active", generation: 1, key: PREVIOUS },
+      "active",
+    ],
+    [
+      "the active key labelled previous",
+      { ...active, role: "previous" },
+      "previous",
+    ],
+    ["the right key presented under the other role", active, "previous"],
+  ] as const)(
+    "refuses %s with one CONFIGURATION_ERROR that names none of the four points",
+    async (_label, entry, role) => {
+      let caught: unknown;
+      try {
+        await verifyKeyEntryAgainstCommitment(entry, await commitment(), role);
+      } catch (error) {
+        caught = error;
+      }
+      expect(isSystemError(caught) && caught.code).toBe("CONFIGURATION_ERROR");
+      const message = isSystemError(caught) ? caught.message : "";
+      expect(message).not.toMatch(/digest|generation|bucket|role/i);
+      expect(message).not.toContain(ACTIVE);
+    },
+  );
 });

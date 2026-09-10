@@ -132,6 +132,22 @@ export type CompleteLinkDto = Readonly<{
 
 export type OperationRefDto = Readonly<{ operationId: string }>;
 
+export type DeleteMappingResult = Readonly<{
+  deleted: boolean;
+  generation: number;
+}>;
+
+/**
+ * `finishUnlink`: closes the record, or — with `noopSince` — keeps it
+ * open marked with the end of a first round that was a no-op over two
+ * generations, for `sweep-orphan-mapping` to re-issue and confirm
+ * (`spec/rotation/index.md`, 削除の no-op 確定).
+ */
+export type FinishUnlinkDto = Readonly<{
+  operationId: string;
+  noopSince?: number;
+}>;
+
 export type BeginUnlinkDto = Readonly<{
   operationId: string;
   credentialId: string;
@@ -270,11 +286,12 @@ export interface IdentityGateway {
   completeLink(userId: string, dto: CompleteLinkDto): Promise<void>;
   finishLink(userId: string, dto: OperationRefDto): Promise<void>;
   beginUnlink(userId: string, dto: BeginUnlinkDto): Promise<BeginUnlinkResult>;
+  /** "Absent is success", and the answer says which; the generation is the adapter's reading of the coordinate. */
   deleteMapping(
     coordinate: CredentialCoordinateDto,
     dto: DeleteMappingDto,
-  ): Promise<void>;
-  finishUnlink(userId: string, dto: OperationRefDto): Promise<void>;
+  ): Promise<DeleteMappingResult>;
+  finishUnlink(userId: string, dto: FinishUnlinkDto): Promise<void>;
   revokeAllAiClientConnections(
     userId: string,
   ): Promise<RevokeAllAiClientConnectionsResult>;

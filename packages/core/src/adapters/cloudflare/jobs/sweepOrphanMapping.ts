@@ -8,6 +8,11 @@ import type {
   UserDataUnitOfWorkContext,
 } from "@repo/core/application/execution/unitOfWork";
 import type { CredentialLocatorDto } from "@repo/core/application/identity/gateway";
+import {
+  confirmDeletion,
+  type DeletionTarget,
+  noopSinceOf,
+} from "@repo/core/application/identity/rotation/deletionConfirmation";
 import { finishUnlinkProcedure } from "@repo/core/application/identity/unlinkSsoCredential";
 import type { Logger } from "@repo/core/application/ports/logger";
 import { decodeMapping } from "../crypto/locatorDerivation";
@@ -36,6 +41,13 @@ export type SweepOrphanMappingDeps = Readonly<{
  * closes. A bucket that cannot be reached leaves its record open, and the
  * job re-arms with the backoff; it ends `finished` only when no record
  * remains (a later unlink revives it, `revivesFromDone`).
+ *
+ * Closing is subject to the no-op confirmation of
+ * `spec/rotation/index.md`: stashed coordinates spanning two generations
+ * whose round deleted nothing keep the record open, marked with
+ * `noopSince` on the coordinates, until one more round after
+ * `deleteNoopReissueDelayMs` — the round a copy that landed in between
+ * cannot hide from.
  */
 export function createSweepOrphanMappingHandler(
   deps: SweepOrphanMappingDeps,
@@ -62,13 +74,14 @@ export function createSweepOrphanMappingHandler(
       );
     }
     const userId = deps.userId();
-    let remaining = 0;
+    let nextRunAt: number | null = null;
     for (const row of rows) {
       const targets =
         row.target_locators === null
           ? []
           : (JSON.parse(row.target_locators) as CredentialLocatorDto[]);
       try {
+        const outcomes: DeletionTarget[] = [];
         for (const target of targets) {
           const locator = decodeMapping(target.kind, target.mapping);
           if (locator === null) {
@@ -81,7 +94,7 @@ export function createSweepOrphanMappingHandler(
             namespace,
             locator,
           ) as unknown as IdentityDirectoryDurableObject;
-          await callDurableObject(() =>
+          const { deleted } = await callDurableObject(() =>
             directory.deleteMapping({
               coordinate: {
                 credentialId: target.credentialId,
@@ -91,11 +104,33 @@ export function createSweepOrphanMappingHandler(
               dto: { userId, callerToken },
             }),
           );
+          outcomes.push({ generation: locator.generation, deleted });
         }
+        const verdict = confirmDeletion({
+          targets: outcomes,
+          noopSince: noopSinceOf(targets),
+          now,
+          reissueDelayMs: tuning.deleteNoopReissueDelayMs,
+        });
         deps.provider().run((ctx) => {
-          finishUnlinkProcedure(ctx, row.operation_id);
+          if (verdict.kind === "confirmed") {
+            finishUnlinkProcedure(ctx, row.operation_id);
+          } else {
+            ctx.updateOperation({
+              operationId: row.operation_id,
+              phase: "deleting",
+              targetLocators: targets.map((t) => ({
+                ...t,
+                noopSince: verdict.noopSince,
+              })),
+            });
+          }
           return undefined;
         });
+        if (verdict.kind === "reissue-after") {
+          nextRunAt =
+            nextRunAt === null ? verdict.at : Math.min(nextRunAt, verdict.at);
+        }
       } catch (error) {
         // A record whose material cannot be read never completes by
         // retrying: that is the runner's poison path, not a re-arm.
@@ -107,17 +142,15 @@ export function createSweepOrphanMappingHandler(
         }
         // Per-record tolerance, like the runner's per-job one: one bucket
         // that cannot be reached must not hold the other records back.
-        remaining += 1;
+        const retryAt = now + tuning.jobsBackoffBaseMs;
+        nextRunAt = nextRunAt === null ? retryAt : Math.min(nextRunAt, retryAt);
         deps.logger.warn("sweep-orphan-mapping: record left open", {
           operationId: row.operation_id,
           cause: failureLabel(error, "unknown"),
         });
       }
     }
-    if (remaining === 0) return { kind: "finished" };
-    return {
-      kind: "rearm",
-      nextRunAt: new Date(now + tuning.jobsBackoffBaseMs),
-    };
+    if (nextRunAt === null) return { kind: "finished" };
+    return { kind: "rearm", nextRunAt: new Date(nextRunAt) };
   };
 }

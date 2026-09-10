@@ -4,8 +4,14 @@ import type {
   UserDataUnitOfWorkContext,
 } from "@repo/core/application/execution/unitOfWork";
 import type { CredentialLocatorDto } from "@repo/core/application/identity/gateway";
+import { WITHDRAWAL_OPERATION_ID } from "@repo/core/application/identity/jobKeys";
+import {
+  confirmDeletion,
+  type DeletionTarget,
+  noopSinceOf,
+} from "@repo/core/application/identity/rotation/deletionConfirmation";
 import type { MappingLocator } from "@repo/core/domain/identity/ports/credentialMappingRepository";
-import { decodeMapping } from "../crypto/locatorDerivation";
+import { decodeMapping, encodeMapping } from "../crypto/locatorDerivation";
 import { callDurableObject, directoryStub } from "../doStubs";
 import type { StateWorkerEnv } from "../durableObjectBase";
 import type { IdentityDirectoryDurableObject } from "../identityDirectoryDurableObject";
@@ -17,6 +23,19 @@ type OpenOperationRow = Readonly<{
   operation_id: string;
   kind: "link" | "unlink";
   target_locators: string | null;
+}>;
+
+type WithdrawalRow = Readonly<{
+  phase: string;
+  target_locators: string | null;
+}>;
+
+/** A stashed withdrawal coordinate: the reverse-index row as a DTO, plus the no-op mark once a round ended in one. */
+type WithdrawalTarget = Readonly<{
+  credentialId: string;
+  kind: "email" | "sso";
+  mapping: string;
+  noopSince?: number;
 }>;
 
 export type FinalizeWithdrawalDeps = Readonly<{
@@ -40,11 +59,17 @@ export type FinalizeWithdrawalDeps = Readonly<{
  * What is removed is the account's reach — every mapping in every
  * generation, the reverse index, the AI connections, the spent codes —
  * and not its content, which no usecase of the spec asks to erase.
+ *
+ * The coordinates are stashed on an `operations` row of kind
+ * `withdrawal` on the first run, so that the no-op confirmation of
+ * `spec/rotation/index.md` has a record to mark: a round over two
+ * generations that deleted nothing waits `deleteNoopReissueDelayMs` and
+ * is issued once more before the tombstone is written.
  */
 export function createFinalizeWithdrawalHandler(
   deps: FinalizeWithdrawalDeps,
 ): JobHandler {
-  return async ({ storage }) => {
+  return async ({ storage, now: nowMs, tuning }) => {
     const sql = storage.sql;
     const account = sql
       .exec<{ status: string }>("SELECT status FROM account LIMIT 1")
@@ -93,43 +118,58 @@ export function createFinalizeWithdrawalHandler(
       });
     }
 
-    // Every mapping this account still reaches, in every generation.
-    const locators = sql
-      .exec<{
-        credential_id: string;
-        kind: "email" | "sso";
-        hmac: string;
-        generation: number;
-        bucket_index: number;
-      }>(
-        "SELECT credential_id, kind, hmac, generation, bucket_index FROM credential_locators",
-      )
-      .toArray();
-    for (const row of locators) {
-      const locator: MappingLocator = {
-        credentialId: row.credential_id,
-        kind: row.kind,
-        hmac: row.hmac,
-        generation: row.generation,
-        bucketIndex: row.bucket_index,
-      };
-      await callDurableObject(() =>
-        bucketOf(locator).deleteMapping({
+    // The withdrawal's own record: every mapping this account still
+    // reaches, in every generation, stashed once.
+    const targets = withdrawalTargets(sql, deps.provider());
+    const outcomes: DeletionTarget[] = [];
+    for (const target of targets) {
+      const decoded = decodeMapping(target.kind, target.mapping);
+      if (decoded === null) {
+        throw new SystemError(
+          SystemErrorCode.DataIntegrityError,
+          "finalize-withdrawal: the record carries an unreadable mapping",
+        );
+      }
+      const { deleted } = await callDurableObject(() =>
+        bucketOf({
+          credentialId: target.credentialId,
+          ...decoded,
+        }).deleteMapping({
           coordinate: {
-            credentialId: row.credential_id,
-            kind: row.kind,
-            mapping: `g${row.generation}:b${row.bucket_index}:${row.hmac}`,
+            credentialId: target.credentialId,
+            kind: target.kind,
+            mapping: target.mapping,
           },
           dto: { userId, callerToken },
         }),
       );
+      outcomes.push({ generation: decoded.generation, deleted });
+    }
+    const verdict = confirmDeletion({
+      targets: outcomes,
+      noopSince: noopSinceOf(targets),
+      now: nowMs,
+      reissueDelayMs: tuning.deleteNoopReissueDelayMs,
+    });
+    if (verdict.kind === "reissue-after") {
+      deps.provider().run((ctx) => {
+        ctx.updateOperation({
+          operationId: WITHDRAWAL_OPERATION_ID,
+          phase: "deleting",
+          targetLocators: targets.map((t) => ({
+            ...t,
+            noopSince: verdict.noopSince,
+          })),
+        });
+        return undefined;
+      });
+      return { kind: "rearm", nextRunAt: new Date(verdict.at) };
     }
 
     // Duty (1) and the tombstone, in one transaction; duty (3) is what is
-    // absent from it (the records stay).
+    // absent from it (the records stay, the withdrawal's included).
     const now = deps.now().getTime();
     deps.provider().run((ctx) => {
-      void ctx;
       sql.exec("DELETE FROM credential_locators");
       sql.exec(
         `UPDATE ai_client_connections SET status = 'revoked', revoked_at = ?, version = version + 1, updated_at = ?
@@ -144,10 +184,68 @@ export function createFinalizeWithdrawalHandler(
         now,
         now,
       );
+      ctx.updateOperation({
+        operationId: WITHDRAWAL_OPERATION_ID,
+        phase: "done",
+      });
       return undefined;
     });
     return { kind: "finished" };
   };
+}
+
+/**
+ * The withdrawal's stashed coordinates, written on the first run from the
+ * reverse index and read back afterwards — so a later run sees the same
+ * set the first one issued, with whatever mark it left.
+ */
+function withdrawalTargets(
+  sql: SqlStorage,
+  provider: UnitOfWorkProvider<UserDataUnitOfWorkContext>,
+): WithdrawalTarget[] {
+  const record = sql
+    .exec<WithdrawalRow>(
+      "SELECT phase, target_locators FROM operations WHERE operation_id = ?",
+      WITHDRAWAL_OPERATION_ID,
+    )
+    .toArray()[0];
+  if (record !== undefined) {
+    return record.target_locators === null
+      ? []
+      : (JSON.parse(record.target_locators) as WithdrawalTarget[]);
+  }
+  const snapshot: WithdrawalTarget[] = sql
+    .exec<{
+      credential_id: string;
+      kind: "email" | "sso";
+      hmac: string;
+      generation: number;
+      bucket_index: number;
+    }>(
+      "SELECT credential_id, kind, hmac, generation, bucket_index FROM credential_locators ORDER BY credential_id, generation",
+    )
+    .toArray()
+    .map((row) => ({
+      credentialId: row.credential_id,
+      kind: row.kind,
+      mapping: encodeMapping({
+        kind: row.kind,
+        hmac: row.hmac,
+        generation: row.generation,
+        bucketIndex: row.bucket_index,
+      }),
+    }));
+  provider.run((ctx) => {
+    ctx.recordOperation({
+      operationId: WITHDRAWAL_OPERATION_ID,
+      kind: "withdrawal",
+      payload: {},
+      phase: "deleting",
+      targetLocators: snapshot,
+    });
+    return undefined;
+  });
+  return snapshot;
 }
 
 /** A link record stores mapping locators with labels; an unlink record stores coordinate DTOs. */

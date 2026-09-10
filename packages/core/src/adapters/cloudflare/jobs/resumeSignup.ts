@@ -1,4 +1,8 @@
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
+import {
+  credentialLabelOf,
+  usableForLoginOf,
+} from "@repo/core/application/identity/credentialLabel";
 import type { CredentialRefDto } from "@repo/core/application/identity/gateway";
 import type { MappingLocator } from "@repo/core/domain/identity/ports/credentialMappingRepository";
 import { encodeMapping } from "../crypto/locatorDerivation";
@@ -49,11 +53,6 @@ export type ResumeSignupDeps = Readonly<{
     nonce: string;
   }) => Promise<string | null>;
 }>;
-
-/** `provider U+0000 subject` → the provider, which is the credential's label. */
-function ssoLabelOf(canonical: string): string {
-  return canonical.split("\u0000")[0] ?? "";
-}
 
 /**
  * Re-drives registration phases 2–4 from the coordinator reservation row,
@@ -128,7 +127,8 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
       row.user_id === userId;
     const coordinatorLabel =
       row.kind === "sso"
-        ? ssoLabelOf(
+        ? credentialLabelOf(
+            row.kind,
             (await deps.openCanonical({
               kind: row.kind,
               credentialId: row.credential_id,
@@ -142,9 +142,10 @@ export function createResumeSignupHandler(deps: ResumeSignupDeps): JobHandler {
       credentialId: l.credentialId,
       kind: l.kind,
       label: l.kind === "sso" && isCoordinator(l) ? coordinatorLabel : "",
-      usableForLogin:
-        l.kind === "sso" ||
-        (isCoordinator(l) && row.password_verifier !== null),
+      usableForLogin: usableForLoginOf(
+        l.kind,
+        isCoordinator(l) ? row.password_verifier : null,
+      ),
     });
     const stub = userDataStub(
       namespace,

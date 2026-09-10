@@ -24,6 +24,7 @@ import type {
   ConsumeAuthorizationCodeResult,
   CredentialLocatorDto,
   CurrentUserDto,
+  FinishUnlinkDto,
   InitializeAccountDto,
   OperationRefDto,
   RecordSignupLocatorDto,
@@ -41,6 +42,11 @@ import { fromCredentialLocator } from "@repo/core/application/identity/rebuild";
 import { recordSignupLocatorProcedure } from "@repo/core/application/identity/recordSignupLocator";
 import { revokeAiClientConnectionProcedure } from "@repo/core/application/identity/revokeAiClientConnection";
 import { revokeAllAiClientConnectionsSteps } from "@repo/core/application/identity/revokeAllAiClientConnections";
+import {
+  type RecordRemappedLocatorDto,
+  type RecordRemappedLocatorResult,
+  recordRemappedLocatorProcedure,
+} from "@repo/core/application/identity/rotation/recordRemappedLocator";
 import {
   beginUnlinkProcedure,
   finishUnlinkProcedure,
@@ -160,7 +166,9 @@ import {
 import type { JobHandlerRegistry } from "./jobRunner";
 import { createLinkCleanupHandler } from "./jobs/cleanup/linkCleanup";
 import { createFinalizeWithdrawalHandler } from "./jobs/finalizeWithdrawal";
+import { createMigrateBulkHandler } from "./jobs/migrateBulk";
 import { createPurgeTrashHandler } from "./jobs/purgeTrash";
+import { createReindexHandler } from "./jobs/reindex";
 import { createResumeLinkHandler } from "./jobs/resumeLink";
 import { createSweepOrphanMappingHandler } from "./jobs/sweepOrphanMapping";
 import { isInitialized } from "./migrationGate";
@@ -172,6 +180,7 @@ import {
   readExportSourceDto,
 } from "./stores/exportSourceReader";
 import { consumeCodeJti } from "./stores/oauthConsumedCodes";
+import { readTargetLocators } from "./stores/operationsStore";
 import { createUserDataUnitOfWorkProvider } from "./unitOfWork";
 
 /**
@@ -218,6 +227,15 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
       userId: () => this.requireSelfLocator(),
       provider: () => this.createUnitOfWorkProvider(),
       logger: this.config.logger,
+    });
+    // Seeded by the migration gate, never by a usecase. The plan is read
+    // through the instance so a test may hand it a later version.
+    jobRegistry.reindex = createReindexHandler({
+      runUnitOfWork: (fn) => this.runUnitOfWork(fn),
+    });
+    jobRegistry["migrate-bulk"] = createMigrateBulkHandler({
+      plan: () => this.migrationPlan,
+      runUnitOfWork: (fn) => this.runUnitOfWork(fn),
     });
   }
 
@@ -283,6 +301,21 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
         abandonAccountProcedure(ctx, this.ctx.storage.sql, dto, now),
       );
     });
+  }
+
+  /**
+   * s3 of the mapping-key transfer (`spec/rotation/index.md`,
+   * `record-remapped-locator`): the new generation's reverse-index row,
+   * written before the copy exists, or the one-valued `skipped`.
+   */
+  async recordRemappedLocator(
+    dto: RecordRemappedLocatorDto,
+  ): Promise<RpcEnvelope<RecordRemappedLocatorResult>> {
+    return this.envelope(() =>
+      this.runUnitOfWork((ctx) =>
+        recordRemappedLocatorProcedure(ctx, this.ctx.storage.sql, dto),
+      ),
+    );
   }
 
   async readAccountState(): Promise<RpcEnvelope<AccountState | null>> {
@@ -376,10 +409,21 @@ export class UserDataDurableObject extends AsyncWorkDurableObject<UserDataUnitOf
     });
   }
 
-  async finishUnlink(dto: OperationRefDto): Promise<RpcEnvelope<void>> {
+  async finishUnlink(dto: FinishUnlinkDto): Promise<RpcEnvelope<void>> {
     return this.envelope(async () => {
+      const noopSince = dto.noopSince;
+      const deferral =
+        noopSince === undefined
+          ? undefined
+          : {
+              noopSince,
+              targetLocators: readTargetLocators(
+                this.ctx.storage.sql,
+                dto.operationId,
+              ),
+            };
       await this.runUnitOfWork((ctx) => {
-        finishUnlinkProcedure(ctx, dto.operationId);
+        finishUnlinkProcedure(ctx, dto.operationId, deferral);
         return undefined;
       });
     });

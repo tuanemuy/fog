@@ -32,6 +32,25 @@ export type MigrationJobSeed<TKind extends MigrationSeedableJobKind> =
   }>;
 
 /**
+ * The data-rewriting half of a step, walked by `migrate-bulk` in chunks
+ * under a cursor of its own (`spec/database/index.md`, データ書き換えを伴う
+ * 部分はジョブへ逃がす). `run` is synchronous and executes inside one
+ * transaction per chunk together with the cursor write; it returns the
+ * position to resume from, or `null` once nothing is left. Written
+ * idempotently, like the DDL: a chunk that committed may be re-run after
+ * a reset from the cursor it wrote.
+ */
+export type BulkStep = Readonly<{
+  /** Names the step in `migration_progress.step` (`migrate-bulk:<version>:<name>`). */
+  name: string;
+  run(
+    sql: SqlStorage,
+    cursor: string | null,
+    limit: number,
+  ): Readonly<{ nextCursor: string | null }>;
+}>;
+
+/**
  * One forward-only step. `version` is the `schema_version` the DO carries
  * once the step commits; `apply` runs inside the gate's `transactionSync`
  * together with the version update, so "applied but the version did not
@@ -40,12 +59,14 @@ export type MigrationJobSeed<TKind extends MigrationSeedableJobKind> =
  * Steps are written re-runnably (`CREATE TABLE IF NOT EXISTS`), but being
  * idempotent is not the same as being bounded — a `CREATE INDEX` on an
  * already-large table is re-runnable and still will not finish in one
- * input.
+ * input. Work that is not bounded goes to `bulk`, which the step's
+ * `migrate-bulk` seed walks after the DDL committed.
  */
 export type MigrationStep<TKind extends MigrationSeedableJobKind> = Readonly<{
   version: number;
   apply(sql: SqlStorage): void;
   seedJobs?: readonly MigrationJobSeed<TKind>[];
+  bulk?: BulkStep;
 }>;
 
 /**

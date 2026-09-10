@@ -106,7 +106,7 @@ describe("unlinkSsoCredential", () => {
           },
         ],
       }),
-      deleteMapping: async () => undefined,
+      deleteMapping: async () => ({ deleted: true, generation: 1 }),
       finishUnlink: async () => undefined,
     });
     await unlinkSsoCredential({

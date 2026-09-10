@@ -49,6 +49,8 @@ export type ServerEnv = Readonly<{
   DIAGNOSTICS_ENABLED?: string;
   SESSION_SECRET?: string;
   DIRECTORY_ROUTING_SECRET?: string;
+  /** The two-generation form of the routing keyring (JSON); wins over the single secret when set. */
+  DIRECTORY_ROUTING_KEYRING?: string;
   /** The AI API's token / code / client-id key material (request Worker). */
   AI_CLIENT_TOKEN_SECRET?: string;
   /** Bearer of `/__operator/*` (request Worker); unset means the surface does not exist. */
@@ -111,6 +113,7 @@ export function readRequestServerConfig(env: ServerEnv): RequestServerConfig {
       ),
       directoryRoutingKeyring: requireDirectoryRoutingKeyring(
         env.DIRECTORY_ROUTING_SECRET,
+        env.DIRECTORY_ROUTING_KEYRING,
       ),
     },
     bindings: {

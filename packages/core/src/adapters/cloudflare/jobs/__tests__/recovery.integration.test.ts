@@ -354,9 +354,11 @@ describe("resume-signup in terminal mode: S1〜S4 and the withdrawal it starts",
     // and, the pool firing a due alarm at once, possibly already gone.
     const abandoned = await accountOf(userId);
     expect(["deleting", "deleted"]).toContain(abandoned.account?.status);
-    expect(abandoned.operations).toEqual([
-      { kind: "signup", phase: "initialized" },
-    ]);
+    // The withdrawal's own record appears once its job has run, which the
+    // pool may already have done.
+    expect(abandoned.operations.filter((o) => o.kind !== "withdrawal")).toEqual(
+      [{ kind: "signup", phase: "initialized" }],
+    );
 
     if (abandoned.account?.status === "deleting") {
       await inUserDataStorage(userId, (sql) =>
@@ -371,8 +373,12 @@ describe("resume-signup in terminal mode: S1〜S4 and the withdrawal it starts",
     });
     expect(done.account?.deleted_at).not.toBeNull();
     expect(done.locators).toBe(0);
-    // The record stays (the withdrawal never deletes `operations`).
-    expect(done.operations).toEqual([{ kind: "signup", phase: "initialized" }]);
+    // The records stay (the withdrawal never deletes `operations`), the
+    // withdrawal's own — its stashed coordinates — among them.
+    expect(done.operations).toEqual([
+      { kind: "signup", phase: "initialized" },
+      { kind: "withdrawal", phase: "done" },
+    ]);
     expect(
       done.jobs.find((j) => j.operation_key === "finalize-withdrawal"),
     ).toMatchObject({
@@ -759,13 +765,15 @@ describe("the kinds without a cleanup, and the re-drive", () => {
       ok: true,
       value: { requeued: true },
     });
+    // The re-arm's alarm is due at once and the pool fires it, so the
+    // forward run may already have failed once (attempt 1, backoff).
     const requeued = await userJob(userId, "sweep-orphan-mapping");
     expect(requeued).toMatchObject({
       status: "pending",
-      attempt: 0,
       completed_at: null,
       terminal_reason: "forward-exhausted",
     });
+    expect(requeued?.attempt).toBeLessThanOrEqual(1);
     // Re-driven forward: the same failure re-confirms and the reason is the current one.
     for (let i = 0; i <= deliveryTuning.jobsMaxAttempts + 1; i++) {
       await inUserDataStorage(userId, (sql) =>

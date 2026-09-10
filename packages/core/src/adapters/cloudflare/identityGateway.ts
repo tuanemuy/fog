@@ -272,12 +272,11 @@ export function createIdentityGateway(
     },
 
     async deleteMapping(coordinate, dto) {
-      await callDurableObject(() =>
-        directory(coordinateLocator(coordinate)).deleteMapping({
-          coordinate,
-          dto,
-        }),
+      const locator = coordinateLocator(coordinate);
+      const { deleted } = await callDurableObject(() =>
+        directory(locator).deleteMapping({ coordinate, dto }),
       );
+      return { deleted, generation: locator.generation };
     },
 
     async finishUnlink(userId, dto) {
