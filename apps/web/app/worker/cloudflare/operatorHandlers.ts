@@ -9,6 +9,7 @@ import {
   userDataStub,
 } from "@repo/core/adapters/cloudflare/doStubs";
 import type { IdentityDirectoryDurableObject } from "@repo/core/adapters/cloudflare/identityDirectoryDurableObject";
+import { IMPORT_ROWS_PER_CALL } from "@repo/core/adapters/cloudflare/rotation/mappingRows";
 import type { UserDataDurableObject } from "@repo/core/adapters/cloudflare/userDataDurableObject";
 import type { RpcEnvelope } from "@repo/core/application/delivery/types";
 import type { ServerEnv } from "@repo/core/application/di/serverCloudflare";
@@ -210,7 +211,7 @@ export const OPERATOR_ENTRIES: Readonly<Record<string, EntrySpec>> = {
     targets: ["directory"],
     schema: z.object({
       active: keyEntrySchema,
-      rows: z.array(mappingRowSchema).min(1).max(4),
+      rows: z.array(mappingRowSchema).min(1).max(IMPORT_ROWS_PER_CALL),
     }),
     call: (stub, args) =>
       (stub as IdentityDirectoryDurableObject).importRemappedMappings({

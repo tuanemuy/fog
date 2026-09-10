@@ -1,3 +1,4 @@
+import { IMPORT_ROWS_PER_CALL } from "@repo/core/adapters/cloudflare/rotation/mappingRows";
 import type { ServerEnv } from "@repo/core/application/di/serverCloudflare";
 import type { Logger, LogMeta } from "@repo/core/application/ports/logger";
 import { describe, expect, it } from "vitest";
@@ -360,6 +361,24 @@ describe("POST /__operator/<entry>", () => {
       id: "cred-1",
       outcome: "ok",
     });
+  });
+
+  it("import-remapped-mappings takes at most IMPORT_ROWS_PER_CALL rows, the bind ceiling over the row width", async () => {
+    const calls: Call[] = [];
+    const rows = (n: number) => Array.from({ length: n }, () => MAPPING_ROW);
+    const send = (n: number) =>
+      handleOperator(
+        post("import-remapped-mappings", {
+          locator: "dir:g1:b2",
+          active: KEY_ACTIVE,
+          rows: rows(n),
+        }),
+        deps(fakeEnv(calls)),
+      );
+    expect(IMPORT_ROWS_PER_CALL).toBe(3);
+    expect((await send(IMPORT_ROWS_PER_CALL)).status).toBe(200);
+    expect((await send(IMPORT_ROWS_PER_CALL + 1)).status).toBe(400);
+    expect(calls).toHaveLength(1);
   });
 
   it("addresses the buckets of both keyring generations while a rotation is open, and generation 1 alone otherwise", async () => {
