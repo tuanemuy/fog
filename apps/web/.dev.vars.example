@@ -23,6 +23,9 @@
 #   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
 #   AI_CLIENT_TOKEN_SECRET       — request Worker (the AI API's tokens, codes and client ids)
 #   OPERATOR_TOKEN               — request Worker (bearer of the maintenance surface `/__operator/*`)
+#   DIRECTORY_ROUTING_KEYRING    — request Worker (the two-generation form of DIRECTORY_ROUTING_SECRET; JSON)
+#   DIRECTORY_KEY_COMMITMENT     — state Worker (SHA-256 digests of the routing keyring; never the keys)
+#   IDENTITY_MAIL_ENCRYPTION_KEYRING — state Worker (the two-generation form of IDENTITY_MAIL_ENCRYPTION_KEY; JSON)
 #   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
 #   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
 #                                  from the MAIL_FROM_ADDRESS environment variable at render time
@@ -45,12 +48,9 @@
 # from staging onward, where each secret is installed with
 # `wrangler secret put --config` against one Worker's config only.
 #
-# **This table is not the complete roster of secrets.** The three keys
-# that never leave a Durable Object are all declared now; the
-# **previous** keyring entry and the rotation key commitment are added by
-# #67. `SESSION_SECRET` is listed above even though it predates this
-# table, so that the table reads as "the secrets declared so far" rather
-# than "all of them" — otherwise a later slice could take it for a
+# **This table is the roster of secrets declared so far**, not a promise
+# that it is complete: `SESSION_SECRET` is listed above even though it
+# predates this table, so that a later slice cannot take it for a
 # complete list and drop its own entry.
 #
 # The two `*_DEV_*` entries are not secrets and are not installed
@@ -67,6 +67,9 @@
 #   wrangler secret put IDENTITY_RESET_TOKEN_KEY     --config wrangler.state.staging.toml
 #   wrangler secret put AI_CLIENT_TOKEN_SECRET       --config wrangler.staging.toml
 #   wrangler secret put OPERATOR_TOKEN               --config wrangler.staging.toml
+#   wrangler secret put DIRECTORY_ROUTING_KEYRING    --config wrangler.staging.toml
+#   wrangler secret put DIRECTORY_KEY_COMMITMENT     --config wrangler.state.staging.toml
+#   wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
 #   wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 #
@@ -120,18 +123,30 @@ GOOGLE_CLIENT_SECRET=""
 # before any Durable Object is entered, which is why this key is
 # deliberately *not* one of the three that stay inside a DO.
 #
-# It is the key material of the **active** keyring entry. The generation
-# number and the bucket count are not variables: they are properties of
-# the generation itself, fixed in
+# It is the key material of the **active** keyring entry, generation 1
+# with 16 buckets. The generation number and the bucket count are not
+# variables: they are properties of the generation itself, fixed in
 # `adapters/cloudflare/crypto/keyring.ts`, because changing the bucket
 # count re-buckets every credential already stored and is therefore a new
-# generation rather than a new setting. The `previous` entry and the
-# rotation commitment arrive with #67.
+# generation rather than a new setting. Not read while
+# `DIRECTORY_ROUTING_KEYRING` below is set.
 #
 #   openssl rand -base64 48
 #
 # At least 32 characters.
 DIRECTORY_ROUTING_SECRET=""
+
+# The two-generation form of the routing keyring, for a mapping-key
+# rotation (`spec/rotation/index.md`, 鍵材料の配布形): a JSON array of
+# `{ role, generation, key, bucketCount }` with exactly one `active` and at
+# most one `previous`. Owner: **request Worker**. While it is set,
+# `DIRECTORY_ROUTING_SECRET` is not read. Deploy it **as a pair** with
+# `DIRECTORY_KEY_COMMITMENT` on the state Worker — the buckets refuse a
+# transfer, and refuse new reservations, whose generations disagree.
+# Locally the operator CLI reads it for `remap-chunk --inject-keyring`.
+#
+#   DIRECTORY_ROUTING_KEYRING='[{"role":"active","generation":2,"key":"<48 chars>","bucketCount":16},{"role":"previous","generation":1,"key":"<the current DIRECTORY_ROUTING_SECRET>","bucketCount":16}]'
+DIRECTORY_ROUTING_KEYRING=""
 
 # AES-256-GCM key protecting the canonical credential value
 # (`credential_mappings.encrypted_canonical`). Owner: **state Worker** —
@@ -141,9 +156,33 @@ DIRECTORY_ROUTING_SECRET=""
 #
 #   openssl rand -base64 48
 #
-# At least 32 characters. Only one generation exists; re-encryption under
-# a second one arrives with #67.
+# At least 32 characters. Generation 1; not read while
+# `IDENTITY_MAIL_ENCRYPTION_KEYRING` below is set.
 IDENTITY_MAIL_ENCRYPTION_KEY=""
+
+# The two-generation form of the encryption keyring, for an encryption-key
+# rotation (`rotate-encryption`): a JSON array of `{ role, generation, key }`
+# with exactly one `active` and at most one `previous`. Owner: **state
+# Worker**. While it is set, `IDENTITY_MAIL_ENCRYPTION_KEY` is not read.
+# Deploy the `previous` entry only after a mapping-key rotation has
+# finished — `remap-chunk` refuses while it is present (the two rotations
+# are serialised), and `start-rotate-encryption` refuses while the
+# commitment below carries a `previous` mapping generation.
+#
+#   IDENTITY_MAIL_ENCRYPTION_KEYRING='[{"role":"active","generation":2,"key":"<48 chars>"},{"role":"previous","generation":1,"key":"<the current IDENTITY_MAIL_ENCRYPTION_KEY>"}]'
+IDENTITY_MAIL_ENCRYPTION_KEYRING=""
+
+# The key commitment: what a bucket verifies an injected routing key
+# against before using it (`spec/rotation/index.md`, 鍵の配布とコミット
+# メント) — the same role-tagged generation set as
+# `DIRECTORY_ROUTING_KEYRING`, with `keyDigest = SHA-256(key)` in lowercase
+# hex in place of each key. Owner: **state Worker**. A digest is one-way,
+# so the state Worker still cannot compute where a credential lives.
+# Required as soon as the routing keyring carries a `previous` entry; may
+# stay unset while single-generation. `printf '%s' "$KEY" | sha256sum`.
+#
+#   DIRECTORY_KEY_COMMITMENT='[{"role":"active","generation":2,"keyDigest":"<64 hex>","bucketCount":16},{"role":"previous","generation":1,"keyDigest":"<64 hex>","bucketCount":16}]'
+DIRECTORY_KEY_COMMITMENT=""
 
 # HMAC key from which each Durable Object derives the
 # `providerIdempotencyKey` it hands back in the send-materials response.

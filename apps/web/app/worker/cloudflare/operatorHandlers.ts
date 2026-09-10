@@ -1,4 +1,8 @@
-import { INITIAL_DIRECTORY_BUCKET_COUNT } from "@repo/core/adapters/cloudflare/crypto/keyring";
+import {
+  INITIAL_DIRECTORY_BUCKET_COUNT,
+  type MappingKeyring,
+  mappingKeyringFromEnv,
+} from "@repo/core/adapters/cloudflare/crypto/keyring";
 import {
   callDurableObject,
   directoryStub,
@@ -53,11 +57,57 @@ type EntrySpec = Readonly<{
     stub: IdentityDirectoryDurableObject | UserDataDurableObject,
     args: Record<string, unknown>,
   ) => Promise<RpcEnvelope<unknown>>;
-  /** What the audit line records as the acted-on id, if any. */
-  auditId?: string;
+  /** What the audit line records as the acted-on id, if any: an argument's name, or a projection of the arguments. */
+  auditId?: string | ((args: Record<string, unknown>) => string | undefined);
 }>;
 
 const BOTH: readonly Target["kind"][] = ["directory", "user"];
+
+/** A keyring entry as the rotation entries take it: the key travels in the body and is used once (`spec/rotation/index.md`, C2). */
+const keyEntrySchema = z.object({
+  role: z.enum(["active", "previous"]),
+  generation: z.number().int().min(1),
+  key: z.string().min(1),
+  bucketCount: z.number().int().min(1),
+});
+
+/** One transferred row, every column, as `import-remapped-mappings` receives it. */
+const mappingRowSchema = z.object({
+  credentialId: z.string().min(1),
+  kind: z.enum(["email", "sso"]),
+  hmac: z.string().regex(/^[0-9a-f]{64}$/),
+  generation: z.number().int().min(1),
+  userId: z.string().nullable(),
+  status: z.enum(["reserved", "active"]),
+  passwordVerifier: z.string().nullable(),
+  pendingVerifier: z.string().nullable(),
+  changeState: z.enum(["pending", "advanced"]).nullable(),
+  changeOrigin: z.enum(["password-change", "reset"]).nullable(),
+  credentialVersion: z.number().int(),
+  encryptedCanonical: z.string(),
+  encryptionGeneration: z.number().int().min(1),
+  encryptionNonce: z.string(),
+  failedAttempts: z.number().int(),
+  nextAttemptAllowedAt: z.number().nullable(),
+  operationId: z.string().nullable(),
+  candidateUserId: z.string().nullable(),
+  reservedUntil: z.number(),
+  sagaCommitted: z.number().nullable(),
+  locators: z.string().nullable(),
+  coordinatorLocator: z.string().nullable(),
+  callerToken: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+
+const locatorDtoSchema = z.object({
+  credentialId: z.string().min(1),
+  kind: z.enum(["email", "sso"]),
+  mapping: z.string().min(1),
+  credentialVersion: z.number().int(),
+  usableForLogin: z.boolean(),
+  label: z.string(),
+});
 
 export const OPERATOR_ENTRIES: Readonly<Record<string, EntrySpec>> = {
   "read-schema-version": {
@@ -131,12 +181,102 @@ export const OPERATOR_ENTRIES: Readonly<Record<string, EntrySpec>> = {
       ),
     auditId: "userId",
   },
+  // The rotation entries (`spec/rotation/index.md`). The keys ride in the
+  // body and are never logged: the audit id is a credential id at most.
+  "start-rotate-encryption": {
+    targets: ["directory"],
+    schema: z.object({}),
+    call: (stub) =>
+      (stub as IdentityDirectoryDurableObject).startRotateEncryption(),
+  },
+  "remap-chunk": {
+    targets: ["directory"],
+    schema: z.object({
+      active: keyEntrySchema,
+      previous: keyEntrySchema,
+      limit: z.number().int().min(1).max(500),
+      afterCredentialId: z.string().min(1).nullable().optional(),
+    }),
+    call: (stub, args) =>
+      (stub as IdentityDirectoryDurableObject).remapChunk({
+        active: args.active as z.infer<typeof keyEntrySchema>,
+        previous: args.previous as z.infer<typeof keyEntrySchema>,
+        limit: args.limit as number,
+        afterCredentialId: (args.afterCredentialId as string | null) ?? null,
+      }),
+    auditId: (args) => (args.afterCredentialId as string | null) ?? undefined,
+  },
+  "import-remapped-mappings": {
+    targets: ["directory"],
+    schema: z.object({
+      active: keyEntrySchema,
+      rows: z.array(mappingRowSchema).min(1).max(4),
+    }),
+    call: (stub, args) =>
+      (stub as IdentityDirectoryDurableObject).importRemappedMappings({
+        active: args.active as z.infer<typeof keyEntrySchema>,
+        rows: args.rows as z.infer<typeof mappingRowSchema>[],
+      }),
+  },
+  // The body's `locator` is the target User Data DO; the reverse-index
+  // row to record is `credentialLocator`.
+  "record-remapped-locator": {
+    targets: ["user"],
+    schema: z.object({
+      callerToken: z.string().min(1),
+      credentialLocator: locatorDtoSchema,
+    }),
+    call: (stub, args) =>
+      (stub as UserDataDurableObject).recordRemappedLocator({
+        callerToken: args.callerToken as string,
+        locator: args.credentialLocator as z.infer<typeof locatorDtoSchema>,
+      }),
+    auditId: (args) =>
+      (args.credentialLocator as z.infer<typeof locatorDtoSchema>).credentialId,
+  },
+  "read-rotation-checkpoint": {
+    targets: ["directory"],
+    schema: z.object({
+      rotationKind: z.enum(["remap", "encryption"]),
+      generation: z.number().int().min(1),
+    }),
+    call: (stub, args) =>
+      (stub as IdentityDirectoryDurableObject).readRotationCheckpoint({
+        rotationKind: args.rotationKind as "remap" | "encryption",
+        generation: args.generation as number,
+      }),
+  },
 };
+
+/**
+ * The generations a `dir:` locator may name, with their bucket counts:
+ * both entries of the request Worker's keyring while a rotation is open,
+ * so the retiring generation's buckets stay addressable for `remap-chunk`
+ * and `read-rotation-checkpoint`. A keyring the request path cannot
+ * build leaves the surface at generation 1 alone.
+ */
+export function operatorBuckets(
+  env: ServerEnv,
+): readonly { generation: number; bucketCount: number }[] {
+  let keyring: MappingKeyring;
+  try {
+    keyring = mappingKeyringFromEnv(
+      env.DIRECTORY_ROUTING_KEYRING,
+      env.DIRECTORY_ROUTING_SECRET,
+    );
+  } catch {
+    return [{ generation: 1, bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT }];
+  }
+  return keyring.entries.map((entry) => ({
+    generation: entry.generation,
+    bucketCount: entry.bucketCount,
+  }));
+}
 
 export type OperatorDeps = Readonly<{
   env: ServerEnv;
   logger?: Logger;
-  /** The generations and bucket counts a `dir:` locator may name; one generation until PH-09B. */
+  /** The generations and bucket counts a `dir:` locator may name; {@link operatorBuckets} when omitted. */
   buckets?: readonly { generation: number; bucketCount: number }[];
 }>;
 
@@ -232,9 +372,7 @@ export async function handleOperator(
     return json({ error: "The body must be an object" }, 400);
   }
   const { locator, ...rest } = body as Record<string, unknown>;
-  const buckets = deps.buckets ?? [
-    { generation: 1, bucketCount: INITIAL_DIRECTORY_BUCKET_COUNT },
-  ];
+  const buckets = deps.buckets ?? operatorBuckets(deps.env);
   const target = parseLocator(locator, buckets);
   if (target === null || !entry.targets.includes(target.kind)) {
     return json({ error: "locator is not one this entry accepts" }, 400);
@@ -259,12 +397,16 @@ export async function handleOperator(
           deps.env.USER_DATA,
           target.userId,
         ) as unknown as UserDataDurableObject);
+  const auditId =
+    entry.auditId === undefined
+      ? undefined
+      : typeof entry.auditId === "function"
+        ? entry.auditId(parsed.data)
+        : String(parsed.data[entry.auditId]);
   const audit = {
     entry: entryName,
     locator: locator as string,
-    ...(entry.auditId === undefined
-      ? {}
-      : { id: String(parsed.data[entry.auditId]) }),
+    ...(auditId === undefined ? {} : { id: auditId }),
   };
   try {
     const result = await callDurableObject(() => entry.call(stub, parsed.data));

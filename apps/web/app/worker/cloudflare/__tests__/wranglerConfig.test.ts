@@ -391,6 +391,53 @@ describe("the operator token belongs to the request Worker", () => {
   );
 });
 
+// The three variables of a key rotation (`spec/rotation/index.md`, 鍵材料の
+// 配布形) are secrets with a fixed owner each: the keyring on the request
+// Worker, the commitment (digests, never keys) and the encryption keyring
+// on the state Worker. None is ever a `[vars]` entry.
+describe("the rotation variables have their declared owners", () => {
+  const owners: ReadonlyArray<readonly [string, "request" | "state"]> = [
+    ["DIRECTORY_ROUTING_KEYRING", "request"],
+    ["DIRECTORY_KEY_COMMITMENT", "state"],
+    ["IDENTITY_MAIL_ENCRYPTION_KEYRING", "state"],
+  ];
+
+  it.each(owners)(
+    ".dev.vars.example declares %s for the %s Worker",
+    (name, owner) => {
+      const example = read(".dev.vars.example");
+      expect(example).toMatch(new RegExp(`^${name}=`, "m"));
+      expect(example).toMatch(
+        new RegExp(`^#\\s+${name}\\s+— ${owner} Worker`, "m"),
+      );
+    },
+  );
+
+  it.each(owners)(
+    "the deploy templates list %s for wrangler secret put against the %s config",
+    (name, owner) => {
+      for (const file of REQUEST_CONFIGS.slice(1)) {
+        const stage = file.includes("staging") ? "staging" : "production";
+        const config =
+          owner === "request"
+            ? `wrangler.${stage}.toml`
+            : `wrangler.state.${stage}.toml`;
+        expect(read(file)).toContain(
+          `wrangler secret put ${name} --config ${config}`,
+        );
+      }
+    },
+  );
+
+  it.each(
+    [...REQUEST_CONFIGS, ...STATE_CONFIGS].flatMap((file) =>
+      owners.map(([name]) => [file, name] as const),
+    ),
+  )("%s does not declare %s as a variable", (file, name) => {
+    expect(read(file)).not.toMatch(new RegExp(`^\\s*${name}\\s*=`, "m"));
+  });
+});
+
 // The sender address is what the mail provider is asked to send as, so
 // every request Worker config that could reach a provider carries it as a
 // `[vars]` entry, and the deployed ones read it from the Pulumi output.

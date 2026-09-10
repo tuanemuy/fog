@@ -9,6 +9,53 @@ import {
 
 const TOKEN = "operator-token-for-tests-0123456789abcdef";
 const USER = "01950000-0000-7000-8000-000000000001";
+const KEY_ACTIVE = {
+  role: "active",
+  generation: 2,
+  key: "active-routing-key-material-0123456789abcdef",
+  bucketCount: 16,
+} as const;
+const KEY_PREVIOUS = {
+  role: "previous",
+  generation: 1,
+  key: "previous-routing-key-material-0123456789abcdef",
+  bucketCount: 16,
+} as const;
+const MAPPING_ROW = {
+  credentialId: "cred-1",
+  kind: "email",
+  hmac: "a".repeat(64),
+  generation: 2,
+  userId: USER,
+  status: "active",
+  passwordVerifier: "pbkdf2$verifier",
+  pendingVerifier: null,
+  changeState: null,
+  changeOrigin: null,
+  credentialVersion: 1,
+  encryptedCanonical: "ciphertext",
+  encryptionGeneration: 1,
+  encryptionNonce: "nonce",
+  failedAttempts: 0,
+  nextAttemptAllowedAt: null,
+  operationId: null,
+  candidateUserId: null,
+  reservedUntil: 0,
+  sagaCommitted: 1,
+  locators: null,
+  coordinatorLocator: null,
+  callerToken: "c".repeat(40),
+  createdAt: 0,
+  updatedAt: 0,
+} as const;
+const LOCATOR_DTO = {
+  credentialId: "cred-1",
+  kind: "email",
+  mapping: `g2:b3:${"a".repeat(64)}`,
+  credentialVersion: 1,
+  usableForLogin: true,
+  label: "",
+} as const;
 
 type Call = Readonly<{ name: string; method: string; args: unknown[] }>;
 type Entry = Readonly<{
@@ -211,6 +258,46 @@ describe("POST /__operator/<entry>", () => {
         "dir:dir:g1:b0",
         "purgeUserMappings",
       ],
+      [
+        "start-rotate-encryption",
+        { locator: "dir:g1:b0" },
+        "dir:dir:g1:b0",
+        "startRotateEncryption",
+      ],
+      [
+        "remap-chunk",
+        {
+          locator: "dir:g1:b0",
+          active: KEY_ACTIVE,
+          previous: KEY_PREVIOUS,
+          limit: 10,
+          afterCredentialId: "cred-after",
+        },
+        "dir:dir:g1:b0",
+        "remapChunk",
+      ],
+      [
+        "import-remapped-mappings",
+        { locator: "dir:g1:b2", active: KEY_ACTIVE, rows: [MAPPING_ROW] },
+        "dir:dir:g1:b2",
+        "importRemappedMappings",
+      ],
+      [
+        "record-remapped-locator",
+        {
+          locator: USER,
+          callerToken: "c".repeat(40),
+          credentialLocator: LOCATOR_DTO,
+        },
+        `user:${USER}`,
+        "recordRemappedLocator",
+      ],
+      [
+        "read-rotation-checkpoint",
+        { locator: "dir:g1:b0", rotationKind: "remap", generation: 1 },
+        "dir:dir:g1:b0",
+        "readRotationCheckpoint",
+      ],
     ];
     expect(Object.keys(OPERATOR_ENTRIES).sort()).toEqual(
       cases
@@ -248,6 +335,76 @@ describe("POST /__operator/<entry>", () => {
       outcome: "ok",
     });
     expect(JSON.stringify(entries)).not.toContain("fine");
+    // The rotation entries carry keys, a verifier, a ciphertext and a
+    // caller token in their bodies; none of it reaches the audit line.
+    const logged = JSON.stringify(entries);
+    for (const secret of [
+      KEY_ACTIVE.key,
+      KEY_PREVIOUS.key,
+      MAPPING_ROW.passwordVerifier,
+      MAPPING_ROW.encryptedCanonical,
+      MAPPING_ROW.callerToken,
+      MAPPING_ROW.hmac,
+    ]) {
+      expect(logged).not.toContain(secret);
+    }
+    expect(audit[cases.length - 4]).toEqual({
+      entry: "remap-chunk",
+      locator: "dir:g1:b0",
+      id: "cred-after",
+      outcome: "ok",
+    });
+    expect(audit[cases.length - 2]).toEqual({
+      entry: "record-remapped-locator",
+      locator: USER,
+      id: "cred-1",
+      outcome: "ok",
+    });
+  });
+
+  it("addresses the buckets of both keyring generations while a rotation is open, and generation 1 alone otherwise", async () => {
+    const calls: Call[] = [];
+    const single = deps(fakeEnv(calls));
+    expect(
+      (
+        await handleOperator(
+          post("read-schema-version", { locator: "dir:g2:b0" }),
+          single,
+        )
+      ).status,
+    ).toBe(400);
+    const rotating = deps({
+      ...fakeEnv(calls),
+      DIRECTORY_ROUTING_KEYRING: JSON.stringify([
+        KEY_ACTIVE,
+        { ...KEY_PREVIOUS, bucketCount: 4 },
+      ]),
+    } as ServerEnv);
+    expect(
+      (
+        await handleOperator(
+          post("read-schema-version", { locator: "dir:g2:b15" }),
+          rotating,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await handleOperator(
+          post("read-schema-version", { locator: "dir:g1:b3" }),
+          rotating,
+        )
+      ).status,
+    ).toBe(200);
+    // The retiring generation has four buckets: its fifth is not a locator.
+    expect(
+      (
+        await handleOperator(
+          post("read-schema-version", { locator: "dir:g1:b4" }),
+          rotating,
+        )
+      ).status,
+    ).toBe(400);
   });
 
   it("answers a Durable Object's error verbatim with its status, and audits the outcome", async () => {

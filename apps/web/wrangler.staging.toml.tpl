@@ -22,6 +22,11 @@
 #      The last two belong to the **state** Worker. Without the encryption
 #      key the Identity Directory throws on the first reservation and no
 #      registration completes at all.
+#      Only while a key is being rotated (`spec/rotation/index.md`; deployed
+#      as a pair, request + state, and removed again after retirement):
+#      `wrangler secret put DIRECTORY_ROUTING_KEYRING --config wrangler.staging.toml`
+#      `wrangler secret put DIRECTORY_KEY_COMMITMENT --config wrangler.state.staging.toml`
+#      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.staging.toml`
 #   4. Set the DLQ's retention out of band — it is a Queue-resource
 #      setting, not a wrangler key:
 #      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
