@@ -56,7 +56,7 @@ function DocumentComposerPage() {
   const { Composer } = Route.useLoaderData();
   return (
     <div className="pb-sheet-end">
-      <Suspense fallback={<DocumentSkeleton />}>
+      <Suspense fallback={<DocumentSkeleton mode="edit" />}>
         <Deferred promise={Composer} />
       </Suspense>
     </div>

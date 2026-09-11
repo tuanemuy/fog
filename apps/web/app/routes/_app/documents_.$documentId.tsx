@@ -26,10 +26,14 @@ const renderDocument = createServerFn({ method: "GET" })
     };
   });
 
-/** P-08. `documents_` keeps it out of any `/documents` layout the tree may grow. */
+/**
+ * P-08. The document's own title is the page's `h1`, drawn in the sheet, so
+ * the header's `document` is a label. `documents_` keeps it out of any
+ * `/documents` layout the tree may grow.
+ */
 export const Route = createFileRoute("/_app/documents_/$documentId")({
   staticData: {
-    header: { kind: "back", entity: "document", back: "/topics", h1: "header" },
+    header: { kind: "back", entity: "document", back: "/topics", h1: "sheet" },
   },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
@@ -51,7 +55,7 @@ function DocumentPage() {
   const { Document } = Route.useLoaderData();
   return (
     <div className="pb-sheet-end">
-      <Suspense fallback={<DocumentSkeleton />}>
+      <Suspense fallback={<DocumentSkeleton mode="read" />}>
         <Deferred promise={Document} />
       </Suspense>
     </div>
