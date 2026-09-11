@@ -445,7 +445,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
   const loaded = initial.items.length + extra.length;
 
   return (
-    <div className="fog-content fog-trash">
+    <div className="fog-trash">
       <div className="fog-trash-header">
         <p className="fog-trash-note">
           ここにある項目は保持期限を過ぎると完全に削除されます。

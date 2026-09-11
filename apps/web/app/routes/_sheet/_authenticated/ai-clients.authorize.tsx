@@ -11,12 +11,13 @@ const searchSchema = z.object({
 });
 
 /**
- * P-14, behind the app's guard: an unauthenticated visitor goes through
- * P-01 and comes back with the same `request`. The referrer policy keeps
- * the request blob off any outbound link.
+ * P-14, on the auth sheet behind the session check: an unauthenticated
+ * visitor goes through P-01 and comes back with the same `request`. The
+ * referrer policy keeps the request blob off any outbound link.
  */
-export const Route = createFileRoute("/_app/ai-clients/authorize")({
-  staticData: { header: { kind: "top", title: "アクセス許可" } },
+export const Route = createFileRoute(
+  "/_sheet/_authenticated/ai-clients/authorize",
+)({
   validateSearch: searchSchema,
   staleTime: 0,
   loaderDeps: ({ search }) => ({ request: search.request }),

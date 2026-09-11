@@ -33,7 +33,7 @@ export function CurrentUserPanel({
   mcpUrl: string;
 }) {
   return (
-    <div className="fog-content fog-settings">
+    <div className="fog-settings">
       <section aria-labelledby="settings-account">
         <h2 id="settings-account" className="fog-section-heading">
           アカウント

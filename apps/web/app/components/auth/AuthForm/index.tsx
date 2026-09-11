@@ -3,7 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { BrandLockup } from "@/components/layout/BrandLockup";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { displayError, renderErrorMessage } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -110,21 +110,85 @@ export function AuthForm({
   const emailError = state.fieldErrors.email;
   const passwordError = state.fieldErrors.password;
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <BrandLockup />
-        </div>
-        <h1 id={`${id}-title`}>{signup ? "アカウント登録" : "ログイン"}</h1>
-        <p className="fog-auth-description">
-          {signup
-            ? "思いついたことを、気軽に残そう。"
-            : "あなたのメモが待っています。"}
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>
+        {signup ? "アカウント登録" : "ログイン"}
+      </AuthSheetTitle>
+      <p className="fog-auth-description">
+        {signup
+          ? "思いついたことを、気軽に残そう。"
+          : "あなたのメモが待っています。"}
+      </p>
+      {ssoError !== undefined && (
+        <p className="fog-error" role="alert">
+          {renderSsoError(ssoError, mode)}
+          {ssoError === "email_registered" && signup && (
+            <>
+              {" "}
+              <Link
+                to="/login"
+                search={redirectTo ? { redirect: redirectTo } : {}}
+              >
+                ログインする
+              </Link>
+            </>
+          )}
         </p>
-        {ssoError !== undefined && (
+      )}
+      <form className="fog-auth-form" action={action} aria-busy={pending}>
+        <label htmlFor={`${id}-email`}>メールアドレス</label>
+        <input
+          id={`${id}-email`}
+          name="email"
+          type="email"
+          autoComplete="email"
+          maxLength={320}
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          disabled={pending}
+          aria-invalid={emailError ? true : undefined}
+          aria-describedby={emailError ? `${id}-email-error` : undefined}
+        />
+        {emailError && (
+          <p id={`${id}-email-error`} className="fog-error" role="alert">
+            {emailError}
+          </p>
+        )}
+        <label htmlFor={`${id}-password`}>パスワード</label>
+        <input
+          id={`${id}-password`}
+          name="password"
+          type="password"
+          autoComplete={signup ? "new-password" : "current-password"}
+          maxLength={128}
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          disabled={pending}
+          aria-invalid={passwordError ? true : undefined}
+          aria-describedby={
+            passwordError
+              ? `${id}-password-error`
+              : signup
+                ? `${id}-password-hint`
+                : undefined
+          }
+        />
+        {signup && !passwordError && (
+          <p id={`${id}-password-hint`} className="fog-hint">
+            8文字以上128文字以下で設定してください。
+          </p>
+        )}
+        {passwordError && (
+          <p id={`${id}-password-error`} className="fog-error" role="alert">
+            {passwordError}
+          </p>
+        )}
+        {state.formError && (
           <p className="fog-error" role="alert">
-            {renderSsoError(ssoError, mode)}
-            {ssoError === "email_registered" && signup && (
+            {state.formError}
+            {state.duplicate && (
               <>
                 {" "}
                 <Link
@@ -137,116 +201,46 @@ export function AuthForm({
             )}
           </p>
         )}
-        <form className="fog-auth-form" action={action} aria-busy={pending}>
-          <label htmlFor={`${id}-email`}>メールアドレス</label>
-          <input
-            id={`${id}-email`}
-            name="email"
-            type="email"
-            autoComplete="email"
-            maxLength={320}
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            disabled={pending}
-            aria-invalid={emailError ? true : undefined}
-            aria-describedby={emailError ? `${id}-email-error` : undefined}
-          />
-          {emailError && (
-            <p id={`${id}-email-error`} className="fog-error" role="alert">
-              {emailError}
-            </p>
-          )}
-          <label htmlFor={`${id}-password`}>パスワード</label>
-          <input
-            id={`${id}-password`}
-            name="password"
-            type="password"
-            autoComplete={signup ? "new-password" : "current-password"}
-            maxLength={128}
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            disabled={pending}
-            aria-invalid={passwordError ? true : undefined}
-            aria-describedby={
-              passwordError
-                ? `${id}-password-error`
-                : signup
-                  ? `${id}-password-hint`
-                  : undefined
-            }
-          />
-          {signup && !passwordError && (
-            <p id={`${id}-password-hint`} className="fog-hint">
-              8文字以上128文字以下で設定してください。
-            </p>
-          )}
-          {passwordError && (
-            <p id={`${id}-password-error`} className="fog-error" role="alert">
-              {passwordError}
-            </p>
-          )}
-          {state.formError && (
-            <p className="fog-error" role="alert">
-              {state.formError}
-              {state.duplicate && (
-                <>
-                  {" "}
-                  <Link
-                    to="/login"
-                    search={redirectTo ? { redirect: redirectTo } : {}}
-                  >
-                    ログインする
-                  </Link>
-                </>
-              )}
-            </p>
-          )}
-          <button className="fog-primary" type="submit" disabled={pending}>
-            {pending
-              ? signup
-                ? "登録中…"
-                : "ログイン中…"
-              : signup
-                ? "アカウント登録"
-                : "ログイン"}
-          </button>
-          {!signup && (
-            <p className="fog-auth-footer">
-              <Link to="/password-reset">パスワードをお忘れの方</Link>
-            </p>
-          )}
-        </form>
-        {ssoProviders.length > 0 && (
-          <p className="fog-auth-divider" aria-hidden="true">
-            または
+        <button className="fog-primary" type="submit" disabled={pending}>
+          {pending
+            ? signup
+              ? "登録中…"
+              : "ログイン中…"
+            : signup
+              ? "アカウント登録"
+              : "ログイン"}
+        </button>
+        {!signup && (
+          <p className="fog-auth-footer">
+            <Link to="/password-reset">パスワードをお忘れの方</Link>
           </p>
         )}
-        <SsoButtons
-          mode={mode}
-          redirectTo={redirectTo}
-          providers={ssoProviders}
-        />
-        <p className="fog-auth-footer">
-          {signup ? "アカウントをお持ちの方は" : "はじめての方は"}{" "}
-          {signup ? (
-            <Link
-              to="/login"
-              search={redirectTo ? { redirect: redirectTo } : {}}
-            >
-              ログイン
-            </Link>
-          ) : (
-            <Link
-              to="/signup"
-              search={redirectTo ? { redirect: redirectTo } : {}}
-            >
-              アカウント登録
-            </Link>
-          )}
+      </form>
+      {ssoProviders.length > 0 && (
+        <p className="fog-auth-divider" aria-hidden="true">
+          または
         </p>
-      </section>
-    </main>
+      )}
+      <SsoButtons
+        mode={mode}
+        redirectTo={redirectTo}
+        providers={ssoProviders}
+      />
+      <p className="fog-auth-footer">
+        {signup ? "アカウントをお持ちの方は" : "はじめての方は"}{" "}
+        {signup ? (
+          <Link to="/login" search={redirectTo ? { redirect: redirectTo } : {}}>
+            ログイン
+          </Link>
+        ) : (
+          <Link
+            to="/signup"
+            search={redirectTo ? { redirect: redirectTo } : {}}
+          >
+            アカウント登録
+          </Link>
+        )}
+      </p>
+    </section>
   );
 }

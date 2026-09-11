@@ -15,7 +15,7 @@ const searchSchema = z.object({
  * `no-referrer` so the token in the URL never leaks through an outbound
  * link or an image.
  */
-export const Route = createFileRoute("/password-reset")({
+export const Route = createFileRoute("/_sheet/password-reset")({
   validateSearch: searchSchema,
   head: ({ match }) => {
     const head = routeHead(match, {

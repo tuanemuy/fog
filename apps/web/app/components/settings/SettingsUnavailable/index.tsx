@@ -9,7 +9,7 @@ import { LogoutButton } from "../LogoutButton";
  */
 export function SettingsUnavailable({ message }: { message: string }) {
   return (
-    <div className="fog-content fog-settings">
+    <div className="fog-settings">
       <div role="alert">
         <h2 className="fog-section-heading">読み込めませんでした</h2>
         <p>{message}</p>

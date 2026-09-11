@@ -40,7 +40,7 @@ export async function PasswordResetDoneFeed() {
     },
   );
   return (
-    <div className="fog-content fog-settings">
+    <div className="fog-settings">
       <p className="fog-notice" role="status">
         パスワードを再設定しました。他の端末のセッションはすべて終了しています。
       </p>

@@ -52,7 +52,7 @@ export const Route = createFileRoute("/_app/documents_/$documentId_/edit")({
     }),
   component: DocumentEditPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -62,7 +62,7 @@ export const Route = createFileRoute("/_app/documents_/$documentId_/edit")({
 function DocumentEditPage() {
   const { Editor } = Route.useLoaderData();
   return (
-    <div className="fog-content">
+    <div className="pb-sheet-end">
       <Suspense fallback={<DocumentSkeleton />}>
         <Deferred promise={Editor} />
       </Suspense>

@@ -29,7 +29,8 @@ declare module "@tanstack/react-router" {
     /**
      * The header `AppShell` draws for this route (ADR-006 of Issue #22).
      * Every screen under `_app` declares one; the deepest declaring match
-     * wins.
+     * wins. The auth sheet (`_sheet`) draws no header, and its screens
+     * declare none.
      */
     header?: PageHeaderDeclaration;
   }

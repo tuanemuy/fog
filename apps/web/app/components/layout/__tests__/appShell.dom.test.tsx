@@ -295,6 +295,31 @@ describe("AppShell", () => {
     }
   });
 
+  // ADR-026 of Issue #22: the column is the same on every screen, the foot
+  // is not (the composer's screen needs more), so the screen owns only that.
+  it("holds the text column in the sheet — top and side padding, content-max — and leaves the bottom to the screen", async () => {
+    await renderWithRouter(
+      <AppShell>
+        <p>body</p>
+      </AppShell>,
+    );
+    const column = screen.getByText("body").parentElement;
+    expect(column?.parentElement).toBe(screen.getByRole("main"));
+    const utilities = [...(column?.classList ?? [])];
+    for (const utility of [
+      "mx-auto",
+      "max-w-content",
+      "pt-2xl",
+      "px-lg",
+      "sm:px-2xl",
+    ]) {
+      expect(utilities, utility).toContain(utility);
+    }
+    expect(
+      utilities.filter((utility) => /(^|:)(p|py|pb)-/.test(utility)),
+    ).toEqual([]);
+  });
+
   it("hands the sheet to the screen as its scroll container", async () => {
     function ReadsContainer() {
       const container = useSheetScrollContainer();

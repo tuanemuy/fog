@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { SettingsSkeleton } from "@/components/settings/SettingsSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
@@ -18,9 +19,13 @@ const renderDone = createServerFn({ method: "GET" })
     return { Done: renderServerComponent(<PasswordResetDoneFeed />) };
   });
 
-/** P-03 after the reset: authenticated by the session the reset just started. */
-export const Route = createFileRoute("/_app/password-reset/done")({
-  staticData: { header: { kind: "top", title: "パスワードを再設定しました" } },
+/**
+ * P-03 after the reset, on the auth sheet: authenticated by the session the
+ * reset just started.
+ */
+export const Route = createFileRoute(
+  "/_sheet/_authenticated/password-reset/done",
+)({
   staleTime: 0,
   ...streamingRouteOptions,
   loader: async () => {
@@ -34,7 +39,7 @@ export const Route = createFileRoute("/_app/password-reset/done")({
     }),
   component: PasswordResetDonePage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -44,8 +49,13 @@ export const Route = createFileRoute("/_app/password-reset/done")({
 function PasswordResetDonePage() {
   const { Done } = Route.useLoaderData();
   return (
-    <Suspense fallback={<SettingsSkeleton />}>
-      <Deferred promise={Done} />
-    </Suspense>
+    <>
+      <AuthSheetTitle>パスワードを再設定しました</AuthSheetTitle>
+      <div className="mt-section">
+        <Suspense fallback={<SettingsSkeleton />}>
+          <Deferred promise={Done} />
+        </Suspense>
+      </div>
+    </>
   );
 }

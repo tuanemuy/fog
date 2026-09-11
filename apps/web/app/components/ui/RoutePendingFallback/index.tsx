@@ -11,14 +11,11 @@ import { Skeleton } from "@/components/ui/Skeleton";
  *
  * `role="status"` + `aria-live="polite"` + the sr-only label give one polite
  * announcement for the whole region; the bars are `aria-hidden` via `Skeleton`.
+ * It holds no padding or width of its own: the frame it is drawn in does.
  */
 export function RoutePendingFallback() {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="flex max-w-content flex-col gap-md p-md"
-    >
+    <div role="status" aria-live="polite" className="flex flex-col gap-md">
       <span className="sr-only">読み込み中</span>
       <Skeleton className="h-xl w-1/3" />
       <Skeleton className="h-md w-full" />

@@ -34,7 +34,7 @@ export const Route = createFileRoute("/_app/search")({
     routeHead(match, { title: "検索 — fog", path: "/search" }),
   component: SearchPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -45,7 +45,7 @@ function SearchPage() {
   const { Search } = Route.useLoaderData();
   const { q, topic } = Route.useSearch();
   return (
-    <div className="fog-content">
+    <div className="pb-sheet-end">
       {/* Keyed per query so a new search always shows the loading state. */}
       <Suspense key={`${q ?? ""}|${topic ?? ""}`} fallback={<SearchSkeleton />}>
         <Deferred promise={Search} />

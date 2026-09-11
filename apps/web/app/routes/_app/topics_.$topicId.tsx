@@ -45,7 +45,7 @@ export const Route = createFileRoute("/_app/topics_/$topicId")({
     }),
   component: TopicPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/_app/topics_/$topicId")({
 function TopicPage() {
   const { Topic } = Route.useLoaderData();
   return (
-    <div className="fog-content">
+    <div className="pb-sheet-end">
       <Suspense fallback={<TopicDetailSkeleton />}>
         <Deferred promise={Topic} />
       </Suspense>

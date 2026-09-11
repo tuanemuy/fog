@@ -60,6 +60,7 @@ const renderTimeline = createServerFn({ method: "GET" })
   });
 
 export const Route = createFileRoute("/_app/")({
+  staticData: { header: { kind: "top", title: "タイムライン" } },
   // Mandatory for the streaming variant: a re-run loader hands out a fresh
   // promise and would re-suspend the boundary on every revisit.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
@@ -74,7 +75,7 @@ export const Route = createFileRoute("/_app/")({
     routeHead(match, { title: "タイムライン — fog", path: "/" }),
   component: TimelinePage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -84,12 +85,16 @@ export const Route = createFileRoute("/_app/")({
 function TimelinePage() {
   const { Timeline } = Route.useLoaderData();
   return (
-    <Suspense fallback={<TimelineSkeleton />}>
-      <Deferred promise={Timeline} />
-    </Suspense>
+    <div className="pb-sheet-end-composer">
+      <Suspense fallback={<TimelineSkeleton />}>
+        <Deferred promise={Timeline} />
+      </Suspense>
+    </div>
   );
 }
 ```
+
+The wrapper is the screen's share of the sheet's inner padding: the app shell holds the top and side padding and the text column's width, the same on every screen, and the screen holds only the foot — `pb-sheet-end`, or `pb-sheet-end-composer` where the composer floats over it. No test checks that a screen sets its foot; a missing one shows as the last row flush with the sheet's bottom edge.
 
 Two helpers carry the pattern:
 
@@ -269,8 +274,8 @@ The route's only responsibility is "pass URL parameters to the server component 
 ### Points
 
 - The loader merely calls the server function bridge. Confine `renderServerComponent(<RSC />)` and server-only imports to the bridge's handler side.
-- **Place the shared shell in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as navigation is lost and flickers. Here the pathless layout `apps/web/app/routes/_app.tsx` renders `AppShell` (`apps/web/app/components/layout/AppShell`) around an `<Outlet />`; every protected screen is a child of it, and only the leaf goes into the RSC payload. `login.tsx` / `signup.tsx` / `password-reset.tsx` sit outside the layout.
-- `_app.tsx`'s `beforeLoad` is the navigation aid: it reads `readAuthStateFn` (`apps/web/app/presentation/authState.ts`) and bounces an unauthenticated visitor to `/login` with a same-origin `?redirect=` (`toSafeRedirect`). The guard proper is `requireUserId()` in every server execution point — `beforeLoad` only saves a round trip.
+- **Place the shared shell in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as navigation is lost and flickers. Here the pathless layout `apps/web/app/routes/_app.tsx` renders `AppShell` (`apps/web/app/components/layout/AppShell`) around an `<Outlet />`; every screen with the app's navigation is a child of it, and only the leaf goes into the RSC payload. Its sibling `apps/web/app/routes/_sheet.tsx` renders `AuthSheet` (`apps/web/app/components/layout/AuthSheet`) for the screens without navigation: login, signup and the password reset directly under it, and AI client authorization and the reset's done page under the nested pathless `_sheet/_authenticated.tsx`.
+- The `beforeLoad` of `_app.tsx` and `_sheet/_authenticated.tsx` is the navigation aid, one shared function: `requireSessionBeforeLoad` (`apps/web/app/presentation/authGuard.ts`) reads `readAuthStateFn` (`apps/web/app/presentation/authState.ts`) and bounces an unauthenticated visitor to `/login` with a same-origin `?redirect=` (`toSafeRedirect`). Reading through `readAuthStateFn` is also what marks every document under those layouts `Cache-Control: no-store`. The guard proper is `requireUserId()` in every server execution point — `beforeLoad` only saves a round trip.
 - `head` goes through `routeHead` (`apps/web/app/presentation/head.ts`) so every route carries a title and canonical path.
 - Since `staleTime` remains in effect even after navigation, the cache can be reused when you return to the same URL. When you want to force a refetch, use `useRouter().invalidate()` on the client.
 - Input validation uses `.inputValidator(...)`. **Do not use the old API `.validator(...)`.**

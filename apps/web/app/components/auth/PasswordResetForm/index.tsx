@@ -3,7 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { BrandLockup } from "@/components/layout/BrandLockup";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { executePasswordResetFn } from "../actions";
@@ -65,59 +65,54 @@ export function PasswordResetForm({ token }: { token: string }) {
     return INITIAL;
   }, INITIAL);
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <BrandLockup />
-        </div>
-        <h1 id={`${id}-title`}>新しいパスワードを設定</h1>
-        <form
-          className="fog-auth-form"
-          action={action}
-          aria-busy={pending}
-          aria-label="新しいパスワードの設定"
-        >
-          <label htmlFor={`${id}-password`}>新しいパスワード</label>
-          <input
-            id={`${id}-password`}
-            name="newPassword"
-            type="password"
-            autoComplete="new-password"
-            maxLength={128}
-            required
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-            disabled={pending}
-            aria-invalid={state.fieldError ? true : undefined}
-            aria-describedby={
-              state.fieldError ? `${id}-password-error` : `${id}-password-hint`
-            }
-          />
-          {state.fieldError ? (
-            <p id={`${id}-password-error`} className="fog-error" role="alert">
-              {state.fieldError}
-            </p>
-          ) : (
-            <p id={`${id}-password-hint`} className="fog-hint">
-              8文字以上128文字以下で設定してください。
-            </p>
-          )}
-          {state.formError && (
-            <p className="fog-error" role="alert">
-              {state.formError}
-              {state.invalidToken && (
-                <>
-                  {" "}
-                  <Link to="/password-reset">もう一度依頼する</Link>
-                </>
-              )}
-            </p>
-          )}
-          <button className="fog-primary" type="submit" disabled={pending}>
-            {pending ? "設定中…" : "パスワードを設定"}
-          </button>
-        </form>
-      </section>
-    </main>
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>新しいパスワードを設定</AuthSheetTitle>
+      <form
+        className="fog-auth-form"
+        action={action}
+        aria-busy={pending}
+        aria-label="新しいパスワードの設定"
+      >
+        <label htmlFor={`${id}-password`}>新しいパスワード</label>
+        <input
+          id={`${id}-password`}
+          name="newPassword"
+          type="password"
+          autoComplete="new-password"
+          maxLength={128}
+          required
+          value={newPassword}
+          onChange={(event) => setNewPassword(event.target.value)}
+          disabled={pending}
+          aria-invalid={state.fieldError ? true : undefined}
+          aria-describedby={
+            state.fieldError ? `${id}-password-error` : `${id}-password-hint`
+          }
+        />
+        {state.fieldError ? (
+          <p id={`${id}-password-error`} className="fog-error" role="alert">
+            {state.fieldError}
+          </p>
+        ) : (
+          <p id={`${id}-password-hint`} className="fog-hint">
+            8文字以上128文字以下で設定してください。
+          </p>
+        )}
+        {state.formError && (
+          <p className="fog-error" role="alert">
+            {state.formError}
+            {state.invalidToken && (
+              <>
+                {" "}
+                <Link to="/password-reset">もう一度依頼する</Link>
+              </>
+            )}
+          </p>
+        )}
+        <button className="fog-primary" type="submit" disabled={pending}>
+          {pending ? "設定中…" : "パスワードを設定"}
+        </button>
+      </form>
+    </section>
   );
 }

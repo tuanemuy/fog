@@ -52,7 +52,7 @@ export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
     }),
   component: DocumentHistoryPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -62,7 +62,7 @@ export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
 function DocumentHistoryPage() {
   const { History } = Route.useLoaderData();
   return (
-    <div className="fog-content">
+    <div className="pb-sheet-end">
       <Suspense fallback={<MemoHistorySkeleton />}>
         <Deferred promise={History} />
       </Suspense>

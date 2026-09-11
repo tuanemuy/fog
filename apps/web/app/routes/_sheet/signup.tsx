@@ -8,7 +8,7 @@ import {
   redirectSearchSchema,
 } from "@/presentation/redirectSearch";
 
-export const Route = createFileRoute("/signup")({
+export const Route = createFileRoute("/_sheet/signup")({
   validateSearch: redirectSearchSchema.extend({
     sso_error: ssoErrorSchema.optional(),
   }),

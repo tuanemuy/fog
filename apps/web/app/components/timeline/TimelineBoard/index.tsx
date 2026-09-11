@@ -181,6 +181,7 @@ export function TimelineBoard({
   });
   const olderSentinel = useRef<HTMLDivElement>(null);
   const newerSentinel = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLElement>(null);
   const sheet = useSheetScrollContainer();
   const [filterOpen, setFilterOpen] = useState(search.q !== undefined);
   const [dateOpen, setDateOpen] = useState(false);
@@ -295,7 +296,7 @@ export function TimelineBoard({
     const element = document.getElementById(`memo-${pivotId}`);
     if (!element || typeof element.scrollIntoView !== "function") return;
     // Already at the head of the list: scrolling would only hide the notice.
-    if (document.querySelector("section.fog-timeline article") === element) {
+    if (list.current?.querySelector("article") === element) {
       return;
     }
     const group = element.closest(".fog-day");
@@ -426,7 +427,7 @@ export function TimelineBoard({
   const groups = groupByDay(optimistic);
   return (
     <section
-      className="fog-timeline"
+      ref={list}
       aria-label="メモ一覧"
       aria-busy={pending || loadingOlder || loadingNewer || deleting}
     >

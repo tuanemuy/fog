@@ -38,7 +38,7 @@ export const Route = createFileRoute("/_app/")({
     routeHead(match, { title: "タイムライン — fog", path: "/" }),
   component: TimelinePage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -48,8 +48,10 @@ export const Route = createFileRoute("/_app/")({
 function TimelinePage() {
   const { Timeline } = Route.useLoaderData();
   return (
-    <Suspense fallback={<TimelineSkeleton />}>
-      <Deferred promise={Timeline} />
-    </Suspense>
+    <div className="pb-sheet-end-composer">
+      <Suspense fallback={<TimelineSkeleton />}>
+        <Deferred promise={Timeline} />
+      </Suspense>
+    </div>
   );
 }

@@ -37,6 +37,11 @@ const SIDE_LINK_CLASS =
  * header stays and the screen scrolls under it. Below `lg` the header's menu
  * opens the nav sheet.
  *
+ * Inside the sheet the shell holds the text column: the top and side
+ * padding and `--content-max`, the same on every screen. The bottom is the
+ * screen's (ADR-026 of Issue #22): `pb-sheet-end`, or `pb-sheet-end-composer`
+ * on a screen whose composer floats over the foot of the sheet.
+ *
  * The header is drawn from the deepest route's `staticData.header`
  * (ADR-006 of Issue #22); a screen puts its data-dependent controls into it
  * with `HeaderActions`. The shell hosts the toasts (ADR-010): the region
@@ -112,13 +117,15 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             data-scroll-restoration-id={SHEET_SCROLL_ID}
             className="mx-auto w-sheet flex-1 overflow-y-auto rounded-t-lg bg-bg-card shadow-sm md:w-sheet-md"
           >
-            <ShellSlotsProvider
-              headerActions={actionsSlot}
-              dock={dockSlot}
-              sheet={sheet}
-            >
-              {children}
-            </ShellSlotsProvider>
+            <div className="mx-auto max-w-content px-lg pt-2xl sm:px-2xl">
+              <ShellSlotsProvider
+                headerActions={actionsSlot}
+                dock={dockSlot}
+                sheet={sheet}
+              >
+                {children}
+              </ShellSlotsProvider>
+            </div>
           </main>
           <div className="pointer-events-none absolute inset-x-[0] bottom-safe-b-xl flex flex-col items-center gap-sm px-2xl">
             <ToastRegion />

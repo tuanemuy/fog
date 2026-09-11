@@ -2,7 +2,7 @@
 export function TrashSkeleton() {
   return (
     <div
-      className="fog-content fog-trash"
+      className="fog-trash"
       role="status"
       aria-live="polite"
       aria-busy="true"

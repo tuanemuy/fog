@@ -37,7 +37,7 @@ export const Route = createFileRoute("/_app/settings")({
     routeHead(match, { title: "設定 — fog", path: "/settings" }),
   component: SettingsPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -48,15 +48,11 @@ function SettingsPage() {
   const { Settings } = Route.useLoaderData();
   const { sso, sso_error: ssoError } = Route.useSearch();
   return (
-    <>
-      {(sso !== undefined || ssoError !== undefined) && (
-        <div className="fog-content">
-          <SsoNotice sso={sso} ssoError={ssoError} />
-        </div>
-      )}
+    <div className="flex flex-col gap-section pb-sheet-end">
+      <SsoNotice sso={sso} ssoError={ssoError} />
       <Suspense fallback={<SettingsSkeleton />}>
         <Deferred promise={Settings} />
       </Suspense>
-    </>
+    </div>
   );
 }

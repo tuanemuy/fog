@@ -3,7 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId } from "react";
-import { BrandLockup } from "@/components/layout/BrandLockup";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import {
@@ -70,82 +70,77 @@ export function AuthorizeSheet({
   );
 
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <BrandLockup />
-        </div>
-        <h1 id={`${id}-title`}>アクセス許可</h1>
-        {view.ok ? (
-          <>
-            <p className="fog-auth-description">
-              <strong>{view.clientName}</strong> が、
-              <strong>{view.email}</strong> として接続することを求めています。
-            </p>
-            <section
-              aria-labelledby={`${id}-allowed`}
-              className="fog-authorize-list"
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>アクセス許可</AuthSheetTitle>
+      {view.ok ? (
+        <>
+          <p className="fog-auth-description">
+            <strong>{view.clientName}</strong> が、
+            <strong>{view.email}</strong> として接続することを求めています。
+          </p>
+          <section
+            aria-labelledby={`${id}-allowed`}
+            className="fog-authorize-list"
+          >
+            <h2 id={`${id}-allowed`}>許可される操作</h2>
+            <ul>
+              {ALLOWED_OPERATIONS.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </section>
+          <section
+            aria-labelledby={`${id}-denied`}
+            className="fog-authorize-list"
+          >
+            <h2 id={`${id}-denied`}>できないこと</h2>
+            <ul>
+              {DENIED_OPERATIONS.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </section>
+          <form
+            className="fog-auth-form fog-authorize-actions"
+            action={act}
+            aria-busy={pending}
+            aria-label="アクセス許可の決定"
+          >
+            {error && (
+              <p className="fog-error" role="alert">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              name="decision"
+              value="approve"
+              className="fog-primary"
+              disabled={pending}
             >
-              <h2 id={`${id}-allowed`}>許可される操作</h2>
-              <ul>
-                {ALLOWED_OPERATIONS.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-            <section
-              aria-labelledby={`${id}-denied`}
-              className="fog-authorize-list"
+              {pending ? "処理中…" : "許可する"}
+            </button>
+            <button
+              type="submit"
+              name="decision"
+              value="deny"
+              className="fog-secondary"
+              disabled={pending}
             >
-              <h2 id={`${id}-denied`}>できないこと</h2>
-              <ul>
-                {DENIED_OPERATIONS.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-            <form
-              className="fog-auth-form fog-authorize-actions"
-              action={act}
-              aria-busy={pending}
-              aria-label="アクセス許可の決定"
-            >
-              {error && (
-                <p className="fog-error" role="alert">
-                  {error}
-                </p>
-              )}
-              <button
-                type="submit"
-                name="decision"
-                value="approve"
-                className="fog-primary"
-                disabled={pending}
-              >
-                {pending ? "処理中…" : "許可する"}
-              </button>
-              <button
-                type="submit"
-                name="decision"
-                value="deny"
-                className="fog-secondary"
-                disabled={pending}
-              >
-                拒否する
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <p className="fog-error" role="alert">
-              {INVALID_REQUEST_MESSAGE}
-            </p>
-            <p className="fog-auth-footer">
-              <Link to="/">タイムラインへ</Link>
-            </p>
-          </>
-        )}
-      </section>
-    </main>
+              拒否する
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <p className="fog-error" role="alert">
+            {INVALID_REQUEST_MESSAGE}
+          </p>
+          <p className="fog-auth-footer">
+            <Link to="/">タイムラインへ</Link>
+          </p>
+        </>
+      )}
+    </section>
   );
 }

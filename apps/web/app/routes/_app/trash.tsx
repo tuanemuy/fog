@@ -29,7 +29,7 @@ export const Route = createFileRoute("/_app/trash")({
     routeHead(match, { title: "ゴミ箱 — fog", path: "/trash" }),
   component: TrashPage,
   errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
+    <div role="alert">
       <h2>読み込めませんでした</h2>
       <p>{sanitizeRouteError(error)}</p>
     </div>
@@ -39,8 +39,10 @@ export const Route = createFileRoute("/_app/trash")({
 function TrashPage() {
   const { Trash } = Route.useLoaderData();
   return (
-    <Suspense fallback={<TrashSkeleton />}>
-      <Deferred promise={Trash} />
-    </Suspense>
+    <div className="pb-sheet-end">
+      <Suspense fallback={<TrashSkeleton />}>
+        <Deferred promise={Trash} />
+      </Suspense>
+    </div>
   );
 }
