@@ -56,7 +56,7 @@ function DocumentEditPage() {
   const { Editor } = Route.useLoaderData();
   return (
     <div className="pb-sheet-end">
-      <Suspense fallback={<DocumentSkeleton />}>
+      <Suspense fallback={<DocumentSkeleton mode="edit" />}>
         <Deferred promise={Editor} />
       </Suspense>
     </div>
