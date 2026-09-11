@@ -91,13 +91,14 @@ apps/web/app/
 │   ├── streamingRoute.ts, head.ts, time.ts, pagination.ts, redirectSearch.ts, diff.ts
 │   ├── ai/                        the OAuth 2.1 / MCP / REST handlers (the token codec arrives from the entry point; pkce.ts is RFC 7636)
 │   └── export/                    the POST /export handler (the archive writer arrives from the entry point)
-├── worker/cloudflare/
-│   ├── state.ts                   state Worker entry: re-exports the two Durable Object classes
-│   ├── queueHandlers.ts           mail consumer + DLQ handler, hosted by the request Worker
-│   ├── operatorHandlers.ts        POST /__operator/<entry>: the 15 maintenance entries behind OPERATOR_TOKEN
-│   └── ssoHandlers.ts, diagnostics.ts, stateEnv.check.ts
-└── scripts/                       operator.ts (the maintenance CLI), ai-client.ts (the OAuth / MCP test client), render-wrangler.ts
+└── worker/cloudflare/
+    ├── state.ts                   state Worker entry: re-exports the two Durable Object classes
+    ├── queueHandlers.ts           mail consumer + DLQ handler, hosted by the request Worker
+    ├── operatorHandlers.ts        POST /__operator/<entry>: the 15 maintenance entries behind OPERATOR_TOKEN
+    └── ssoHandlers.ts, diagnostics.ts, stateEnv.check.ts
 ```
+
+`apps/web/scripts/` (beside `app/`, not inside it) holds `operator.ts` (the maintenance CLI), `ai-client.ts` (the OAuth / MCP test client) and `render-wrangler.ts`.
 
 ## Domain Layer
 
@@ -384,28 +385,21 @@ Adding an aggregate is two edits: one slot line on the context of the DO class t
 The OCC write is a conditional `UPDATE` guarded on `id` **and** `version`, whose matched-row count is read back. `createUserSettingsRepository` (`packages/core/src/adapters/cloudflare/stores/userSettingsRepository.ts`) is the shipped one; `user_settings` is single-row, so `version` alone conditions it and there is no `id` predicate to add:
 
 ```ts
-save: (user, expectedVersion) => {
+save(user, expectedVersion) {
   const matched = updateMatchedRow(
     sql,
-    `UPDATE user_settings
-     SET trash_retention_days = ?, version = ?, updated_at = ?
+    `UPDATE user_settings SET trash_retention_days = ?, version = ?, updated_at = ?
      WHERE version = ?`,
     user.trashRetentionDays,
     user.version,
-    now,
+    user.updatedAt.getTime(),
     expectedVersion as number,
   );
-  if (!matched) {
-    // The message reaches the client as-is (`redactForClient` passes
-    // `conflict` through), so it must not carry the user id or the
-    // expected version.
-    throw new ConflictError(
-      "OPTIMISTIC_LOCK_FAILURE",
-      "Optimistic lock failure: the user was modified concurrently",
-    );
-  }
+  if (!matched) throw occConflict();
 },
 ```
+
+`occConflict()` (`stores/occ.ts`) is the one translation of a zero-row update every store shares — `ConflictError("OPTIMISTIC_LOCK_FAILURE", "The row was modified by another operation")`, a message with no identifier in it.
 
 Key points:
 
