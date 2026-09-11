@@ -1,6 +1,10 @@
 .DS_Store
 node_modules/
 
+# A common global excludesFile ignores macOS `Icon\r` files with a bare `Icon`
+# pattern, which also swallows this component directory.
+!apps/web/app/components/ui/Icon/
+
 # TanStack Start / Vite
 .tanstack/
 .output/
