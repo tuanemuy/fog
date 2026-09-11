@@ -189,6 +189,59 @@ function projectMemo(sql: SqlStorage, memo: Memo): void {
 type PivotRow = Readonly<{ posted_at: number; id: string }>;
 
 /**
+ * The pivot reads of `findTimelineAround`: the memo anchor itself, and for
+ * a date anchor the newest row before the day's end and the oldest row
+ * from it. Exported so the plan test reads the statements the repository
+ * runs (`__tests__/memoTimelinePlan.integration.test.ts`).
+ */
+export function pivotStatement(
+  kind: "memo" | "before" | "after",
+  keyword: boolean,
+): string {
+  const keywordClause = keyword ? ` AND ${KEYWORD_CLAUSE}` : "";
+  switch (kind) {
+    case "memo":
+      return `SELECT posted_at, id FROM memos WHERE id = ? AND status = 'active'${keywordClause}`;
+    case "before":
+      return `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at < ?${keywordClause}
+       ORDER BY posted_at DESC, id DESC LIMIT 1`;
+    case "after":
+      return `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at >= ?${keywordClause}
+       ORDER BY posted_at ASC, id ASC LIMIT 1`;
+  }
+}
+
+/**
+ * One page of `findTimelinePage` / one half of `findTimelineAround`:
+ * `positioned` continues from a `(posted_at, id)` cursor, `inclusive`
+ * keeps the cursor row on the older side. Exported for the plan test.
+ */
+export function timelinePageStatement(shape: {
+  positioned: boolean;
+  direction: "older" | "newer";
+  inclusive: boolean;
+  keyword: boolean;
+}): string {
+  const conditions = ["status = 'active'"];
+  if (shape.positioned) {
+    // A row-value comparison, not the equivalent `a < ? OR (a = ? AND b < ?)`:
+    // SQLite seeks `memos_timeline_idx` from the cursor for the former and
+    // walks it from the newest row for the latter, so a deep page would
+    // cost every row above it.
+    const comparison =
+      shape.direction === "older" ? (shape.inclusive ? "<=" : "<") : ">";
+    conditions.push(`(posted_at, id) ${comparison} (?, ?)`);
+  }
+  if (shape.keyword) conditions.push(KEYWORD_CLAUSE);
+  const order =
+    shape.direction === "older"
+      ? "posted_at DESC, id DESC"
+      : "posted_at ASC, id ASC";
+  return `SELECT ${MEMO_COLUMNS} FROM memos WHERE ${conditions.join(" AND ")}
+         ORDER BY ${order} LIMIT ?`;
+}
+
+/**
  * The row the window is centred on. A memo anchor is the memo itself. A
  * date anchor is the newest memo of the day; for an empty day it is the
  * nearer of the newest memo before the day and the oldest memo after it,
@@ -200,7 +253,6 @@ function resolvePivot(
   anchor: TimelineAnchor,
   keyword: string | null,
 ): CursorPayload | null {
-  const keywordClause = keyword === null ? "" : ` AND ${KEYWORD_CLAUSE}`;
   const keywordBindings: SqlStorageValue[] =
     keyword === null ? [] : [keywordLikePattern(keyword)];
   const toPivot = (row: PivotRow | undefined): CursorPayload | null =>
@@ -209,7 +261,7 @@ function resolvePivot(
     return toPivot(
       sql
         .exec<PivotRow>(
-          `SELECT posted_at, id FROM memos WHERE id = ? AND status = 'active'${keywordClause}`,
+          pivotStatement("memo", keyword !== null),
           anchor.memoId,
           ...keywordBindings,
         )
@@ -220,8 +272,7 @@ function resolvePivot(
   const toExclusive = anchor.toExclusive.getTime();
   const before = sql
     .exec<PivotRow>(
-      `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at < ?${keywordClause}
-       ORDER BY posted_at DESC, id DESC LIMIT 1`,
+      pivotStatement("before", keyword !== null),
       toExclusive,
       ...keywordBindings,
     )
@@ -229,8 +280,7 @@ function resolvePivot(
   if (before && before.posted_at >= from) return toPivot(before);
   const after = sql
     .exec<PivotRow>(
-      `SELECT posted_at, id FROM memos WHERE status = 'active' AND posted_at >= ?${keywordClause}
-       ORDER BY posted_at ASC, id ASC LIMIT 1`,
+      pivotStatement("after", keyword !== null),
       toExclusive,
       ...keywordBindings,
     )
@@ -261,29 +311,19 @@ export function createMemoRepository(
     direction: "older" | "newer",
     inclusive = false,
   ): { rows: MemoRow[]; hasMore: boolean } => {
-    const conditions = ["status = 'active'"];
     const bindings: SqlStorageValue[] = [];
-    if (position !== null) {
-      const tie = inclusive ? "<=" : "<";
-      conditions.push(
-        direction === "older"
-          ? `(posted_at < ? OR (posted_at = ? AND id ${tie} ?))`
-          : "(posted_at > ? OR (posted_at = ? AND id > ?))",
-      );
-      bindings.push(position.p, position.p, position.i);
-    }
+    if (position !== null) bindings.push(position.p, position.i);
     if (query.keyword !== null) {
-      conditions.push(KEYWORD_CLAUSE);
       bindings.push(keywordLikePattern(query.keyword));
     }
-    const order =
-      direction === "older"
-        ? "posted_at DESC, id DESC"
-        : "posted_at ASC, id ASC";
     const rows = sql
       .exec<MemoRow>(
-        `SELECT ${MEMO_COLUMNS} FROM memos WHERE ${conditions.join(" AND ")}
-         ORDER BY ${order} LIMIT ?`,
+        timelinePageStatement({
+          positioned: position !== null,
+          direction,
+          inclusive,
+          keyword: query.keyword !== null,
+        }),
         ...bindings,
         query.limit + 1,
       )
