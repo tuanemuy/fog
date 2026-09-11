@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
 import { z } from "zod";
-import { MemoHistorySkeleton } from "@/components/memoHistory/MemoHistorySkeleton";
+import { RevisionHistorySkeleton } from "@/components/memoHistory/RevisionHistorySkeleton";
 import { Deferred } from "@/components/ui/Deferred";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
@@ -26,14 +26,17 @@ const renderDocumentHistory = createServerFn({ method: "GET" })
     };
   });
 
-/** P-10. Same shape as the memo history; the skeleton is the same rows. */
+/**
+ * P-10. The memo history's shape under the document's title, which the
+ * sheet draws as the page's `h1` (ADR-023 of Issue #22).
+ */
 export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
   staticData: {
     header: {
       kind: "back",
       entity: "document",
       back: "/documents/$documentId",
-      h1: "header",
+      h1: "sheet",
     },
   },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
@@ -56,7 +59,7 @@ function DocumentHistoryPage() {
   const { History } = Route.useLoaderData();
   return (
     <div className="pb-sheet-end">
-      <Suspense fallback={<MemoHistorySkeleton />}>
+      <Suspense fallback={<RevisionHistorySkeleton subject="document" />}>
         <Deferred promise={History} />
       </Suspense>
     </div>
