@@ -1,6 +1,24 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./theme.css";
+@import "./app.css";
+@import "./knowledge.css";
+@import "./topics.css";
+@import "./documents.css";
+@import "./search.css";
+@import "./trash.css";
+
+/* Tailwind's `container` turns the breakpoints into widths; the frame width
+   here is `--sheet-*`. The word turns up in prose the scanner reads, so it is
+   switched off rather than left to appear in the CSS. */
+@source not inline("container");
+
+/* spec/design/tokens.md「余白の向き」の `.ラベル + * { margin-top }`. The
+   label carries it (`next-sibling:mt-md`), so the gap travels with the label
+   and a label reused elsewhere does not drag it along. It is the only
+   sibling-targeting variant, and only `mt-*` may ride it
+   (`lint/designTokens.test.ts`). */
+@custom-variant next-sibling (& + *);
 
 @layer base {
   html,
@@ -28,35 +46,3 @@
     }
   }
 }
-
-/* ADR-012: Utilities and variants for cases that cannot be written with utilities alone */
-
-/* Custom variant for next-sibling selector (label + * margin pattern) */
-@custom-variant next-sibling (& + *);
-
-/* Animations for loading spinners and other effects */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-@import "./app.css";
-@import "./knowledge.css";
-@import "./topics.css";
-@import "./documents.css";
-@import "./search.css";
-@import "./trash.css";

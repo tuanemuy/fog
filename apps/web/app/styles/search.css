@@ -47,11 +47,11 @@
 .fog-chip[aria-current="page"] {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 .fog-chip[aria-current="page"] .fog-badge {
-  background: rgba(255, 255, 255, 0.25);
-  color: #fff;
+  background: var(--color-primary-darker);
+  color: var(--color-text-inverse);
 }
 .fog-chip:focus-visible {
   outline: 2px solid var(--color-focus);

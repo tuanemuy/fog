@@ -14,12 +14,16 @@ import { Skeleton } from "@/components/ui/Skeleton";
  */
 export function RoutePendingFallback() {
   return (
-    <div role="status" aria-live="polite" className="space-y-4 p-4">
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex max-w-content flex-col gap-md p-md"
+    >
       <span className="sr-only">読み込み中</span>
-      <Skeleton className="h-8 w-48" />
-      <Skeleton className="h-4 w-full max-w-2xl" />
-      <Skeleton className="h-4 w-full max-w-xl" />
-      <Skeleton className="h-4 w-full max-w-lg" />
+      <Skeleton className="h-xl w-1/3" />
+      <Skeleton className="h-md w-full" />
+      <Skeleton className="h-md w-5/6" />
+      <Skeleton className="h-md w-2/3" />
     </div>
   );
 }

@@ -149,7 +149,7 @@ a {
 .fog-app {
   display: flex;
   min-height: 100dvh;
-  max-width: var(--container-max, 1160px);
+  max-width: var(--container-max);
   margin: 0 auto;
 }
 .fog-sidebar {
@@ -421,7 +421,7 @@ a {
   .fog-sidebar {
     display: flex;
     flex-direction: column;
-    width: var(--sidebar-w, 220px);
+    width: var(--sidebar-w);
     flex: none;
     padding: var(--space-2xl) var(--space-lg);
   }
@@ -454,11 +454,11 @@ a {
     display: none;
   }
   .fog-composer-wrap {
-    left: calc(50% + var(--sidebar-w, 220px) / 2);
+    left: calc(50% + var(--sidebar-w) / 2);
     right: auto;
     width: min(
-      calc(100vw - var(--sidebar-w, 220px) - 88px),
-      calc(var(--container-max, 1160px) - var(--sidebar-w, 220px) - 88px)
+      calc(100vw - var(--sidebar-w) - 88px),
+      calc(var(--container-max) - var(--sidebar-w) - 88px)
     );
     transform: translateX(-50%);
   }
@@ -766,7 +766,7 @@ a {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  font-family: var(--font-brand, var(--font-base));
+  font-family: var(--font-brand);
   font-weight: var(--weight-semibold);
   font-size: var(--text-xl);
   color: var(--color-neutral-900);
@@ -989,10 +989,10 @@ a {
   z-index: 15;
   display: flex;
   flex-direction: column;
-  min-width: var(--popover-min-w, 160px);
+  min-width: var(--popover-min-w);
   padding: 6px;
   background: var(--color-bg-card);
-  border-radius: var(--radius-popover, var(--radius-md));
+  border-radius: var(--radius-popover);
   box-shadow: var(--shadow-md);
 }
 .fog-pop-item {
@@ -1129,7 +1129,7 @@ a {
   width: 100%;
   margin-inline: calc(-1 * var(--space-md));
   width: calc(100% + 2 * var(--space-md));
-  padding: var(--pad-row, var(--space-md)) var(--space-md);
+  padding: var(--pad-row) var(--space-md);
   border: 0;
   border-radius: var(--radius-md);
   background: none;

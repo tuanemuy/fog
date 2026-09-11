@@ -54,9 +54,11 @@
   --color-bg-page-top: oklch(0.955 0.003 286);   /* #f0f0f3 ページ上部グラデーション始点 */
   --color-bg-card: oklch(1 0 0);                 /* #ffffff シート・カード */
   --color-bg-section: oklch(0.965 0.9 286 / 0);  /* 使用しない（面の分割は罫線で行う） */
-  --color-bg-input: oklch(0.96 0.003 286 / 0.88);/* rgba(244,244,246,.88) コンポーザー等の磨りガラス面 */
+  --color-bg-input: oklch(0.96 0.003 286 / 0.88);/* rgba(244,244,246,.88) コンポーザーの磨りガラス面 */
   --color-bg-hover: oklch(1 0 0 / 0.55);         /* ページ背景上のホバー面（ヘッダーボタン・サイドリンク） */
   --color-overlay: oklch(0.21 0.006 270 / 0.28); /* モーダル・ナビシートのオーバーレイ */
+  --gradient-page: linear-gradient(180deg, var(--color-bg-page-top) 0%, var(--color-bg-page) 240px);
+                                                 /* body に敷くページ背景（上 240px で page-top から page へ） */
 
   /* Text on fill */
   --color-text-inverse: oklch(1 0 0);            /* 塗りボタン・トースト上の白文字 */
@@ -69,7 +71,7 @@
 
 補足:
 - `--color-bg-section` は様式上使わない（面の階層は背景×シートの2段まで。シート内の区切りは `--color-neutral-100` の1pxヘアラインで行う）
-- 磨りガラス面（コンポーザー・シートナビ）は `--color-bg-input` + `backdrop-filter: blur(16px)`
+- 磨りガラス面はコンポーザーだけで、`--color-bg-input` + `backdrop-filter: blur(var(--blur-glass))`。ボトムシートナビは `--color-bg-card` の白いカード
 
 ## タイポグラフィ
 
@@ -118,12 +120,24 @@ UI 基本書体は OS 標準のサンセリフスタック1本。Web フォン�
   --space-xl: 1.875rem;  /* 30px シート上部パディング */
   --space-2xl: 2.5rem;   /* 40px */
   --space-section: 2.25rem; /* 36px シート内セクション間（.origin 等） */
+  --space-sheet-end: 5rem;  /* 80px シート内側の下端（スクロールの終わり際の逃げ幅） */
+  --space-sheet-end-composer: 9.375rem; /* 150px コンポーザーを持つ画面のシート内側の下端 */
+
+  /* 画面端に接する余白 — 既定の段と「safe-area + 1段下」の大きいほう。
+     viewport-fit=cover でノッチ・ホームインジケータ帯に食い込まないようにする */
+  --space-safe-t-lg: max(var(--space-lg), calc(env(safe-area-inset-top, 0px) + var(--space-md)));
+                         /* ヘッダーの上端 */
+  --space-safe-b-xl: max(var(--space-xl), calc(env(safe-area-inset-bottom, 0px) + var(--space-md)));
+                         /* コンポーザーの下端 */
+  --space-safe-b-2xl: max(var(--space-2xl), calc(env(safe-area-inset-bottom, 0px) + var(--space-lg)));
+                         /* ボトムシートの下端 */
 
   /* コンポーネント余白 — 役割で選ぶ */
   --pad-row: 16px;       /* リスト行の縦 padding（全画面共通） */
   --pad-menu: 0.75rem var(--space-md); /* 12px 14px メニュー/ナビ項目（サイドバーリンク・ポップオーバー項目） */
   --pad-btn: 12px 24px;  /* ピルボタン大（フォームの主ボタン） */
   --pad-btn-sm: 10px 20px; /* ピルボタン小（ヘッダー保存・インライン追加・設定行のボタン） */
+  --pad-input: 12px 16px; /* 入力欄（フォームの入力・コンポーザー・検索欄・日付と数値の入力） */
 }
 ```
 
@@ -190,20 +204,40 @@ UI 基本書体は OS 標準のサンセリフスタック1本。Web フォン�
   /* Popover */
   --popover-min-w: 10rem;  /* 160px ポップオーバー最小幅 */
 
+  /* 点・ハンドル — 面ではなく「点」として置く小さな図形 */
+  --size-dot: 6px;         /* ブランドの点（戻る付きヘッダー）・ナビの現在地マーク */
+  --size-handle-w: 36px;   /* ボトムシートのハンドル */
+  --size-handle-h: 4px;
+
+  /* Blur */
+  --blur-glass: 16px;      /* 磨りガラス面（コンポーザー）の backdrop-filter */
+
   /* Shadow — 影は「浮遊」の表現専用。3段のみ */
   --shadow-sm: 0 2px 24px oklch(0.21 0.006 270 / 0.05);   /* シート */
   --shadow-md: 0 12px 36px oklch(0.21 0.006 270 / 0.18);  /* コンポーザー・フローティング要素 */
   --shadow-lg: 0 -8px 40px oklch(0.21 0.006 270 / 0.2);   /* ボトムシート */
 
-  /* Transition */
-  --transition-fast: 0.15s ease;
-  --transition-default: 0.22s ease;
+  /* Transition — 2種のみ。どちらも ease。持続時間とイージングを成分として持ち、
+     shorthand はその合成（ユーティリティは成分を別々に読む） */
+  --duration-fast: 0.15s;
+  --duration-default: 0.22s;
+  --ease-default: ease;
+  --transition-fast: var(--duration-fast) var(--ease-default);
+  --transition-default: var(--duration-default) var(--ease-default);
 
   /* Container */
   --container-max: 1280px;
   --content-max: 50rem;        /* 800px シート内コンテンツの最大幅（全画面共通） */
   --sheet-max: calc(var(--content-max) + 2 * var(--space-2xl));
                                /* 880px ヘッダーとシートが共有する横フレームの最大幅 */
+  --sheet-w: min(100% - 2 * var(--space-md), var(--sheet-max));
+                               /* 横フレームの幅（md 未満）。余った幅はページ背景へ逃がす */
+  --sheet-w-md: min(100% - 2 * var(--space-lg), var(--sheet-max));
+                               /* 横フレームの幅（md 以上） */
+  --nav-sheet-inset: max(var(--space-md), calc((100% - var(--sheet-max)) / 2));
+                               /* ボトムシートの左右位置（横フレームに揃える） */
+  --narrow-max: 26rem;         /* 416px 単一カラムの狭いカード（認証シート・確認ダイアログ・コンポーザー） */
+  --input-number-w: 6.5rem;    /* 104px 数値入力（4桁）の幅 */
   --container-padding: clamp(0.875rem, 4vw, 2rem);
   --sidebar-w: 200px;          /* lg 以上の常設サイドバー幅 */
 
@@ -217,24 +251,75 @@ UI 基本書体は OS 標準のサンセリフスタック1本。Web フォン�
 
 Web フォントは使わない。`--font-base` の OS 標準スタックのみで、`<link>` による外部フォント読み込み（Google Fonts 等）は全ページで行わない。
 
-## トークン選別の記録（ADR-003）
+## 実装への写し
 
-モック HTML と `tokens.css` に存在する値のうち、上記の表に無いものは、1 つずつ既存トークンへ寄せるか新しい役割として追加するかを選別する。この表は段階的に更新される（ステップ 2 の初回選別で、その後のステップで追加が要る場合は随時更新）。
+`apps/web/app/styles/tokens.css` は、この文書のコードブロックの写しで、名前と値が一致する。生の値を持つのは `tokens.css` だけで、ほかの CSS と、Tailwind がアプリのソースから生成するユーティリティは、トークンと下の許容リストの値だけを使う。`lint/designTokens.test.ts` がこの一致と、生の値・未定義の参照・`var()` のフォールバックが無いことを検査する。
 
-### 許容リスト（ADR-002）
+## モックの生の値の選別
 
-次の値は生の値として生成された CSS や className に現れることを許可する。これ以外の値はトークンまたはその投影（ユーティリティ）から来なければならない。
+`pages/*.html` のうち、トークンを通らない値を 1 つずつ (a) 既存トークンへ寄せる / (b) 新しい役割のトークンを足す、に分けた結果。寄せた箇所はモックと px では一致しない（「同形」は構造の一致で、px の一致ではない）。アイコン 4 段・影 3 段・トランジション 2 種には段を足さず、寄せるだけにする。モック HTML は書き換えない。
 
-- `0`（長さのゼロ値）
-- `1px`（ヘアライン）
-- `±2px`（フォーカスリングの outline-offset）
-- ブレークポイント数値（`640px` / `768px` / `1024px` / `1280px` / `1536px`）
-- 相対単位（`%` / `vw` / `vh` / `fr`）
-- `em` を使う余白（tokens.md「余白の向き」の例外に記載）
-- `@keyframes` 定義
-- `currentColor`
-- `transparent`
+### (b) 足したトークン
 
-制限対象外：
-- モック HTML の `style` 属性
-- テスト用の生の値（プリミティブのスタイル定義）
+| トークン | モックの値 | 役割 |
+|---|---|---|
+| `--gradient-page` | 全画面の `body` の `linear-gradient(180deg, … 240px)` | ページ背景 |
+| `--space-sheet-end` / `--space-sheet-end-composer` | `.inner` の下 `80px` / `150px` | シート内側の下端の逃げ幅（[index.md](./index.md)「余白と区切り」） |
+| `--space-safe-t-lg` / `--space-safe-b-xl` / `--space-safe-b-2xl` | `header.top` の `max(20px, env(…) + 12px)`、`.composer-wrap` の `max(30px, env(…) + 16px)`、`.nav-sheet` の `max(40px, env(…) + 24px)` | 画面端に接する余白。既定値と safe-area の加算分をスケールの段へ寄せた |
+| `--pad-input` | `.form-input` などの `12px 16px` | 入力欄の内側余白 |
+| `--size-dot` | `.h-title .dot` の `6px` | ブランドの点 |
+| `--size-handle-w` / `--size-handle-h` | `.nav-sheet .handle` の `36px` × `4px` | ボトムシートのハンドル |
+| `--blur-glass` | `.composer` の `blur(16px)` | 磨りガラス面 |
+| `--sheet-w` / `--sheet-w-md` / `--nav-sheet-inset` | `.sheet`・`.nav-sheet` のトークンの式 | ヘッダー・シート・ボトムシートが共有する横フレーム |
+| `--narrow-max` | `.auth-sheet` の `26rem` | 単一カラムの狭いカード |
+| `--input-number-w` | `.input-number` の `6.5rem` | 数値入力の幅 |
+| `--duration-*` / `--ease-default` | （`--transition-*` の成分） | 2 種のトランジションを、持続時間とイージングに分けて読むため。段は増えない |
+
+### (a) 寄せた値
+
+余白（`gap`・`padding`・`margin`）は軸ごとに一番近い段へ寄せ、等距離なら小さい段を取る: 2〜6px → `--space-xs`、8〜10px → `--space-sm`、12〜18px → `--space-md`、20〜24px → `--space-lg`、28〜30px → `--space-xl`、40px → `--space-2xl`。役割のトークンがある箱（入力欄・ボタン・行・メニュー項目）はそちらを使う。
+
+| モックの値（主な箇所） | 寄せ先 |
+|---|---|
+| `.composer` `14px 20px`、`.search-box` `16px 20px`、`.date-input` / `.input-number` `10px 12px` | `--pad-input` |
+| `.dialog-btn` `12px 16px` | `--pad-btn-sm` |
+| `.nav-item` の横 `2px` | `--space-xs`（縦は `--pad-row` のまま） |
+| `.doc-body li` / `.memo-list li` の `padding-left: 18px` | `--space-md` |
+| `.day-head .sub` の `margin-left: 8px` | 親の `gap` の `--space-sm` |
+| `.menu-popup` の `top: calc(100% + 6px)`、`.topic-pop` の `calc(100% - 12px)`、`.entry-pop` の `top: 28px` | トリガーの下端（`100%`）＋余白の段 |
+| `.nav-item .mark` / `.side-link .mark` の `5px` | `--size-dot` |
+| `.nav-sheet .handle` の `border-radius: 4px` | `--radius-full` |
+| `.menu`（ハンバーガー）の線 `19px` / `12px` × `2.5px`・角丸 `3px`・間隔 `6px` | アイコン（線画）の `--icon-md` |
+| `.spinner` の `14px`・`border: 2px` | アイコン（線画）の `--icon-xs`。線の太さは SVG が持つ |
+| `.restriction-icon` `18px`、`.scope-icon` `20px` | `--icon-md` |
+| `.diff-mark` の `width: 16px` | `--icon-sm` |
+| `.restriction-icon` の `margin-top: 2px` | アイコンを文字の 1 行目に揃える `1lh` の箱（`.inline-alert svg` と同形） |
+| 行の操作ボタン（`.row-action` など）の `28px` 四方 | アイコン＋`--space-xs` の padding |
+| `.dialog-box` `320px`、`.composer` `340px` / `420px` | `--narrow-max` |
+| `.dialog-cancel` の `1.3px solid neutral-100` | `--border-input` |
+| `.doc-row .d-name` の `line-height: 1.6` / `.origin-row .o-text` の `1.8` | `--leading-tight` / `--leading-normal` |
+| `.body-input` の `min-height: 10em` | `10lh`（行数で数える） |
+| SVG の `18` / `15` / `14` / `10` と、行末の復元・削除の `20` | `--icon-md` / `--icon-sm` / `--icon-xs` / `--icon-xs` / `--icon-md` |
+
+ロゴ（lockup）の表示寸法は [icons/logo.md](./icons/logo.md) が決め、SVG の属性で持つ。
+
+### 消した値（実装だけにあったトークン）
+
+- 読み込み中のバーの寸法: スケルトンは実画面の DOM に被せる形で、固有の寸法を持たない
+- ヘッダー以外の上端の safe-area の段: 使う箇所が無い
+- ナビの現在地マークの寸法: `--size-dot` へ寄せた
+
+## 許容リスト
+
+`tokens.css` の外の CSS と生成されたユーティリティに、生の値として現れてよいもの。これ以外の色・長さ・書体・文字サイズ・ウェイト・行間・字間・角丸・影・トランジションは、トークンかその投影から来る。
+
+- `0`（単位の有無を問わない）
+- `1px` と `-1px`（ヘアライン）
+- `2px` と `-2px`（フォーカスリングの `outline` と `outline-offset` だけ）
+- ブレークポイントの値（上の表の 5 つ。`theme.css` の `--breakpoint-*` と、`@media` の条件だけ）
+- 相対単位: `%`・ビューポート単位（`vw`・`vh`・`dvh` など）・`fr`・`lh`（行数で数える寸法。1 行の高さは行間トークンから決まる）
+- `em`（`margin` だけ。「余白の向き」の例外）
+- `@keyframes` の中身と、それを使う `--animate-*`（スピナーの回転。アニメーションはこれだけ）
+- 値を選ばないキーワード: `transparent`・`currentColor`・`none`・`inherit` などの CSS 全体キーワード。スケルトンの透明な文字と、塗りの無い面に使う
+
+角度（`rotate`・グラデーションの向き）と、単位の無い倍率（`calc` の係数・`z-index`・`opacity` など）は上の区分に入らない。モック HTML と、TSX の `style` 属性は検査の対象外。

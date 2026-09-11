@@ -30,7 +30,7 @@
 }
 .fog-document-body {
   margin-top: var(--space-lg);
-  line-height: var(--leading-relaxed, 1.8);
+  line-height: var(--leading-normal);
 }
 .fog-document-body .fog-markdown h1,
 .fog-document-body .fog-markdown h2,
