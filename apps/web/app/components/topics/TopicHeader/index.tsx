@@ -6,17 +6,29 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   type FormEvent,
   useEffect,
-  useId,
   useOptimistic,
   useRef,
   useState,
   useTransition,
 } from "react";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { FormError } from "@/components/ui/FormError";
+import { Icon } from "@/components/ui/Icon";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { PopoverMenu, PopoverMenuItem } from "@/components/ui/PopoverMenu";
+import { TextAreaField } from "@/components/ui/TextAreaField";
+import { TextField } from "@/components/ui/TextField";
 import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { trashTopicFn, updateTopicFn } from "../actions";
 import { isTopicResult, isTrashTopicResult } from "../schema";
+import {
+  TOPIC_DETAIL_DESC_CLASS,
+  TOPIC_HEAD_CLASS,
+  TOPIC_STATUS_CLASS,
+  TOPIC_TITLE_CLASS,
+} from "../styles";
 
 type Patch = Readonly<{
   name?: string;
@@ -25,27 +37,29 @@ type Patch = Readonly<{
 }>;
 
 /**
- * The head of P-07: name and description with an inline editor, 完了にする /
- * 完了を解除 as a visible one-action button, and a menu of 編集 / 削除 — the
- * complete action never shares a menu with 削除 (spec/pages P-07).
+ * The head of P-07 (`spec/design/pages/topic-detail.html`, `.topic-head` /
+ * `.topic-status`): the name with its menu (編集 / 削除), the description,
+ * and under them 完了にする / 完了を解除 as a visible one-action button — the
+ * complete action never shares a menu with 削除 (spec/pages P-07). 編集 turns
+ * the head into its form in place.
+ *
  * Renaming and archiving are in-item changes, so the island owns them with
  * an item-local `useOptimistic`; deleting leaves the screen, so it
- * navigates to the list once the server confirms.
+ * navigates to the list once the server confirms. A rejected save stays in
+ * its form (`FormError`); a rejected archive or delete is told under the
+ * head (`InlineAlert`).
  */
 export function TopicHeader({ topic }: { topic: TopicView }) {
   const router = useRouter();
   const navigate = useNavigate();
   const update = useServerFn(updateTopicFn);
   const trash = useServerFn(trashTopicFn);
-  const nameId = useId();
-  const nameErrorId = useId();
-  const descriptionId = useId();
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(topic.name);
   const [nameMissing, setNameMissing] = useState(false);
   const [description, setDescription] = useState(topic.description ?? "");
+  const [formError, setFormError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [saving, startSave] = useTransition();
@@ -55,21 +69,19 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
     (current, next) => ({ ...current, ...next }),
   );
 
+  // 編集 is chosen from a menu that the form replaces, so focus would be
+  // left on nothing; it goes to the name instead.
   useEffect(() => {
-    if (!menuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuOpen]);
+    if (editing) nameRef.current?.focus();
+  }, [editing]);
+
+  const startEditing = () => {
+    setName(topic.name);
+    setDescription(topic.description ?? "");
+    setNameMissing(false);
+    setFormError(null);
+    setEditing(true);
+  };
 
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -97,17 +109,18 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
           isTopicResult,
           "updateTopicFn",
         );
-        setError(null);
+        setFormError(null);
         setEditing(false);
         await router.invalidate();
       } catch (failure) {
-        setError(displayError(failure));
+        setFormError(displayError(failure));
       }
     });
   };
 
   const toggleArchived = () => {
     const archived = shown.status !== "archived";
+    setError(null);
     startSave(async () => {
       patch({ status: archived ? "archived" : "active" });
       try {
@@ -116,7 +129,6 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
           isTopicResult,
           "updateTopicFn",
         );
-        setError(null);
         await router.invalidate();
       } catch (failure) {
         setError(displayError(failure));
@@ -125,6 +137,7 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
   };
 
   const confirmDelete = () => {
+    setError(null);
     startDelete(async () => {
       try {
         readServerFnResult(
@@ -142,19 +155,19 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
 
   const archived = shown.status === "archived";
   return (
-    <header className="fog-topic-head" aria-busy={saving || undefined}>
+    <div aria-busy={saving || undefined}>
       {editing ? (
         <form
-          className="fog-topic-edit"
+          className="flex flex-col gap-sm"
           onSubmit={save}
           aria-label="トピックを編集"
         >
-          <label className="fog-form-label" htmlFor={nameId}>
-            名前
-          </label>
-          <input
-            id={nameId}
-            className="fog-field"
+          {formError ? <FormError>{formError}</FormError> : null}
+          <TextField
+            ref={nameRef}
+            label="トピック名"
+            hideLabel
+            placeholder="トピック名"
             value={name}
             onChange={(event) => {
               setName(event.target.value);
@@ -162,126 +175,87 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
             }}
             disabled={saving}
             maxLength={100}
-            aria-invalid={nameMissing || undefined}
-            aria-describedby={nameMissing ? nameErrorId : undefined}
+            error={nameMissing ? blankFieldMessage("topicName") : null}
           />
-          {nameMissing && (
-            <p className="fog-error" id={nameErrorId} role="alert">
-              {blankFieldMessage("topicName")}
-            </p>
-          )}
-          <label className="fog-form-label" htmlFor={descriptionId}>
-            説明
-          </label>
-          <textarea
-            id={descriptionId}
-            className="fog-field"
+          <TextAreaField
+            label="説明"
+            hideLabel
+            placeholder="説明（任意）"
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             disabled={saving}
-            rows={3}
+            rows={2}
             maxLength={500}
-            placeholder="説明（任意）"
           />
-          <div className="fog-actions">
-            <button type="submit" className="fog-primary" disabled={saving}>
-              {saving ? "保存中…" : "保存"}
-            </button>
-            <button
-              type="button"
-              className="fog-secondary"
+          <div className="flex items-center justify-end gap-sm">
+            <Button
+              variant="text"
               disabled={saving}
               onClick={() => {
                 setEditing(false);
                 setNameMissing(false);
-                setName(topic.name);
-                setDescription(topic.description ?? "");
+                setFormError(null);
               }}
             >
-              取り消し
-            </button>
+              キャンセル
+            </Button>
+            <Button
+              variant="fill-sm"
+              type="submit"
+              disabled={saving || nameMissing}
+            >
+              {saving ? "保存中…" : "保存"}
+            </Button>
           </div>
         </form>
       ) : (
         <>
-          <div className="fog-topic-title-row">
-            <h2 className="fog-topic-title">
-              {shown.name}
-              {archived && <span className="fog-badge">完了</span>}
-            </h2>
-            <button
-              type="button"
-              className="fog-secondary fog-topic-archive"
+          <div className={TOPIC_HEAD_CLASS}>
+            <h2 className={TOPIC_TITLE_CLASS}>{shown.name}</h2>
+            <PopoverMenu label="トピックの操作">
+              <PopoverMenuItem icon="edit" onSelect={startEditing}>
+                編集
+              </PopoverMenuItem>
+              <PopoverMenuItem
+                icon="delete"
+                tone="danger"
+                onSelect={() => setConfirming(true)}
+              >
+                削除
+              </PopoverMenuItem>
+            </PopoverMenu>
+          </div>
+          {shown.description ? (
+            <p className={TOPIC_DETAIL_DESC_CLASS}>{shown.description}</p>
+          ) : null}
+          <div className={TOPIC_STATUS_CLASS}>
+            {archived ? (
+              <span className="font-base text-xs leading-tight text-neutral-400">
+                完了済み
+              </span>
+            ) : null}
+            <Button
+              variant="outline"
               onClick={toggleArchived}
               disabled={saving}
             >
+              <span className="flex text-neutral-500">
+                <Icon name={archived ? "restore" : "check"} size="sm" />
+              </span>
               {archived ? "完了を解除" : "完了にする"}
-            </button>
-            <div className="fog-entry-menu-wrap" ref={menuRef}>
-              <button
-                type="button"
-                className="fog-entry-menu"
-                aria-label="トピックの操作"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((open) => !open)}
-              >
-                <svg
-                  aria-hidden="true"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                >
-                  <circle cx="3" cy="8" r="1.4" fill="currentColor" />
-                  <circle cx="8" cy="8" r="1.4" fill="currentColor" />
-                  <circle cx="13" cy="8" r="1.4" fill="currentColor" />
-                </svg>
-              </button>
-              {menuOpen && (
-                <div className="fog-entry-pop" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="fog-pop-item"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setName(topic.name);
-                      setDescription(topic.description ?? "");
-                      setEditing(true);
-                    }}
-                  >
-                    編集
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="fog-pop-item fog-pop-danger"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setConfirming(true);
-                    }}
-                  >
-                    削除
-                  </button>
-                </div>
-              )}
-            </div>
+            </Button>
           </div>
-          {shown.description && (
-            <p className="fog-topic-desc">{shown.description}</p>
-          )}
         </>
       )}
-      {error && (
-        <p className="fog-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error ? (
+        <div className="mt-md">
+          <InlineAlert tone="error">{error}</InlineAlert>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={confirming}
         title="トピックを削除しますか？"
-        description="トピックと配下のドキュメントはゴミ箱に移動し、保持期限を過ぎると完全に削除されます。"
+        description="トピックとそのドキュメントはゴミ箱に移動し、保持期限を過ぎると完全に削除されます。"
         confirmLabel="削除"
         danger
         pending={deleting}
@@ -290,6 +264,6 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
           if (!deleting) setConfirming(false);
         }}
       />
-    </header>
+    </div>
   );
 }

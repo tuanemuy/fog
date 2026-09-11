@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { TopicRow } from "@/components/topics/TopicRow";
@@ -25,58 +25,98 @@ describe("TopicRow", () => {
     );
     const link = screen.getByRole("link", { name: /読書メモ/ });
     expect(link.getAttribute("href")).toBe("/topics/t1");
-    expect(document.querySelector(".fog-topic-count")?.textContent).toBe(
-      "ドキュメント数: 2",
-    );
-    expect(screen.getByText("本の要約")).toBeTruthy();
+    expect(
+      within(link).getByText("ドキュメント数:").parentElement?.textContent,
+    ).toBe("ドキュメント数: 2");
+    expect(within(link).getByText("本の要約")).toBeTruthy();
     expectInternalHrefsToResolve();
   });
 
-  it("opens the menu with 編集 / 削除, navigates on 編集 and delegates 削除", async () => {
+  it("sets an archived topic neutral and leaves its description out", async () => {
+    await renderWithRouter(
+      <>
+        <TopicRow
+          topic={topic("t1", "完了した", {
+            status: "archived",
+            description: "書かない説明",
+          })}
+          onDelete={vi.fn()}
+        />
+        <TopicRow
+          topic={topic("t2", "進行中", { description: "書く説明" })}
+          onDelete={vi.fn()}
+        />
+      </>,
+      { path: "/topics" },
+    );
+    expect(screen.queryByText("書かない説明")).toBeNull();
+    expect(screen.getByText("書く説明")).toBeTruthy();
+    const neutral = (name: string) =>
+      screen.getByText(name).classList.contains("text-neutral-600");
+    expect(neutral("完了した")).toBe(true);
+    expect(neutral("進行中")).toBe(false);
+  });
+
+  it("opens its menu with 編集 (a link to the detail) and 削除, which it hands to the owner", async () => {
     const onDelete = vi.fn();
     const t = topic("t1", "読書メモ");
-    const { router } = await renderWithRouter(
+    const { expectInternalHrefsToResolve } = await renderWithRouter(
       <TopicRow topic={t} onDelete={onDelete} />,
-      {
-        path: "/topics",
-      },
+      { path: "/topics" },
     );
-    const navigate = vi.spyOn(router, "navigate");
     const button = screen.getByRole("button", { name: "トピックの操作" });
     expect(button.getAttribute("aria-haspopup")).toBe("menu");
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "編集",
-      "削除",
-    ]);
-    fireEvent.click(screen.getByRole("menuitem", { name: "編集" }));
-    expect(navigate).toHaveBeenCalledWith({
-      to: "/topics/$topicId",
-      params: { topicId: "t1" },
-    });
-    expect(screen.queryByRole("menu")).toBeNull();
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual(["編集", "削除"]);
+    expect(items[0]?.getAttribute("href")).toBe("/topics/t1");
+    expectInternalHrefsToResolve();
 
-    fireEvent.click(button);
     fireEvent.click(screen.getByRole("menuitem", { name: "削除" }));
     expect(onDelete).toHaveBeenCalledWith(t);
-  });
-
-  it("opens on right click and closes on Escape", async () => {
-    await renderWithRouter(
-      <TopicRow topic={topic("t1", "x")} onDelete={vi.fn()} />,
-      {
-        path: "/topics",
-      },
-    );
-    const row = document.querySelector(".fog-topic-row-main") as HTMLElement;
-    fireEvent.contextMenu(row);
-    expect(screen.getByRole("menu")).toBeTruthy();
-    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("draws a pending row without a menu and with the saving status", async () => {
+  it("opens the menu on a right click on the row and closes it on Escape", async () => {
+    await renderWithRouter(
+      <TopicRow topic={topic("t1", "x")} onDelete={vi.fn()} />,
+      { path: "/topics" },
+    );
+    const link = screen.getByRole("link", { name: /x/ });
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.contextMenu(link);
+    const menu = screen.getByRole("menu", { name: "トピックの操作" });
+    expect(document.activeElement).toBe(
+      within(menu).getByRole("menuitem", { name: "編集" }),
+    );
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("draws the owner's failure under the row, and none without one", async () => {
+    await renderWithRouter(
+      <>
+        <TopicRow
+          topic={topic("t1", "失敗した")}
+          onDelete={vi.fn()}
+          error={<p role="alert">削除できませんでした</p>}
+        />
+        <TopicRow topic={topic("t2", "普通")} onDelete={vi.fn()} />
+      </>,
+      { path: "/topics" },
+    );
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.textContent).toBe("削除できませんでした");
+    expect(
+      screen
+        .getByRole("link", { name: /失敗した/ })
+        .contains(alerts[0] ?? null),
+    ).toBe(false);
+  });
+
+  it("draws a pending row without a link or a menu, busy, with the saving status", async () => {
     await renderWithRouter(
       <TopicRow
         topic={{ ...topic("p", "保存中の行"), pending: true }}
@@ -84,11 +124,10 @@ describe("TopicRow", () => {
       />,
       { path: "/topics" },
     );
-    expect(screen.getByRole("status").textContent).toBe("保存中…");
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("保存中…");
     expect(screen.queryByRole("button", { name: "トピックの操作" })).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
-    expect(
-      document.querySelector(".fog-topic-row")?.getAttribute("aria-busy"),
-    ).toBe("true");
+    expect(status.closest('[aria-busy="true"]')).not.toBeNull();
   });
 });

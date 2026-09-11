@@ -1,11 +1,15 @@
 import type { TopicDetailView } from "@repo/core/application/knowledge/view";
-import { Link } from "@tanstack/react-router";
 import { KnowledgeNotFound } from "@/components/knowledge/KnowledgeNotFound";
+import { KnowledgeSection } from "@/components/knowledge/KnowledgeSection";
 import { OriginList } from "@/components/knowledge/OriginRow";
+import { RowLink } from "@/components/ui/RowLink";
+import { RowList } from "@/components/ui/RowList";
 import { extractSerializedError } from "@/presentation/errorResponse";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
 import { formatDay } from "@/presentation/time";
+import { AddRowLink } from "../AddRow";
+import { DOCUMENT_META_CLASS, DOCUMENT_NAME_CLASS } from "../styles";
 import { TopicHeader } from "../TopicHeader";
 
 const loadTopic = serverData(
@@ -14,29 +18,11 @@ const loadTopic = serverData(
     getTopic({ container, input: { userId, topicId } }),
 );
 
-function JumpIcon() {
-  return (
-    <span className="fog-doc-row-jump">
-      <svg
-        aria-hidden="true"
-        width="18"
-        height="18"
-        viewBox="0 0 20 20"
-        fill="none"
-      >
-        <path
-          d="M5 15L15 5M15 5H7.5M15 5V12.5"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
-}
-
-/** The document list of P-07, `updatedAt` descending as the usecase promises. */
+/**
+ * The documents of P-07, `updatedAt` descending as the usecase promises
+ * (`spec/design/pages/topic-detail.html`): each a `RowLink` to P-08, and
+ * 「新しいドキュメント」 last. With no document the add row is all there is.
+ */
 export function TopicDocuments({
   topicId,
   documents,
@@ -45,41 +31,28 @@ export function TopicDocuments({
   documents: TopicDetailView["documents"];
 }) {
   return (
-    <section aria-label="ドキュメント">
-      <h3 className="fog-section-label">ドキュメント</h3>
-      {documents.length === 0 ? (
-        <p className="fog-empty-inline">まだドキュメントがありません</p>
-      ) : (
-        <div className="fog-doc-rows">
-          {documents.map((document) => (
-            <Link
-              key={document.id}
-              className="fog-doc-row"
+    <KnowledgeSection label="ドキュメント">
+      <RowList>
+        {documents.map((document) => (
+          <li key={document.id}>
+            <RowLink
               to="/documents/$documentId"
               params={{ documentId: document.id }}
             >
-              <span className="fog-doc-row-main">
-                <span className="fog-doc-row-name">{document.title}</span>
-                <span className="fog-doc-row-meta">
-                  {formatDay(document.updatedAt)} 更新
-                </span>
+              <span className={DOCUMENT_NAME_CLASS}>{document.title}</span>
+              <span className={DOCUMENT_META_CLASS}>
+                {formatDay(document.updatedAt)} 更新
               </span>
-              <JumpIcon />
-            </Link>
-          ))}
-        </div>
-      )}
-      <Link
-        className="fog-add-item"
-        to="/topics/$topicId/documents/new"
-        params={{ topicId }}
-      >
-        <span className="fog-add-item-icon" aria-hidden="true">
-          ＋
-        </span>
-        新しいドキュメント
-      </Link>
-    </section>
+            </RowLink>
+          </li>
+        ))}
+        <li>
+          <AddRowLink to="/topics/$topicId/documents/new" params={{ topicId }}>
+            新しいドキュメント
+          </AddRowLink>
+        </li>
+      </RowList>
+    </KnowledgeSection>
   );
 }
 
@@ -102,10 +75,10 @@ export async function TopicDetailFeed({ topicId }: { topicId: string }) {
     throw error;
   }
   return (
-    <div className="fog-topic-detail">
+    <>
       <TopicHeader key={detail.topic.id} topic={detail.topic} />
       <TopicDocuments topicId={detail.topic.id} documents={detail.documents} />
       <OriginList memos={detail.relatedMemos} label="関連メモ" />
-    </div>
+    </>
   );
 }

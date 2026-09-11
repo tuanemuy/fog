@@ -1,85 +1,80 @@
 "use client";
 
 import type { RelatedMemoView } from "@repo/core/application/knowledge/view";
-import { Link } from "@tanstack/react-router";
+import { KnowledgeSection } from "@/components/knowledge/KnowledgeSection";
+import { Icon } from "@/components/ui/Icon";
+import { RowLink } from "@/components/ui/RowLink";
+import { RowList } from "@/components/ui/RowList";
 import { formatDateTime } from "@/presentation/time";
 
-function JumpIcon() {
-  return (
-    <span className="fog-origin-jump">
-      <svg
-        aria-hidden="true"
-        width="18"
-        height="18"
-        viewBox="0 0 20 20"
-        fill="none"
-      >
-        <path
-          d="M5 15L15 5M15 5H7.5M15 5V12.5"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
-}
+// `spec/design/pages/document.html`, `.time-label` / `.o-text`.
+const TIME_CLASS =
+  "block text-xs font-medium leading-tight tracking-label text-neutral-400 tabular-nums next-sibling:mt-xs";
+const TEXT_CLASS = "line-clamp-2 leading-normal";
 
 /**
  * One memo cited by a document — P-08's 「元になったメモ」 and P-07's 関連メモ.
- * A live memo links to its position on the timeline (`/?memo=`); a memo in
- * the trash reads 「削除済みのメモ」 and does not navigate. A hard-deleted
- * memo never reaches here (ADR-003).
+ * A live memo is a `RowLink` to its position on the timeline (`/?memo=`); a
+ * memo in the trash reads 「削除済みのメモ」, grayed, and does not navigate.
+ * A hard-deleted memo never reaches here.
  */
 export function OriginRow({ memo }: { memo: RelatedMemoView }) {
   const time = (
-    <span className="fog-origin-time">{formatDateTime(memo.postedAt)}</span>
+    <span className={TIME_CLASS}>{formatDateTime(memo.postedAt)}</span>
   );
   if (memo.deleted) {
+    // Not interactive, so no hover surface and no bleed past the text
+    // column: `RowLink`'s padding lands the text in the same place.
     return (
-      <div className="fog-origin-row deleted" aria-disabled="true">
-        <span className="fog-origin-main">
+      <div
+        aria-disabled="true"
+        className="flex items-center gap-md py-row font-base text-base leading-normal text-neutral-400"
+      >
+        <span className="min-w-[0] flex-1">
           {time}
-          <span className="fog-origin-text">削除済みのメモ</span>
+          <span className={`block ${TEXT_CLASS}`}>削除済みのメモ</span>
         </span>
-        <JumpIcon />
+        <span className="flex shrink-0 text-neutral-300">
+          <Icon name="jump" size="md" />
+        </span>
       </div>
     );
   }
   return (
-    <Link
-      className="fog-origin-row"
+    <RowLink
       to="/"
       search={{ memo: memo.memoId }}
       aria-label={`タイムラインで表示: ${memo.snippet}`}
     >
-      <span className="fog-origin-main">
-        {time}
-        <span className="fog-origin-text">{memo.snippet}</span>
+      {time}
+      <span className={`block text-neutral-700 ${TEXT_CLASS}`}>
+        {memo.snippet}
       </span>
-      <JumpIcon />
-    </Link>
+    </RowLink>
   );
 }
 
-/** The list of them, or nothing at all when there is none to show. */
+/** The list of them under its label, or nothing at all when there is none. */
 export function OriginList({
   memos,
   label,
+  level = 3,
 }: {
   memos: readonly RelatedMemoView[];
   label: string;
+  /** Heading level of the label under the page's `h1`. */
+  level?: 2 | 3;
 }) {
   if (memos.length === 0) return null;
   return (
-    <section className="fog-origin" aria-label={label}>
-      <h3 className="fog-section-label">{label}</h3>
-      <div className="fog-origin-list">
+    <KnowledgeSection label={label} level={level}>
+      <RowList>
         {memos.map((memo) => (
-          <OriginRow key={memo.memoId} memo={memo} />
+          <li key={memo.memoId}>
+            <OriginRow memo={memo} />
+          </li>
         ))}
-      </div>
-    </section>
+      </RowList>
+    </KnowledgeSection>
   );
 }
