@@ -29,6 +29,31 @@
   }
 }
 
+/* ADR-012: Utilities and variants for cases that cannot be written with utilities alone */
+
+/* Custom variant for next-sibling selector (label + * margin pattern) */
+@custom-variant next-sibling (& + *);
+
+/* Animations for loading spinners and other effects */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 @import "./app.css";
 @import "./knowledge.css";
 @import "./topics.css";

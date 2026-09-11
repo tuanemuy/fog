@@ -53,6 +53,7 @@
 
   /* Typography */
   --font-base: var(--font-base);
+  --font-brand: var(--font-brand);
 
   --text-xs: var(--text-xs);
   --text-sm: var(--text-sm);

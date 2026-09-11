@@ -11,6 +11,8 @@
 
 ## 構成ファイル
 
+### デザインソース
+
 | ファイル | 内容 |
 |---|---|
 | `logo.svg` | アイコン単体（24 グリッド、線 `#191a1d` × 点 `#e8590c`） |
@@ -18,6 +20,20 @@
 | `lockup.svg` | アイコン ＋ Wordmark の確定 lockup（viewBox `0 0 64.7 26` — UI 実寸と 1:1 の座標系） |
 
 デザインモック（`../pages/*.html`）にも同じ SVG を埋め込む。表示サイズは 64.7×26px（アイコン 26px、Wordmark 19px 相当）とする。華奢さの対策は Wordmark の拡大ではなく、アイコンの拡大と Medium ウェイトで行う。
+
+### アセット配布
+
+`apps/web/public/` に以下を配置する：
+
+| ファイル | 用途 | 仕様 |
+|---|---|---|
+| `favicon.svg` | ブラウザタブ・ブックマーク。有彩色版 | アイコン単体 26px、色付き |
+| `favicon.ico` | 古いブラウザ・その他環境のフォールバック | アイコン単体、単色 |
+| `icon-192.png` | Web App Manifest（ホーム画面アイコン）。中サイズ | 192×192px、色付き |
+| `icon-512.png` | Web App Manifest。大サイズ | 512×512px、色付き |
+| `apple-touch-icon.png` | iOS ホーム画面（古いバージョン）。角丸無し | 180×180px、色付き |
+| `og-image.png` | OG Image（SNS共有時のプレビュー） | 1200×630px、lockup 中央配置の推奨 |
+| `site.webmanifest` | PWA Manifest | `name` / `short_name` / `start_url` / `icons` 定義 |
 
 ## 幾何
 
