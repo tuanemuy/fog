@@ -39,7 +39,7 @@
 #      `wrangler deploy` cannot resolve its virtual modules
 #      (`#tanstack-start-entry`, `#tanstack-router-entry`,
 #      `tanstack-start-manifest:v`) — the same unresolved point that keeps
-#      `pnpm start` from booting. Tracking: #73.
+#      `pnpm start` from booting.
 #   6. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"
