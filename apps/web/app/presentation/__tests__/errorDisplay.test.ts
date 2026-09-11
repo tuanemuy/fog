@@ -148,7 +148,7 @@ describe("renderErrorMessage", () => {
         code: IdentityErrorCode.InvalidEmail,
         message: "Invalid email address",
       },
-      "メールアドレスの形式が正しくありません",
+      "有効なメールアドレスを入力してください",
     ],
     [
       "a weak password",
@@ -157,7 +157,7 @@ describe("renderErrorMessage", () => {
         code: IdentityErrorCode.PasswordTooWeak,
         message: "Password must be between 8 and 128 characters",
       },
-      "パスワードは8文字以上128文字以下で入力してください",
+      "8文字以上で入力してください",
     ],
     [
       "an over-long memo body",
@@ -364,7 +364,7 @@ describe("renderErrorMessage", () => {
         code: "TOO_MANY_ATTEMPTS",
         message: "Attempts are limited for now",
       },
-      "試行回数の上限に達しました。しばらくしてからお試しください",
+      "試行が制限されています。しばらくしてからお試しください",
     ],
     [
       "the last login method",

@@ -2,6 +2,7 @@ import type {
   AiClientConnectionView,
   CurrentUserView,
 } from "@repo/core/application/identity/view";
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 import { AiConnectionsList } from "../AiConnectionsList";
 import { CredentialList } from "../CredentialList";
 import { ExportPanel } from "../ExportPanel";
@@ -55,13 +56,7 @@ export function CurrentUserPanel({
       </SettingsSection>
       <SettingsSection id="settings-account" label="アカウント">
         {withPassword && <PasswordChangeForm />}
-        <div
-          className={
-            withPassword
-              ? "mt-section border-t border-neutral-100 pt-lg"
-              : undefined
-          }
-        >
+        <div className={withPassword ? SHEET_SECTION_CLASS : undefined}>
           <LogoutButton />
         </div>
       </SettingsSection>

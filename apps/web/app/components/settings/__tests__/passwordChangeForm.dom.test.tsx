@@ -103,7 +103,7 @@ describe("PasswordChangeForm", () => {
       { kind: "business", code: "PASSWORD_TOO_WEAK", message: "no" },
       "新しいパスワード",
       "現在のパスワード",
-      "パスワードは8文字以上128文字以下で入力してください",
+      "8文字以上で入力してください",
     ],
   ] as const)("draws %s", async (_label, error, field, other, wording) => {
     mocks.changePasswordFn.mockRejectedValue(new AppServerError(error));
@@ -130,7 +130,7 @@ describe("PasswordChangeForm", () => {
     fill("old-pass-1", "new-pass-12");
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
-      "試行回数の上限に達しました。しばらくしてからお試しください",
+      "試行が制限されています。しばらくしてからお試しください",
     );
     expect(form().firstElementChild).toBe(alert);
     expect(input("現在のパスワード").getAttribute("aria-invalid")).toBeNull();

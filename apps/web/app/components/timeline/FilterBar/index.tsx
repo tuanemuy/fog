@@ -57,7 +57,7 @@ export function FilterBar({
           placeholder="タイムラインを絞り込む…"
           aria-label="キーワードで絞り込む"
           maxLength={500}
-          className="min-w-0 flex-1 bg-transparent font-base text-sm leading-tight text-neutral-900 outline-none placeholder:text-neutral-400"
+          className="min-w-[0] flex-1 bg-transparent font-base text-sm leading-tight text-neutral-900 outline-none placeholder:text-neutral-400"
         />
         {keyword === undefined ? null : (
           <IconButton

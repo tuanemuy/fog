@@ -16,6 +16,8 @@ describe("RevisionHistorySkeleton", () => {
     const status = screen.getByRole("status");
     expect(status.getAttribute("aria-busy")).toBe("true");
     expect(within(status).getByText("読み込み中")).toBeTruthy();
+    // P-05 keeps its `h1` in the header, so the label is not one here.
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     expect(
       within(status).getByRole("heading", { level: 2, name: "履歴" }),
     ).toBeTruthy();
@@ -40,7 +42,11 @@ describe("RevisionHistorySkeleton", () => {
     const status = screen.getByRole("status");
     const title = within(status).getByText("ドキュメントのタイトル");
     expect(title.getAttribute("aria-hidden")).toBe("true");
-    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    // P-10 leaves the `h1` to the document's title, which is not here yet:
+    // the loading label carries it meanwhile.
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "読み込み中",
+    );
     const list = within(status).getByRole("list");
     expect(
       title.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,

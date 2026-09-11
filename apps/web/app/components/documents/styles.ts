@@ -1,5 +1,6 @@
 // The document screens' own pieces (`spec/design/pages/document.html` /
 // `document-edit.html`). The loaded screens and their skeletons read the same
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 // strings, so a line keeps its height when the skeleton gives way to it.
 
 /** `.doc-context`: the topic the document belongs to, over its title. */
@@ -26,7 +27,7 @@ export const DOC_BODY_CLASS = "mt-section";
  * body run on as one seamless editor, so neither draws a border or a ring —
  * the caret is where the focus shows.
  */
-export const TITLE_INPUT_CLASS = `block w-full min-w-0 bg-transparent outline-none placeholder:text-neutral-400 ${DOC_TITLE_CLASS}`;
+export const TITLE_INPUT_CLASS = `block w-full min-w-[0] bg-transparent outline-none placeholder:text-neutral-400 ${DOC_TITLE_CLASS}`;
 
 /**
  * `.body-input`: the body in the reading leading, growing with its content so
@@ -36,7 +37,7 @@ export const BODY_INPUT_CLASS =
   "mt-lg block min-h-[5lh] w-full resize-none bg-transparent font-base text-base leading-loose text-neutral-900 outline-none field-sizing-content placeholder:text-neutral-400";
 
 /** `.origin` / `.reason`: a section after the body, over its hairline. */
-export const DOC_SECTION_CLASS = "mt-section border-t border-neutral-100 pt-lg";
+export const DOC_SECTION_CLASS = SHEET_SECTION_CLASS;
 
 /** The alerts that open the sheet (a conflict, a failed save or delete). */
 export const SHEET_ALERTS_CLASS = "flex flex-col gap-sm next-sibling:mt-lg";

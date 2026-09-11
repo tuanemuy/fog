@@ -21,7 +21,7 @@ export type DateJumpProps = Readonly<{
 // `.date-input` in `spec/design/pages/timeline.html`; the box is tokens.md's
 // `--pad-input`, the ring the form fields' outer one.
 const DATE_INPUT_CLASS =
-  "min-w-0 rounded-md bg-bg-card p-(--pad-input) font-base text-base leading-tight tabular-nums text-neutral-900 [border:var(--border-input)] transition-colors focus:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+  "min-w-[0] rounded-md bg-bg-card p-(--pad-input) font-base text-base leading-tight tabular-nums text-neutral-900 [border:var(--border-input)] transition-colors focus:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 /**
  * The header's calendar and the card it opens under itself

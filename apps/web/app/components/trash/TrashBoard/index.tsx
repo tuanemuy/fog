@@ -602,6 +602,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         title="ゴミ箱を空にしますか？"
         description={`全件（${totalCount}件）が完全に削除され、元に戻せません。`}
         confirmLabel="空にする"
+        pendingLabel="空にしています…"
         danger
         onConfirm={confirmEmpty}
         onCancel={() => setPendingDialog(null)}

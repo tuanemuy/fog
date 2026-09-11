@@ -495,7 +495,7 @@ export function TimelineBoard({
                       <RowError
                         message={deleteFailure.message}
                         retry={{
-                          label: "再試行",
+                          label: "リトライ",
                           onRetry: () => runDelete(deleteFailure.memo),
                         }}
                       />

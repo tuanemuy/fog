@@ -2,8 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
-import { AuthSheetDescription } from "@/components/auth/AuthSheetDescription";
-import { AuthSheetTitle } from "@/components/layout/AuthSheet";
+import {
+  AuthSheetDescription,
+  AuthSheetTitle,
+} from "@/components/layout/AuthSheet";
 import { PasswordResetDoneSkeleton } from "@/components/settings/PasswordResetDoneFeed/skeleton";
 import { Deferred } from "@/components/ui/Deferred";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";

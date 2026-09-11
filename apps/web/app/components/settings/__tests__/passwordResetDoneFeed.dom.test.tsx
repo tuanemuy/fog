@@ -66,7 +66,9 @@ const connections: readonly AiClientConnectionView[] = [
   },
 ];
 
-async function drawFeed() {
+async function drawFeed(
+  aiConnections: readonly AiClientConnectionView[] = connections,
+) {
   const [loadCurrentUser, loadAiConnections] = mocks.loaders;
   mocks.requireUserId.mockResolvedValue(USER_ID);
   loadCurrentUser?.mockResolvedValue({
@@ -78,7 +80,7 @@ async function drawFeed() {
     },
     mcpUrl: "http://localhost:3000/mcp",
   });
-  loadAiConnections?.mockResolvedValue(connections);
+  loadAiConnections?.mockResolvedValue(aiConnections);
   // Drawn in its frame, whose toasts the lists may raise their successes on.
   const feed = await PasswordResetDoneFeed();
   return renderWithRouter(<AuthSheet>{feed}</AuthSheet>, {
@@ -96,10 +98,10 @@ describe("PasswordResetDoneFeed", () => {
     const { container, expectInternalHrefsToResolve } = await drawFeed();
     expect(labels(container)).toEqual(["ログイン手段", "AI"]);
     const methods = screen.getByRole("region", { name: "ログイン手段" });
+    // The email method is named by the address the account holds (P-13).
+    expect(within(methods).getByText("user@example.com")).toBeTruthy();
     expect(
-      within(methods).getByRole("button", {
-        name: "外部アカウント（google）を解除",
-      }),
+      within(methods).getByRole("button", { name: "Google の連携を解除" }),
     ).toBeTruthy();
     const ai = screen.getByRole("region", { name: "AI" });
     expect(within(ai).getByText("Claude Desktop")).toBeTruthy();
@@ -110,6 +112,12 @@ describe("PasswordResetDoneFeed", () => {
       ai.compareDocumentPosition(onward) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expectInternalHrefsToResolve();
+  });
+
+  it("leaves out the revoke-all row when there is no connection to revoke", async () => {
+    await drawFeed([]);
+    const ai = screen.getByRole("region", { name: "AI" });
+    expect(within(ai).queryByRole("button", { name: "すべて失効" })).toBeNull();
   });
 
   // The screen removes what the user does not recognise; it never adds.

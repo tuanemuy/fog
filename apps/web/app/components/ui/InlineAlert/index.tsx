@@ -71,7 +71,7 @@ export function InlineAlert({ tone, children, retry }: InlineAlertProps) {
           <Icon name={look.glyph.name} size="sm" />
         </span>
       )}
-      <div className="min-w-0 flex-1 wrap-anywhere">{children}</div>
+      <div className="min-w-[0] flex-1 wrap-anywhere">{children}</div>
       {retry === undefined ? null : (
         <button
           type="button"

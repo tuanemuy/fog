@@ -1,6 +1,7 @@
-import { KnowledgeSection } from "@/components/knowledge/KnowledgeSection";
 import { Button } from "@/components/ui/Button";
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { RowList } from "@/components/ui/RowList";
+import { SheetSection } from "@/components/ui/SheetSection";
 import { Sk } from "@/components/ui/Sk";
 import {
   DOCUMENT_META_CLASS,
@@ -23,12 +24,12 @@ const DOCUMENTS = [
  * classes and sections, with the text laid over by `Sk`. The one action is
  * the real outline button, disabled and hidden from assistive technology, so
  * its box is the loaded one's. The document rows are the `RowLink` box
- * without the link: nothing here reacts.
+ * without the link: nothing here reacts. The topic's name is the page's `h1`
+ * once it arrives, so the loading label stands in for it meanwhile.
  */
 export function TopicDetailSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion asPageHeading>
       <div className={TOPIC_HEAD_CLASS}>
         <p className={TOPIC_TITLE_CLASS}>
           <Sk>ブランド刷新</Sk>
@@ -43,7 +44,7 @@ export function TopicDetailSkeleton() {
           <Sk>完了にする</Sk>
         </Button>
       </div>
-      <KnowledgeSection label="ドキュメント">
+      <SheetSection label="ドキュメント" level={2}>
         <RowList>
           {DOCUMENTS.map((document) => (
             <li key={document.title}>
@@ -60,7 +61,7 @@ export function TopicDetailSkeleton() {
             </li>
           ))}
         </RowList>
-      </KnowledgeSection>
-    </div>
+      </SheetSection>
+    </LoadingRegion>
   );
 }

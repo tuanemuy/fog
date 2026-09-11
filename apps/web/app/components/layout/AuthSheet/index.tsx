@@ -62,6 +62,22 @@ export function AuthSheetTitle({
 }
 
 /**
+ * The one sentence under an auth sheet's title (`.page-description` in
+ * `spec/design/pages/password-reset.html`), for a screen whose title alone
+ * does not say what happens next. Centred, and broken only at punctuation
+ * unless a word cannot fit.
+ */
+export function AuthSheetDescription({
+  children,
+}: Readonly<{ children: string }>) {
+  return (
+    <p className="mt-lg text-center font-base text-sm leading-tight text-neutral-600 text-balance break-keep wrap-anywhere">
+      {children}
+    </p>
+  );
+}
+
+/**
  * The error component of the root and of the two layouts under it, `_app`
  * and `_sheet` (ADR-009 of Issue #22): their failure takes the frame down
  * with it, so the route error is drawn on the auth sheet instead of bare.

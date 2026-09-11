@@ -44,7 +44,7 @@ export function Row({
             : `flex items-start gap-lg pt-row font-base text-base leading-normal text-neutral-900 ${hasError ? "pb-sm" : "pb-row"}`
         }
       >
-        <div className="min-w-0 flex-1">{children}</div>
+        <div className="min-w-[0] flex-1">{children}</div>
         {actions === undefined ? null : (
           <div className="flex shrink-0 items-center gap-sm">{actions}</div>
         )}

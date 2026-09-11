@@ -42,7 +42,7 @@ type DeleteFailure = Readonly<{ topic: DisplayTopic; message: string }>;
 
 // `spec/design/pages/topics.html`, `.section-toggle`: a section label that
 // opens and closes what follows. The hairline and the section gap above it
-// are the section's, as with `KnowledgeSection`.
+// are the section's, as with `SheetSection`.
 const SECTION_TOGGLE_CLASS =
   "mt-section flex w-full cursor-pointer items-center gap-sm border-t border-neutral-100 pt-lg pb-md text-left font-base text-xs font-semibold leading-tight tracking-label text-neutral-600 transition-colors hover:text-neutral-900 focus-visible:rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus";
 

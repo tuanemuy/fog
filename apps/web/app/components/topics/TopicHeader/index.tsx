@@ -38,7 +38,8 @@ type Patch = Readonly<{
 
 /**
  * The head of P-07 (`spec/design/pages/topic-detail.html`, `.topic-head` /
- * `.topic-status`): the name with its menu (編集 / 削除), the description,
+ * `.topic-status`): the name as the page's `h1` (the route declares
+ * `h1: "sheet"`) with its menu (編集 / 削除), the description,
  * and under them 完了にする / 完了を解除 as a visible one-action button — the
  * complete action never shares a menu with 削除 (spec/pages P-07). 編集 turns
  * the head into its form in place.
@@ -211,7 +212,7 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
       ) : (
         <>
           <div className={TOPIC_HEAD_CLASS}>
-            <h2 className={TOPIC_TITLE_CLASS}>{shown.name}</h2>
+            <h1 className={TOPIC_TITLE_CLASS}>{shown.name}</h1>
             <PopoverMenu label="トピックの操作">
               <PopoverMenuItem icon="edit" onSelect={startEditing}>
                 編集

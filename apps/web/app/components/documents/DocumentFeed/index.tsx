@@ -56,7 +56,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
     });
   } catch (error) {
     if (extractSerializedError(error).kind === "notFound") {
-      return <KnowledgeNotFound subject="ドキュメント" />;
+      return <KnowledgeNotFound subject="ドキュメント" asPageHeading />;
     }
     throw error;
   }
@@ -87,7 +87,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
       <div className={DOC_BODY_CLASS}>
         <Markdown body={document.body} variant="document" />
       </div>
-      <OriginList memos={sources.sourceMemos} label="出典" />
+      <OriginList memos={sources.sourceMemos} label="出典" level={2} />
     </article>
   );
 }

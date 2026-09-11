@@ -32,9 +32,16 @@ describe("TopicDetailSkeleton", () => {
   it("is the head, the status line and the document rows, with the text laid over", () => {
     render(<TopicDetailSkeleton />);
     const region = expectOneBusyRegion();
-    expect(within(region).queryAllByRole("heading", { level: 2 })).toHaveLength(
-      0,
+    // P-07's `h1` is the topic's name; until it arrives the loading label
+    // carries it, and the stand-in name is no heading.
+    expect(within(region).getByRole("heading", { level: 1 }).textContent).toBe(
+      "読み込み中",
     );
+    expect(
+      within(region)
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["ドキュメント"]);
     expect(screen.getByText("ブランド刷新").getAttribute("aria-hidden")).toBe(
       "true",
     );

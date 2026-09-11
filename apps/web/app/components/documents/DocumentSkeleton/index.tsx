@@ -1,3 +1,4 @@
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { Sk } from "@/components/ui/Sk";
 import {
   DOC_BODY_CLASS,
@@ -22,12 +23,13 @@ const NEXT_PARAGRAPH_CLASS = "mt-[1.3em]";
  * The document screens while their fragment streams in
  * (`spec/design/pages/document.html` / `document-edit.html`, 読み込み中): the
  * loaded screen's lines, from the same classes, with `Sk` over the text. The
- * title stays out of the heading outline until the real one arrives.
+ * title stays out of the heading outline until the real one arrives; on P-08,
+ * whose route leaves the `h1` to that title, the loading label stands in for
+ * it meanwhile.
  */
 export function DocumentSkeleton({ mode }: { mode: DocumentSkeletonMode }) {
   return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion asPageHeading={mode === "read"}>
       <p className={DOC_CONTEXT_CLASS}>
         <Sk>ブランド刷新</Sk>
       </p>
@@ -62,6 +64,6 @@ export function DocumentSkeleton({ mode }: { mode: DocumentSkeletonMode }) {
           </p>
         </div>
       )}
-    </div>
+    </LoadingRegion>
   );
 }

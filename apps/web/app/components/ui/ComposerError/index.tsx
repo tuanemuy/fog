@@ -29,7 +29,7 @@ export function ComposerError({ message, retry }: ComposerErrorProps) {
       <span className="flex shrink-0 text-error">
         <Icon name="error" size="sm" />
       </span>
-      <span className="min-w-0 wrap-anywhere">{message}</span>
+      <span className="min-w-[0] wrap-anywhere">{message}</span>
       {retry === undefined ? null : (
         <button
           type="button"

@@ -18,7 +18,7 @@ describe("TopicDocuments", () => {
       { path: "/topics/$topicId" },
     );
     const section = screen.getByRole("region", { name: "ドキュメント" });
-    expect(within(section).getByRole("heading", { level: 3 }).textContent).toBe(
+    expect(within(section).getByRole("heading", { level: 2 }).textContent).toBe(
       "ドキュメント",
     );
     const items = within(section).getAllByRole("listitem");

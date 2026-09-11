@@ -69,7 +69,9 @@ describe("the knowledge leaves' not-found branch", () => {
     await renderWithRouter(await DocumentFeed({ documentId: "missing" }), {
       path: "/documents/$documentId",
     });
-    expect(screen.getByText("ドキュメントが見つかりません").tagName).toBe("P");
+    // P-08 leaves the `h1` to the document's title, so this sentence, drawn
+    // in its place, is the page's heading.
+    expect(screen.getByText("ドキュメントが見つかりません").tagName).toBe("H1");
     expect(
       screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
     ).toBe("/topics");
@@ -94,7 +96,7 @@ describe("the knowledge leaves' not-found branch", () => {
     await renderWithRouter(await TopicDetailFeed({ topicId: "missing" }), {
       path: "/topics/$topicId",
     });
-    expect(screen.getByText("トピックが見つかりません").tagName).toBe("P");
+    expect(screen.getByText("トピックが見つかりません").tagName).toBe("H1");
     expect(
       screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
     ).toBe("/topics");
@@ -124,13 +126,13 @@ describe("the knowledge leaves' not-found branch", () => {
     await renderWithRouter(await TopicDetailFeed({ topicId: "t1" }), {
       path: "/topics/$topicId",
     });
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "ブランド刷新",
     );
     expect(screen.queryByText("トピックが見つかりません")).toBeNull();
     expect(
       screen
-        .getAllByRole("heading", { level: 3 })
+        .getAllByRole("heading", { level: 2 })
         .map((heading) => heading.textContent),
     ).toEqual(["ドキュメント", "関連メモ"]);
     expect(

@@ -5,6 +5,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
+import { ButtonAnchor } from "@/components/ui/ButtonAnchor";
 import { FormError } from "@/components/ui/FormError";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Row } from "@/components/ui/Row";
@@ -32,16 +33,16 @@ export function providerName(provider: string): string {
   return PROVIDER_NAMES[provider] ?? provider;
 }
 
-/**
- * `/auth/sso/:provider/start` — the only entry that creates something P-03
- * can unlink. The link entry submits to it with `intent=link`
- * (`LINK_INTENT`).
- */
-export function linkStartAction(provider: string): string {
-  return `/auth/sso/${provider}/start`;
-}
-
 export const LINK_INTENT = "link";
+
+/**
+ * `/auth/sso/:provider/start` with `intent=link` — the only entry that
+ * creates something P-03 can unlink. A bare handler of the request Worker,
+ * not a route, so the row links to it with `ButtonAnchor`.
+ */
+export function linkStartHref(provider: string): string {
+  return `/auth/sso/${provider}/start?intent=${LINK_INTENT}`;
+}
 
 type RowFailure = Readonly<{ credentialId: string; message: string }>;
 
@@ -150,17 +151,14 @@ export function CredentialList({
             {linkProviders.map((provider) => {
               const icon = PROVIDER_ICONS[provider];
               return (
-                <form
+                <ButtonAnchor
                   key={provider}
-                  method="get"
-                  action={linkStartAction(provider)}
+                  variant="outline"
+                  href={linkStartHref(provider)}
                 >
-                  <input type="hidden" name="intent" value={LINK_INTENT} />
-                  <Button variant="outline" type="submit">
-                    {icon === undefined ? null : <Icon name={icon} size="md" />}
-                    {providerName(provider)} で続行
-                  </Button>
-                </form>
+                  {icon === undefined ? null : <Icon name={icon} size="md" />}
+                  {providerName(provider)} で続行
+                </ButtonAnchor>
               );
             })}
           </div>

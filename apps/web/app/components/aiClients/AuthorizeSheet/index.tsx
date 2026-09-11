@@ -9,6 +9,7 @@ import { FormError } from "@/components/ui/FormError";
 import { Icon } from "@/components/ui/Icon";
 import { RowList } from "@/components/ui/RowList";
 import { SectionLabel } from "@/components/ui/SectionLabel";
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import {
@@ -38,7 +39,7 @@ export const INVALID_REQUEST_MESSAGE =
 
 // A block of the sheet after the client: a section's space above it and the
 // hairline that separates it from what came before.
-const BLOCK_CLASS = "mt-section border-t border-neutral-100 pt-lg";
+const BLOCK_CLASS = SHEET_SECTION_CLASS;
 
 // The glyph sits in a one-line box so it lines up with the first line of a
 // wrapped item.
@@ -136,7 +137,7 @@ export function AuthorizeSheet({
                   <span className={GLYPH_CLASS}>
                     <Icon name="check" size="md" />
                   </span>
-                  <span className="min-w-0 flex-1">{item}</span>
+                  <span className="min-w-[0] flex-1">{item}</span>
                 </li>
               ))}
             </RowList>
@@ -152,7 +153,7 @@ export function AuthorizeSheet({
                   <span className={GLYPH_CLASS}>
                     <Icon name="minus" size="sm" />
                   </span>
-                  <span className="min-w-0 flex-1">{item}</span>
+                  <span className="min-w-[0] flex-1">{item}</span>
                 </li>
               ))}
             </ul>

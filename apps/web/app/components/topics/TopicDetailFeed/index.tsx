@@ -1,9 +1,9 @@
 import type { TopicDetailView } from "@repo/core/application/knowledge/view";
 import { KnowledgeNotFound } from "@/components/knowledge/KnowledgeNotFound";
-import { KnowledgeSection } from "@/components/knowledge/KnowledgeSection";
 import { OriginList } from "@/components/knowledge/OriginRow";
 import { RowLink } from "@/components/ui/RowLink";
 import { RowList } from "@/components/ui/RowList";
+import { SheetSection } from "@/components/ui/SheetSection";
 import { extractSerializedError } from "@/presentation/errorResponse";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
@@ -31,7 +31,7 @@ export function TopicDocuments({
   documents: TopicDetailView["documents"];
 }) {
   return (
-    <KnowledgeSection label="ドキュメント">
+    <SheetSection label="ドキュメント" level={2}>
       <RowList>
         {documents.map((document) => (
           <li key={document.id}>
@@ -52,7 +52,7 @@ export function TopicDocuments({
           </AddRowLink>
         </li>
       </RowList>
-    </KnowledgeSection>
+    </SheetSection>
   );
 }
 
@@ -70,7 +70,7 @@ export async function TopicDetailFeed({ topicId }: { topicId: string }) {
     });
   } catch (error) {
     if (extractSerializedError(error).kind === "notFound") {
-      return <KnowledgeNotFound subject="トピック" />;
+      return <KnowledgeNotFound subject="トピック" asPageHeading />;
     }
     throw error;
   }
@@ -78,7 +78,7 @@ export async function TopicDetailFeed({ topicId }: { topicId: string }) {
     <>
       <TopicHeader key={detail.topic.id} topic={detail.topic} />
       <TopicDocuments topicId={detail.topic.id} documents={detail.documents} />
-      <OriginList memos={detail.relatedMemos} label="関連メモ" />
+      <OriginList memos={detail.relatedMemos} label="関連メモ" level={2} />
     </>
   );
 }

@@ -29,6 +29,8 @@ const loadAiConnections = serverData(
  * timeline. The title and the description above it are the route's, drawn
  * before this streams in. The link-adding entry is deliberately absent —
  * this screen removes what the user does not recognise; it never adds.
+ * 「すべて失効」 is the same: with no connection to revoke there is nothing
+ * for it to do, so the panel is left out (`spec/design/pages/password-reset.html`).
  */
 export async function PasswordResetDoneFeed() {
   const { user, mcpUrl, aiConnections } = await guardStreamedRender(
@@ -49,12 +51,16 @@ export async function PasswordResetDoneFeed() {
         className={DONE_SECTION_CLASS}
       >
         <SectionLabel id="reset-done-credentials">ログイン手段</SectionLabel>
-        <CredentialList credentials={user.credentials} linkProviders={[]} />
+        <CredentialList
+          credentials={user.credentials}
+          linkProviders={[]}
+          email={user.email}
+        />
       </section>
       <section aria-labelledby="reset-done-ai" className={DONE_SECTION_CLASS}>
         <SectionLabel id="reset-done-ai">AI</SectionLabel>
         <AiConnectionsList connections={aiConnections} mcpUrl={mcpUrl} />
-        <AiConnectionsPanel />
+        {aiConnections.length > 0 && <AiConnectionsPanel />}
       </section>
       <div className={DONE_ACTIONS_CLASS}>
         <ButtonLink variant="fill" to="/">

@@ -1,10 +1,10 @@
 "use client";
 
 import type { RelatedMemoView } from "@repo/core/application/knowledge/view";
-import { KnowledgeSection } from "@/components/knowledge/KnowledgeSection";
 import { Icon } from "@/components/ui/Icon";
 import { RowLink } from "@/components/ui/RowLink";
 import { RowList } from "@/components/ui/RowList";
+import { SheetSection } from "@/components/ui/SheetSection";
 import { formatDateTime } from "@/presentation/time";
 
 // `spec/design/pages/document.html`, `.time-label` / `.o-text`.
@@ -67,7 +67,7 @@ export function OriginList({
 }) {
   if (memos.length === 0) return null;
   return (
-    <KnowledgeSection label={label} level={level}>
+    <SheetSection label={label} level={level}>
       <RowList>
         {memos.map((memo) => (
           <li key={memo.memoId}>
@@ -75,6 +75,6 @@ export function OriginList({
           </li>
         ))}
       </RowList>
-    </KnowledgeSection>
+    </SheetSection>
   );
 }

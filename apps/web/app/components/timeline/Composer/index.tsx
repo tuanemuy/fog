@@ -29,7 +29,7 @@ const SUBMIT_CLASS =
   "flex h-[1lh] shrink-0 cursor-pointer items-center rounded-full px-xs font-base text-base leading-normal text-neutral-500 transition-colors enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-default disabled:text-neutral-300";
 
 const INPUT_CLASS =
-  "max-h-[6lh] min-h-[1lh] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent font-base text-base leading-normal text-neutral-900 field-sizing-content outline-none placeholder:text-neutral-400";
+  "max-h-[6lh] min-h-[1lh] min-w-[0] flex-1 resize-none overflow-y-auto bg-transparent font-base text-base leading-normal text-neutral-900 field-sizing-content outline-none placeholder:text-neutral-400";
 
 const sizesByContent = (): boolean =>
   typeof CSS !== "undefined" &&

@@ -68,8 +68,8 @@ const INVALID_CREDENTIALS: SerializedError = {
   message: "Invalid credentials",
 };
 
-const EMAIL_MESSAGE = "メールアドレスの形式が正しくありません";
-const PASSWORD_MESSAGE = "パスワードは8文字以上128文字以下で入力してください";
+const EMAIL_MESSAGE = "有効なメールアドレスを入力してください";
+const PASSWORD_MESSAGE = "8文字以上で入力してください";
 const CREDENTIALS_MESSAGE = "メールアドレスまたはパスワードが正しくありません";
 const DUPLICATE_MESSAGE = "このメールアドレスは既に登録されています。";
 const PASSWORD_HELPER = "8文字以上";

@@ -1,3 +1,4 @@
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { Sk } from "@/components/ui/Sk";
 import {
   DAY_ENTRIES_CLASS,
@@ -29,8 +30,7 @@ const STAND_INS = [
  */
 export function TimelineSkeleton() {
   return (
-    <section role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion>
       {/* Not an `h2`: its only text is the hidden stand-in, and an empty
           heading would still be announced. The classes make the same box. */}
       <div className={DAY_HEADING_CLASS}>
@@ -55,6 +55,6 @@ export function TimelineSkeleton() {
           </div>
         ))}
       </div>
-    </section>
+    </LoadingRegion>
   );
 }

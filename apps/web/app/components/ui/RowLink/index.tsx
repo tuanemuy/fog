@@ -23,7 +23,7 @@ const ROW_LINK_CLASS =
 function RowAnchor({ children, ...rest }: RowAnchorProps) {
   return (
     <a {...rest} className={ROW_LINK_CLASS} style={undefined}>
-      <span className="min-w-0 flex-1">{children}</span>
+      <span className="min-w-[0] flex-1">{children}</span>
       <span className="flex shrink-0 text-primary">
         <Icon name="jump" size="md" />
       </span>

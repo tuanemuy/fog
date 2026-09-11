@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/Button";
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { Row } from "@/components/ui/Row";
 import { RowList } from "@/components/ui/RowList";
 import { Sk } from "@/components/ui/Sk";
@@ -18,8 +19,7 @@ import {
  */
 export function SettingsSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion>
       <div aria-hidden="true">
         <SettingsSection id="settings-ai-loading" label="AI">
           <RowList>
@@ -97,6 +97,6 @@ export function SettingsSkeleton() {
           </Button>
         </SettingsSection>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }

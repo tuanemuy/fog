@@ -3,6 +3,7 @@
 import { type ReactNode, useId } from "react";
 import { RowList } from "@/components/ui/RowList";
 import { SectionLabel } from "@/components/ui/SectionLabel";
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 import { formatDateTime } from "@/presentation/time";
 
 /** One version as its row shows it: when, then who (and why, for a document). */
@@ -31,8 +32,7 @@ export const HISTORY_SUBJECT_CLASS =
  * The history under something else on the sheet: it opens with the hairline
  * and the gap that separate it from what is above (`.history-section`).
  */
-export const HISTORY_SECTION_CLASS =
-  "mt-section border-t border-neutral-100 pt-lg";
+export const HISTORY_SECTION_CLASS = SHEET_SECTION_CLASS;
 
 // A version row is neither of `RowLink` / `Row`: the whole row is one toggle
 // button (`.revision-row` in `spec/design/pages/memo-history.html`). Its hover

@@ -55,7 +55,7 @@ describe("TopicHeader", () => {
       />,
       { path: "/topics/$topicId" },
     );
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "読書メモ",
     );
     expect(screen.getByText("本の要約")).toBeTruthy();
@@ -131,7 +131,7 @@ describe("TopicHeader", () => {
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
     // The prop is what the refetched loader hands down; the harness never
     // refetches, so the header settles back on 「前」.
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("前");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("前");
   });
 
   it("keeps the form open with the rejection at its head when the save fails", async () => {
@@ -166,7 +166,7 @@ describe("TopicHeader", () => {
     fireEvent.change(name, { target: { value: "破棄" } });
     fireEvent.click(within(form).getByRole("button", { name: "キャンセル" }));
     expect(screen.queryByRole("form")).toBeNull();
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("前");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("前");
     expect(openEditor().name.value).toBe("前");
     expect(mocks.updateTopicFn).not.toHaveBeenCalled();
   });

@@ -96,27 +96,25 @@ describe("CredentialList", () => {
     expect(screen.queryByText("メール・パスワード")).toBeNull();
   });
 
-  it("submits the link entry to the provider's start with the link intent", async () => {
+  it("links the link entry to the provider's start with the link intent", async () => {
     await renderWithRouter(
       <CredentialList credentials={credentials} linkProviders={["google"]} />,
     );
     expect(screen.getByText("連携を追加")).toBeTruthy();
-    const button = screen.getByRole("button", { name: "Google で続行" });
-    expect(button.getAttribute("type")).toBe("submit");
-    const form = button.closest("form");
-    if (form === null) throw new Error("the link entry is not a form");
-    expect(form.getAttribute("method")).toBe("get");
-    expect(form.getAttribute("action")).toBe("/auth/sso/google/start");
-    // What the browser appends to the action as the query on submit.
-    expect([...new FormData(form).entries()]).toEqual([["intent", "link"]]);
+    // A bare handler of the request Worker, not a route: a plain anchor, so
+    // it opens in a new tab and its address can be copied.
+    const entry = screen.getByRole("link", { name: "Google で続行" });
+    expect(entry.getAttribute("href")).toBe(
+      "/auth/sso/google/start?intent=link",
+    );
   });
 
   it("offers no link for a provider outside the configured list", async () => {
     await renderWithRouter(
       <CredentialList credentials={credentials} linkProviders={["google"]} />,
     );
-    expect(screen.getByRole("button", { name: "Google で続行" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apple で続行" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Google で続行" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Apple で続行" })).toBeNull();
   });
 
   it("omits the link entry on P-03", async () => {
@@ -124,7 +122,7 @@ describe("CredentialList", () => {
       <CredentialList credentials={credentials} linkProviders={[]} />,
     );
     expect(screen.queryByText("連携を追加")).toBeNull();
-    expect(screen.queryByRole("button", { name: /で続行$/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /で続行$/ })).toBeNull();
   });
 
   it("removes the row at once, then reconciles through the router", async () => {

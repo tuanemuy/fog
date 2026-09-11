@@ -3,7 +3,7 @@
 // primary border and ring on focus, the error border while invalid. The
 // focus border steps aside for an invalid field so the red stays.
 const FIELD_BOX =
-  "w-full min-w-0 rounded-md bg-bg-card font-base text-base text-neutral-900 [border:var(--border-input)] transition-colors placeholder:text-neutral-400 focus:not-aria-invalid:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-invalid:border-error read-only:text-neutral-600 disabled:text-neutral-600";
+  "w-full min-w-[0] rounded-md bg-bg-card font-base text-base text-neutral-900 [border:var(--border-input)] transition-colors placeholder:text-neutral-400 focus:not-aria-invalid:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-invalid:border-error read-only:text-neutral-600 disabled:text-neutral-600";
 
 /** One line: the input box of the form (`--pad-input`). */
 export const TEXT_INPUT_CLASS = `${FIELD_BOX} p-(--pad-input) leading-tight`;

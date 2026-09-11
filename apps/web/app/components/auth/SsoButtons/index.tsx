@@ -1,4 +1,4 @@
-import { buttonClassName } from "@/components/ui/Button/styles";
+import { ButtonAnchor } from "@/components/ui/ButtonAnchor";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import type { SsoErrorCode } from "../schema";
 
@@ -53,10 +53,10 @@ export function renderSsoError(
 
 /**
  * The SSO half of P-01 / P-02 (`.sso-group` in `login.html`): outline
- * buttons, one per provider, stretched to the sheet's width. They are plain
- * anchors with the outline step's look, because the round trip is a redirect
- * chain the bare handler owns — neither a server function nor a route the
- * router serves. Drawn from `AppConfig.ssoProviders` — only a provider with
+ * buttons, one per provider, stretched to the sheet's width. They are
+ * `ButtonAnchor`s, because the round trip is a redirect chain the bare
+ * handler owns — neither a server function nor a route the router serves.
+ * Drawn from `AppConfig.ssoProviders` — only a provider with
  * an adapter is offered — and absent altogether when none is configured.
  */
 export function SsoButtons({
@@ -77,14 +77,14 @@ export function SsoButtons({
       {providers.map((provider) => {
         const icon = PROVIDERS[provider]?.icon;
         return (
-          <a
+          <ButtonAnchor
             key={provider}
-            className={buttonClassName("outline")}
+            variant="outline"
             href={ssoStartHref(provider, mode, redirectTo)}
           >
             {icon === undefined ? null : <Icon name={icon} size="md" />}
             {ssoButtonLabel(provider, mode)}
-          </a>
+          </ButtonAnchor>
         );
       })}
     </nav>

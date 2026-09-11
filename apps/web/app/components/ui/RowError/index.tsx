@@ -3,7 +3,12 @@ import type { RetryAction } from "@/components/ui/InlineAlert/styles";
 
 export type RowErrorProps = Readonly<{
   message: string;
-  /** Re-runs the row's failed action (「リトライ」). */
+  /**
+   * Re-runs the row's failed action. Its label is 「リトライ」: a row says
+   * that and a surface — a form's head, the composer, an `InlineAlert`, a
+   * route error — says 「再試行」, which is how the mocks word the two
+   * (`spec/design/pages/trash.html` against `timeline.html`).
+   */
   retry?: RetryAction;
 }>;
 
@@ -24,7 +29,7 @@ export function RowError({ message, retry }: RowErrorProps) {
       className="flex items-center gap-sm rounded-full bg-error-bg px-md py-sm font-base text-sm leading-tight text-error-dark"
     >
       <Icon name="error" size="sm" />
-      <span className="min-w-0 flex-1 wrap-anywhere">{message}</span>
+      <span className="min-w-[0] flex-1 wrap-anywhere">{message}</span>
       {retry === undefined ? null : (
         <button
           type="button"

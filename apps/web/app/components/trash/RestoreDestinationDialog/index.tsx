@@ -2,15 +2,13 @@
 
 import type { TopicListView } from "@repo/core/application/knowledge/view";
 import { useServerFn } from "@tanstack/react-start";
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import {
+  Dialog,
+  DialogActions,
+  DialogCancelButton,
+} from "@/components/ui/Dialog";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { TextAreaField } from "@/components/ui/TextAreaField";
 import { TextField } from "@/components/ui/TextField";
@@ -48,6 +46,8 @@ type Candidates =
 /** The radio value of 「新しいトピックを作成」; every other value is a topic id. */
 const NEW_TOPIC = "new";
 
+const TITLE = "復元先のトピック";
+
 const OPTION_CLASS =
   "flex cursor-pointer items-center gap-sm border-neutral-100 py-md font-base text-base leading-tight text-neutral-900 not-first:border-t";
 const RADIO_CLASS =
@@ -58,7 +58,8 @@ const RADIO_CLASS =
  * an existing live topic (archived ones included) or a new one
  * (`spec/design/pages/trash.html`, 復元先選択). The candidates are fetched
  * when the dialog opens (decision △-5), and read again on request when the
- * chosen one turned out to be unavailable.
+ * chosen one turned out to be unavailable. The frame is `Dialog`'s, the same
+ * one a confirmation is drawn in; only the body is a form.
  */
 export function RestoreDestinationDialog({
   pending,
@@ -66,22 +67,12 @@ export function RestoreDestinationDialog({
   onChoose,
   onCancel,
 }: RestoreDestinationDialogProps) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const load = useServerFn(loadRestoreDestinationsFn);
   const [candidates, setCandidates] = useState<Candidates>({
     state: "loading",
   });
   const [choice, setChoice] = useState<string | null>(null);
   const [nameMissing, setNameMissing] = useState(false);
-  const titleId = useId();
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) {
-      if (typeof element.showModal === "function") element.showModal();
-      else element.setAttribute("open", "");
-    }
-  }, []);
 
   const reload = useCallback(async () => {
     setCandidates({ state: "loading" });
@@ -135,29 +126,13 @@ export function RestoreDestinationDialog({
   const topics = candidates.state === "ready" ? candidates.topics : [];
 
   return (
-    // `m-auto` puts the modal back in the middle of the viewport: the
-    // preflight's blanket `margin: 0` otherwise pins it to the top left.
-    <dialog
-      ref={dialog}
-      className="m-auto w-sheet max-w-narrow bg-transparent backdrop:bg-overlay"
-      aria-labelledby={titleId}
+    <Dialog
+      title={TITLE}
+      description="元のトピックは完全に削除されています。"
+      locked={pending}
       onClose={onCancel}
     >
-      <form
-        method="dialog"
-        onSubmit={submit}
-        aria-labelledby={titleId}
-        className="rounded-lg bg-bg-card px-xl py-2xl font-base shadow-md"
-      >
-        <h2
-          id={titleId}
-          className="text-lg font-semibold leading-tight text-neutral-900"
-        >
-          復元先のトピック
-        </h2>
-        <p className="mt-md text-sm leading-normal text-neutral-700">
-          元のトピックは完全に削除されています。
-        </p>
+      <form onSubmit={submit} aria-label={TITLE}>
         {error === null ? null : (
           <div className="mt-md">
             <InlineAlert
@@ -176,7 +151,7 @@ export function RestoreDestinationDialog({
           </div>
         )}
         <fieldset className="mt-md min-w-[0]" disabled={pending}>
-          <legend className="sr-only">復元先のトピック</legend>
+          <legend className="sr-only">{TITLE}</legend>
           {candidates.state === "loading" && (
             <p
               role="status"
@@ -242,7 +217,7 @@ export function RestoreDestinationDialog({
             />
           </div>
         )}
-        <div className="mt-xl flex flex-col gap-sm">
+        <DialogActions>
           <Button
             variant="fill-sm"
             type="submit"
@@ -250,11 +225,11 @@ export function RestoreDestinationDialog({
           >
             {pending ? "復元中…" : "復元"}
           </Button>
-          <Button variant="outline" onClick={onCancel} disabled={pending}>
+          <DialogCancelButton onClick={onCancel} disabled={pending}>
             キャンセル
-          </Button>
-        </div>
+          </DialogCancelButton>
+        </DialogActions>
       </form>
-    </dialog>
+    </Dialog>
   );
 }

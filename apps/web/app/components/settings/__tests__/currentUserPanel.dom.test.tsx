@@ -154,8 +154,8 @@ describe("CurrentUserPanel", () => {
     await drawPanel({ ssoProviders: ["google", "apple"] });
     expect(
       screen
-        .getAllByRole("button", { name: /で続行$/ })
-        .map((button) => button.textContent),
+        .getAllByRole("link", { name: /で続行$/ })
+        .map((entry) => entry.textContent),
     ).toEqual(["Google で続行", "Apple で続行"]);
   });
 

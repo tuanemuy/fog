@@ -911,7 +911,8 @@ describe("TimelineBoard: delete is owned by the board", () => {
     expect(toastRegion().textContent).toBe("");
 
     mocks.softDeleteMemoFn.mockResolvedValueOnce({ deleted: true });
-    fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
+    // A row says 「リトライ」; a surface says 「再試行」.
+    fireEvent.click(within(alert).getByRole("button", { name: "リトライ" }));
     await waitFor(() =>
       expect(mocks.softDeleteMemoFn).toHaveBeenCalledTimes(2),
     );

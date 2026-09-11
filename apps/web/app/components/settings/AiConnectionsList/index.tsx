@@ -14,28 +14,10 @@ import {
   isOptimisticLockFailure,
 } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
-import { DISPLAY_TIME_ZONE } from "@/presentation/time";
+import { formatDate, formatDateTime } from "@/presentation/time";
 import { revokeAiClientConnectionFn } from "../actions";
 import { ItemMeta, ItemName, SectionEmpty } from "../SettingsSection";
 import { isConnectionRevokedResult } from "../schema";
-
-// The settings sheet's dates (`spec/design/pages/settings.html`): the day
-// without its weekday, and the minute after it.
-const dayFormatter = new Intl.DateTimeFormat("ja-JP", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  timeZone: DISPLAY_TIME_ZONE,
-});
-
-const minuteFormatter = new Intl.DateTimeFormat("ja-JP", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  timeZone: DISPLAY_TIME_ZONE,
-});
 
 type RowFailure = Readonly<{ connectionId: string; message: string }>;
 
@@ -132,12 +114,12 @@ export function AiConnectionsList({
               >
                 <ItemName>{connection.clientName}</ItemName>
                 <ItemMeta>
-                  接続: {dayFormatter.format(connection.connectedAt)}
+                  接続: {formatDate(connection.connectedAt)}
                   <br />
                   最終利用:{" "}
                   {connection.lastUsedAt === null
                     ? "未使用"
-                    : minuteFormatter.format(connection.lastUsedAt)}
+                    : formatDateTime(connection.lastUsedAt)}
                 </ItemMeta>
               </Row>
             </li>

@@ -37,7 +37,7 @@ export function SearchBox({ defaultValue, onSubmit, loading }: SearchBoxProps) {
           maxLength={500}
           autoComplete="off"
           enterKeyHint="search"
-          className="min-w-0 flex-1 bg-transparent text-neutral-900 outline-none placeholder:text-neutral-400"
+          className="min-w-[0] flex-1 bg-transparent text-neutral-900 outline-none placeholder:text-neutral-400"
         />
       </form>
     </search>

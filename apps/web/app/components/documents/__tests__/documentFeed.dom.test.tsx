@@ -148,12 +148,18 @@ describe("DocumentFeed", () => {
 });
 
 describe("DocumentSkeleton", () => {
-  it("draws P-08's lines — topic, title, update time, body — busy, hidden, and with no heading", async () => {
+  it("draws P-08's lines — topic, title, update time, body — busy, hidden, and headed only by its loading label", async () => {
     await renderWithRouter(<DocumentSkeleton mode="read" />);
     const region = screen.getByRole("status");
     expect(region.getAttribute("aria-busy")).toBe("true");
     expect(region.textContent).toContain("読み込み中");
-    expect(within(region).queryByRole("heading")).toBeNull();
+    // P-08's `h1` is the document's title; until it arrives the loading
+    // label is the page's heading, and the stand-in title is not one.
+    const heading = within(region).getByRole("heading");
+    expect([heading.tagName, heading.textContent]).toEqual([
+      "H1",
+      "読み込み中",
+    ]);
     expect(within(region).getByText("2026年7月20日 12:42 更新")).toBeTruthy();
     const standIns = [...region.querySelectorAll("[aria-hidden='true']")];
     expect(standIns.length).toBe(5);
@@ -164,6 +170,8 @@ describe("DocumentSkeleton", () => {
     const region = screen.getByRole("status");
     expect(region.getAttribute("aria-busy")).toBe("true");
     expect(within(region).queryByText("2026年7月20日 12:42 更新")).toBeNull();
+    // P-09 keeps its `h1` in the header, so the label is not one here.
+    expect(within(region).queryByRole("heading")).toBeNull();
     const standIns = [...region.querySelectorAll("[aria-hidden='true']")];
     expect(standIns.length).toBe(4);
   });

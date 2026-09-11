@@ -225,10 +225,13 @@ describe("AppShell", () => {
         .getByRole("link", { name: "タイムライン" })
         .getAttribute("aria-current"),
     ).toBeNull();
-    const h1 = screen.getByRole("heading", { level: 1 });
-    expect(h1.textContent).toBe("topic");
-    expect(h1.getAttribute("lang")).toBe("en");
+    // The topic's own name is the `h1` (the route declares `h1: "sheet"`),
+    // so the header's English word is a label and no heading of the frame's.
     const header = screen.getByRole("banner");
+    const label = within(header).getByText("topic");
+    expect(label.tagName).toBe("SPAN");
+    expect(label.getAttribute("lang")).toBe("en");
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     expect(
       within(header).getByRole("link", { name: "戻る" }).getAttribute("href"),
     ).toBe("/topics");

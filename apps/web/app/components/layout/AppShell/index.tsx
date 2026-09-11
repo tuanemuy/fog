@@ -12,6 +12,7 @@ import {
 } from "@/components/layout/PageHeader";
 import { ShellSlotsProvider } from "@/components/layout/ShellSlots";
 import { SHEET_SCROLL_ID } from "@/components/layout/sheet";
+import { PageHeadingOwnerProvider } from "@/components/ui/PageHeading";
 import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
 
 /** The deepest match's declaration wins: a leaf route over its layouts. */
@@ -44,7 +45,10 @@ const SIDE_LINK_CLASS =
  *
  * The header is drawn from the deepest route's `staticData.header`
  * (ADR-006 of Issue #22); a screen puts its data-dependent controls into it
- * with `HeaderActions`. The shell hosts the toasts (ADR-010): the region
+ * with `HeaderActions`. A route that declares `h1: "sheet"` keeps its `h1`
+ * in the sheet, so whatever is drawn in place of that screen — a route
+ * error, a 404 — is told that the heading is its to draw
+ * (`usePageHeadingOwner`). The shell hosts the toasts (ADR-010): the region
  * floats at the bottom of the column, and `BottomDock` stacks whatever the
  * screen floats there (the composer) under it.
  */
@@ -123,7 +127,15 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
                 dock={dockSlot}
                 sheet={sheet}
               >
-                {children}
+                <PageHeadingOwnerProvider
+                  owner={
+                    declaration.kind === "back" && declaration.h1 === "sheet"
+                      ? "screen"
+                      : "frame"
+                  }
+                >
+                  {children}
+                </PageHeadingOwnerProvider>
               </ShellSlotsProvider>
             </div>
           </main>

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/Button";
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { Row } from "@/components/ui/Row";
 import { RowList } from "@/components/ui/RowList";
 import { Sk } from "@/components/ui/Sk";
@@ -24,8 +25,7 @@ const STAND_INS = [
  */
 export function TrashSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion>
       <div aria-hidden="true">
         <TrashHeader
           action={
@@ -54,6 +54,6 @@ export function TrashSkeleton() {
           ))}
         </RowList>
       </div>
-    </div>
+    </LoadingRegion>
   );
 }

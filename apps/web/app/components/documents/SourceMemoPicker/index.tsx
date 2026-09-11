@@ -38,7 +38,7 @@ export const PICKER_PAGE_LIMIT = 20;
 const SEARCH_BOX_CLASS =
   "flex items-center gap-md rounded-full bg-neutral-50 p-(--pad-btn-sm) focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus";
 const SEARCH_INPUT_CLASS =
-  "min-w-0 flex-1 bg-transparent font-base text-base leading-tight text-neutral-900 outline-none placeholder:text-neutral-400";
+  "min-w-[0] flex-1 bg-transparent font-base text-base leading-tight text-neutral-900 outline-none placeholder:text-neutral-400";
 
 /**
  * P-09's source-memo picker (`spec/design/pages/document-edit.html`, 出典の

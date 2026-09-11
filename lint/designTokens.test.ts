@@ -796,6 +796,116 @@ describe("design tokens — no override path onto a primitive", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Class names that reach no stylesheet. With Tailwind's default theme dropped
+// (ADR-001), a name that reads a scale the tokens do not carry — `min-w-0`,
+// `p-0`, `gap-0` — is not an error: it simply generates nothing, and the
+// declaration it was meant to write is silently missing (ADR-018).
+//
+// The class lists are read from the sources rather than from the scan, because
+// the scanner offers prose words as candidates too: a string literal counts as
+// a class list when every token is candidate-shaped and at least one of them
+// does generate CSS. Out of reach: a class string of a single token, and a
+// class name assembled at runtime (which never becomes CSS either).
+
+const probeBaseline = (
+  await compile(styleSource.get(ENTRY_CSS) ?? "", {
+    base: STYLES,
+    onDependency: () => {},
+  })
+).build([]);
+
+const generatesCss = async (candidate: string): Promise<boolean> => {
+  if (validCandidates.has(candidate)) return true;
+  const probe = await compile(styleSource.get(ENTRY_CSS) ?? "", {
+    base: STYLES,
+    onDependency: () => {},
+  });
+  return probe.build([candidate]) !== probeBaseline;
+};
+
+// Tailwind's marker classes: they name the subject of a `group-*` / `peer-*`
+// variant and carry no declaration of their own.
+const MARKER_CLASSES = /^(?:group|peer)(?:\/[\w-]+)?$/;
+
+const stripComments = (source: string): string =>
+  source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+const STRING_LITERAL = /"([^"\\\n]*)"|'([^'\\\n]*)'|`((?:[^`\\$]|\$(?!\{))*)`/g;
+const INTERPOLATION = /\$\{(?:[^{}]|\{[^{}]*\})*\}/g;
+// A token is candidate-shaped when it opens the way a utility does. SVG path
+// data (`M118`, `-107.5Q441`, `4.5v3.7`) and sentences do not.
+const CANDIDATE_TOKEN = /^(?:-?[a-z]|\[|!)\S*$/;
+
+/** The tokens of a string literal, dropping the halves an `${…}` splits. */
+const literalTokens = (raw: string): string[] => {
+  const chunks = raw.split(INTERPOLATION);
+  return chunks.flatMap((chunk, index) => {
+    const parts = chunk.split(/\s+/);
+    if (index > 0 && !/^\s/.test(chunk)) parts.shift();
+    if (index < chunks.length - 1 && !/\s$/.test(chunk)) parts.pop();
+    return parts.filter((part) => part !== "");
+  });
+};
+
+describe("design tokens — every class name reaches the stylesheet", () => {
+  it("generates CSS for every token of every class list", async () => {
+    const found: string[] = [];
+    for (const file of scanner.files) {
+      const rel = relative(REPO_ROOT, file);
+      if (!isAppSource(rel)) continue;
+      const source = stripComments(readIfPresent(file) ?? "");
+      for (const match of source.matchAll(STRING_LITERAL)) {
+        const tokens = literalTokens(match[1] ?? match[2] ?? match[3] ?? "");
+        if (tokens.length < 2) continue;
+        if (!tokens.every((t) => CANDIDATE_TOKEN.test(t))) continue;
+        const dead: string[] = [];
+        let live = 0;
+        for (const token of tokens) {
+          if (MARKER_CLASSES.test(token)) continue;
+          if (await generatesCss(token)) live += 1;
+          else dead.push(token);
+        }
+        if (live === 0) continue;
+        found.push(...dead.map((token) => `${rel}: \`${token}\``));
+      }
+    }
+    expect(
+      [...new Set(found)].sort(),
+      "this class name generates no CSS — write a value 0 as `[0]` and every other value with a token utility",
+    ).toEqual([]);
+  });
+
+  it("knows a live utility from a dead one", async () => {
+    expect(await generatesCss("p-md")).toBe(true);
+    expect(await generatesCss("min-w-[0]")).toBe(true);
+    expect(await generatesCss("sr-only")).toBe(true);
+    expect(await generatesCss("min-w-0")).toBe(false);
+    expect(await generatesCss("p-0")).toBe(false);
+    expect(await generatesCss("gap-0")).toBe(false);
+  });
+
+  it("reads a class list off a literal and leaves prose alone", () => {
+    // Assembled rather than written out: a `${…}` inside a literal here is
+    // the fixture, not this file's own interpolation.
+    const hole = (expression: string) => `$\{${expression}}`;
+    expect(literalTokens("min-w-[0] flex-1")).toEqual(["min-w-[0]", "flex-1"]);
+    expect(literalTokens(`block w-full ${hole("DOC_TITLE_CLASS")}`)).toEqual([
+      "block",
+      "w-full",
+    ]);
+    expect(literalTokens(`${hole("SIZE_CLASS[size]")} shrink-0`)).toEqual([
+      "shrink-0",
+    ]);
+    expect(literalTokens(`text-${hole("size")} p-md`)).toEqual(["p-md"]);
+    expect(CANDIDATE_TOKEN.test("before:content-['–']")).toBe(true);
+    expect(CANDIDATE_TOKEN.test("M118")).toBe(false);
+    expect(CANDIDATE_TOKEN.test("-107.5Q441")).toBe(false);
+  });
+});
+
 describe("design tokens — the stylesheets pending removal", () => {
   const imports = [
     ...(styleSource.get(ENTRY_CSS) ?? "").matchAll(/@import\s+"\.\/([^"]+)"/g),

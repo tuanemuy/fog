@@ -232,9 +232,7 @@ describe("PasswordResetForm", () => {
     });
     submitReset("short");
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe(
-      "パスワードは8文字以上128文字以下で入力してください",
-    );
+    expect(alert.textContent).toBe("8文字以上で入力してください");
     const field = screen.getByLabelText("新パスワード");
     expect(field.getAttribute("aria-invalid")).toBe("true");
     expect(field.getAttribute("aria-describedby")?.split(" ")[0]).toBe(

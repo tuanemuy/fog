@@ -2,14 +2,16 @@
 
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { AuthSheetTitle } from "@/components/layout/AuthSheet";
+import {
+  AuthSheetDescription,
+  AuthSheetTitle,
+} from "@/components/layout/AuthSheet";
 import { Button } from "@/components/ui/Button";
 import { FormError } from "@/components/ui/FormError";
 import { TextField } from "@/components/ui/TextField";
 import { useToast } from "@/components/ui/Toast";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
-import { AuthSheetDescription } from "../AuthSheetDescription";
 import { requestPasswordResetFn } from "../actions";
 import { isResetRequestedResult } from "../schema";
 

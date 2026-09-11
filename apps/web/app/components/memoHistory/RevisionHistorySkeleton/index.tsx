@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { RowList } from "@/components/ui/RowList";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Sk } from "@/components/ui/Sk";
@@ -18,13 +19,15 @@ export type RevisionHistorySkeletonProps = Readonly<{
   subject: "memo" | "document";
 }>;
 
-const STAND_IN_TIME = "2026/07/20 12:42";
+const STAND_IN_TIME = "2026年7月20日 12:42";
 
 /**
  * The history screens while their fragment streams in: the same title,
  * section and version rows as the loaded screen, the text laid over by
  * `Sk` (ADR-005 of Issue #22), so the swap moves nothing. 「履歴」 is the
- * screen's own word, not loaded data, and is drawn as it will stay.
+ * screen's own word, not loaded data, and is drawn as it will stay. P-10
+ * leaves the `h1` to the document's title, so the loading label stands in
+ * for it until that title arrives.
  */
 export function RevisionHistorySkeleton({
   subject,
@@ -46,8 +49,7 @@ export function RevisionHistorySkeleton({
     </>
   );
   return (
-    <div role="status" aria-live="polite" aria-busy="true">
-      <span className="sr-only">読み込み中</span>
+    <LoadingRegion asPageHeading={subject === "document"}>
       {subject === "document" ? (
         <>
           <p className={HISTORY_SUBJECT_CLASS}>
@@ -58,6 +60,6 @@ export function RevisionHistorySkeleton({
       ) : (
         history
       )}
-    </div>
+    </LoadingRegion>
   );
 }

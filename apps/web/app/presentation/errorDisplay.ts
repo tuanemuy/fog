@@ -54,9 +54,9 @@ export function blankFieldMessage(field: BlankField): string {
 function renderBusinessMessage(code: string | null): string | null {
   switch (code) {
     case IdentityErrorCode.PasswordTooWeak:
-      return "パスワードは8文字以上128文字以下で入力してください";
+      return "8文字以上で入力してください";
     case IdentityErrorCode.InvalidEmail:
-      return "メールアドレスの形式が正しくありません";
+      return "有効なメールアドレスを入力してください";
     case IdentityErrorCode.LastCredentialRemoval:
     case IdentityErrorCode.LoginMethodRequired:
       return "最後のログイン手段は解除できません";
@@ -118,7 +118,7 @@ function renderValidationMessage(code: string | null): string | null {
     case "CURRENT_PASSWORD_MISMATCH":
       return "現在のパスワードが正しくありません";
     case "TOO_MANY_ATTEMPTS":
-      return "試行回数の上限に達しました。しばらくしてからお試しください";
+      return "試行が制限されています。しばらくしてからお試しください";
     case "AUTHORIZATION_REQUEST_INVALID":
       return "認可リクエストが正しくありません。クライアントアプリからやり直してください";
     default:

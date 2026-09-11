@@ -76,6 +76,7 @@ export function RollbackControl({ baseTime, rollback }: RollbackControlProps) {
         title="この内容に戻しますか？"
         description={`${baseTime} の内容で新しいリビジョンを作ります。これまでの履歴は残ります。`}
         confirmLabel="戻す"
+        pendingLabel="戻しています…"
         pending={pending}
         onConfirm={confirm}
         onCancel={() => {

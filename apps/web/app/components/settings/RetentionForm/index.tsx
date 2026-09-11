@@ -99,7 +99,7 @@ export function RetentionForm({ retentionDays }: { retentionDays: number }) {
       aria-label="ゴミ箱の保持期限"
       className="flex flex-col items-start gap-md py-row sm:flex-row sm:flex-wrap sm:items-end"
     >
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[0] flex-1">
         <label
           htmlFor={inputId}
           className="block font-base text-sm font-medium leading-tight text-neutral-900"
