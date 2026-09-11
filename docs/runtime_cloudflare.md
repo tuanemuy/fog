@@ -10,16 +10,16 @@ Every section that describes a procedure carries a **Reality** marker, and the m
 | ------ | ------- |
 | **Available** | Runnable against production today. |
 | **Local only** | Runnable under `pnpm dev` / `pnpm preview`; there is no way to do it in production. |
-| **None** | Runnable in neither. |
+| **None (#N)** | Runnable in neither; the issue #N tracks the limit. A **None** with no number is so by design, and says why. |
 
 Two rules follow from that question, and both are easy to get wrong:
 
 - **The marker is not decided by whether code exists.** A maintenance RPC is **Available** because `POST /__operator/<entry>` (8.2) reaches it, not because its method is defined on the Durable Object; a capability that only `sqlite3` against `.wrangler/state` provides is **Local only** however complete the code behind it is.
-- **The marker is not lowered because a later step is blocked.** `wrangler secret put`, `wrangler queues update` and `pulumi up` are commands you can run today, so they are **Available** even though the deploy they prepare for stops at the request Worker's bundling (4.2). Where that boundary falls is shown by section headings — "before the deploy" versus "after the deploy" — not by the marker.
+- **The marker is not lowered because a later step is blocked.** `wrangler secret put`, `wrangler queues update` and `pulumi up` are commands you can run today, so they are **Available** even though the deploy they prepare for stops at the request Worker's bundling (4.2, tracked in [#3](https://github.com/tuanemuy/fog/issues/3)). Where that boundary falls is shown by section headings — "before the deploy" versus "after the deploy" — not by the marker.
 
 **A section whose reality is `None` still carries its full procedure, and says so at the top.** The alternative — leaving it out — reads as "there is a way and we did not write it down".
 
-**This document records what is, not the gap between what is and what a spec says.** Where the two disagree, the disagreement belongs on the issue tracker, not here. Where a behaviour is a limit of the implementation rather than a gap — something the code does on purpose and the spec does not name — it is written as a limit, in the section it belongs to.
+**This document records what is, not the gap between what is and what a spec says.** A limit is tracked on an issue; this document carries the fact and the issue number, never the plan to close it. Where a behaviour is a limit of the implementation rather than a gap — something the code does on purpose and the spec does not name — it is written as a limit, in the section it belongs to.
 
 ## 1. Topology
 
@@ -60,7 +60,7 @@ Two Workers, one Queue plus its dead-letter queue, and Durable Objects that hold
 - **The consumers run in the request Worker's `queue()` handler** — the mail consumer and the DLQ handler both. That is `apps/web/app/worker/cloudflare/queueHandlers.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`. Hosting them there is what puts the mail provider's secret on the request Worker.
 - **Pruning is not a job kind.** The job runner deletes retention-expired `done` and `published` rows at the tail of each wake-up.
 
-**D1 is not in the runtime.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. What remains is outside the runtime: the Pulumi `resources` stack still provisions a protected D1 database, and `apps/web/scripts/render-wrangler.ts` still substitutes `D1_DATABASE_ID` / `D1_DATABASE_NAME`, which no template uses. Retiring those two changes nothing the runtime reads.
+**D1 is not in the runtime.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. What remains is outside the runtime: the Pulumi `resources` stack still provisions a protected D1 database, and `apps/web/scripts/render-wrangler.ts` still substitutes `D1_DATABASE_ID` / `D1_DATABASE_NAME`, which no template uses. Retiring those two is tracked in [#4](https://github.com/tuanemuy/fog/issues/4); it changes nothing the runtime reads.
 
 The staleness check for this chapter is therefore not the word D1 but four English literals — the shared table of processed events, and standalone Workers for relaying, pruning and dead-lettering:
 
@@ -93,7 +93,7 @@ Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrang
 - request side: `main = "app/server.cloudflare.ts"`
 - state side: `main = "app/worker/cloudflare/state.ts"`
 
-**That the request side points at the TanStack Start source entry is why the request Worker cannot be deployed**, not an incidental detail: `wrangler deploy` cannot resolve `#tanstack-start-entry`, `#tanstack-router-entry` or `tanstack-start-manifest:v`, which only the Vite plugin supplies. The templates' own headers say so.
+**That the request side points at the TanStack Start source entry is why the request Worker cannot be deployed** (tracked in [#3](https://github.com/tuanemuy/fog/issues/3)), not an incidental detail: `wrangler deploy` cannot resolve `#tanstack-start-entry`, `#tanstack-router-entry` or `tanstack-start-manifest:v`, which only the Vite plugin supplies. The templates' own headers say so.
 
 ### Durable Object migrations in the config
 
@@ -147,9 +147,9 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
 
-`{ protect: true }` is set on the **D1 database and nothing else**. It stops `pulumi destroy` and stops a resource-replacing edit from deleting the database. The database holds nothing the runtime reads (chapter 1); the protection stays until the resource is removed from the stack, so that the removal is an explicit step and not a side effect.
+`{ protect: true }` is set on the **D1 database and nothing else**. It stops `pulumi destroy` and stops a resource-replacing edit from deleting the database. The database holds nothing the runtime reads (chapter 1); the protection stays until the resource is removed from the stack ([#4](https://github.com/tuanemuy/fog/issues/4)), so that the removal is an explicit step and not a side effect.
 
-**Reality: Available.** To remove the protection when D1 is retired from the stack:
+**Reality: Available.** To remove the protection when D1 is retired from the stack ([#4](https://github.com/tuanemuy/fog/issues/4)):
 
 ```bash
 # from the repo root
@@ -162,7 +162,7 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> state unprotect \
 
 ## 3. Secrets: ownership and procedure
 
-**Reality: Available** (installing a secret is a command you can run today; the deploy it prepares for is blocked at the request Worker's bundling, 4.2).
+**Reality: Available** (installing a secret is a command you can run today; the deploy it prepares for is blocked at the request Worker's bundling, 4.2 and [#3](https://github.com/tuanemuy/fog/issues/3)).
 
 `apps/web/.dev.vars.example` is the authority for ownership; its header table is the roster and `wranglerConfig.test.ts` pins every secret row of it. Fifteen secrets and three `[vars]` entries:
 
@@ -280,13 +280,13 @@ Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omit
 
 ### 4.2 Steps that only mean something after the deploy
 
-**Reality: None for the request Worker half.**
+**Reality: None ([#3](https://github.com/tuanemuy/fog/issues/3)) for the request Worker half.**
 
 ```bash
 # from the repo root (both are root scripts that delegate to @repo/web)
 # 5. state Worker FIRST, then the request Worker
 pnpm deploy:<stage>:state     # works
-pnpm deploy:<stage>           # fails while bundling the request Worker
+pnpm deploy:<stage>           # fails while bundling the request Worker (#3)
 pnpm deploy:<stage>:all       # runs the two in that order; only the first half lands
 
 # 6. bind the hostname
@@ -295,7 +295,7 @@ pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
 
 **The order is not a preference.** The request Worker's DO bindings name the state Worker's script, and a binding cannot be created against a script that does not exist. The routes stack comes last for the same reason one level up: Cloudflare rejects a custom-domain binding for a service that has not been uploaded.
 
-`pnpm deploy:<stage>` fails today because `main` is the TanStack Start source entry and `wrangler` cannot resolve its virtual modules — the same unresolved point that keeps `pnpm start` from booting. Until that resolves, **the request Worker cannot be deployed at all**, and everything downstream of it in this document is unreachable in production regardless of what else is true.
+`pnpm deploy:<stage>` fails today because `main` is the TanStack Start source entry and `wrangler` cannot resolve its virtual modules — the same unresolved point that keeps `pnpm start` from booting. Until [#3](https://github.com/tuanemuy/fog/issues/3) closes, **the request Worker cannot be deployed at all**, and everything downstream of it in this document is unreachable in production regardless of what else is true.
 
 ### 4.3 Rollback
 
@@ -332,7 +332,7 @@ Section 8.6 refers back to this paragraph rather than restating it.
 
 `pnpm preview` serves the build output through `vite preview`, so `pnpm build` (= `build:cf`) must have run first; it reads `.wrangler/deploy/config.json` to find that output. **`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, and `vite preview` picks its own port — so `og:url` and the canonical link will disagree with the address in the browser bar. That is expected in preview and is not a signal of a misconfiguration.
 
-`pnpm start` (`wrangler dev` over both configs) — see `README.md` for its current status; it fails for the same cause as the deploy.
+`pnpm start` (`wrangler dev` over both configs) — see `README.md` for its current status; it fails for the same cause as the deploy ([#3](https://github.com/tuanemuy/fog/issues/3)).
 
 **`pnpm dev` and `pnpm preview` share `apps/web/.wrangler/state`.** Run one at a time: two processes over the same Durable Object files compete for the same Alarms, and a job may run in whichever process fires first. Preview's `[dev-mail]` lines carry `APP_URL`'s host (`:3000`), so a reset link printed by preview has to be opened against preview's own port by hand.
 
@@ -504,7 +504,7 @@ Lateness is what to look for instead.
 - a rising `attempt` on the same row — publishes are failing and backoff is pushing it out
 - rows in `quarantined` — attempts are exhausted; see 8.4
 
-Locally, read them from the DO's SQLite file (chapter 6). In production, `read-delivery-backlog` (8.3) answers the first three as counts and the oldest `created_at`, and `list-quarantined-events` (8.4) the fourth — for one object per call. Nothing notifies an operator of stuck delivery; these reads are pulled, not pushed.
+Locally, read them from the DO's SQLite file (chapter 6). In production, `read-delivery-backlog` (8.3) answers the first three as counts and the oldest `created_at`, and `list-quarantined-events` (8.4) the fourth — for one object per call. Nothing notifies an operator of stuck delivery; these reads are pulled, not pushed (tracked in [#7](https://github.com/tuanemuy/fog/issues/7)).
 
 ### 7.4 Finding a fail-closed DO
 
@@ -625,7 +625,7 @@ Writes the same four state columns as the quarantine re-drive — `status = 'pen
 
 **That single re-drive cannot send twice.** The send-materials guard checks the message's `(event.id, owner_token)` pair against the row: a row the relay re-claimed since carries a new token and answers `nothing-to-send`, and so does one an operator re-drove through `requeue-quarantined-event`. Running the two paths against the same event is safe.
 
-**What you get in the log is `event.id`, `type` and the outcome, and nothing else.** That is the whole of what the hygiene rules allow about a queue message. **In production, not even that is retained**: no wrangler config in this repository declares an `[observability]` block, so nothing keeps the line past the invocation that wrote it — see 8.7.
+**What you get in the log is `event.id`, `type` and the outcome, and nothing else.** That is the whole of what the hygiene rules allow about a queue message. **In production, not even that is retained**: no wrangler config in this repository declares an `[observability]` block, so nothing keeps the line past the invocation that wrote it — see 8.7 (tracked in [#5](https://github.com/tuanemuy/fog/issues/5)).
 
 **What is lost and what remains when the re-drive also fails:**
 
@@ -647,7 +647,7 @@ Therefore:
 
 - **Restrict who can read the DLQ** to the same people who may reach the operator path (8.2). It is not a lower-sensitivity surface than the maintenance entries; it is the same sensitivity by a different route.
 - **Keep no copy of a message.** Not in a ticket, not in a paste, not in an incident channel.
-- **The reach control covers the log readers too.** The message itself is acked within seconds and is gone. The log line is written regardless — but **nothing in this repository retains it in production**: none of the six wrangler configs declares an `[observability]` block, so Workers Logs is off. What is readable in production today is the standard output of a `wrangler tail` session for as long as somebody holds one open, so the reach control applies to whoever that is. The log carries only `event.id` and `type`, which is deliberately not enough to pass the guard on its own, but it is the durable half of a credential and the audience for it should be the operator audience.
+- **The reach control covers the log readers too.** The message itself is acked within seconds and is gone. The log line is written regardless — but **nothing in this repository retains it in production**: none of the six wrangler configs declares an `[observability]` block, so Workers Logs is off (tracked in [#5](https://github.com/tuanemuy/fog/issues/5)). What is readable in production today is the standard output of a `wrangler tail` session for as long as somebody holds one open, so the reach control applies to whoever that is. The log carries only `event.id` and `type`, which is deliberately not enough to pass the guard on its own, but it is the durable half of a credential and the audience for it should be the operator audience.
 - **Never forward the DLQ to an external monitoring or log-aggregation sink.** That prohibition is the price of carrying `owner_token` on the message at all.
 
 ### 8.8 Storage pressure
@@ -656,7 +656,7 @@ Therefore:
 
 The cap is 10 GB per Durable Object, counting the base tables and the FTS5 index together. **Near the cap a DO half-dies: writes fail while reads and `DELETE` still succeed.** Every recovery path has to work without a single write, which is why the export and deletion paths are shaped the way they are.
 
-**Identity Directory DOs are shared by many users.** Pressure in one bucket is not one user's problem — it reaches everyone whose credential hashes to that bucket. A single account attracting a flood of quarantined rows can push a whole bucket toward the cap, and the mechanism that bounds it is per-origin rate limiting, which this repository does not provide (9.4).
+**Identity Directory DOs are shared by many users.** Pressure in one bucket is not one user's problem — it reaches everyone whose credential hashes to that bucket. A single account attracting a flood of quarantined rows can push a whole bucket toward the cap, and the mechanism that bounds it is per-origin rate limiting, which this repository does not provide (9.4, tracked in [#8](https://github.com/tuanemuy/fog/issues/8)).
 
 ## 9. Personal data and secrets
 
@@ -712,7 +712,7 @@ The recipient address and the raw reset token **do** leave the DO. They cross th
 
 ### 9.4 Per-origin rate limiting
 
-**Reality: None.** Nothing rate-limits by origin today.
+**Reality: None ([#8](https://github.com/tuanemuy/fog/issues/8)).** Nothing rate-limits by origin today.
 
 What to put in place when it lands, as a WAF rule:
 
@@ -787,7 +787,7 @@ Partial failure is normal and is handled by the job's own retry, not by an opera
 
 ### 11.3 Point-in-time recovery
 
-**Reality: the restore itself is a platform operation; the four mandatory steps below have their storage and no operator entry that writes it.** Every table and column they name exists in the v1 schemas; what does not exist is a maintenance entry that advances an epoch, revokes connections, deletes tokens or clears a lockout, so the steps are done locally with `sqlite3` (chapter 6) and in production not at all — no entry for them exists. **Running a restore today would leave revoked sessions, revoked connections and consumed reset tokens alive** — the default below, cutting everything, is not yet executable in production.
+**Reality: the restore itself is a platform operation; the four mandatory steps below have their storage and no operator entry that writes it.** Every table and column they name exists in the v1 schemas; what does not exist is a maintenance entry that advances an epoch, revokes connections, deletes tokens or clears a lockout, so the steps are done locally with `sqlite3` (chapter 6) and in production not at all — no entry for them exists (tracked in [#6](https://github.com/tuanemuy/fog/issues/6)). **Running a restore today would leave revoked sessions, revoked connections and consumed reset tokens alive** — the default below, cutting everything, is not yet executable in production.
 
 - **Retention: 30 days**, per Durable Object.
 - **The unit of recovery is one DO.** There is no way to restore several objects to a common instant.
@@ -911,7 +911,7 @@ The four lockout values are chosen against the shape the domain requires, not ag
 
 | Value | Where it goes | Receives it |
 | ----- | ------------- | ----------- |
-| **Per-origin rate limit** (paths, key, window) | a WAF rule, not this repository; see 9.4 | nothing yet — no rule exists |
+| **Per-origin rate limit** (paths, key, window) | a WAF rule, not this repository; see 9.4 | nothing yet — no rule exists ([#8](https://github.com/tuanemuy/fog/issues/8)) |
 
 The throttle window and its grace are read: `IdentityTuning` holds `resetRequestWindowMs` (900,000) and `resetRequestWindowGraceMs` (300,000), the usecase composes `windowKey` from the first and the adapter computes the window row's `expires_at` from both — **one configured value, read by two layers from the same container**, which is what keeps `sweep-reset-tokens` from deleting a window that is still being counted against. The window length is held strictly below `resetTokenTtlMs` (900,000 < 3,600,000), as `spec/database/index.md` requires; `createIdentityTuning` checks its own fields, and that inequality is one of them. The export cap is `EXPORT_MAX_SOURCE_BYTES` (11.1).
 
@@ -976,7 +976,7 @@ Enumerated from **every file under `spec/manual-tests/`** — `index.md`, `accou
 | 18 | Break and restore the queue producer binding, to force quarantine | `account.md` (TC-45) | **Local only** — comment out `[[queues.producers]]` in `wrangler.state.toml` and restart, or seed a `quarantined` row with `sqlite3` |
 | 19 | Break and restore the mail provider, to force a DLQ landing | `account.md` (TC-46) | **Local only** — unset `MAIL_DEV_SINK` without a provider key and the consumer fails; restore it afterwards |
 | 20 | Open a throttle window (clear `reset_request_windows`) | `account.md` (TC-44/45/46) | **Local only** — `sqlite3` on the bucket's table |
-| 21 | Fail a cross-DO RPC for one specific bucket | `account.md` (TC-47) | **Local only, and too coarse** — breaking `script_name` disables *all* DO calls, not one bucket; the terminal-mode entry itself is pinned by the integration suites |
+| 21 | Fail a cross-DO RPC for one specific bucket | `account.md` (TC-47) | **Local only, and too coarse** — breaking `script_name` disables *all* DO calls, not one bucket; the terminal-mode entry itself is pinned by the integration suites; tracked in [#21](https://github.com/tuanemuy/fog/issues/21) |
 | 22 | Receive mail (a development mailbox) | `account.md` (many), `timeline.md` | **Local only** — `MAIL_DEV_SINK="console"` prints `[dev-mail] to=… url=…` on the request Worker's log (the declared exception to the hygiene rule, `spec/async/index.md`); no deployed config carries it |
 | 23 | Shorten the reset-token TTL | `account.md` (TC-30) | **Local only** — edit `resetTokenTtlMs`; there is no env override. **Editing it alone floors at 900,001 ms**, because constraint 1 (12.3) is checked at construction against `queueMaxRetryPeriodMs + dlqRetentionMs`; lowering those two as well — to 90,000 (their own floor) and 0 — takes the TTL down to 90,001 ms. Below that `createDeliveryTuning` throws `CONFIGURATION_ERROR` and the container never builds. Alternatively, `sqlite3` on `password_reset_tokens.expires_at` |
 | 24 | Produce an expired authorization URL | `account.md` (TC-25) | **Local only** — the AI test client (row 26) prints the URL; wait out the code's TTL before opening it |
@@ -1003,15 +1003,16 @@ Enumerated from **every file under `spec/manual-tests/`** — `index.md`, `accou
 
 ## 14. Known limits
 
-Each row is described in full in the section it names; this list only collects them.
+Each row is described in full in the section it names, and tracked on its issue.
 
-| Limit | Described in |
-| ----- | ------------ |
-| The request Worker cannot be deployed, and `pnpm start` does not boot, for the same cause | 4.2, `README.md` |
-| The Pulumi `resources` stack still provisions a D1 database, and the render script still substitutes its two placeholders, with no runtime reader | chapter 1, chapter 2 (Pulumi) |
-| **The DLQ's one log line is not retained in production** — no wrangler config declares `[observability]`, so Workers Logs is off and only a live `wrangler tail` sees it | 8.7 |
-| PITR's four mandatory steps have no maintenance entry; in production they cannot be executed | 11.3 |
-| Stuck delivery is not actively notified | 7.3, 8.3 |
-| No per-origin rate limiting | 9.4 |
-| **Individual operators cannot be told apart by the surface itself.** `OPERATOR_TOKEN` is one bearer; identity comes from Cloudflare Access in front of it (8.2), which this repository does not configure | 8.2 — Access is the control |
-| The three out-of-band settings (DLQ retention, queue retry period, WAF) cannot be read back from the repository | chapter 5 — inherent |
+| Limit | Described in | Tracked in |
+| ----- | ------------ | ---------- |
+| The request Worker cannot be deployed, and `pnpm start` does not boot, for the same cause | 4.2, `README.md` | [#3](https://github.com/tuanemuy/fog/issues/3) |
+| The Pulumi `resources` stack still provisions a D1 database, and the render script still substitutes its two placeholders, with no runtime reader | chapter 1, chapter 2 (Pulumi) | [#4](https://github.com/tuanemuy/fog/issues/4) |
+| **The DLQ's one log line is not retained in production** — no wrangler config declares `[observability]`, so Workers Logs is off and only a live `wrangler tail` sees it | 8.6, 8.7 | [#5](https://github.com/tuanemuy/fog/issues/5) |
+| PITR's four mandatory steps have no maintenance entry; in production they cannot be executed | 11.3 | [#6](https://github.com/tuanemuy/fog/issues/6) |
+| Stuck delivery is not actively notified | 7.3, 8.3 | [#7](https://github.com/tuanemuy/fog/issues/7) |
+| No per-origin rate limiting | 9.4 | [#8](https://github.com/tuanemuy/fog/issues/8) |
+| A cross-DO RPC cannot be failed for one bucket locally (manual test `account.md` TC-47) | 13 (row 21) | [#21](https://github.com/tuanemuy/fog/issues/21) |
+| **Individual operators cannot be told apart by the surface itself.** `OPERATOR_TOKEN` is one bearer; identity comes from Cloudflare Access in front of it (8.2), which this repository does not configure | 8.2 | operations — Access is the control |
+| The three out-of-band settings (DLQ retention, queue retry period, WAF) cannot be read back from the repository | chapter 5 | inherent, not scheduled |

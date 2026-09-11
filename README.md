@@ -79,7 +79,7 @@ pnpm build
 
 To deploy: render the configs, install each secret against the config of the Worker that owns it, set the DLQ retention out of band, then deploy the **state Worker first** and the request Worker second. The full procedure is in [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md); the same checklist is summarised in the header of `apps/web/wrangler.<stage>.toml.tpl`, and which secret belongs to which Worker is declared in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example).
 
-**The request Worker cannot be deployed today** — the same unresolved TanStack Start virtual modules that keep `pnpm start` from booting also break `wrangler deploy`.
+**The request Worker cannot be deployed today** — the same unresolved TanStack Start virtual modules that keep `pnpm start` from booting also break `wrangler deploy`. Tracked in [#3](https://github.com/tuanemuy/fog/issues/3).
 
 ## Development commands
 
@@ -108,7 +108,7 @@ pnpm --filter @repo/web operator <entry> --locator <dir:gN:bM | userId> [--json 
 pnpm --filter @repo/web ai-client -- register|authorize|refresh|whoami|mcp <method> ['<json>']|call <tool> ['<json>']
 ```
 
-**`pnpm start` does not boot, and the request Worker cannot be deployed — one cause.** Re-checked at HEAD `f14fcd8` (2026-09-11): `pnpm start:cf` loads both configs, lists both Workers' bindings, then fails while bundling the request Worker with `Build failed with 5 errors: Could not resolve "#tanstack-router-entry" / "#tanstack-start-entry" / "#tanstack-start-plugin-adapters" / "tanstack-start-manifest:v" / "tanstack-start-injected-head-scripts:v"` — virtual modules only the Vite plugin supplies. The state Worker alone (`wrangler dev -c wrangler.state.toml`) starts fine; `pnpm deploy:<stage>` fails at the same point because all deploy templates point `main` at that source entry, so `pnpm deploy:<stage>:all` lands only its state half. `pnpm dev`, `pnpm preview` and `pnpm build` go through Vite and are unaffected.
+**`pnpm start` does not boot, and the request Worker cannot be deployed — one cause, tracked in [#3](https://github.com/tuanemuy/fog/issues/3).** Re-checked at HEAD `f14fcd8` (2026-09-11): `pnpm start:cf` loads both configs, lists both Workers' bindings, then fails while bundling the request Worker with `Build failed with 5 errors: Could not resolve "#tanstack-router-entry" / "#tanstack-start-entry" / "#tanstack-start-plugin-adapters" / "tanstack-start-manifest:v" / "tanstack-start-injected-head-scripts:v"` — virtual modules only the Vite plugin supplies. The state Worker alone (`wrangler dev -c wrangler.state.toml`) starts fine; `pnpm deploy:<stage>` fails at the same point because all deploy templates point `main` at that source entry, so `pnpm deploy:<stage>:all` lands only its state half. `pnpm dev`, `pnpm preview` and `pnpm build` go through Vite and are unaffected.
 
 ### The operator surface
 
