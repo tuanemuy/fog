@@ -1,12 +1,6 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./theme.css";
-@import "./app.css";
-@import "./knowledge.css";
-@import "./topics.css";
-@import "./documents.css";
-@import "./search.css";
-@import "./trash.css";
 
 /* Tailwind's `container` turns the breakpoints into widths; the frame width
    here is `--sheet-*`. The word turns up in prose the scanner reads, so it is

@@ -95,7 +95,7 @@ Two helpers carry the pattern:
 - `streamingRouteOptions` (`apps/web/app/presentation/streamingRoute.ts`) is spread into every streaming route. It sets `pendingComponent: () => null`, so the fragment skeleton is the only fallback, and `ssr: !import.meta.env.DEV`: under `vite dev` an SSR response carrying an RSC payload never emits the stream end, so the streamed leaf stays unhydrated; the production build (`pnpm build && pnpm preview`) streams and hydrates correctly. Limit: browser checks under `pnpm dev` therefore do not cover the SSR streaming path — verify that on the preview build.
 - `Deferred` (`apps/web/app/components/ui/Deferred/index.tsx`) resolves the promise on the client with `use(useDeferredValue(promise))`. The `useDeferredValue` is what keeps the already-resolved content on screen when `router.invalidate()` hands out a *replacement* promise after a mutation: router state arrives through an external store and cannot ride a transition, so without it the boundary would drop back to its fallback and an optimistic entry would flash away before the refetched list replaced it.
 
-Skeletons are shaped to the real DOM of the fragment they stand in for, so the swap happens without layout shift: `TimelineSkeleton`, `TopicsSkeleton`, `TopicDetailSkeleton`, `DocumentSkeleton`, `SearchSkeleton`, `TrashSkeleton`, `MemoHistorySkeleton`, `SettingsSkeleton`, each next to its feed under `apps/web/app/components/<area>/`, all built from the generic `apps/web/app/components/ui/Skeleton`. Each carries one `role="status"` announcement; the bars are `aria-hidden` and respect `prefers-reduced-motion`.
+A skeleton is the loaded screen's own DOM with the text laid over, not a row of bars standing in for it: it is built from the same primitives and elements as the fragment it replaces, and only the text is wrapped in `Sk` (`apps/web/app/components/ui/Sk`), which hides the glyphs behind a flat block and keeps the line's real height — so the swap moves nothing. `Sk` does not animate, and nothing else in a skeleton does either. The skeletons are `TimelineSkeleton`, `TopicsSkeleton`, `TopicDetailSkeleton`, `DocumentSkeleton` (read / edit), `SearchSkeleton`, `TrashSkeleton`, `RevisionHistorySkeleton`, `SettingsSkeleton` and `PasswordResetDoneSkeleton`, each next to its feed under `apps/web/app/components/<area>/`; `RoutePendingFallback` (`apps/web/app/components/ui/RoutePendingFallback`) is the route-level one. All but `SearchSkeleton` wrap their whole area in one `LoadingRegion` (`apps/web/app/components/ui/LoadingRegion`) — the single `role="status"` with `aria-busy` and the loading label — hide the stand-ins from assistive technology and draw the controls out of reach. On a route that declares `h1: "sheet"`, that label is the page's `h1` while the name it will carry has not arrived. `SearchSkeleton` is the exception because its fragment draws the search box and the chips as well as the results: it keeps those on the same DOM, inert, and puts a spinner row where the results will be.
 
 **Route-level pending is a separate mechanism**, wired in `apps/web/app/router.tsx` as `defaultPendingComponent: RoutePendingFallback` with `defaultPendingMs: 200` / `defaultPendingMinMs: 300`. It shows for any route whose loader stays unresolved past the threshold. A streaming route is not automatically exempt: on client navigation its loader still awaits the `/_serverFn/…` round trip that hands over the unresolved promise, and if that hop is slower than `defaultPendingMs` the route-level fallback would show first and the fragment skeleton after. `streamingRouteOptions`' `pendingComponent: () => null` is what prevents the double fallback.
 
@@ -244,12 +244,12 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
     });
   } catch (error) {
     if (extractSerializedError(error).kind === "notFound") {
-      return <KnowledgeNotFound subject="ドキュメント" />;
+      return <KnowledgeNotFound subject="ドキュメント" asPageHeading />;
     }
     throw error;
   }
   const { document, sources, topic } = data;
-  return <article className="fog-document">{/* … */}</article>;
+  return <article aria-labelledby={TITLE_ID}>{/* … */}</article>;
 }
 ```
 
@@ -257,7 +257,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
 
 - Because we `await` inside the server component, there is no need to assemble the data in the loader.
 - `guardStreamedRender` (`apps/web/app/presentation/errorResponseMiddleware.ts`) wraps the read of every streamed leaf. The HTTP status is already committed by the time the leaf renders, so what it does is classify the failure the way the middleware would — for redaction and for the `system` / `unknown` logging branch — and rethrow. What reaches the client through the RSC error frame is `kind: "unknown"` unless the `serialized` payload survives that boundary; both fail towards less information.
-- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. The router's default 404 is for URLs that match no route (see "Error / Not Found").
+- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. It takes `asPageHeading` from the leaf rather than reading the frame's heading context, because it is drawn in the streamed RSC tree where that context does not reach; the leaves of the routes whose `h1` lives in the sheet pass it. The router's default 404 is for URLs that match no route (see "Error / Not Found").
 - Consolidate the DI / module loading for usecase invocation on the `serverData` wrapper. Calling `getContainer()` directly requires writing `import "@tanstack/react-start/server-only";` every time, and the moment someone adds a single static import line, the server graph risks leaking into the client; the wrapper's dynamic import structurally blocks this.
 - The leaf hands its data to the client island and keys the island on the URL (`TimelineFeed` → `<TimelineBoard key={…} initial={…} search={…} />`), so a `router.invalidate()` for the same URL keeps the island — with its scrolled-in pages — and a URL change remounts it.
 

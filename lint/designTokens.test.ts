@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest";
 // utility CSS Tailwind generates from `apps/web`'s sources — the latter is
 // where an arbitrary value (`p-[13px]`) or a bare number (`border-3`) lands,
 // so it is checked as CSS rather than as className text. On top of that it
-// closes the override paths a wrapper could use on a primitive
-// (`*:` / `**:` / descendant-targeting variants) outside `components/ui`.
+// closes the two paths by which a primitive's look could be redefined from
+// outside it: a wrapper's other-element variants (`*:` / `**:` /
+// descendant-targeting) outside `components/ui`, and a class selector in the
+// hand-written CSS.
 //
 // It lives in `lint/` for the same reason `banList.test.ts` does: it reads
 // across `spec/` and `apps/web`.
@@ -33,22 +35,6 @@ const ADR_DIR = join(REPO_ROOT, "spec", "adr");
 const TOKENS_CSS = "tokens.css";
 const THEME_CSS = "theme.css";
 const ENTRY_CSS = "index.css";
-
-// The pre-#22 stylesheets. They still carry raw lengths (about 150 lines) and
-// every `fog-*` class rule, and are deleted outright once the last screen has
-// moved onto the primitives (Issue #22, step 17) — so the raw-value check skips
-// them rather than rewriting CSS that is about to go. Colors, `var()`
-// fallbacks, undefined references and ADR citations are still checked in them.
-// An entry is only valid while its file exists, is imported, and still has a
-// raw value to hide; the health checks below turn a stale entry red.
-const PENDING_REMOVAL = [
-  "app.css",
-  "documents.css",
-  "knowledge.css",
-  "search.css",
-  "topics.css",
-  "trash.css",
-];
 
 // The one sibling-targeting variant (`index.css`'s `@custom-variant`): the
 // label side of tokens.md's `.label + * { margin-top }`.
@@ -259,6 +245,19 @@ const rawMediaLengths = (
     .map(([text]) => text)
     .filter((text) => !breakpoints.has(text));
 };
+
+// A class selector in a hand-written rule is the second way a look could be
+// redefined from outside the component that owns it (ADR-004): `styles/` holds
+// the tokens, the theme projection and the base layer, and names no class.
+// `@keyframes` steps (`from` / `to` / `50%`) are not selectors.
+const CLASS_SELECTOR = /(?<![\w\\-])\.-?[_a-z]/i;
+const classSelectors = (blocks: readonly CssBlock[]): CssBlock[] =>
+  blocks.filter(
+    (b) =>
+      !b.prelude.startsWith("@") &&
+      !b.context.some((c) => c.startsWith("@keyframes")) &&
+      CLASS_SELECTOR.test(b.prelude),
+  );
 
 const FALLBACK = /var\(\s*--[\w-]+\s*,/;
 const VAR_REF = /var\(\s*(--[\w-]+)/g;
@@ -673,7 +672,7 @@ describe("design tokens — no raw value outside tokens.css", () => {
 
   it("has no raw value outside the allowlist in the hand-written CSS", () => {
     const found = styleFiles
-      .filter((f) => f !== TOKENS_CSS && !PENDING_REMOVAL.includes(f))
+      .filter((f) => f !== TOKENS_CSS)
       .flatMap((f) => [
         ...walked(f)
           .decls.filter((d) => !inKeyframes(d) && !themeException(f, d))
@@ -787,6 +786,18 @@ describe("design tokens — no override path onto a primitive", () => {
       return why === null ? [] : [`${file}: \`${candidate}\` (${why})`];
     });
     expect(found).toEqual([]);
+  });
+
+  it("names no class in the hand-written CSS", () => {
+    const found = styleFiles.flatMap((f) =>
+      classSelectors(walked(f).blocks).map(
+        (b) => `${where(f, b.line)} ${b.prelude}`,
+      ),
+    );
+    expect(
+      found,
+      "a look belongs to the element's className; styles/ carries only the tokens, the theme projection and the base layer",
+    ).toEqual([]);
   });
 
   it("defines the next-sibling variant in index.css", () => {
@@ -906,34 +917,6 @@ describe("design tokens — every class name reaches the stylesheet", () => {
   });
 });
 
-describe("design tokens — the stylesheets pending removal", () => {
-  const imports = [
-    ...(styleSource.get(ENTRY_CSS) ?? "").matchAll(/@import\s+"\.\/([^"]+)"/g),
-  ].map(([, f]) => f);
-
-  it.each(PENDING_REMOVAL)(
-    "%s still exists, is imported and still needs the skip",
-    (file) => {
-      expect(styleFiles, `drop ${file} from PENDING_REMOVAL`).toContain(file);
-      expect(imports, `drop ${file} from PENDING_REMOVAL`).toContain(file);
-      const raw = walked(file).decls.filter(
-        (d) => rawValues(d.prop, d.value).length > 0,
-      );
-      expect(
-        raw.length,
-        `${file} has no raw value left; drop it from PENDING_REMOVAL`,
-      ).toBeGreaterThan(0);
-    },
-  );
-
-  // Reported on every run until the list is empty (Issue #22, step 17).
-  if (PENDING_REMOVAL.length > 0) {
-    it.todo(
-      `Issue #22 step 17: the raw-value check still skips ${PENDING_REMOVAL.join(", ")}`,
-    );
-  }
-});
-
 // The detectors' own reach, independent of what the repository holds today.
 describe("design tokens — what the checks reach", () => {
   it("flags raw colors and lets keywords through", () => {
@@ -999,6 +982,13 @@ describe("design tokens — what the checks reach", () => {
     expect(rawMediaLengths("@media (width >= 500px)", bp)).toEqual(["500px"]);
     expect(rawMediaLengths("@media (hover: hover)", bp)).toEqual([]);
     expect(rawMediaLengths("@layer utilities", bp)).toEqual([]);
+  });
+
+  it("finds a class selector and leaves element and keyframe rules alone", () => {
+    const { blocks } = walkCss(
+      "@layer base { a { color: red } } @keyframes spin { to { rotate: 1turn } } @media (width >= 1px) { .fog-x { color: red } }",
+    );
+    expect(classSelectors(blocks).map((b) => b.prelude)).toEqual([".fog-x"]);
   });
 
   it("finds override paths and lets self-targeting variants through", () => {
