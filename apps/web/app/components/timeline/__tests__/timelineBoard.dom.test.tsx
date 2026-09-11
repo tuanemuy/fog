@@ -5,6 +5,7 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { AppShell } from "@/components/layout/AppShell";
 import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
   groupByDay,
@@ -43,8 +44,25 @@ vi.mock("@/components/timeline/actions", () => ({
   softDeleteMemoFn: mocks.softDeleteMemoFn,
 }));
 
+type ObserverRecord = {
+  root: Element | Document | null | undefined;
+  targets: Element[];
+};
+
+const observers: ObserverRecord[] = [];
+
 class IntersectionObserverStub {
-  observe(): void {}
+  private readonly record: ObserverRecord;
+  constructor(
+    _callback: IntersectionObserverCallback,
+    options?: IntersectionObserverInit,
+  ) {
+    this.record = { root: options?.root, targets: [] };
+    observers.push(this.record);
+  }
+  observe(target: Element): void {
+    this.record.targets.push(target);
+  }
   unobserve(): void {}
   disconnect(): void {}
   takeRecords(): IntersectionObserverEntry[] {
@@ -58,6 +76,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  observers.length = 0;
 });
 
 // 23:00 JST on Jan 1 and 00:30 JST on Jan 2: 90 minutes apart in UTC, on
@@ -365,6 +384,36 @@ describe("TimelineBoard", () => {
         screen.queryByRole("button", { name: "過去のメモを読み込む" }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("TimelineBoard infinite scroll", () => {
+  const withOlderPage = () => (
+    <TimelineBoard
+      initial={page([memo("m1", "existing", JAN_1_LATE)], "cursor-1")}
+      search={{}}
+    />
+  );
+
+  const olderSentinelObserver = () => {
+    const button = screen.getByRole("button", { name: "過去のメモを読み込む" });
+    return observers.find((record) =>
+      record.targets.some((target) => target.contains(button)),
+    );
+  };
+
+  it("watches the older sentinel against the shell's sheet, which is what scrolls", async () => {
+    await renderWithRouter(<AppShell>{withOlderPage()}</AppShell>);
+    await waitFor(() => expect(olderSentinelObserver()).toBeDefined());
+    const sheet = screen.getByRole("main");
+    expect(sheet.contains(screen.getByText("existing"))).toBe(true);
+    expect(olderSentinelObserver()?.root).toBe(sheet);
+  });
+
+  it("watches it against the viewport when drawn without the shell", async () => {
+    await renderWithRouter(withOlderPage());
+    await waitFor(() => expect(olderSentinelObserver()).toBeDefined());
+    expect(olderSentinelObserver()?.root).toBeNull();
   });
 });
 

@@ -29,6 +29,14 @@ const renderDocumentHistory = createServerFn({ method: "GET" })
 
 /** P-10. Same shape as the memo history; the skeleton is the same rows. */
 export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
+  staticData: {
+    header: {
+      kind: "back",
+      entity: "document",
+      back: "/documents/$documentId",
+      h1: "header",
+    },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

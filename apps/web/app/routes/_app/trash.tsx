@@ -18,6 +18,7 @@ const renderTrash = createServerFn({ method: "GET" })
 
 /** P-12. */
 export const Route = createFileRoute("/_app/trash")({
+  staticData: { header: { kind: "top", title: "ゴミ箱" } },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async () => {

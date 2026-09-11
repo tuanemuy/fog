@@ -18,6 +18,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { useSheetScrollContainer } from "@/components/layout/ShellSlots";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
@@ -180,6 +181,7 @@ export function TimelineBoard({
   });
   const olderSentinel = useRef<HTMLDivElement>(null);
   const newerSentinel = useRef<HTMLDivElement>(null);
+  const sheet = useSheetScrollContainer();
   const [filterOpen, setFilterOpen] = useState(search.q !== undefined);
   const [dateOpen, setDateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DisplayMemo | null>(null);
@@ -257,7 +259,10 @@ export function TimelineBoard({
           if (hit) loadMore(hit[1]);
         }
       },
-      { rootMargin: "200px" },
+      // The sheet is what scrolls, so the margin that starts the next page
+      // before the sentinel shows has to extend the sheet's scrollport — on
+      // the viewport it would be clipped away by the sheet.
+      { root: sheet.current, rootMargin: "200px" },
     );
     for (const [element] of watched) observer.observe(element);
     return () => observer.disconnect();
@@ -268,6 +273,7 @@ export function TimelineBoard({
     loadingOlder,
     loadingNewer,
     loadMore,
+    sheet,
   ]);
 
   // A position-specified visit: bring the target into view once it is drawn.

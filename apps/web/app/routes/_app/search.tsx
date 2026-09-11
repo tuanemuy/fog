@@ -21,6 +21,7 @@ const renderSearch = createServerFn({ method: "GET" })
 
 /** P-11. */
 export const Route = createFileRoute("/_app/search")({
+  staticData: { header: { kind: "top", title: "検索" } },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   validateSearch: (search) => searchPageSchema.parse(search),

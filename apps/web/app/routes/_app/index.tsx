@@ -22,6 +22,7 @@ const renderTimeline = createServerFn({ method: "GET" })
   });
 
 export const Route = createFileRoute("/_app/")({
+  staticData: { header: { kind: "top", title: "タイムライン" } },
   // Mandatory for the streaming variant: a re-run loader hands out a fresh
   // promise and would re-suspend the boundary on every revisit.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,

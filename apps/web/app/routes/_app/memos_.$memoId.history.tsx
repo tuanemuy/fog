@@ -25,6 +25,9 @@ const renderMemoHistory = createServerFn({ method: "GET" })
 
 /** P-05. `memos_` keeps it out of any `/memos` layout the tree may grow. */
 export const Route = createFileRoute("/_app/memos_/$memoId/history")({
+  staticData: {
+    header: { kind: "back", entity: "memo", back: "/", h1: "header" },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

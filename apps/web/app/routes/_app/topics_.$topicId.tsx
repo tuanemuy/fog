@@ -27,6 +27,9 @@ const renderTopic = createServerFn({ method: "GET" })
 
 /** P-07. `topics_` keeps it out of the list's layout. */
 export const Route = createFileRoute("/_app/topics_/$topicId")({
+  staticData: {
+    header: { kind: "back", entity: "topic", back: "/topics", h1: "header" },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

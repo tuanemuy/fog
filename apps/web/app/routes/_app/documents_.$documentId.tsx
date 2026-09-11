@@ -29,6 +29,9 @@ const renderDocument = createServerFn({ method: "GET" })
 
 /** P-08. `documents_` keeps it out of any `/documents` layout the tree may grow. */
 export const Route = createFileRoute("/_app/documents_/$documentId")({
+  staticData: {
+    header: { kind: "back", entity: "document", back: "/topics", h1: "header" },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

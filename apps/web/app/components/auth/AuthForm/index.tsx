@@ -3,7 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { Brand } from "@/components/layout/Brand";
+import { BrandLockup } from "@/components/layout/BrandLockup";
 import { displayError, renderErrorMessage } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -113,7 +113,7 @@ export function AuthForm({
     <main className="fog-auth">
       <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
         <div className="fog-auth-brand">
-          <Brand />
+          <BrandLockup />
         </div>
         <h1 id={`${id}-title`}>{signup ? "アカウント登録" : "ログイン"}</h1>
         <p className="fog-auth-description">

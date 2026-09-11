@@ -25,6 +25,7 @@ const searchSchema = z.object({
 });
 
 export const Route = createFileRoute("/_app/settings")({
+  staticData: { header: { kind: "top", title: "設定" } },
   validateSearch: searchSchema,
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,

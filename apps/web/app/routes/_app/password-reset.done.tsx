@@ -20,6 +20,7 @@ const renderDone = createServerFn({ method: "GET" })
 
 /** P-03 after the reset: authenticated by the session the reset just started. */
 export const Route = createFileRoute("/_app/password-reset/done")({
+  staticData: { header: { kind: "top", title: "パスワードを再設定しました" } },
   staleTime: 0,
   ...streamingRouteOptions,
   loader: async () => {

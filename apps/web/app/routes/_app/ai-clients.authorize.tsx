@@ -16,6 +16,7 @@ const searchSchema = z.object({
  * the request blob off any outbound link.
  */
 export const Route = createFileRoute("/_app/ai-clients/authorize")({
+  staticData: { header: { kind: "top", title: "アクセス許可" } },
   validateSearch: searchSchema,
   staleTime: 0,
   loaderDeps: ({ search }) => ({ request: search.request }),

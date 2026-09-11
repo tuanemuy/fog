@@ -29,6 +29,14 @@ const renderDocumentEditor = createServerFn({ method: "GET" })
 
 /** P-09, edit mode. The trailing `_` on the id segment keeps it off P-08's outlet. */
 export const Route = createFileRoute("/_app/documents_/$documentId_/edit")({
+  staticData: {
+    header: {
+      kind: "back",
+      entity: "document",
+      back: "/documents/$documentId",
+      h1: "header",
+    },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

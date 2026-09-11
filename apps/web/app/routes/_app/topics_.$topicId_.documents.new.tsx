@@ -29,6 +29,14 @@ const renderDocumentComposer = createServerFn({ method: "GET" })
 
 /** P-09, create mode. The topic is fixed by where the user came from (P-07). */
 export const Route = createFileRoute("/_app/topics_/$topicId_/documents/new")({
+  staticData: {
+    header: {
+      kind: "back",
+      entity: "document",
+      back: "/topics/$topicId",
+      h1: "header",
+    },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {

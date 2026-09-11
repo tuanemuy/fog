@@ -18,6 +18,7 @@ const renderTopics = createServerFn({ method: "GET" })
 
 /** P-06. */
 export const Route = createFileRoute("/_app/topics")({
+  staticData: { header: { kind: "top", title: "トピック" } },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async () => {
