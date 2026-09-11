@@ -106,7 +106,14 @@ describe("SearchPanel", () => {
   });
 
   it("draws the chips with the archived badge and marks the current scope", async () => {
-    await draw({ search: { q: "fogsearch", topic: "t2" } });
+    await renderWithRouter(
+      <SearchPanel
+        topics={TOPICS}
+        search={{ q: "fogsearch", topic: "t2" }}
+        initial={{ kind: "results", page: page([MEMO, DOC]) }}
+      />,
+      { path: "/search?q=fogsearch&topic=t2" },
+    );
     const chips = within(
       screen.getByRole("list", { name: "トピックで絞り込む" }),
     ).getAllByRole("link");
@@ -118,13 +125,32 @@ describe("SearchPanel", () => {
     expect(chips.map((c) => c.getAttribute("aria-current"))).toEqual([
       null,
       null,
-      "true",
+      "page",
     ]);
     expect(chips[0]?.getAttribute("href")).toBe("/search?q=fogsearch");
     expect(chips[1]?.getAttribute("href")).toBe("/search?q=fogsearch&topic=t1");
     expect(within(chips[2] as HTMLElement).getByText("完了").className).toBe(
       "fog-badge",
     );
+  });
+
+  it("marks 「すべて」 alone when no topic is chosen", async () => {
+    await renderWithRouter(
+      <SearchPanel
+        topics={TOPICS}
+        search={{ q: "fogsearch" }}
+        initial={{ kind: "results", page: page([MEMO, DOC]) }}
+      />,
+      { path: "/search?q=fogsearch" },
+    );
+    const chips = within(
+      screen.getByRole("list", { name: "トピックで絞り込む" }),
+    ).getAllByRole("link");
+    expect(chips.map((c) => c.getAttribute("aria-current"))).toEqual([
+      "page",
+      null,
+      null,
+    ]);
   });
 
   it("lists the results with kind, highlighted snippet, time, topic and destination", async () => {

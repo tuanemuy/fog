@@ -44,12 +44,12 @@
   font-size: var(--text-sm);
   text-decoration: none;
 }
-.fog-chip[aria-current="true"] {
+.fog-chip[aria-current="page"] {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #fff;
 }
-.fog-chip[aria-current="true"] .fog-badge {
+.fog-chip[aria-current="page"] .fog-badge {
   background: rgba(255, 255, 255, 0.25);
   color: #fff;
 }

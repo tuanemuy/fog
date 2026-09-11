@@ -31,6 +31,12 @@ export type SearchPanelProps = Readonly<{
   initial: SearchPanelInitial;
 }>;
 
+// A chip is the current scope only when the URL's search equals its own.
+// `Link`'s default match is partial on search, which makes 「すべて」 ({q})
+// active under every {q, topic} too; and an active `Link` always stamps
+// `aria-current="page"`, so that attribute is the one the style keys on.
+const CHIP_ACTIVE = { exact: true } as const;
+
 /**
  * P-11: the keyword box, the topic chips (「すべて」 + every live topic,
  * archived ones marked), and the result list with 「もっと読む」. A search
@@ -131,7 +137,7 @@ export function SearchPanel({ topics, search, initial }: SearchPanelProps) {
             to="/search"
             search={compactSearch({ q: keyword })}
             className="fog-chip"
-            aria-current={search.topic === undefined ? "true" : undefined}
+            activeOptions={CHIP_ACTIVE}
           >
             すべて
           </Link>
@@ -142,7 +148,7 @@ export function SearchPanel({ topics, search, initial }: SearchPanelProps) {
               to="/search"
               search={compactSearch({ q: keyword, topic: topic.id })}
               className="fog-chip"
-              aria-current={search.topic === topic.id ? "true" : undefined}
+              activeOptions={CHIP_ACTIVE}
             >
               {topic.name}
               {topic.archived && <span className="fog-badge">完了</span>}
