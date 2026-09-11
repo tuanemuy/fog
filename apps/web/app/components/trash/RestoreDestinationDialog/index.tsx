@@ -10,6 +10,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { Button } from "@/components/ui/Button";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { TextAreaField } from "@/components/ui/TextAreaField";
+import { TextField } from "@/components/ui/TextField";
 import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { loadRestoreDestinationsFn } from "../actions";
@@ -30,7 +34,6 @@ export type RestoreDestinationError = Readonly<{
 }>;
 
 export type RestoreDestinationDialogProps = Readonly<{
-  documentTitle: string;
   pending: boolean;
   error: RestoreDestinationError | null;
   onChoose: (destination: RestoreDestination) => void;
@@ -42,14 +45,22 @@ type Candidates =
   | Readonly<{ state: "failed"; message: string }>
   | Readonly<{ state: "ready"; topics: TopicListView["topics"] }>;
 
+/** The radio value of 「新しいトピックを作成」; every other value is a topic id. */
+const NEW_TOPIC = "new";
+
+const OPTION_CLASS =
+  "flex cursor-pointer items-center gap-sm border-neutral-100 py-md font-base text-base leading-tight text-neutral-900 not-first:border-t";
+const RADIO_CLASS =
+  "shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+
 /**
  * ADR-001: the document's topic is gone, so the user picks where it goes —
- * an existing live topic (archived ones included) or a new one. The
- * candidates are fetched when the dialog opens (decision △-5), and read
- * again on request when the chosen one turned out to be unavailable.
+ * an existing live topic (archived ones included) or a new one
+ * (`spec/design/pages/trash.html`, 復元先選択). The candidates are fetched
+ * when the dialog opens (decision △-5), and read again on request when the
+ * chosen one turned out to be unavailable.
  */
 export function RestoreDestinationDialog({
-  documentTitle,
   pending,
   error,
   onChoose,
@@ -60,12 +71,9 @@ export function RestoreDestinationDialog({
   const [candidates, setCandidates] = useState<Candidates>({
     state: "loading",
   });
-  const [mode, setMode] = useState<"existing" | "new">("existing");
+  const [choice, setChoice] = useState<string | null>(null);
   const [nameMissing, setNameMissing] = useState(false);
-  const nameId = useId();
-  const nameErrorId = useId();
-  const descriptionId = useId();
-  const selectId = useId();
+  const titleId = useId();
 
   useEffect(() => {
     const element = dialog.current;
@@ -84,7 +92,12 @@ export function RestoreDestinationDialog({
         "loadRestoreDestinationsFn",
       );
       setCandidates({ state: "ready", topics: list.topics });
-      if (list.topics.length === 0) setMode("new");
+      setChoice((current) =>
+        current !== null &&
+        (current === NEW_TOPIC || list.topics.some((t) => t.id === current))
+          ? current
+          : (list.topics[0]?.id ?? NEW_TOPIC),
+      );
     } catch (failure) {
       setCandidates({ state: "failed", message: displayError(failure) });
     }
@@ -96,16 +109,12 @@ export function RestoreDestinationDialog({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (pending) return;
-    const form = event.currentTarget;
-    if (mode === "existing") {
-      const topicId = (
-        form.elements.namedItem("topicId") as HTMLSelectElement | null
-      )?.value;
-      if (!topicId) return;
-      onChoose({ kind: "existing", topicId });
+    if (pending || choice === null) return;
+    if (choice !== NEW_TOPIC) {
+      onChoose({ kind: "existing", topicId: choice });
       return;
     }
+    const form = event.currentTarget;
     const name = (
       form.elements.namedItem("name") as HTMLInputElement
     ).value.trim();
@@ -123,116 +132,109 @@ export function RestoreDestinationDialog({
     });
   };
 
-  const hasCandidates =
-    candidates.state === "ready" && candidates.topics.length > 0;
+  const topics = candidates.state === "ready" ? candidates.topics : [];
 
   return (
+    // `m-auto` puts the modal back in the middle of the viewport: the
+    // preflight's blanket `margin: 0` otherwise pins it to the top left.
     <dialog
       ref={dialog}
-      className="fog-dialog fog-destination"
-      aria-labelledby="restore-destination-title"
+      className="m-auto w-sheet max-w-narrow bg-transparent backdrop:bg-overlay"
+      aria-labelledby={titleId}
       onClose={onCancel}
     >
       <form
         method="dialog"
         onSubmit={submit}
-        aria-label="復元先のトピック"
-        className="fog-dialog-box fog-destination-box"
+        aria-labelledby={titleId}
+        className="rounded-lg bg-bg-card px-xl py-2xl font-base shadow-md"
       >
-        <h2 id="restore-destination-title" className="fog-dialog-title">
-          「{documentTitle}」の復元先を選んでください
+        <h2
+          id={titleId}
+          className="text-lg font-semibold leading-tight text-neutral-900"
+        >
+          復元先のトピック
         </h2>
-        <p className="fog-dialog-text">
-          元のトピックは完全に削除されています。既存のトピックへ戻すか、新しいトピックを作って戻します。
+        <p className="mt-md text-sm leading-normal text-neutral-700">
+          元のトピックは完全に削除されています。
         </p>
-        <fieldset className="fog-destination-choice" disabled={pending}>
-          <legend className="fog-sr-only">復元先の種類</legend>
-          <label>
-            <input
-              type="radio"
-              name="mode"
-              value="existing"
-              checked={mode === "existing"}
-              disabled={!hasCandidates}
-              onChange={() => setMode("existing")}
-            />
-            既存のトピックへ
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="mode"
-              value="new"
-              checked={mode === "new"}
-              onChange={() => setMode("new")}
-            />
-            新しいトピックを作る
-          </label>
-        </fieldset>
-        {mode === "existing" && (
-          <div className="fog-destination-existing">
-            {candidates.state === "loading" && (
-              <p className="fog-meta" role="status">
-                トピックを読み込み中…
-              </p>
-            )}
-            {candidates.state === "failed" && (
-              <p className="fog-error" role="alert">
-                {candidates.message}
-                <button
-                  type="button"
-                  className="fog-text-button"
-                  onClick={() => void reload()}
-                >
-                  読み直す
-                </button>
-              </p>
-            )}
-            {candidates.state === "ready" && !hasCandidates && (
-              <p className="fog-meta">
-                選べるトピックがありません。新しいトピックを作ってください。
-              </p>
-            )}
-            {hasCandidates && (
-              <>
-                <label htmlFor={selectId} className="fog-sr-only">
-                  復元先のトピック
-                </label>
-                <select id={selectId} name="topicId" disabled={pending}>
-                  {candidates.topics.map((topic) => (
-                    <option key={topic.id} value={topic.id}>
-                      {topic.name}
-                      {topic.status === "archived" ? "（完了）" : ""}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
+        {error === null ? null : (
+          <div className="mt-md">
+            <InlineAlert
+              tone="error"
+              {...(error.stale && candidates.state === "ready"
+                ? {
+                    retry: {
+                      label: "候補を読み直す",
+                      onRetry: () => void reload(),
+                    },
+                  }
+                : {})}
+            >
+              {error.message}
+            </InlineAlert>
           </div>
         )}
-        {mode === "new" && (
-          <div className="fog-destination-new">
-            <label htmlFor={nameId}>トピック名</label>
-            <input
-              id={nameId}
+        <fieldset className="mt-md min-w-[0]" disabled={pending}>
+          <legend className="sr-only">復元先のトピック</legend>
+          {candidates.state === "loading" && (
+            <p
+              role="status"
+              className="py-md text-sm leading-tight text-neutral-600"
+            >
+              トピックを読み込み中…
+            </p>
+          )}
+          {candidates.state === "failed" && (
+            <InlineAlert
+              tone="error"
+              retry={{ label: "再試行", onRetry: () => void reload() }}
+            >
+              {candidates.message}
+            </InlineAlert>
+          )}
+          <div>
+            {topics.map((topic) => (
+              <label key={topic.id} className={OPTION_CLASS}>
+                <input
+                  type="radio"
+                  name="destination"
+                  value={topic.id}
+                  checked={choice === topic.id}
+                  onChange={() => setChoice(topic.id)}
+                  className={RADIO_CLASS}
+                />
+                {topic.name}
+                {topic.status === "archived" ? "（完了）" : ""}
+              </label>
+            ))}
+            <label className={OPTION_CLASS}>
+              <input
+                type="radio"
+                name="destination"
+                value={NEW_TOPIC}
+                checked={choice === NEW_TOPIC}
+                onChange={() => setChoice(NEW_TOPIC)}
+                className={RADIO_CLASS}
+              />
+              新しいトピックを作成
+            </label>
+          </div>
+        </fieldset>
+        {choice === NEW_TOPIC && (
+          <div className="mt-md flex flex-col gap-lg">
+            <TextField
+              label="トピック名"
               name="name"
-              type="text"
               required
               maxLength={100}
               disabled={pending}
               autoComplete="off"
+              error={nameMissing ? blankFieldMessage("topicName") : null}
               onChange={() => setNameMissing(false)}
-              aria-invalid={nameMissing || undefined}
-              aria-describedby={nameMissing ? nameErrorId : undefined}
             />
-            {nameMissing && (
-              <p className="fog-error" id={nameErrorId} role="alert">
-                {blankFieldMessage("topicName")}
-              </p>
-            )}
-            <label htmlFor={descriptionId}>説明（任意）</label>
-            <textarea
-              id={descriptionId}
+            <TextAreaField
+              label="説明（任意）"
               name="description"
               rows={2}
               maxLength={500}
@@ -240,36 +242,17 @@ export function RestoreDestinationDialog({
             />
           </div>
         )}
-        {error !== null && (
-          <p className="fog-error" role="alert">
-            {error.message}
-            {error.stale && candidates.state === "ready" && (
-              <button
-                type="button"
-                className="fog-text-button"
-                onClick={() => void reload()}
-              >
-                候補を読み直す
-              </button>
-            )}
-          </p>
-        )}
-        <div className="fog-dialog-actions">
-          <button
-            type="button"
-            className="fog-secondary"
-            onClick={onCancel}
-            disabled={pending}
-          >
-            キャンセル
-          </button>
-          <button
+        <div className="mt-xl flex flex-col gap-sm">
+          <Button
+            variant="fill-sm"
             type="submit"
-            className="fog-primary"
-            disabled={pending || (mode === "existing" && !hasCandidates)}
+            disabled={pending || choice === null}
           >
-            {pending ? "復元中…" : "この場所へ復元"}
-          </button>
+            {pending ? "復元中…" : "復元"}
+          </Button>
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            キャンセル
+          </Button>
         </div>
       </form>
     </dialog>
