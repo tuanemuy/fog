@@ -103,14 +103,22 @@ async function drawEdit() {
 }
 
 describe("DocumentEditor: create", () => {
-  it("cannot save with a blank title and posts no change reason", async () => {
+  it("refuses a blank title with its message, keeps the body, and posts no change reason", async () => {
     await drawCreate();
-    const { title, save } = editorForm("ドキュメントを作成");
-    expect(save.disabled).toBe(true);
-    fireEvent.change(title, { target: { value: "   " } });
-    expect(save.disabled).toBe(true);
-    fireEvent.change(title, { target: { value: "新規" } });
+    const { title, body, save } = editorForm("ドキュメントを作成");
     expect(save.disabled).toBe(false);
+    fireEvent.change(body, { target: { value: "本文のみ" } });
+    fireEvent.change(title, { target: { value: "   " } });
+    fireEvent.click(save);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("タイトルを入力してください");
+    expect(title.getAttribute("aria-invalid")).toBe("true");
+    expect(title.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(body.value).toBe("本文のみ");
+    expect(mocks.createDocumentFn).not.toHaveBeenCalled();
+    fireEvent.change(title, { target: { value: "新規" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(title.hasAttribute("aria-invalid")).toBe(false);
     expect(screen.queryByLabelText("変更理由")).toBeNull();
     expect(
       screen.getByRole("link", { name: "読書メモ" }).getAttribute("href"),

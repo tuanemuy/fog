@@ -13,7 +13,7 @@ import {
   useTransition,
 } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { displayError } from "@/presentation/errorDisplay";
+import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { trashTopicFn, updateTopicFn } from "../actions";
 import { isTopicResult, isTrashTopicResult } from "../schema";
@@ -37,11 +37,13 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
   const update = useServerFn(updateTopicFn);
   const trash = useServerFn(trashTopicFn);
   const nameId = useId();
+  const nameErrorId = useId();
   const descriptionId = useId();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(topic.name);
+  const [nameMissing, setNameMissing] = useState(false);
   const [description, setDescription] = useState(topic.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -71,7 +73,11 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextName = name.trim();
-    if (nextName.length === 0 || saving) return;
+    if (saving) return;
+    if (nextName.length === 0) {
+      setNameMissing(true);
+      return;
+    }
     const nextDescription = description.trim();
     startSave(async () => {
       patch({
@@ -150,10 +156,20 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
             id={nameId}
             className="fog-field"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameMissing(false);
+            }}
             disabled={saving}
             maxLength={100}
+            aria-invalid={nameMissing || undefined}
+            aria-describedby={nameMissing ? nameErrorId : undefined}
           />
+          {nameMissing && (
+            <p className="fog-error" id={nameErrorId} role="alert">
+              {blankFieldMessage("topicName")}
+            </p>
+          )}
           <label className="fog-form-label" htmlFor={descriptionId}>
             説明
           </label>
@@ -168,11 +184,7 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
             placeholder="説明（任意）"
           />
           <div className="fog-actions">
-            <button
-              type="submit"
-              className="fog-primary"
-              disabled={saving || name.trim().length === 0}
-            >
+            <button type="submit" className="fog-primary" disabled={saving}>
               {saving ? "保存中…" : "保存"}
             </button>
             <button
@@ -181,6 +193,7 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
               disabled={saving}
               onClick={() => {
                 setEditing(false);
+                setNameMissing(false);
                 setName(topic.name);
                 setDescription(topic.description ?? "");
               }}

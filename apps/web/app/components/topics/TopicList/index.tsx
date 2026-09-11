@@ -16,7 +16,7 @@ import {
   useTransition,
 } from "react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { displayError } from "@/presentation/errorDisplay";
+import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { createTopicFn, trashTopicFn } from "../actions";
 import { isTopicResult, isTrashTopicResult } from "../schema";
@@ -39,8 +39,10 @@ export function TopicList({ initial }: { initial: TopicListView }) {
   const create = useServerFn(createTopicFn);
   const trash = useServerFn(trashTopicFn);
   const nameId = useId();
+  const nameErrorId = useId();
   const descriptionId = useId();
   const [name, setName] = useState("");
+  const [nameMissing, setNameMissing] = useState(false);
   const [description, setDescription] = useState("");
   const [describing, setDescribing] = useState(false);
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
@@ -63,10 +65,19 @@ export function TopicList({ initial }: { initial: TopicListView }) {
         : current.filter((topic) => topic.id !== action.id),
   );
 
-  // One create per submit event (the same guard as the memo composer).
+  // One create per submit event (the same guard as the memo composer). A
+  // blank name stops here too, before React queues the action, so the
+  // message is the only thing the submit produces and the description stays.
   const inFlight = useRef(false);
   const guardSubmit = (event: FormEvent<HTMLFormElement>) => {
-    if (inFlight.current) event.preventDefault();
+    if (inFlight.current) {
+      event.preventDefault();
+      return;
+    }
+    if (name.trim().length === 0) {
+      event.preventDefault();
+      setNameMissing(true);
+    }
   };
 
   const [state, action, pending] = useActionState<ComposerState, FormData>(
@@ -166,15 +177,16 @@ export function TopicList({ initial }: { initial: TopicListView }) {
             className="fog-create-input"
             placeholder="新しいトピック"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameMissing(false);
+            }}
             disabled={pending}
             maxLength={100}
+            aria-invalid={nameMissing || undefined}
+            aria-describedby={nameMissing ? nameErrorId : undefined}
           />
-          <button
-            type="submit"
-            className="fog-primary"
-            disabled={pending || name.trim().length === 0}
-          >
+          <button type="submit" className="fog-primary" disabled={pending}>
             {pending ? "追加中…" : "追加"}
           </button>
         </div>
@@ -203,6 +215,11 @@ export function TopicList({ initial }: { initial: TopicListView }) {
           >
             説明を追加
           </button>
+        )}
+        {nameMissing && (
+          <p className="fog-error" id={nameErrorId} role="alert">
+            {blankFieldMessage("topicName")}
+          </p>
         )}
         {state.error && (
           <p className="fog-error" role="alert">

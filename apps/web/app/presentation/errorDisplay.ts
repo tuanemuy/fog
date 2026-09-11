@@ -24,6 +24,23 @@ function renderConflictMessage(code: string | null): string {
   }
 }
 
+export type BlankField = "topicName" | "documentTitle";
+
+/**
+ * The wording for a required field left blank. A form shows it before
+ * posting (the blank submit never reaches the server) and the business
+ * table below shows the same one when the server's value object refuses a
+ * blank, so the two paths cannot word it differently.
+ */
+export function blankFieldMessage(field: BlankField): string {
+  switch (field) {
+    case "topicName":
+      return "トピック名を入力してください";
+    case "documentTitle":
+      return "タイトルを入力してください";
+  }
+}
+
 // `business` and `validation` both carry the message the layer that threw
 // wrote in English. Codes we have a user-facing wording for are translated
 // here; everything else keeps falling through to that message, so adding a
@@ -54,7 +71,7 @@ function renderBusinessMessage(code: string | null): string | null {
     case MemoErrorCode.EmptyBody:
       return "メモを入力してください";
     case KnowledgeErrorCode.EmptyTopicName:
-      return "トピック名を入力してください";
+      return blankFieldMessage("topicName");
     case KnowledgeErrorCode.TopicNameMultiline:
       return "トピック名に改行は使えません";
     case KnowledgeErrorCode.TopicNameTooLong:
@@ -64,17 +81,13 @@ function renderBusinessMessage(code: string | null): string | null {
     case KnowledgeErrorCode.TopicDescriptionTooLong:
       return "説明文は500文字以内で入力してください";
     case KnowledgeErrorCode.EmptyDocumentTitle:
-      return "タイトルを入力してください";
+      return blankFieldMessage("documentTitle");
     case KnowledgeErrorCode.DocumentTitleMultiline:
       return "タイトルに改行は使えません";
     case KnowledgeErrorCode.DocumentTitleTooLong:
       return "タイトルは200文字以内で入力してください";
     case KnowledgeErrorCode.DocumentBodyTooLong:
       return "本文は400,000文字以内で入力してください";
-    // **The three change-reason codes reach no screen yet.** A change reason
-    // is posted only by the editor's edit mode, which the slice that owns
-    // editing brings; the wording waits here so that slice adds a field
-    // rather than a row of this table.
     case KnowledgeErrorCode.EmptyChangeReason:
       return "変更理由を入力してください";
     case KnowledgeErrorCode.ChangeReasonMultiline:

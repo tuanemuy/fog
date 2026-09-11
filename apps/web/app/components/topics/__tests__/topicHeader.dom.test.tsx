@@ -59,7 +59,7 @@ describe("TopicHeader", () => {
     expect(children[separator + 1]?.textContent).toBe("削除");
   });
 
-  it("edits inline: prefilled, blank name disables, saves with an optimistic name and invalidates", async () => {
+  it("edits inline: prefilled, a blank name is refused with its message, saves with an optimistic name and invalidates", async () => {
     const update = deferred<unknown>();
     mocks.updateTopicFn.mockReturnValue(update.promise);
     const { router } = await renderWithRouter(
@@ -76,11 +76,15 @@ describe("TopicHeader", () => {
     expect(name.value).toBe("前");
     expect(description.value).toBe("説明");
     fireEvent.change(name, { target: { value: "   " } });
-    expect(
-      (within(form).getByRole("button", { name: "保存" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    fireEvent.submit(form);
+    const alert = within(form).getByRole("alert");
+    expect(alert.textContent).toBe("トピック名を入力してください");
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(name.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(mocks.updateTopicFn).not.toHaveBeenCalled();
+    expect(screen.getByRole("form", { name: "トピックを編集" })).toBe(form);
     fireEvent.change(name, { target: { value: "後" } });
+    expect(within(form).queryByRole("alert")).toBeNull();
     fireEvent.change(description, { target: { value: "" } });
     fireEvent.submit(form);
     await waitFor(() =>

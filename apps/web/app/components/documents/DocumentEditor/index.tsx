@@ -11,6 +11,7 @@ import { type FormEvent, useActionState, useRef, useState } from "react";
 import { OriginList } from "@/components/knowledge/OriginRow";
 import { actorLabel } from "@/components/timeline/MemoEntry";
 import {
+  blankFieldMessage,
   displayError,
   isOptimisticLockFailure,
 } from "@/presentation/errorDisplay";
@@ -45,6 +46,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
   const edit = useServerFn(editDocumentFn);
   const editing = props.mode === "edit" ? props.document : null;
   const [title, setTitle] = useState(editing?.title ?? "");
+  const [titleMissing, setTitleMissing] = useState(false);
   const [body, setBody] = useState(editing?.body ?? "");
   const [changeReason, setChangeReason] = useState("");
   const [picked, setPicked] = useState<readonly PickedMemo[]>([]);
@@ -54,10 +56,19 @@ export function DocumentEditor(props: DocumentEditorProps) {
   const [conflict, setConflict] = useState<DocumentConflictView | null>(null);
 
   // Two submits in one frame both arrive before the pending state disables
-  // the button; the second is stopped before React queues its action.
+  // the button; the second is stopped before React queues its action. A
+  // blank title stops here too, so the message is all the submit produces
+  // and the body stays as typed.
   const inFlight = useRef(false);
   const guardSubmit = (event: FormEvent<HTMLFormElement>) => {
-    if (inFlight.current) event.preventDefault();
+    if (inFlight.current) {
+      event.preventDefault();
+      return;
+    }
+    if (title.trim().length === 0) {
+      event.preventDefault();
+      setTitleMissing(true);
+    }
   };
 
   const [state, action, pending] = useActionState<EditorState, FormData>(
@@ -121,7 +132,6 @@ export function DocumentEditor(props: DocumentEditorProps) {
 
   const topicId =
     props.mode === "create" ? props.topicId : props.document.topicId;
-  const cannotSave = pending || title.trim().length === 0;
 
   return (
     <form
@@ -156,7 +166,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
               やめる
             </Link>
           )}
-          <button type="submit" className="fog-primary" disabled={cannotSave}>
+          <button type="submit" className="fog-primary" disabled={pending}>
             {pending ? "保存中…" : conflict ? "そのまま保存" : "保存"}
           </button>
         </div>
@@ -170,9 +180,19 @@ export function DocumentEditor(props: DocumentEditorProps) {
         className="fog-title-input"
         placeholder="タイトル"
         value={title}
-        onChange={(event) => setTitle(event.target.value)}
+        onChange={(event) => {
+          setTitle(event.target.value);
+          setTitleMissing(false);
+        }}
         disabled={pending}
+        aria-invalid={titleMissing || undefined}
+        aria-describedby={titleMissing ? "document-title-error" : undefined}
       />
+      {titleMissing && (
+        <p className="fog-error" id="document-title-error" role="alert">
+          {blankFieldMessage("documentTitle")}
+        </p>
+      )}
       <label className="fog-sr-only" htmlFor="document-body">
         本文
       </label>

@@ -47,19 +47,40 @@ function rowNames(): string[] {
 }
 
 describe("TopicList: create", () => {
-  it("draws the empty state and enables 追加 once a name is typed", async () => {
+  it("draws the empty state; a blank name says so, posts nothing and keeps the description", async () => {
+    mocks.createTopicFn.mockResolvedValue(topicView("t1", "補充後トピック"));
     await renderWithRouter(<TopicList initial={{ topics: [] }} />, {
       path: "/topics",
     });
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
       "最初のトピックを作ろう",
     );
+    fireEvent.click(screen.getByRole("button", { name: "説明を追加" }));
+    fireEvent.change(screen.getByLabelText("説明"), {
+      target: { value: "説明のみ" },
+    });
     const { input, submit } = composer();
-    expect(submit.disabled).toBe(true);
-    fireEvent.change(input, { target: { value: "  " } });
-    expect(submit.disabled).toBe(true);
-    fireEvent.change(input, { target: { value: "読書" } });
     expect(submit.disabled).toBe(false);
+    fireEvent.change(input, { target: { value: "  " } });
+    fireEvent.click(submit);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("トピック名を入力してください");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(mocks.createTopicFn).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("説明") as HTMLTextAreaElement).value).toBe(
+      "説明のみ",
+    );
+
+    fireEvent.change(input, { target: { value: "補充後トピック" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(input.hasAttribute("aria-invalid")).toBe(false);
+    fireEvent.click(composer().submit);
+    await waitFor(() =>
+      expect(mocks.createTopicFn).toHaveBeenCalledWith({
+        data: { name: "補充後トピック", description: "説明のみ" },
+      }),
+    );
   });
 
   it("reveals the description textarea behind 説明を追加 and posts it", async () => {
