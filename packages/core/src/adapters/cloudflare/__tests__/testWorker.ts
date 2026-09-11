@@ -10,4 +10,11 @@ export default {
   fetch(): Response {
     return new Response("Not found", { status: 404 });
   },
+  // The relay under test publishes for real, and a full batch is delivered
+  // to this entry. No suite here is the consumer (the request Worker's
+  // consumers are driven directly by their own tests), so the batch is
+  // acknowledged rather than left to fail in a handler that does not exist.
+  queue(batch: MessageBatch<unknown>): void {
+    batch.ackAll();
+  },
 };

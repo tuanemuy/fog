@@ -1,4 +1,5 @@
 import { runDurableObjectAlarm } from "cloudflare:test";
+import { DELIVERY_TUNING_DEFAULTS } from "@repo/core/application/delivery/tuning";
 import { describe, expect, it } from "vitest";
 import { directoryStubOf, inDirectoryStorage } from "./helpers";
 
@@ -109,5 +110,132 @@ describe("alarm(): one relay pass and one jobs pass per wake-up", () => {
 
     // Nothing is due any more, so a second wake-up is not even scheduled.
     expect(await runDurableObjectAlarm(stub)).toBe(false);
+  });
+
+  it("holds the relay's and the jobs pass's count limits independently", async () => {
+    const bucket = { generation: 8000, bucketIndex: 2 } as const;
+    const stub = directoryStubOf(bucket.generation, bucket.bucketIndex);
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
+    const relayLimit = DELIVERY_TUNING_DEFAULTS.relayMaxRowsPerPass;
+    const jobsLimit = DELIVERY_TUNING_DEFAULTS.jobsMaxJobsPerPass;
+    const past = Date.now() - 1_000;
+
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        state.storage.transactionSync(() => {
+          for (let i = 0; i < relayLimit + 2; i += 1) {
+            sql.exec(
+              `INSERT INTO outbox_events (id, type, payload, aggregate_id, occurred_at, created_at, attempt, next_run_at, status, lease_until, owner_token, terminal_reason, completed_at)
+               VALUES (?, 'identity.passwordResetRequested', '{"tokenId":"t","mailKind":"password-reset"}', 'w', ?, ?, 0, ?, 'pending', NULL, NULL, NULL, NULL)`,
+              `evt-limit-${i}`,
+              past,
+              past,
+              past,
+            );
+          }
+          for (let i = 0; i < jobsLimit + 2; i += 1) {
+            sql.exec(
+              `INSERT INTO jobs (operation_key, kind, payload, payload_digest, attempt, next_run_at, status, lease_until, owner_token, terminal_reason, completed_at)
+               VALUES (?, 'sweep-reservations', '{}', '{}', 0, ?, 'pending', NULL, NULL, NULL, NULL)`,
+              `sweep-reservations:limit-${i}`,
+              past,
+            );
+          }
+        });
+        await state.storage.setAlarm(Date.now() + 60_000);
+      },
+    );
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    await inDirectoryStorage(bucket.generation, bucket.bucketIndex, (sql) => {
+      const count = (query: string) => sql.exec<{ n: number }>(query).one().n;
+      // A backlog in one table neither eats the other pass's budget nor
+      // stops the other pass from running: each spent exactly its own.
+      expect(
+        count(
+          "SELECT count(*) AS n FROM outbox_events WHERE status = 'published'",
+        ),
+      ).toBe(relayLimit);
+      expect(
+        count(
+          "SELECT count(*) AS n FROM outbox_events WHERE status = 'pending'",
+        ),
+      ).toBe(2);
+      expect(
+        count("SELECT count(*) AS n FROM jobs WHERE status = 'done'"),
+      ).toBe(jobsLimit);
+      expect(
+        count("SELECT count(*) AS n FROM jobs WHERE status = 'pending'"),
+      ).toBe(2);
+    });
+
+    // The tail re-arm left the DO armed on the leftovers' past `next_run_at`,
+    // so the next wake-up (whether workerd has already fired it or this
+    // call runs it) drains both tables.
+    await runDurableObjectAlarm(stub);
+    await inDirectoryStorage(bucket.generation, bucket.bucketIndex, (sql) => {
+      const left = sql
+        .exec<{ n: number }>(
+          `SELECT (SELECT count(*) FROM outbox_events WHERE status = 'pending')
+                + (SELECT count(*) FROM jobs WHERE status = 'pending') AS n`,
+        )
+        .one().n;
+      expect(left).toBe(0);
+    });
+  });
+
+  it("re-arms on the earliest lease when every runnable row is claimed", async () => {
+    const bucket = { generation: 8000, bucketIndex: 3 } as const;
+    const stub = directoryStubOf(bucket.generation, bucket.bucketIndex);
+    expect((await stub.readDeliveryBacklog()).ok).toBe(true);
+    const now = Date.now();
+    const jobLease = now + 30_000;
+    const eventLease = now + 45_000;
+
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        state.storage.transactionSync(() => {
+          // Claimed rows whose `next_run_at` is already past: re-arming on
+          // that value would wake the DO at once, claim nothing, and spin.
+          sql.exec(
+            `INSERT INTO jobs (operation_key, kind, payload, payload_digest, attempt, next_run_at, status, lease_until, owner_token, terminal_reason, completed_at)
+             VALUES ('sweep-reservations', 'sweep-reservations', '{}', '{}', 0, ?, 'running', ?, 'held', NULL, NULL)`,
+            now - 5_000,
+            jobLease,
+          );
+          sql.exec(
+            `INSERT INTO outbox_events (id, type, payload, aggregate_id, occurred_at, created_at, attempt, next_run_at, status, lease_until, owner_token, terminal_reason, completed_at)
+             VALUES ('evt-leased', 'identity.passwordResetRequested', '{"tokenId":"t","mailKind":"password-reset"}', 'w', ?, ?, 0, ?, 'publishing', ?, 'held', NULL, NULL)`,
+            now - 5_000,
+            now - 5_000,
+            now - 5_000,
+            eventLease,
+          );
+        });
+        await state.storage.setAlarm(now + 60_000);
+      },
+    );
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+
+    await inDirectoryStorage(
+      bucket.generation,
+      bucket.bucketIndex,
+      async (sql, _instance, state) => {
+        expect(
+          sql
+            .exec<{ status: string; owner_token: string | null }>(
+              "SELECT status, owner_token FROM jobs WHERE operation_key = 'sweep-reservations'",
+            )
+            .one(),
+        ).toEqual({ status: "running", owner_token: "held" });
+        expect(await state.storage.getAlarm()).toBe(jobLease);
+      },
+    );
   });
 });
