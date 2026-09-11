@@ -9,10 +9,7 @@ import { createConsoleMailSender } from "@repo/core/adapters/mail/consoleMailSen
 import { createResendMailSender } from "@repo/core/adapters/mail/resendMailSender";
 import { createDevStubSsoProvider } from "@repo/core/adapters/sso/devStubSsoProvider";
 import { createGoogleSsoProvider } from "@repo/core/adapters/sso/googleSsoProvider";
-import {
-  type AiTokenCodec,
-  createAiTokenCodec,
-} from "@repo/core/adapters/webcrypto/aiTokenCodec";
+import { createAiTokenCodec } from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { createHmacSessionCodec } from "@repo/core/adapters/webcrypto/hmacSessionCodec";
 import { createPbkdf2PasswordHasher } from "@repo/core/adapters/webcrypto/pbkdf2PasswordHasher";
 import {
@@ -20,6 +17,7 @@ import {
   type SsoStateCodec,
 } from "@repo/core/adapters/webcrypto/ssoStateCodec";
 import { WebCryptoTokenGenerator } from "@repo/core/adapters/webcrypto/webCryptoTokenGenerator";
+import type { AiTokenCodec } from "@repo/core/application/ports/aiTokenCodec";
 import { content } from "@repo/core/config";
 import type { SsoProvider } from "@repo/core/domain/identity/valueObject";
 import { SystemError, SystemErrorCode } from "../errors";

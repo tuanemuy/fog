@@ -1,11 +1,13 @@
-import { createZipArchiveWriter } from "@repo/core/adapters/fflate/zipArchiveWriter";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { exportAllData } from "@repo/core/application/export/exportAllData";
+import type { ArchiveWriter } from "@repo/core/domain/export/ports/archiveWriter";
 import { clientErrorStatus, toClientErrorBody } from "../errorBody";
 import { readSessionUserId } from "../requestSession";
 
 export type ExportHandlerDeps = Readonly<{
   container: RequestContainer;
+  /** One writer per export; the entry point supplies the zip adapter. */
+  createArchiveWriter: () => ArchiveWriter;
 }>;
 
 export const EXPORT_PATH = "/export";
@@ -80,7 +82,7 @@ export async function handleExport(
   try {
     const output = await exportAllData(
       { container: deps.container, input: { userId, timezone } },
-      createZipArchiveWriter(),
+      deps.createArchiveWriter(),
     );
     return new Response(output.data as unknown as BodyInit, {
       status: 200,

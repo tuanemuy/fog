@@ -1,13 +1,10 @@
-import { describe, expect, it } from "vitest";
 import {
   AI_ACCESS_TOKEN_TTL_MS,
   AI_AUTHORIZATION_CODE_TTL_MS,
   AI_REFRESH_TOKEN_TTL_MS,
-  createAiTokenCodec,
-  isPkceChallenge,
-  isPkceVerifier,
-  pkceChallengeOf,
-} from "../aiTokenCodec";
+} from "@repo/core/application/ports/aiTokenCodec";
+import { describe, expect, it } from "vitest";
+import { createAiTokenCodec } from "../aiTokenCodec";
 
 const SECRET = "a".repeat(48);
 const NOW = new Date("2026-09-08T00:00:00.000Z");
@@ -121,15 +118,5 @@ describe("aiTokenCodec", () => {
     expect(await codec.verifyAccess("nope", NOW)).toBeNull();
     expect(await codec.verifyClientId("not-a-client")).toBeNull();
     expect(() => createAiTokenCodec({ secret: "short" })).toThrow();
-  });
-
-  it("PKCE S256 matches RFC 7636's appendix B vector", async () => {
-    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-    expect(isPkceVerifier(verifier)).toBe(true);
-    const challenge = await pkceChallengeOf(verifier);
-    expect(challenge).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
-    expect(isPkceChallenge(challenge)).toBe(true);
-    expect(isPkceVerifier("too-short")).toBe(false);
-    expect(isPkceChallenge("not-43-chars")).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { createZipArchiveWriter } from "@repo/core/adapters/fflate/zipArchiveWriter";
 import { trippingExportGateway } from "@repo/core/application/__tests__/fakes";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
@@ -76,7 +77,10 @@ function post(
   });
 }
 
-const deps = (c = container()) => ({ container: c });
+const deps = (c = container()) => ({
+  container: c,
+  createArchiveWriter: createZipArchiveWriter,
+});
 
 describe("POST /export", () => {
   it("answers the zip as an attachment named after the day, uncached", async () => {

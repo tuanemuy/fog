@@ -1,7 +1,4 @@
-import {
-  createAiTokenCodec,
-  pkceChallengeOf,
-} from "@repo/core/adapters/webcrypto/aiTokenCodec";
+import { createAiTokenCodec } from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { trippingMemoGateway } from "@repo/core/application/__tests__/fakes";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import {
@@ -16,6 +13,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { handleMcp } from "../mcp";
 import { handleAuthorize, handleRegister, handleToken } from "../oauth";
+import { pkceChallengeOf } from "../pkce";
 import { handleAiRest } from "../rest";
 
 const APP_URL = "http://localhost:3000";

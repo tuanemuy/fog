@@ -1,16 +1,14 @@
+import type { RequestContainer } from "@repo/core/application/di/types";
+import { authorizeAiClient } from "@repo/core/application/identity/authorizeAiClient";
+import { consumeAuthorizationCode } from "@repo/core/application/identity/consumeAuthorizationCode";
 import {
   AI_ACCESS_TOKEN_TTL_MS,
   AI_SCOPE,
   type AiTokenCodec,
-  isPkceChallenge,
-  isPkceVerifier,
-  pkceChallengeOf,
-} from "@repo/core/adapters/webcrypto/aiTokenCodec";
-import type { RequestContainer } from "@repo/core/application/di/types";
-import { authorizeAiClient } from "@repo/core/application/identity/authorizeAiClient";
-import { consumeAuthorizationCode } from "@repo/core/application/identity/consumeAuthorizationCode";
+} from "@repo/core/application/ports/aiTokenCodec";
 import { isBusinessRuleError } from "@repo/core/domain/error";
 import { ClientName } from "@repo/core/domain/identity/valueObject";
+import { isPkceChallenge, isPkceVerifier, pkceChallengeOf } from "./pkce";
 
 export type OAuthDeps = Readonly<{
   container: RequestContainer;

@@ -35,7 +35,7 @@ packages/core/src/
 │   ├── execution/
 │   │   └── unitOfWork.ts              the canonical (synchronous) UoW contract + one context per DO class
 │   ├── ports/                         clock, idGenerator, logger, tokenGenerator (synchronous);
-│   │                                  mailSender, sessionCodec, ssoIdentityProvider (asynchronous)
+│   │                                  mailSender, sessionCodec, ssoIdentityProvider, aiTokenCodec (asynchronous)
 │   ├── errors.ts                      NotFound / Conflict / Validation / Unauthorized / Forbidden / System
 │   ├── types.ts                       UsecaseContainer, ServiceArgs<T>
 │   └── ${domain}/
@@ -89,8 +89,8 @@ apps/web/app/
 │   ├── validator.ts               validateInput(schema) — transport-boundary shape check
 │   ├── currentUser.ts, session.ts, sessionCookie.ts, requestSession.ts, authState.ts
 │   ├── streamingRoute.ts, head.ts, time.ts, pagination.ts, redirectSearch.ts, diff.ts
-│   ├── ai/                        the OAuth 2.1 / MCP / REST handlers
-│   └── export/                    the POST /export handler
+│   ├── ai/                        the OAuth 2.1 / MCP / REST handlers (the token codec arrives from the entry point; pkce.ts is RFC 7636)
+│   └── export/                    the POST /export handler (the archive writer arrives from the entry point)
 ├── worker/cloudflare/
 │   ├── state.ts                   state Worker entry: re-exports the two Durable Object classes
 │   ├── queueHandlers.ts           mail consumer + DLQ handler, hosted by the request Worker

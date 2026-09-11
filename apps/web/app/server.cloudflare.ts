@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { OutboxQueueMessage } from "@repo/core/adapters/cloudflare/queueMessage";
+import { createZipArchiveWriter } from "@repo/core/adapters/fflate/zipArchiveWriter";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   createAiRuntime,
@@ -73,7 +74,12 @@ export default {
       );
     }
     if (isExportRoute(url.pathname)) {
-      return storage.run(container, () => handleExport(request, { container }));
+      return storage.run(container, () =>
+        handleExport(request, {
+          container,
+          createArchiveWriter: createZipArchiveWriter,
+        }),
+      );
     }
     return storage.run(container, () => defaultEntry.fetch(request));
   },

@@ -1,8 +1,8 @@
-import type { AiTokenCodec } from "@repo/core/adapters/webcrypto/aiTokenCodec";
 import { toAiToolContainer } from "@repo/core/application/di/aiToolContainer";
 import type { RequestContainer } from "@repo/core/application/di/types";
 import { isSystemError, SystemErrorCode } from "@repo/core/application/errors";
 import { authorizeAiClient } from "@repo/core/application/identity/authorizeAiClient";
+import type { AiTokenCodec } from "@repo/core/application/ports/aiTokenCodec";
 import type { AiToolContext } from "./tools";
 
 export type AiAuthDeps = Readonly<{

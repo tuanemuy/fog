@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// Node-pool config for unit tests (domain logic, fakes, property-based,
-// pure usecases). Anything that needs a real D1 binding lives in
+// Node-pool config for unit tests (domain logic, fakes, pure usecases,
+// presentation helpers). Anything that needs a real Durable Object lives in
 // `*.integration.test.ts` and runs through `vitest.config.integration.ts`
 // (the `vitest-pool-workers` Workers pool); anything that needs a DOM
 // lives in `*.dom.test.{ts,tsx}` and runs through `vitest.config.dom.ts`.
