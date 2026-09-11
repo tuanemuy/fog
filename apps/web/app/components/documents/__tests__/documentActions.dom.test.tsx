@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { DocumentActions } from "@/components/documents/DocumentActions";
@@ -74,7 +74,7 @@ describe("DocumentActions", () => {
     const navigate = vi.spyOn(router, "navigate");
     fireEvent.click(screen.getByRole("button", { name: "削除" }));
     fireEvent.click(
-      screen.getByRole("dialog").querySelector(".fog-danger") as HTMLElement,
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
     );
     expect(mocks.trashDocumentFn).toHaveBeenCalledWith({
       data: { documentId: "d1" },
@@ -101,7 +101,7 @@ describe("DocumentActions", () => {
     const navigate = vi.spyOn(router, "navigate");
     fireEvent.click(screen.getByRole("button", { name: "削除" }));
     fireEvent.click(
-      screen.getByRole("dialog").querySelector(".fog-danger") as HTMLElement,
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
     );
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("システムエラーが発生しました");
@@ -115,7 +115,7 @@ describe("DocumentActions", () => {
     const navigate = vi.spyOn(router, "navigate");
     fireEvent.click(screen.getByRole("button", { name: "削除" }));
     fireEvent.click(
-      screen.getByRole("dialog").querySelector(".fog-danger") as HTMLElement,
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
     );
     expect((await screen.findByRole("alert")).textContent).toBe(
       "システムエラーが発生しました",
