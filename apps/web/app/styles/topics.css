@@ -142,6 +142,11 @@
   gap: var(--space-sm);
   flex-wrap: wrap;
 }
+.fog-topic-archive {
+  flex: none;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
 .fog-topic-head .fog-topic-desc {
   margin-top: 10px;
   white-space: pre-wrap;
@@ -157,11 +162,6 @@
 .fog-topic-edit .fog-actions {
   margin-top: var(--space-md);
   gap: var(--space-sm);
-}
-.fog-pop-separator {
-  height: 1px;
-  margin: 4px 0;
-  background: var(--color-neutral-100);
 }
 .fog-doc-rows {
   display: flex;

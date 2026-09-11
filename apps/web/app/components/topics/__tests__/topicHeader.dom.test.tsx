@@ -32,7 +32,7 @@ function openMenu() {
 }
 
 describe("TopicHeader", () => {
-  it("shows the name, the badge when archived and the description, with 削除 apart", async () => {
+  it("shows the name, the badge when archived and the description; 完了 is a header button and never a menu item", async () => {
     await renderWithRouter(
       <TopicHeader
         topic={topicView("t1", "読書メモ", {
@@ -47,16 +47,14 @@ describe("TopicHeader", () => {
     );
     expect(screen.getByText("完了")).toBeTruthy();
     expect(screen.getByText("本の要約")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "完了を解除" })).toBeTruthy();
     const menu = openMenu();
     expect(
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["編集", "完了を解除", "削除"]);
-    const children = [...menu.children];
-    const separator = children.findIndex((c) => c.tagName === "HR");
-    expect(separator).toBeGreaterThan(0);
-    expect(children[separator + 1]?.textContent).toBe("削除");
+    ).toEqual(["編集", "削除"]);
+    expect(within(menu).queryByText(/完了/)).toBeNull();
   });
 
   it("edits inline: prefilled, a blank name is refused with its message, saves with an optimistic name and invalidates", async () => {
@@ -126,10 +124,9 @@ describe("TopicHeader", () => {
     await renderWithRouter(<TopicHeader topic={topicView("t1", "x")} />, {
       path: "/topics/$topicId",
     });
-    fireEvent.click(
-      within(openMenu()).getByRole("menuitem", { name: "完了にする" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "完了にする" }));
     await screen.findByText("完了");
+    expect(screen.getByRole("button", { name: "完了を解除" })).toBeTruthy();
     expect(mocks.updateTopicFn).toHaveBeenCalledWith({
       data: { topicId: "t1", archived: true },
     });
@@ -143,9 +140,8 @@ describe("TopicHeader", () => {
         path: "/topics/$topicId",
       },
     );
-    const buttons = screen.getAllByRole("button", { name: "トピックの操作" });
+    const buttons = screen.getAllByRole("button", { name: "完了を解除" });
     fireEvent.click(buttons[buttons.length - 1] as HTMLElement);
-    fireEvent.click(screen.getByRole("menuitem", { name: "完了を解除" }));
     await waitFor(() =>
       expect(mocks.updateTopicFn).toHaveBeenCalledWith({
         data: { topicId: "t2", archived: false },
@@ -164,9 +160,7 @@ describe("TopicHeader", () => {
     await renderWithRouter(<TopicHeader topic={topicView("t1", "x")} />, {
       path: "/topics/$topicId",
     });
-    fireEvent.click(
-      within(openMenu()).getByRole("menuitem", { name: "完了にする" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "完了にする" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
       "他の操作と競合しました。もう一度お試しください",

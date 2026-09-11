@@ -26,7 +26,8 @@ type Patch = Readonly<{
 
 /**
  * The head of P-07: name and description with an inline editor, 完了にする /
- * 完了を解除 as one action, and the menu whose 削除 sits apart from them.
+ * 完了を解除 as a visible one-action button, and a menu of 編集 / 削除 — the
+ * complete action never shares a menu with 削除 (spec/pages P-07).
  * Renaming and archiving are in-item changes, so the island owns them with
  * an item-local `useOptimistic`; deleting leaves the screen, so it
  * navigates to the list once the server confirms.
@@ -106,7 +107,6 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
   };
 
   const toggleArchived = () => {
-    setMenuOpen(false);
     const archived = shown.status !== "archived";
     startSave(async () => {
       patch({ status: archived ? "archived" : "active" });
@@ -209,6 +209,14 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
               {shown.name}
               {archived && <span className="fog-badge">完了</span>}
             </h2>
+            <button
+              type="button"
+              className="fog-secondary fog-topic-archive"
+              onClick={toggleArchived}
+              disabled={saving}
+            >
+              {archived ? "完了を解除" : "完了にする"}
+            </button>
             <div className="fog-entry-menu-wrap" ref={menuRef}>
               <button
                 type="button"
@@ -245,15 +253,6 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
                   >
                     編集
                   </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="fog-pop-item"
-                    onClick={toggleArchived}
-                  >
-                    {archived ? "完了を解除" : "完了にする"}
-                  </button>
-                  <hr className="fog-pop-separator" />
                   <button
                     type="button"
                     role="menuitem"
