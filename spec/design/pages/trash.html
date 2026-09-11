@@ -80,6 +80,8 @@
         --pad-menu: 0.75rem var(--space-md); /* 12px 14px メニュー/ナビ項目（サイドバーリンク・ポップオーバー項目） */
         --border-input: 1.3px solid var(--color-neutral-300); /* 入力欄の枠線（ヘアラインよりわずかに強い） */
         --icon-md: 19px; /* ヘッダー操作・行末操作（ジャンプ/復元/削除） */
+        --icon-sm: 16px; /* 行内トリガー(…)・ポップオーバー項目・× 閉じる */
+        --color-text-inverse: oklch(1 0 0); /* 塗りボタン・トースト上の白文字 */
         /* Focus — リングは2色のみ。通常は紫、破壊的操作ボタンだけ赤（意図的なセマンティック差） */
         --color-focus: var(--color-primary);
         --color-focus-danger: var(--color-error); /* 削除・完全削除・空にする等の実行ボタン専用 */
@@ -408,6 +410,8 @@
       }
       .remaining-days {
         display: inline;
+        white-space: nowrap;
+        font-size: var(--text-xs);
         color: var(--color-neutral-400);
         font-variant-numeric: tabular-nums;
       }
@@ -439,7 +443,7 @@
         transition: color var(--transition-fast);
       }
       @media (hover: hover) {
-        .restore-btn:hover {
+        .restore-btn:hover:not(:disabled) {
           color: var(--color-primary-dark);
         }
       }
@@ -462,7 +466,7 @@
         transition: color var(--transition-fast);
       }
       @media (hover: hover) {
-        .delete-btn:hover {
+        .delete-btn:hover:not(:disabled) {
           color: var(--color-error);
         }
       }
@@ -471,7 +475,82 @@
         outline-offset: 2px;
       }
 
-      /* ---- セット削除行の子要素（インデント + メタ表記で従属を表す） ---- */
+      .restore-btn:disabled,
+      .delete-btn:disabled {
+        color: var(--color-neutral-300);
+        cursor: default;
+      }
+
+      /* ---- 操作中・操作失敗（行に帰属） ---- */
+      .row-status {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-sm);
+        font-size: var(--text-xs);
+        color: var(--color-neutral-400);
+      }
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border-radius: var(--radius-full);
+        border: 2px solid var(--color-neutral-200);
+        border-top-color: var(--color-neutral-400);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* エラーは行の下に全幅で置く（狭い幅でもタイトル列に押し込まない） */
+      .row:has(+ .row-error) {
+        padding-bottom: var(--space-sm);
+      }
+      .row-error {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding: 10px 16px;
+        background: var(--color-error-bg);
+        border-radius: var(--radius-full);
+        font-size: var(--text-sm);
+        color: var(--color-error-dark);
+      }
+      .row-error + * {
+        margin-top: var(--pad-row);
+      }
+      .trash-group:has(> .row-error:last-child) {
+        padding-bottom: var(--pad-row);
+      }
+      .row-error svg {
+        width: var(--icon-sm);
+        height: var(--icon-sm);
+        flex: none;
+      }
+      .retry-btn {
+        margin-left: auto;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: var(--text-sm);
+        font-weight: var(--weight-medium);
+        color: var(--color-error-dark);
+        text-decoration: underline;
+        border-radius: var(--radius-sm);
+        white-space: nowrap;
+      }
+      @media (hover: hover) {
+        .retry-btn:hover {
+          color: var(--color-neutral-900);
+        }
+      }
+      .retry-btn:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+
+      /* ---- セット削除行の子要素（トピックの下にインデントして従属を表す） ---- */
       .child-row {
         display: flex;
         align-items: flex-start;
@@ -486,11 +565,6 @@
         font-size: var(--text-sm);
         line-height: var(--leading-normal);
         color: var(--color-neutral-700);
-      }
-      .child-meta {
-        font-size: var(--text-xs);
-        color: var(--color-neutral-400);
-        margin-top: 4px;
       }
 
       /* ---- 状態の例（通常フローの外、ページ最下部に隔離） ---- */
@@ -581,6 +655,52 @@
       .dialog-confirm:focus-visible {
         outline: 2px solid var(--color-focus-danger);
         outline-offset: 2px;
+      }
+      .dialog-primary {
+        background: var(--color-primary-dark);
+        color: var(--color-text-inverse);
+      }
+      @media (hover: hover) {
+        .dialog-primary:hover {
+          background: var(--color-primary-darker);
+        }
+      }
+      .dialog-primary:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .dest-list {
+        border: none;
+        min-inline-size: 0;
+        margin-top: var(--space-md);
+      }
+      .dest-option {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+        padding-block: var(--space-md);
+        font-size: var(--text-base);
+        color: var(--color-neutral-900);
+        cursor: pointer;
+      }
+      .dest-option + .dest-option {
+        border-top: 1px solid var(--color-neutral-100);
+      }
+      .dest-option input {
+        accent-color: var(--color-primary);
+        flex: none;
+      }
+      .dest-option input:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+      }
+      .vh {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
       .dialog-cancel {
         background: none;
@@ -764,7 +884,7 @@
               <p class="trash-note">
                 ここにある項目は30日後に完全に削除されます。
               </p>
-              <button class="empty-btn">空にする（7）</button>
+              <button class="empty-btn">空にする（6）</button>
             </div>
 
             <!-- メモ1 -->
@@ -843,14 +963,14 @@
               </div>
             </div>
 
-            <!-- トピック + 配下ドキュメント（セット削除） -->
+            <!-- トピック + そのドキュメント（セット削除。インデントで従属を示す） -->
             <div class="trash-group">
               <div class="row">
                 <div class="grow">
                   <div class="row-title">旧サイト運用</div>
                   <div class="row-tags">
                     <span class="pill">トピック</span>
-                    <span class="remaining-days">ドキュメント2件・残り28日</span>
+                    <span class="remaining-days">残り28日</span>
                   </div>
                 </div>
                 <div class="row-actions">
@@ -879,11 +999,10 @@
                 </div>
               </div>
 
-              <!-- 配下ドキュメント1 -->
+              <!-- トピックのドキュメント1 -->
               <div class="child-row">
                 <div class="grow">
                   <div class="child-title">ドメイン管理の手続き</div>
-                  <div class="child-meta">トピックとセットで削除</div>
                 </div>
                 <div class="row-actions">
                   <button class="restore-btn" aria-label="復元">
@@ -911,11 +1030,10 @@
                 </div>
               </div>
 
-              <!-- 配下ドキュメント2 -->
+              <!-- トピックのドキュメント2 -->
               <div class="child-row">
                 <div class="grow">
                   <div class="child-title">サーバー移行のチェックリスト</div>
-                  <div class="child-meta">トピックとセットで削除</div>
                 </div>
                 <div class="row-actions">
                   <button class="restore-btn" aria-label="復元">
@@ -1008,28 +1126,159 @@
       <h2>状態の例</h2>
       <div class="example">
         <p class="example-label">ゴミ箱が空（「空にする」は非活性）</p>
+        <div class="trash-header">
+          <p class="trash-note">ここにある項目は30日後に完全に削除されます。</p>
+          <button class="empty-btn" disabled>空にする</button>
+        </div>
         <div class="empty-state">
           <p class="empty-title">ゴミ箱は空です</p>
         </div>
       </div>
       <div class="example">
         <p class="example-label">
-          完全削除の確認ダイアログ（実アプリではオーバーレイ上の中央モーダル）
+          完全削除の確認ダイアログ（ドキュメント）
         </p>
         <div
           class="dialog-box"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="dialog-title"
+          aria-labelledby="dialog-title-delete-doc"
         >
-          <h2 class="dialog-title" id="dialog-title">完全に削除しますか？</h2>
+          <h2 class="dialog-title" id="dialog-title-delete-doc">完全に削除しますか？</h2>
           <p class="dialog-text">
-            履歴ごと消え、元に戻せません。このトピックの配下ドキュメント（2件）も対象です。
+            履歴ごと消え、元に戻せません。
           </p>
           <div class="dialog-actions">
             <button class="dialog-btn dialog-confirm">完全に削除</button>
             <button class="dialog-btn dialog-cancel">キャンセル</button>
           </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">
+          完全削除の確認ダイアログ（トピックとそのドキュメント）
+        </p>
+        <div
+          class="dialog-box"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dialog-title-delete-topic"
+        >
+          <h2 class="dialog-title" id="dialog-title-delete-topic">完全に削除しますか？</h2>
+          <p class="dialog-text">
+            履歴ごと消え、元に戻せません。このトピックのドキュメント（2件）も一緒に削除されます。
+          </p>
+          <div class="dialog-actions">
+            <button class="dialog-btn dialog-confirm">完全に削除</button>
+            <button class="dialog-btn dialog-cancel">キャンセル</button>
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">
+          「空にする」確認ダイアログ
+        </p>
+        <div
+          class="dialog-box"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dialog-title-empty-trash"
+        >
+          <h2 class="dialog-title" id="dialog-title-empty-trash">ゴミ箱を空にしますか？</h2>
+          <p class="dialog-text">
+            全件（6件）が完全に削除され、元に戻せません。
+          </p>
+          <div class="dialog-actions">
+            <button class="dialog-btn dialog-confirm">空にする</button>
+            <button class="dialog-btn dialog-cancel">キャンセル</button>
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">ドキュメント復元の確認（所属トピックもゴミ箱内）</p>
+        <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="dialog-title-restore-set">
+          <h2 class="dialog-title" id="dialog-title-restore-set">トピックごと復元しますか？</h2>
+          <p class="dialog-text">
+            トピック「旧サイト運用」もゴミ箱にあります。トピックとそのドキュメント（2件）も一緒に復元されます。
+          </p>
+          <div class="dialog-actions">
+            <button class="dialog-btn dialog-primary">トピックごと復元</button>
+            <button class="dialog-btn dialog-cancel">キャンセル</button>
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">ドキュメント復元の復元先選択（所属トピックが完全に削除済み）</p>
+        <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="dialog-title-restore-dest">
+          <h2 class="dialog-title" id="dialog-title-restore-dest">復元先のトピック</h2>
+          <p class="dialog-text">元のトピックは完全に削除されています。</p>
+          <fieldset class="dest-list">
+            <legend class="vh">復元先のトピック</legend>
+            <label class="dest-option"><input type="radio" name="dest" checked />読書メモ</label>
+            <label class="dest-option"><input type="radio" name="dest" />仕事の段取り</label>
+            <label class="dest-option"><input type="radio" name="dest" />引っ越し準備</label>
+            <label class="dest-option"><input type="radio" name="dest" />新しいトピックを作成</label>
+          </fieldset>
+          <div class="dialog-actions">
+            <button class="dialog-btn dialog-primary">復元</button>
+            <button class="dialog-btn dialog-cancel">キャンセル</button>
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">操作中（対象の行だけ操作不可。他の行は操作できる）</p>
+        <div class="trash-group">
+          <div class="row" aria-busy="true">
+            <div class="grow">
+              <div class="row-title">打ち合わせ前の走り書き。</div>
+              <div class="row-tags">
+                <span class="pill">メモ</span>
+                <span class="row-status"><span class="spinner" aria-hidden="true"></span>復元中…</span>
+              </div>
+            </div>
+            <div class="row-actions">
+              <button class="restore-btn" aria-label="復元" disabled><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="delete-btn" aria-label="完全に削除" disabled><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6H16M8 6V4.5C8 4 8.4 3.5 9 3.5H11C11.6 3.5 12 4 12 4.5V6M6.5 6L7 16C7 16.5 7.5 17 8 17H12C12.5 17 13 16.5 13 16L13.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div class="trash-group">
+          <div class="row">
+            <div class="grow">
+              <div class="row-title">2024年Q1レビュー</div>
+              <div class="row-tags">
+                <span class="pill">ドキュメント</span>
+                <span class="remaining-days">残り5日</span>
+              </div>
+            </div>
+            <div class="row-actions">
+              <button class="restore-btn" aria-label="復元"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="delete-btn" aria-label="完全に削除"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6H16M8 6V4.5C8 4 8.4 3.5 9 3.5H11C11.6 3.5 12 4 12 4.5V6M6.5 6L7 16C7 16.5 7.5 17 8 17H12C12.5 17 13 16.5 13 16L13.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">操作失敗（エラーはその行に表示＋リトライ）</p>
+        <div class="trash-group">
+          <div class="row">
+            <div class="grow">
+              <div class="row-title">打ち合わせ前の走り書き。</div>
+              <div class="row-tags">
+                <span class="pill">メモ</span>
+                <span class="remaining-days">残り22日</span>
+              </div>
+            </div>
+            <div class="row-actions">
+              <button class="restore-btn" aria-label="復元"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4.5 8.2A6 6 0 1 1 4 11.5M4.5 4.5v3.7h3.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="delete-btn" aria-label="完全に削除"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6H16M8 6V4.5C8 4 8.4 3.5 9 3.5H11C11.6 3.5 12 4 12 4.5V6M6.5 6L7 16C7 16.5 7.5 17 8 17H12C12.5 17 13 16.5 13 16L13.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
+          </div>
+          <div class="row-error" role="alert">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M10 6.5V10.5M10 14V14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                <span>復元できませんでした</span>
+                <button class="retry-btn">リトライ</button>
+              </div>
         </div>
       </div>
     </section>

@@ -203,6 +203,15 @@
         color: var(--color-error);
       }
 
+      .error-message {
+        background: var(--color-error-bg);
+        border: 1px solid var(--color-error);
+        border-radius: var(--radius-md);
+        padding: 12px 16px;
+        font-size: var(--text-sm);
+        color: var(--color-error-dark);
+      }
+
       /* ---- ボタン ---- */
       .btn {
         padding: var(--pad-btn);
@@ -408,7 +417,7 @@
             <div>
               <label class="form-label" for="signup-password">パスワード</label>
               <span class="form-label-helper" id="signup-password-helper"
-                >8文字以上。大文字・小文字・数字を含む</span
+                >8文字以上</span
               >
             </div>
             <input
@@ -487,9 +496,38 @@
     <section class="state-examples" aria-label="状態の例">
       <h2>状態の例</h2>
       <div class="example">
-        <p class="example-label">パスワード入力エラー（項目直下に表示）</p>
+        <p class="example-label">メール形式エラー（項目直下に表示）</p>
         <div class="form-group">
-          <label class="form-label" for="example-password">パスワード</label>
+          <label class="form-label" for="example-email-error">メールアドレス</label>
+          <input
+            type="email"
+            id="example-email-error"
+            class="form-input error"
+            autocomplete="email"
+            aria-invalid="true"
+            aria-describedby="example-email-error-msg"
+            placeholder="you@example.com"
+            value="invalid-email"
+          />
+          <div class="field-error" id="example-email-error-msg">
+            有効なメールアドレスを入力してください
+          </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">登録済みのメールアドレス（フォーム上部に表示し、ログインへの導線を出す）</p>
+        <div class="error-message" role="alert">
+          このメールアドレスは既に登録されています。
+          <a href="login.html" class="form-link">ログイン</a>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">パスワードが要件未満（項目直下に表示）</p>
+        <div class="form-group">
+          <div>
+            <label class="form-label" for="example-password">パスワード</label>
+            <span class="form-label-helper">8文字以上</span>
+          </div>
           <input
             type="password"
             id="example-password"
@@ -498,10 +536,28 @@
             aria-invalid="true"
             aria-describedby="example-password-error"
             placeholder="パスワード"
+            value="abcd123"
           />
           <div class="field-error" id="example-password-error">
-            パスワードが要件を満たしていません
+            8文字以上で入力してください
           </div>
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">送信中（入力とボタンを無効化し、ボタンに進行を表示）</p>
+        <div class="auth-form">
+          <div class="form-group">
+            <label class="form-label" for="signup-busy-email">メールアドレス</label>
+            <input type="email" id="signup-busy-email" class="form-input" autocomplete="email" value="tanaka.yui@example.com" readonly />
+          </div>
+          <div class="form-group">
+            <div>
+              <label class="form-label" for="signup-busy-password">パスワード</label>
+              <span class="form-label-helper">8文字以上</span>
+            </div>
+            <input type="password" id="signup-busy-password" class="form-input" autocomplete="new-password" value="password123" readonly />
+          </div>
+          <button type="button" class="btn btn-primary" disabled>登録中…</button>
         </div>
       </div>
     </section>

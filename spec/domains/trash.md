@@ -286,7 +286,7 @@ trash 独自の書き込みポートは持たない。
 
 詳細は Phase 4（ユースケース設計）で定義する。すべて Web UI 専用（AI非公開）。
 
-- listTrash — ゴミ箱一覧の取得（ページング、削除日時・期限表示、セット関係表示）（S-TR-01）
+- listTrash — ゴミ箱一覧の取得（ページング、期限表示、セット関係表示）（S-TR-01）
 - restoreMemo — メモの復元（S-TR-02）
 - restoreDocument — ドキュメントの復元。`RestorePolicy.decideDocumentRestore` の3分岐（単独復元 / セット復元確認 / 復元先トピック選択 ADR-001）を持つ（S-TR-02）。セット復元分岐では確認のうえ `TopicTrashService.restoreTopicSet` を実行し、復元要求対象が `skippedDocuments`（個別削除分）に含まれた場合は同一 UoW 内で追加で `Document.restore` する
 - restoreTopic — トピックの復元（セット削除された配下ドキュメントごとセット復元）（S-TR-02）

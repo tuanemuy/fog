@@ -314,7 +314,7 @@
       }
 
       @media (hover: hover) {
-        .btn-outline:hover {
+        .btn-outline:hover:not(:disabled) {
           border-color: var(--color-neutral-600);
           color: var(--color-neutral-900);
         }
@@ -323,6 +323,32 @@
       .btn-outline:focus-visible {
         outline: 2px solid var(--color-focus);
         outline-offset: 2px;
+      }
+
+      .btn-outline:disabled {
+        color: var(--color-neutral-400);
+        border-color: var(--color-neutral-100);
+        cursor: default;
+      }
+
+      /* ---- リンク（login.html） ---- */
+      .form-link {
+        font-size: var(--text-sm);
+        color: var(--color-primary-dark);
+        text-decoration: none;
+        transition: color var(--transition-fast);
+      }
+
+      @media (hover: hover) {
+        .form-link:hover {
+          color: var(--color-primary-darker);
+        }
+      }
+
+      .form-link:focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+        border-radius: var(--radius-sm);
       }
 
       /* ---- エラーメッセージ ---- */
@@ -512,10 +538,23 @@
       <h2>状態の例</h2>
       <div class="example">
         <p class="example-label">
+          未ログイン（この画面は出さずにログイン画面を挟み、ログイン後にこの画面へ戻る）
+        </p>
+        <p><a href="login.html" class="form-link">ログイン画面</a></p>
+      </div>
+      <div class="example">
+        <p class="example-label">
           認可エラー（不正なリクエスト時、ボタンの代わりにシート内に表示）
         </p>
         <div class="error-message">
           認可リクエストが正しくありません。クライアントアプリからやり直してください
+        </div>
+      </div>
+      <div class="example">
+        <p class="example-label">処理中（両方のボタンを無効化）</p>
+        <div class="button-group">
+          <button type="button" class="btn btn-primary" disabled>許可中…</button>
+          <button type="button" class="btn btn-outline" disabled>拒否する</button>
         </div>
       </div>
     </section>

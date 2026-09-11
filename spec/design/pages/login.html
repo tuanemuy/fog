@@ -479,6 +479,20 @@
           メールアドレスまたはパスワードが正しくありません
         </div>
       </div>
+      <div class="example">
+        <p class="example-label">送信中（入力とボタンを無効化し、ボタンに進行を表示）</p>
+        <div class="auth-form">
+          <div class="form-group">
+            <label class="form-label" for="login-busy-email">メールアドレス</label>
+            <input type="email" id="login-busy-email" class="form-input" autocomplete="email" value="tanaka.yui@example.com" readonly />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="login-busy-password">パスワード</label>
+            <input type="password" id="login-busy-password" class="form-input" autocomplete="current-password" value="password123" readonly />
+          </div>
+          <button type="button" class="btn btn-primary" disabled>ログイン中…</button>
+        </div>
+      </div>
     </section>
   </body>
 </html>
