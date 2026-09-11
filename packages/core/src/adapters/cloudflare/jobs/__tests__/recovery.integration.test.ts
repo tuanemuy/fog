@@ -303,15 +303,15 @@ describe("abandon-account: the six checks in order", () => {
       value: "abandoned",
     });
     const after = await accountOf(userId);
-    expect(after.account).toMatchObject({
-      status: "deleting",
-      session_epoch: before + 1,
-    });
-    // Enqueued in the same transaction; the pool may already have run it.
+    // Enqueued in the same transaction; the pool fires the due alarm at
+    // once, so the withdrawal may be waiting, mid-run on its RPCs, or done
+    // (the tombstone does not move the epoch again).
+    expect(["deleting", "deleted"]).toContain(after.account?.status);
+    expect(after.account?.session_epoch).toBe(before + 1);
     const withdrawal = after.jobs.find(
       (j) => j.operation_key === "finalize-withdrawal",
     );
-    expect(["pending", "done"]).toContain(withdrawal?.status);
+    expect(["pending", "running", "done"]).toContain(withdrawal?.status);
     // Twice is the same answer, and the check on status comes before the binding.
     expect(
       await stub.abandonAccount({
