@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Markdown } from "@/components/ui/Markdown";
 import {
   displayError,
   isOptimisticLockFailure,
@@ -23,7 +24,6 @@ import {
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDateTime, formatTime } from "@/presentation/time";
 import { editMemoFn } from "../actions";
-import { Markdown } from "../Markdown";
 import { SourceDocumentLinks } from "../SourceDocumentLinks";
 import { isEditMemoResult } from "../schema";
 
@@ -271,7 +271,9 @@ export function MemoEntry({
         </form>
       ) : (
         <>
-          <Markdown body={shownBody} />
+          <div className="mt-sm">
+            <Markdown body={shownBody} variant="memo" />
+          </div>
           <SourceDocumentLinks documents={memo.sourceDocuments} />
         </>
       )}

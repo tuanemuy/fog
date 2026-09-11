@@ -48,6 +48,7 @@ function OpenDialog({
   }, []);
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the click only detects a hit on the backdrop; the keyboard path to the same cancel is the native Escape, which arrives through `onClose`
     <dialog
       ref={ref}
       className="fog-dialog"

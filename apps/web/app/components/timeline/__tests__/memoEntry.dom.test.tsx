@@ -113,7 +113,10 @@ describe("MemoEntry", () => {
     expect(container.innerHTML).not.toContain("<script");
     // Without rehype-raw the tags stay visible as text — inline and
     // block-level alike — so the author's input is neither run nor lost.
-    expect(container.querySelector(".fog-markdown")?.textContent?.trim()).toBe(
+    const body = screen.getByText(
+      "before <script>alert(1)</script> after",
+    ).parentElement;
+    expect(body?.textContent?.trim()).toBe(
       "before <script>alert(1)</script> after\n<script>alert(2)</script>",
     );
   });

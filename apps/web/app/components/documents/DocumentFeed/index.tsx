@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { KnowledgeNotFound } from "@/components/knowledge/KnowledgeNotFound";
 import { OriginList } from "@/components/knowledge/OriginRow";
-import { Markdown } from "@/components/timeline/Markdown";
+import { Markdown } from "@/components/ui/Markdown";
 import { extractSerializedError } from "@/presentation/errorResponse";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
@@ -67,7 +67,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
       </p>
       <DocumentActions documentId={document.id} topicId={document.topicId} />
       <div className="fog-document-body">
-        <Markdown body={document.body} />
+        <Markdown body={document.body} variant="document" />
       </div>
       <OriginList memos={sources.sourceMemos} label="元になったメモ" />
     </article>
