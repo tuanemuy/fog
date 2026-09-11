@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
-import { MemoHistorySkeleton } from "@/components/memoHistory/MemoHistorySkeleton";
+import { RevisionHistorySkeleton } from "@/components/memoHistory/RevisionHistorySkeleton";
 import { memoHistoryParamsSchema } from "@/components/memoHistory/schema";
 import { Deferred } from "@/components/ui/Deferred";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
@@ -47,7 +47,7 @@ function MemoHistoryPage() {
   const { History } = Route.useLoaderData();
   return (
     <div className="pb-sheet-end">
-      <Suspense fallback={<MemoHistorySkeleton />}>
+      <Suspense fallback={<RevisionHistorySkeleton subject="memo" />}>
         <Deferred promise={History} />
       </Suspense>
     </div>
