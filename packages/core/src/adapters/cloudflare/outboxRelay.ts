@@ -77,7 +77,6 @@ export type RelayPassOptions = Readonly<{
  * There is likewise no terminal branch for the per-message size limit: no
  * row the normal write path produces can assemble a message that reaches
  * it, and per-row backoff into `quarantined` absorbs one that did.
- * (`.thread/51/adr.md` ADR-012 carries both arguments in full.)
  *
  * Per row, failures are caught: one row that cannot be published must not
  * stop the other deliveries and must not escape `alarm()`.

@@ -280,7 +280,7 @@ export const SystemErrorCode = {
   // The Durable Object has no `_meta` row. Every User Data DO entry
   // except the two diagnostics answers this without writing a row; the
   // one path allowed to run the initialisation branch is
-  // `initialize-account` (#64).
+  // `initialize-account`.
   NotInitialized: "NOT_INITIALIZED",
   // A value thrown behind a catch boundary that no layer classified — it
   // reached the boundary as something other than a `CodedError`. Kept

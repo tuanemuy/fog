@@ -11,7 +11,7 @@
  * counted against the DO's 10 GB cap, and — for `jobs`, which binds
  * `payload` and `payload_digest` in one INSERT — a statement of twice the
  * size, so the ceiling that breaks first there is 100 KB per statement
- * rather than 2 MB per row. (`.thread/51/adr.md` ADR-013.)
+ * rather than 2 MB per row.
  *
  * Normalisation: object keys sorted ascending by Unicode code point,
  * recursively; array order preserved; keys whose value is `undefined`

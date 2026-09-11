@@ -15,7 +15,7 @@ import { SystemError, SystemErrorCode } from "../errors";
  * them, and today's declarations clear their bounds with room to spare);
  * a copy of a real queue-consumer setting (the paragraph below); and, for
  * tiers 1 and 2 of the three-tier job bound, one past measurement — the
- * 3.4 ms per 1,000 rows recorded on #37, costed against the row count a
+ * 3.4 ms per 1,000 rows measured on a local Durable Object, costed against the row count a
  * wake-up may touch, with the arithmetic in `docs/runtime_cloudflare.md`.
  * **A value matching none of them is a judgement about the shape the
  * machinery has to have, not a derivation**, and what each such value was
