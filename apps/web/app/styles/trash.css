@@ -11,12 +11,9 @@
   color: var(--color-neutral-600);
   font-size: var(--text-sm);
 }
-.fog-danger {
-  color: var(--color-error-dark);
+.fog-secondary.fog-danger {
+  padding: var(--pad-btn-sm);
   border-color: var(--color-error);
-}
-.fog-danger:focus-visible {
-  outline-color: var(--color-error);
 }
 .fog-trash-groups,
 .fog-trash-children {
@@ -81,6 +78,9 @@
 .fog-row-actions .fog-secondary {
   padding: 4px 10px;
   font-size: var(--text-sm);
+}
+.fog-destination-box {
+  width: min(420px, 92vw);
 }
 .fog-destination fieldset {
   border: 0;
