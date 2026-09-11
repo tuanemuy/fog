@@ -480,3 +480,52 @@ ADR-008 で認証シートの 5 画面を `_sheet` に集めた。ログイン�
 ### Consequences
 - 良い点: 認証シートの枠とロックアップが 1 実装になり、画面がどの枠に出るかがルートツリーだけで決まる。ガードを包んだりコピーしたりすると、DOM テストが落ちる
 - トレードオフ: ステップ 9 までは、説明文（`fog-auth-description`、旧 CSS の `margin: 0`）が見出しの直下に詰まって出る（ステップ 9 で説明文ごと撤去する）。レスポンスの `Cache-Control` そのものはテストせず、ブラウザ確認に頼る
+
+---
+
+## ADR-028: 404 はどのルートも `notFoundComponent` を持たずに既定へ任せ、未知の URL はルートのコンポーネントが認証シートで包む
+
+### Context
+ADR-009 は、`_app` 配下の子ルートの not found をアプリシェル内に、未知の URL を認証シートの枠に出すと決めた。ルーターは、ローダーが投げた `notFound()` を、投げたルートから上へたどって最初に `notFoundComponent` を持つルートで描く（`router-core` の `getNotFoundBoundaryIndex`）。上に 1 つも無ければ、投げたルート自身が既定の 404 を描く。そのため `__root` に認証シートで包んだ `notFoundComponent` を置くと、子ルートの 404 まで `__root` へ吸い上げられ、アプリシェルの外に出る。また既定の `notFoundMode: "fuzzy"` では、未知の URL（`/topics/x/nowhere`）でも接頭辞が合ったレイアウト（`_app`）が not found を受け、アプリシェルの中に出る。
+
+### Decision
+- どのルートも `notFoundComponent` を宣言しない。ルーターの `defaultNotFoundComponent` に `NotFound` を置き、子ルートの `notFound()` はそのルート自身が親のフレームの中で描く
+- ルーターを `notFoundMode: "root"` にし、未知の URL は常に `__root` で受ける
+- `__root` のコンポーネントは、ルートのマッチが global not found のときだけ `<Outlet />` を `AuthSheet` で包む。`Outlet` はそこで既定の `NotFound` を描く
+- `__root` は `shellComponent` に `<html>` の枠を持ち、`errorComponent` は `_app`・`_sheet` と同じ `AuthSheetRouteError` にする
+- DOM テストが、`notFoundComponent` を宣言するルートが無いこと、`errorComponent` を宣言するのが `__root`・`_app`・`_sheet` の 3 つだけで、どれも `AuthSheetRouteError` であることを本番のルートツリーで確かめる
+
+### Consequences
+- 良い点: 子ルートの 404 はそのフレームに、未知の URL は接頭辞に関係なく認証シートに出る。ルートを足しても 404 の付け忘れも取り違えも起きない
+- トレードオフ: 未知の URL の枠は `notFoundComponent` ではなくルートのコンポーネントの分岐で決まる。ルート固有の 404 が要るルートは、自分に `notFoundComponent` を足すと、その下の子ルートの 404 もそこへ吸い上げる
+
+---
+
+## ADR-029: 認証シートの枠のエラーと 404 は、見た目を変えずに一文を `h1` にする
+
+### Context
+steps.md ステップ 8 の申し送りで、認証シートの枠に出るエラーと 404 には見出しが無いと指摘された。アプリシェルはヘッダーが常に `h1` を描く（ADR-006）が、認証シートの枠は見出しを描かず、画面の `AuthSheetTitle` が `h1` になる（ADR-027）。エラーと 404 は画面の代わりに描かれるので、認証シートでは `h1` が無いページになる。認証シートに出るのは、`__root`・`_app`・`_sheet` 自身の失敗（`AuthSheetRouteError`）、未知の URL（ADR-028）に加えて、`_sheet` の子ルートの失敗（既定の `RouteError` が `_sheet` の `Outlet` に出る）である。最後のものは既定のコンポーネントなので、props で見出しの有無を渡せない。
+
+### Decision
+- 一文を `h1` にする。見た目は変えない（`EmptyState` の `asPageHeading` は、段落と同じクラスを `h1` に付ける。preflight が見出しの文字サイズとウェイトを継承にしている）
+- `h1` を描くのが枠か画面かを、`components/ui/PageHeading` のコンテキスト（`"frame"` / `"screen"`、既定は `"frame"`）で配る。`AuthSheet` がカードの中を `"screen"` にし、`RouteError` と `NotFound` はこれを読んで一文を `h1` にする
+- アプリシェルでは `"frame"` のままで、一文は段落のまま（ヘッダーの `h1` と二重にしない）
+
+### Consequences
+- 良い点: 認証シートに出るエラーと 404 は、どの経路で出ても `h1` を 1 つ持つ。見た目はモックの状態例のまま
+- トレードオフ: 一文の要素が、置かれたフレームで変わる。`EmptyState` を直に使う画面の空状態は、コンテキストを読まないので段落のまま
+
+---
+
+## ADR-030: 再試行の押下中の状態は `useTransition` ではなく素の state で持ち、旧 CSS の `a` の色は base 層へ移す
+
+### Context
+`RouteError` の再試行は `router.invalidate()` を待つ間ボタンを無効にする。`useTransition` で包むと、ブラウザ（`vite dev` と本番ビルドの両方）で、再試行がまた失敗したとき、読み込みが終わった後も保留の状態が下りず、ボタンが無効のまま残った（jsdom では再現しない）。また、`NotFound` はリンク版のボタン（`ButtonLink`）を画面に出す最初の場所で、レイヤーの外にある旧 CSS の `a { color: var(--color-primary-dark) }` がユーティリティの `text-text-inverse` に勝ち、塗りのボタンの文字が地と同じ色で見えなかった（ADR-018 が挙げた、旧 CSS がユーティリティに勝つ経路の 1 つ）。旧 CSS はステップ 17 まで残り、ステップ 9〜16 の画面も `ButtonLink`・`RowLink` を使う。
+
+### Decision
+- 再試行の押下中は `useState` で持ち、`router.invalidate()` の後に `finally` で下ろす。理由はコードのコメントに書く
+- `app.css` の `a` の規則だけを `@layer base` に入れる。クラスの無いリンクと `fog-*` の規則（レイヤーの外）は今の色のまま、色のユーティリティを持つリンク（`ButtonLink`・サイドバーのリンクなど）はユーティリティが勝つ。旧 CSS のほかの規則には触らない
+
+### Consequences
+- 良い点: 再試行が続けて失敗しても、もう一度押せる。リンク版のボタンの文字が見え、サイドバーのリンクも宣言どおりの中立色になる
+- トレードオフ: 押下中の表示は遷移に乗らない。保留が下りない原因は特定していない（DOM テストは jsdom で押さえ、ブラウザでの保留は docs/test.md に限界として書いた）。旧 CSS の `button` の `font: inherit` や `:focus-visible` は残り、再試行のボタンの文字サイズとフォーカスリングはステップ 17 まで最終形にならない（ADR-018）

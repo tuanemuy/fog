@@ -25,6 +25,18 @@ describe("EmptyState", () => {
     expect(sentence.nextElementSibling?.contains(retry)).toBe(true);
     expect(sentence.classList.contains("next-sibling:mt-lg")).toBe(true);
   });
+
+  it("makes the sentence the page's h1 when asked, with the paragraph's look", () => {
+    const { rerender } = render(<EmptyState message="読み込めませんでした" />);
+    const look = screen.getByText("読み込めませんでした").className;
+    expect(screen.queryByRole("heading")).toBeNull();
+
+    rerender(<EmptyState message="読み込めませんでした" asPageHeading />);
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.textContent).toBe("読み込めませんでした");
+    expect(heading.className).toBe(look);
+  });
 });
 
 describe("SectionLabel", () => {

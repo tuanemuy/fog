@@ -8,7 +8,7 @@ Basic design principles:
 
 - **Choose RSC with an awareness of its "owner".** An RSC is nothing more than a React Flight payload returned from `createServerFn`. Decide first where you call it from = who holds that payload.
 - **Keep data fetching, authorization, and usecase invocation entirely inside server components.** Treat the loader as "a thin proxy for pulling a server component in as an RSC payload".
-- **`throw` errors.** There is no need to convert them to status codes and return them via `data()`. Throwing `redirect({ to })` lets the router pick it up, and any other exception falls back to the route's `errorComponent`. Absence that is a screen state (a deleted document) is rendered by the server component itself, not thrown.
+- **`throw` errors.** There is no need to convert them to status codes and return them via `data()`. Throwing `redirect({ to })` lets the router pick it up, and any other exception falls back to the router's default error component, drawn in the screen's frame (see "Error / Not Found"). Absence that is a screen state (a deleted document) is rendered by the server component itself, not thrown.
 - **Carve out only the parts that need client state with `"use client"`.** Make only the parts that hold forms or interactions into client components.
 - **When calling a server function from the client, wrap it with `useServerFn(fn)` and read what it resolves to through `readServerFnResult`.** The first makes `throw redirect({ to })` inside the usecase navigate automatically; the second turns a response of an unexpected shape into a system error instead of a phantom success.
 - **The primitives are React 19's own** — `useActionState` for forms, `useTransition` + `useOptimistic` for inline actions, plain `<form>` elements, `router.invalidate()` to reconcile. No query cache, no form library, no toast library: none of these is a dependency of `apps/web`.
@@ -74,12 +74,6 @@ export const Route = createFileRoute("/_app/")({
   head: ({ match }) =>
     routeHead(match, { title: "タイムライン — fog", path: "/" }),
   component: TimelinePage,
-  errorComponent: ({ error }) => (
-    <div role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function TimelinePage() {
@@ -263,7 +257,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
 
 - Because we `await` inside the server component, there is no need to assemble the data in the loader.
 - `guardStreamedRender` (`apps/web/app/presentation/errorResponseMiddleware.ts`) wraps the read of every streamed leaf. The HTTP status is already committed by the time the leaf renders, so what it does is classify the failure the way the middleware would — for redaction and for the `system` / `unknown` logging branch — and rethrow. What reaches the client through the RSC error frame is `kind: "unknown"` unless the `serialized` payload survives that boundary; both fail towards less information.
-- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. `notFoundComponent` in `apps/web/app/routes/__root.tsx` is for URLs that match no route.
+- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. The router's default 404 is for URLs that match no route (see "Error / Not Found").
 - Consolidate the DI / module loading for usecase invocation on the `serverData` wrapper. Calling `getContainer()` directly requires writing `import "@tanstack/react-start/server-only";` every time, and the moment someone adds a single static import line, the server graph risks leaking into the client; the wrapper's dynamic import structurally blocks this.
 - The leaf hands its data to the client island and keys the island on the URL (`TimelineFeed` → `<TimelineBoard key={…} initial={…} search={…} />`), so a `router.invalidate()` for the same URL keeps the island — with its scrolled-in pages — and a URL change remounts it.
 
@@ -468,19 +462,24 @@ try {
 
 ## Error / Not Found
 
-Define `errorComponent` per route; every `_app/*` route renders the same 「読み込めませんでした」 block with `sanitizeRouteError`. Exceptions thrown inside a server component bubble up here.
-
-The site-wide final fallback is the `errorComponent` / `notFoundComponent` in `apps/web/app/routes/__root.tsx`. The hierarchy is as follows:
+No screen defines an `errorComponent` or a `notFoundComponent`. `apps/web/app/router.tsx` sets the router's defaults — `RouteError` (`apps/web/app/components/ui/RouteError`) and `NotFound` (`apps/web/app/components/ui/NotFound`) — and the frame they are drawn in is decided by where the failure happens:
 
 ```
-Exception source (loader / server component / server function)
+Exception source (loader / beforeLoad / a streamed fragment's promise / a render)
     ↓ throw
-Matched child route .errorComponent  ←  stops here if defined
-    ↓ if undefined, bubble up
-__root.tsx .errorComponent          ←  final fallback (sanitizeRouteError)
+The failing route's boundary: the router's default RouteError,
+drawn in the parent layout's Outlet  ←  a screen under _app: in the app shell's sheet
+                                     ←  a screen under _sheet: in the auth sheet's card
+    ↓ the failing route is __root, _app or _sheet itself (its guard, its frame)
+AuthSheetRouteError                  ←  RouteError on an auth sheet of its own
 ```
 
-`redirect()` is caught by the router itself rather than the errorComponent and routed to navigation. `notFoundComponent` in `__root.tsx` answers URLs that match no route; a missing entity inside a matched route is a screen state rendered by the leaf (`KnowledgeNotFound`), see "Server component" above.
+- `RouteError` is 「読み込めませんでした」 and 「再試行」, one alert. The sentence is fixed — nothing of the error reaches the page — and the router's `defaultOnCatch` (`reportRouteError`, `apps/web/app/presentation/errorDisplay.ts`) logs it. 再試行 calls `router.invalidate()`: the loaders rerun and the boundary resets once that load settles, so a streamed fragment whose promise rejected (it throws out of `Deferred` into the route's boundary, where its skeleton was) renders afresh from the new promise.
+- `__root`, `_app` and `_sheet` declare `errorComponent: AuthSheetRouteError` (`apps/web/app/components/layout/AuthSheet`): their own failure takes their frame down with it, so it is drawn on the auth sheet instead of bare. A signed-in user whose `_app` check fails therefore sees it without the navigation.
+- A loader's `notFound()` is drawn by the nearest route up the tree that declares a not-found component, so none does: the screen that threw it draws the default `NotFound` in its own frame. A URL no route serves is answered at the root (`notFoundMode: "root"`), whose component frames it on the auth sheet — never inside whichever layout matched a prefix of it.
+- On the auth sheet the frame draws no heading, so the sentence of `RouteError` / `NotFound` becomes the page's `h1` there (`PageHeadingOwnerProvider`, `apps/web/app/components/ui/PageHeading`); in the app shell the header keeps the `h1`.
+
+`redirect()` is caught by the router itself rather than the error component and routed to navigation. A missing entity inside a matched route is a screen state rendered by the leaf (`KnowledgeNotFound`), see "Server component" above.
 
 ### Propagating server function exceptions in structured form
 
@@ -499,7 +498,7 @@ An exception thrown by `createServerFn`'s `handler` reaches the client, but if i
 
 (`apps/web/app/presentation/errorResponse.ts`).
 
-`displayError` / `sanitizeRouteError` (`apps/web/app/presentation/errorDisplay.ts`) dispatch through a `Record<SerializedErrorKind, handler>`-typed table, so adding a new variant to `SerializedError.kind` produces a compile error. The aim is to guarantee exhaustiveness at the type level.
+`displayError` (`apps/web/app/presentation/errorDisplay.ts`) dispatches through a `Record<SerializedErrorKind, handler>`-typed table, so adding a new variant to `SerializedError.kind` produces a compile error. The aim is to guarantee exhaustiveness at the type level.
 
 ## Summary: must-haves for the current `@tanstack/react-start`
 

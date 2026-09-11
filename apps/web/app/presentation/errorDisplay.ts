@@ -229,11 +229,16 @@ export function isOptimisticLockFailure(error: unknown): boolean {
   );
 }
 
-export function sanitizeRouteError(error: unknown): string {
+/**
+ * The router's `defaultOnCatch`: logs a failure a route's error boundary
+ * caught. The error itself goes to the console under `vite dev` only; a
+ * production build logs that one happened. The page shows none of it
+ * (`RouteError`'s sentence is fixed).
+ */
+export function reportRouteError(error: unknown): void {
   if (import.meta.env.DEV) {
     console.error("Route error:", error);
   } else {
     console.error("Route error");
   }
-  return renderErrorMessage(toDisplayError(error));
 }

@@ -5,7 +5,6 @@ import { Suspense } from "react";
 import { MemoHistorySkeleton } from "@/components/memoHistory/MemoHistorySkeleton";
 import { memoHistoryParamsSchema } from "@/components/memoHistory/schema";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { streamingRouteOptions } from "@/presentation/streamingRoute";
@@ -42,12 +41,6 @@ export const Route = createFileRoute("/_app/memos_/$memoId/history")({
       path: `/memos/${params.memoId}/history`,
     }),
   component: MemoHistoryPage,
-  errorComponent: ({ error }) => (
-    <div role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function MemoHistoryPage() {

@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 import { BrandLockup } from "@/components/layout/BrandLockup";
+import { PageHeadingOwnerProvider } from "@/components/ui/PageHeading";
+import { RouteError } from "@/components/ui/RouteError";
 import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
 
 /**
@@ -16,6 +18,10 @@ import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
  * bottom: it does not scroll, so the escape room at the foot of the app's
  * sheet would only push its content up (`spec/design/index.md`「余白と区切り」).
  * It hosts the toasts (ADR-010), fixed at the bottom centre of the page.
+ *
+ * The frame draws no heading: the screen's `AuthSheetTitle` is the page's
+ * `h1`, and a route error or 404 standing in for the screen makes its
+ * sentence the `h1` instead (`PageHeadingOwnerProvider`).
  */
 export function AuthSheet({ children }: Readonly<{ children: ReactNode }>) {
   return (
@@ -25,7 +31,9 @@ export function AuthSheet({ children }: Readonly<{ children: ReactNode }>) {
           <div className="flex justify-center">
             <BrandLockup />
           </div>
-          {children}
+          <PageHeadingOwnerProvider owner="screen">
+            {children}
+          </PageHeadingOwnerProvider>
         </main>
       </div>
       <div className="pointer-events-none fixed inset-x-[0] bottom-safe-b-xl flex flex-col items-center px-md">
@@ -50,5 +58,18 @@ export function AuthSheetTitle({
     >
       {children}
     </h1>
+  );
+}
+
+/**
+ * The error component of the root and of the two layouts under it, `_app`
+ * and `_sheet` (ADR-009 of Issue #22): their failure takes the frame down
+ * with it, so the route error is drawn on the auth sheet instead of bare.
+ */
+export function AuthSheetRouteError() {
+  return (
+    <AuthSheet>
+      <RouteError />
+    </AuthSheet>
   );
 }

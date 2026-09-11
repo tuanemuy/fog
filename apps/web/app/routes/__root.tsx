@@ -20,7 +20,7 @@ import "@/components/timeline/actions";
 import "@/components/topics/actions";
 import "@/components/trash/actions";
 import type { ReactNode } from "react";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
+import { AuthSheet, AuthSheetRouteError } from "@/components/layout/AuthSheet";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { buildHead } from "@/presentation/head";
 import appCss from "../styles/index.css?url";
@@ -53,29 +53,28 @@ export const Route = createRootRoute({
     const { meta, links } = buildHead(config);
     return { meta, links: [...baseLinks, ...links] };
   },
+  shellComponent: RootDocument,
   component: RootComponent,
-  errorComponent: ({ error }) => (
-    <RootDocument>
-      <div>
-        <h1>Something went wrong</h1>
-        <pre>{sanitizeRouteError(error)}</pre>
-      </div>
-    </RootDocument>
-  ),
-  notFoundComponent: () => (
-    <RootDocument>
-      <div>
-        <h1>404 Not Found</h1>
-      </div>
-    </RootDocument>
-  ),
+  errorComponent: AuthSheetRouteError,
 });
 
+/**
+ * A URL no route serves is answered here (`notFoundMode: "root"`), and the
+ * root has no frame of its own: the router's default 404 is drawn on the
+ * auth sheet (ADR-009 of Issue #22). The root declares no not-found
+ * component — one here would also catch a screen's `notFound()` and pull it
+ * out of the app shell (`router.tsx`).
+ */
 function RootComponent() {
-  return (
-    <RootDocument>
+  const unknownUrl = Route.useMatch({
+    select: (match) => match.globalNotFound === true,
+  });
+  return unknownUrl ? (
+    <AuthSheet>
       <Outlet />
-    </RootDocument>
+    </AuthSheet>
+  ) : (
+    <Outlet />
   );
 }
 

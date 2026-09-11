@@ -5,7 +5,6 @@ import { Suspense } from "react";
 import { z } from "zod";
 import { DocumentSkeleton } from "@/components/documents/DocumentSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { streamingRouteOptions } from "@/presentation/streamingRoute";
@@ -51,12 +50,6 @@ export const Route = createFileRoute("/_app/topics_/$topicId_/documents/new")({
       path: `/topics/${params.topicId}/documents/new`,
     }),
   component: DocumentComposerPage,
-  errorComponent: ({ error }) => (
-    <div role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function DocumentComposerPage() {
