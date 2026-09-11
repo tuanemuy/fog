@@ -40,7 +40,10 @@ function SearchPage() {
   return (
     <div className="pb-sheet-end">
       {/* Keyed per query so a new search always shows the loading state. */}
-      <Suspense key={`${q ?? ""}|${topic ?? ""}`} fallback={<SearchSkeleton />}>
+      <Suspense
+        key={`${q ?? ""}|${topic ?? ""}`}
+        fallback={<SearchSkeleton q={q} />}
+      >
         <Deferred promise={Search} />
       </Suspense>
     </div>
