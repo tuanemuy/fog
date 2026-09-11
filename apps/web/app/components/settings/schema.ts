@@ -2,8 +2,10 @@ import { z } from "zod";
 import { isRecord } from "@/presentation/serverFnResult";
 
 /** Transport bound only (DoS); the domain has no upper bound (decision △-4). */
+export const RETENTION_DAYS_TRANSPORT_MAX = 36_500;
+
 export const changeTrashRetentionDaysSchema = z.object({
-  retentionDays: z.number().int().min(1).max(36_500),
+  retentionDays: z.number().int().min(1).max(RETENTION_DAYS_TRANSPORT_MAX),
 });
 
 export const changePasswordSchema = z.object({

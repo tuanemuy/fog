@@ -2,18 +2,36 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState, useId, useOptimistic, useState } from "react";
+import {
+  type FormEvent,
+  startTransition,
+  useActionState,
+  useId,
+  useOptimistic,
+  useState,
+} from "react";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { changeTrashRetentionDaysFn } from "../actions";
-import { isRetentionSavedResult } from "../schema";
+import {
+  isRetentionSavedResult,
+  RETENTION_DAYS_TRANSPORT_MAX,
+} from "../schema";
 
 type FormState = Readonly<{ error: string | null; saved: boolean }>;
+
+const RULE_MESSAGE = "1 以上の整数を入力してください";
+const CEILING_MESSAGE = `${RETENTION_DAYS_TRANSPORT_MAX.toLocaleString("ja-JP")} 日以下で入力してください`;
 
 /**
  * P-13's retention setting (S-ST-01). The saved value shows optimistically
  * while the request runs; a rejection keeps the draft and names the rule.
- * No upper bound on the input: the domain has none (decision △-4).
+ * The domain has no upper bound (decision △-4); the transport's DoS ceiling
+ * is checked here too, so a value past it gets words instead of the
+ * schema's English. The submit dispatches the action itself rather than
+ * through `<form action>`: that path resets the form afterwards, and a
+ * focused number input's default is the value it was drawn with, so a
+ * rejected draft would snap back to it.
  */
 export function RetentionForm({ retentionDays }: { retentionDays: number }) {
   const router = useRouter();
@@ -30,7 +48,10 @@ export function RetentionForm({ retentionDays }: { retentionDays: number }) {
       const raw = String(formData.get("retentionDays") ?? "").trim();
       const value = Number(raw);
       if (raw.length === 0 || !Number.isInteger(value) || value < 1) {
-        return { error: "1 以上の整数を入力してください", saved: false };
+        return { error: RULE_MESSAGE, saved: false };
+      }
+      if (value > RETENTION_DAYS_TRANSPORT_MAX) {
+        return { error: CEILING_MESSAGE, saved: false };
       }
       showSaved(value);
       try {
@@ -43,12 +64,13 @@ export function RetentionForm({ retentionDays }: { retentionDays: number }) {
         return { error: null, saved: true };
       } catch (failure) {
         const serialized = toDisplayError(failure);
+        const refusedValue =
+          (serialized.kind === "business" &&
+            serialized.code === "INVALID_TRASH_RETENTION_DAYS") ||
+          (serialized.kind === "validation" &&
+            serialized.fieldErrors?.retentionDays !== undefined);
         return {
-          error:
-            serialized.kind === "business" &&
-            serialized.code === "INVALID_TRASH_RETENTION_DAYS"
-              ? "1 以上の整数を入力してください"
-              : displayError(failure),
+          error: refusedValue ? RULE_MESSAGE : displayError(failure),
           saved: false,
         };
       }
@@ -56,9 +78,15 @@ export function RetentionForm({ retentionDays }: { retentionDays: number }) {
     { error: null, saved: false },
   );
 
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    startTransition(() => action(data));
+  };
+
   return (
     <form
-      action={action}
+      onSubmit={submit}
       className="fog-retention-form"
       aria-label="ゴミ箱の保持期限"
     >

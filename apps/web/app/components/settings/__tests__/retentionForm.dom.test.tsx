@@ -78,6 +78,48 @@ describe("RetentionForm", () => {
     expect(mocks.changeTrashRetentionDaysFn).not.toHaveBeenCalled();
   });
 
+  it("keeps a rejected draft in the focused input instead of resetting it", async () => {
+    await renderWithRouter(<RetentionForm retentionDays={30} />);
+    const { form: f, input } = form();
+    input.focus();
+    fireEvent.change(input, { target: { value: "0" } });
+    fireEvent.submit(f);
+    await screen.findByRole("alert");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(input.value).toBe("0");
+  });
+
+  it("refuses a value past the transport ceiling with its wording, and words the transport's own rejection", async () => {
+    mocks.changeTrashRetentionDaysFn.mockRejectedValueOnce(
+      new AppServerError({
+        kind: "validation",
+        code: "INVALID_INPUT",
+        message: "Invalid input",
+        fieldErrors: {
+          retentionDays: ["Too small: expected number to be >=1"],
+        },
+      }),
+    );
+    await renderWithRouter(<RetentionForm retentionDays={30} />);
+    const { form: f, input } = form();
+    fireEvent.change(input, { target: { value: "36501" } });
+    fireEvent.submit(f);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "36,500 日以下で入力してください",
+    );
+    expect(mocks.changeTrashRetentionDaysFn).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "36500" } });
+    fireEvent.submit(f);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "1 以上の整数を入力してください",
+      ),
+    );
+    expect(mocks.changeTrashRetentionDaysFn).toHaveBeenCalledWith({
+      data: { retentionDays: 36500 },
+    });
+  });
+
   it("names the rule on the domain's rejection and shows other failures as they come", async () => {
     mocks.changeTrashRetentionDaysFn
       .mockRejectedValueOnce(
