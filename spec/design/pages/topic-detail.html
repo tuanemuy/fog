@@ -1113,6 +1113,9 @@
         <p class="example-label">
           トピックの操作メニュー（開いた状態。実装ではトリガー直下に浮遊配置・aria-expanded="true"）
         </p>
+        <!-- 「完了にする / 完了を解除」はメニューに入れず、ヘッダーに見えるワンアクションのボタンとして置く。
+             メニューは「編集 / 削除」だけにし、削除と完了を同じ選択場面に並べない
+             （requirements 4.2、spec/pages/index.md P-07）。このモックのメニューは項目の見た目の見本であり、並びは採らない -->
         <div class="menu-popup show" role="menu">
           <button class="pop-item" role="menuitem">
             <svg aria-hidden="true" width="15" height="15" viewBox="0 0 20 20" fill="none">
