@@ -69,9 +69,7 @@ describe("the knowledge leaves' not-found branch", () => {
     await renderWithRouter(await DocumentFeed({ documentId: "missing" }), {
       path: "/documents/$documentId",
     });
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
-      "ドキュメントが見つかりません",
-    );
+    expect(screen.getByText("ドキュメントが見つかりません").tagName).toBe("P");
     expect(
       screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
     ).toBe("/topics");
@@ -96,9 +94,52 @@ describe("the knowledge leaves' not-found branch", () => {
     await renderWithRouter(await TopicDetailFeed({ topicId: "missing" }), {
       path: "/topics/$topicId",
     });
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
-      "トピックが見つかりません",
-    );
+    expect(screen.getByText("トピックが見つかりません").tagName).toBe("P");
+    expect(
+      screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
+    ).toBe("/topics");
+    expect(screen.queryByRole("region", { name: "ドキュメント" })).toBeNull();
     expect(loadTopic).toHaveBeenCalledWith(USER_ID, "missing");
+  });
+
+  it("TopicDetailFeed draws the head, the documents and the related memos when the topic is there", async () => {
+    const loadTopic = mocks.loaders[3];
+    mocks.requireUserId.mockResolvedValue(USER_ID);
+    const at = new Date("2026-01-01T14:00:00Z");
+    loadTopic?.mockResolvedValue({
+      topic: {
+        id: "t1",
+        name: "ブランド刷新",
+        description: null,
+        status: "active",
+        version: 0,
+        createdAt: at,
+        updatedAt: at,
+      },
+      documents: [{ id: "d1", title: "サイト構成の方針", updatedAt: at }],
+      relatedMemos: [
+        { memoId: "m1", snippet: "紺は残す", postedAt: at, deleted: false },
+      ],
+    });
+    await renderWithRouter(await TopicDetailFeed({ topicId: "t1" }), {
+      path: "/topics/$topicId",
+    });
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      "ブランド刷新",
+    );
+    expect(screen.queryByText("トピックが見つかりません")).toBeNull();
+    expect(
+      screen
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["ドキュメント", "関連メモ"]);
+    expect(
+      screen
+        .getByRole("link", { name: /サイト構成の方針/ })
+        .getAttribute("href"),
+    ).toBe("/documents/d1");
+    expect(
+      screen.getByRole("link", { name: "タイムラインで表示: 紺は残す" }),
+    ).toBeTruthy();
   });
 });

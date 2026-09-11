@@ -9,15 +9,25 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   type FormEvent,
   useActionState,
+  useEffect,
   useId,
   useOptimistic,
   useRef,
   useState,
   useTransition,
 } from "react";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { FormError } from "@/components/ui/FormError";
+import { Icon } from "@/components/ui/Icon";
+import { RowError } from "@/components/ui/RowError";
+import { RowList } from "@/components/ui/RowList";
+import { TextAreaField } from "@/components/ui/TextAreaField";
+import { TextField } from "@/components/ui/TextField";
 import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
+import { AddRowButton } from "../AddRow";
 import { createTopicFn, trashTopicFn } from "../actions";
 import { isTopicResult, isTrashTopicResult } from "../schema";
 import { type DisplayTopic, TopicRow } from "../TopicRow";
@@ -28,30 +38,37 @@ type ListAction =
   | Readonly<{ kind: "add"; topic: DisplayTopic }>
   | Readonly<{ kind: "remove"; id: string }>;
 
+type DeleteFailure = Readonly<{ topic: DisplayTopic; message: string }>;
+
+// `spec/design/pages/topics.html`, `.section-toggle`: a section label that
+// opens and closes what follows. The hairline and the section gap above it
+// are the section's, as with `KnowledgeSection`.
+const SECTION_TOGGLE_CLASS =
+  "mt-section flex w-full cursor-pointer items-center gap-sm border-t border-neutral-100 pt-lg pb-md text-left font-base text-xs font-semibold leading-tight tracking-label text-neutral-600 transition-colors hover:text-neutral-900 focus-visible:rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus";
+
 /**
- * The list owner of P-06: creating (an optimistic row dispatched from the
- * form) and deleting (an optimistic removal behind a confirmation) are
- * membership changes, so both run here. Archived topics fold into
- * 「完了済み」, hidden when there is none.
+ * The list owner of P-06 (`spec/design/pages/topics.html`): creating (an
+ * optimistic row dispatched from the form) and deleting (an optimistic
+ * removal behind a confirmation) are membership changes, so both run here.
+ * The list ends in 「新しいトピック」, which turns into the create form in
+ * its place. Archived topics fold into 「完了済み」, drawn only when there is
+ * one. A failed delete puts its row back with the failure under it.
  */
 export function TopicList({ initial }: { initial: TopicListView }) {
   const router = useRouter();
   const create = useServerFn(createTopicFn);
   const trash = useServerFn(trashTopicFn);
-  const nameId = useId();
-  const nameErrorId = useId();
-  const descriptionId = useId();
+  const archivedListId = useId();
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [nameMissing, setNameMissing] = useState(false);
   const [description, setDescription] = useState("");
-  const [describing, setDescribing] = useState(false);
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DisplayTopic | null>(null);
-  const [deleteFailure, setDeleteFailure] = useState<{
-    topic: DisplayTopic;
-    message: string;
-  } | null>(null);
+  const [deleteFailure, setDeleteFailure] = useState<DeleteFailure | null>(
+    null,
+  );
   const [deleting, startDelete] = useTransition();
 
   const base: DisplayTopic[] = initial.topics.filter(
@@ -64,6 +81,29 @@ export function TopicList({ initial }: { initial: TopicListView }) {
         ? [action.topic, ...current]
         : current.filter((topic) => topic.id !== action.id),
   );
+
+  // Opening the form puts focus in its name field and closing it puts focus
+  // back on 「新しいトピック」: each replaces the other, so the element that
+  // had focus is gone.
+  const nameRef = useRef<HTMLInputElement>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const moveFocus = useRef(false);
+  useEffect(() => {
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    (creating ? nameRef.current : addRef.current)?.focus();
+  }, [creating]);
+  const openForm = () => {
+    moveFocus.current = true;
+    setCreating(true);
+  };
+  const closeForm = () => {
+    moveFocus.current = true;
+    setCreating(false);
+    setName("");
+    setDescription("");
+    setNameMissing(false);
+  };
 
   // One create per submit event (the same guard as the memo composer). A
   // blank name stops here too, before React queues the action, so the
@@ -113,9 +153,7 @@ export function TopicList({ initial }: { initial: TopicListView }) {
           isTopicResult,
           "createTopicFn",
         );
-        setName("");
-        setDescription("");
-        setDescribing(false);
+        closeForm();
         await router.invalidate();
         return { error: null };
       } catch (failure) {
@@ -126,6 +164,14 @@ export function TopicList({ initial }: { initial: TopicListView }) {
     },
     { error: null },
   );
+  // The action's state outlives the form: a rejection dismissed with
+  // キャンセル must not greet the next opening of it.
+  const [dismissed, setDismissed] = useState<ComposerState | null>(null);
+  const formError = state === dismissed ? null : state.error;
+  const cancelForm = () => {
+    setDismissed(state);
+    closeForm();
+  };
 
   const runDelete = (topic: DisplayTopic) => {
     setDeleteFailure(null);
@@ -151,134 +197,116 @@ export function TopicList({ initial }: { initial: TopicListView }) {
   const archived = optimistic.filter((topic) => topic.status === "archived");
   const rows = (topics: readonly TopicWithDocumentsView[]) =>
     topics.map((topic) => (
-      <TopicRow key={topic.id} topic={topic} onDelete={setDeleteTarget} />
+      <li key={topic.id}>
+        <TopicRow
+          topic={topic}
+          onDelete={setDeleteTarget}
+          error={
+            deleteFailure?.topic.id === topic.id ? (
+              <RowError
+                message={deleteFailure.message}
+                retry={{
+                  label: "リトライ",
+                  onRetry: () => runDelete(deleteFailure.topic),
+                }}
+              />
+            ) : undefined
+          }
+        />
+      </li>
     ));
 
   return (
-    <section
-      className="fog-topics"
-      aria-label="トピック一覧"
-      aria-busy={pending || deleting}
-    >
-      <form
-        className="fog-create-row"
-        action={action}
-        onSubmit={guardSubmit}
-        aria-label="新しいトピック"
-      >
-        <div className="fog-create-line">
-          <label className="fog-sr-only" htmlFor={nameId}>
-            新しいトピックの名前
-          </label>
-          <input
-            id={nameId}
-            name="name"
-            type="text"
-            className="fog-create-input"
-            placeholder="新しいトピック"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              setNameMissing(false);
-            }}
-            disabled={pending}
-            maxLength={100}
-            aria-invalid={nameMissing || undefined}
-            aria-describedby={nameMissing ? nameErrorId : undefined}
-          />
-          <button type="submit" className="fog-primary" disabled={pending}>
-            {pending ? "追加中…" : "追加"}
-          </button>
-        </div>
-        {describing ? (
-          <>
-            <label className="fog-sr-only" htmlFor={descriptionId}>
-              説明
-            </label>
-            <textarea
-              id={descriptionId}
-              name="description"
-              className="fog-create-description"
-              placeholder="説明（任意）"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              disabled={pending}
-              rows={2}
-              maxLength={500}
-            />
-          </>
-        ) : (
-          <button
-            type="button"
-            className="fog-text-button"
-            onClick={() => setDescribing(true)}
-          >
-            説明を追加
-          </button>
-        )}
-        {nameMissing && (
-          <p className="fog-error" id={nameErrorId} role="alert">
-            {blankFieldMessage("topicName")}
-          </p>
-        )}
-        {state.error && (
-          <p className="fog-error" role="alert">
-            {state.error}
-          </p>
-        )}
-      </form>
-      {deleteFailure && (
-        <p className="fog-error" role="alert">
-          {deleteFailure.message}
-          <button
-            type="button"
-            className="fog-text-button"
-            onClick={() => runDelete(deleteFailure.topic)}
-          >
-            再試行
-          </button>
-        </p>
-      )}
+    <section aria-label="トピック一覧" aria-busy={pending || deleting}>
       {optimistic.length === 0 ? (
-        <div className="fog-empty">
-          <h2>最初のトピックを作ろう</h2>
-          <p>ドキュメントを束ねる文脈です。上の入力欄から作れます。</p>
-        </div>
-      ) : (
-        <>
-          <div className="fog-topic-rows">{rows(active)}</div>
-          {archived.length > 0 && (
-            <>
-              <button
-                type="button"
-                className="fog-section-toggle"
-                aria-expanded={archivedOpen}
-                onClick={() => setArchivedOpen((open) => !open)}
-              >
-                <span
-                  className={`fog-toggle-chevron${archivedOpen ? " open" : ""}`}
-                  aria-hidden="true"
+        <EmptyState message="最初のトピックを作ってみましょう" />
+      ) : null}
+      <RowList aria-label="進行中のトピック">
+        {rows(active)}
+        <li>
+          {creating ? (
+            <form
+              className="flex flex-col gap-sm py-row"
+              action={action}
+              onSubmit={guardSubmit}
+              aria-label="新しいトピック"
+            >
+              {formError ? <FormError>{formError}</FormError> : null}
+              <TextField
+                ref={nameRef}
+                label="トピック名"
+                hideLabel
+                name="name"
+                placeholder="トピック名"
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setNameMissing(false);
+                }}
+                disabled={pending}
+                maxLength={100}
+                error={nameMissing ? blankFieldMessage("topicName") : null}
+              />
+              <TextAreaField
+                label="説明（任意）"
+                hideLabel
+                name="description"
+                placeholder="説明（任意）"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                disabled={pending}
+                rows={2}
+                maxLength={500}
+              />
+              <div className="flex items-center justify-end gap-sm">
+                <Button variant="text" disabled={pending} onClick={cancelForm}>
+                  キャンセル
+                </Button>
+                <Button
+                  variant="fill-sm"
+                  type="submit"
+                  disabled={pending || nameMissing}
                 >
-                  ›
-                </span>
-                完了済み（{archived.length}）
-              </button>
-              {archivedOpen && (
-                <section
-                  className="fog-topic-rows"
-                  aria-label="完了済みのトピック"
-                >
-                  {rows(archived)}
-                </section>
-              )}
-            </>
+                  {pending ? "追加中…" : "追加"}
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <AddRowButton ref={addRef} onClick={openForm}>
+              新しいトピック
+            </AddRowButton>
           )}
+        </li>
+      </RowList>
+      {archived.length > 0 ? (
+        <>
+          <button
+            type="button"
+            className={SECTION_TOGGLE_CLASS}
+            aria-expanded={archivedOpen}
+            aria-controls={archivedOpen ? archivedListId : undefined}
+            onClick={() => setArchivedOpen((open) => !open)}
+          >
+            <span
+              className={`flex shrink-0 transition-transform ${archivedOpen ? "rotate-90" : ""}`}
+            >
+              <Icon name="chevron-right" size="xs" />
+            </span>
+            完了済み（{archived.length}）
+          </button>
+          {archivedOpen ? (
+            <div id={archivedListId}>
+              <RowList aria-label="完了済みのトピック">
+                {rows(archived)}
+              </RowList>
+            </div>
+          ) : null}
         </>
-      )}
+      ) : null}
       <ConfirmDialog
         open={deleteTarget !== null}
         title="トピックを削除しますか？"
-        description="トピックと配下のドキュメントはゴミ箱に移動し、保持期限を過ぎると完全に削除されます。"
+        description="トピックとそのドキュメントはゴミ箱に移動し、保持期限を過ぎると完全に削除されます。"
         confirmLabel="削除"
         danger
         pending={deleting}
