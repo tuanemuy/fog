@@ -983,7 +983,7 @@ User Data DO 側と同じ2列（`schema_version` / `self_locator`）。違うの
 
 ## 本ファイルで定義しないテーブル
 
-- **OAuth 2.1 の `jti` 一回性テーブル。** 認可コードは署名済みの自己完結値なので永続化せず、User Data DO に置くのは交換済みコードの `jti` を短期間だけ記録する表だけである。**採用した名前と形は `oauth_consumed_codes (jti TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)` である** — User Data DO の v1 に置く adapter-owned の表で、UoW コンテキストに書き込み口を持たない。書き手は認可コード交換の RPC だけで、交換と同じ `transactionSync` で `jti` を記録し、`expires_at` を過ぎた行を同時に消す（掃除のための `jobs.kind` は足さない。コード TTL は 10 分なので行数は小さい）。`jti` の一致で 2 回目の交換を拒否する。10 GB の上限に算入するが、TTL 内の行しか残らない OCC の `version` は持たない（一回性の記録なので集約ではない）
+- **OAuth 2.1 の `jti` 一回性テーブル。** 認可コードは署名済みの自己完結値なので永続化せず、User Data DO に置くのは交換済みコードの `jti` を短期間だけ記録する表だけである。**採用した名前と形は `oauth_consumed_codes (jti TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)` である** — User Data DO の v1 に置く adapter-owned の表で、UoW コンテキストに書き込み口を持たない。書き手は 2 つである — 認可コード交換の RPC（交換と同じ `transactionSync` で `jti` を記録し、`expires_at` を過ぎた行を同時に消す）と、`finalize-withdrawal` の最終トランザクション（退会でアカウントの到達性を消す義務の一部として全行を消す。recovery/index.md）（掃除のための `jobs.kind` は足さない。コード TTL は 10 分なので行数は小さい）。`jti` の一致で 2 回目の交換を拒否する。10 GB の上限に算入するが、TTL 内の行しか残らない OCC の `version` は持たない（一回性の記録なので集約ではない）
 - **検索の不透明カーソルが指す期限付きスナップショットの物理形。** ドメイン側で決まっているのは契約（同じカーソルからは同じ集合が読める / 期限切れのカーソルは拒否される / カーソルは不透明である。domains/search.md）だけで、**物理形は実装が決める** — 期限付きの表・DO ストレージの一時キー・安定順位による再実行のいずれでも契約を満たせるうえ、寿命と粒度はストレージ上限に依存する判断だからである。**採用した形はカーソル自体への埋め込みである** — 順位順の ID 集合（種別 1 byte + UUID 16 byte）を base64url に詰め（構造・期限・クエリ一致の検査で不正なカーソルを拒否する。署名は持たない）、集合の上限は 500 件、期限は 30 分。表を増やさず、読み取りで何も書かないので 10 GB 逼迫時にも検索は動く。上限を超える一致は読めず、`count` は切った後の件数である（値の根拠と改訂の条件は実装の `stores/searchCursor.ts` の JSDoc と統合テストが持つ）
 
 ## リレーション図
