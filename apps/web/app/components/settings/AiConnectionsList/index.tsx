@@ -4,21 +4,55 @@ import type { AiClientConnectionView } from "@repo/core/application/identity/vie
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Row } from "@/components/ui/Row";
+import { RowError } from "@/components/ui/RowError";
+import { RowList } from "@/components/ui/RowList";
 import {
   displayError,
   isOptimisticLockFailure,
 } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
-import { formatDateTime, formatDay } from "@/presentation/time";
+import { DISPLAY_TIME_ZONE } from "@/presentation/time";
 import { revokeAiClientConnectionFn } from "../actions";
+import { ItemMeta, ItemName, SectionEmpty } from "../SettingsSection";
 import { isConnectionRevokedResult } from "../schema";
+
+// The settings sheet's dates (`spec/design/pages/settings.html`): the day
+// without its weekday, and the minute after it.
+const dayFormatter = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  timeZone: DISPLAY_TIME_ZONE,
+});
+
+const minuteFormatter = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: DISPLAY_TIME_ZONE,
+});
+
+type RowFailure = Readonly<{ connectionId: string; message: string }>;
+
+/**
+ * The empty list's sentence. The MCP URL stays in it: nowhere else in the app
+ * tells the user what to add to the client.
+ */
+export function emptyMessage(mcpUrl: string): string {
+  return `接続しているAIはありません。AIアプリの設定で fog（${mcpUrl}）を追加すると接続できます。`;
+}
 
 /**
  * The connected AI clients (S-AC-06, P-13 / P-03), owned as a list:
  * revocation removes the row optimistically, the server function runs
- * here, and a rejection puts the row back with its reason. Only active
- * connections are drawn; a revoked one is a fact the screens do not show.
+ * here, and a rejection puts the row back with its reason under it. Only
+ * active connections are drawn; a revoked one is a fact the screens do not
+ * show.
  */
 export function AiConnectionsList({
   connections,
@@ -31,7 +65,7 @@ export function AiConnectionsList({
   const router = useRouter();
   const revoke = useServerFn(revokeAiClientConnectionFn);
   const [, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<RowFailure | null>(null);
   const [confirming, setConfirming] = useState<AiClientConnectionView | null>(
     null,
   );
@@ -48,7 +82,7 @@ export function AiConnectionsList({
     const target = confirming;
     if (target === null) return;
     setConfirming(null);
-    setError(null);
+    setFailure(null);
     startTransition(async () => {
       remove(target.connectionId);
       try {
@@ -58,57 +92,57 @@ export function AiConnectionsList({
           "revokeAiClientConnectionFn",
         );
         await router.invalidate();
-      } catch (failure) {
+      } catch (error) {
         // A concurrent revocation already did the work: the refetch shows it.
-        if (isOptimisticLockFailure(failure)) {
+        if (isOptimisticLockFailure(error)) {
           await router.invalidate();
           return;
         }
-        setError(displayError(failure));
+        setFailure({
+          connectionId: target.connectionId,
+          message: displayError(error),
+        });
       }
     });
   };
 
   return (
-    <div className="fog-ai-connections">
+    <div>
       {shown.length === 0 ? (
-        <>
-          <p className="fog-meta">接続はありません。</p>
-          <p className="fog-meta">
-            LLM アプリで fog
-            をコネクタとして追加すると、このブラウザで認可画面が開きます。MCP
-            サーバーの URL: <code>{mcpUrl}</code>
-          </p>
-        </>
+        <SectionEmpty>{emptyMessage(mcpUrl)}</SectionEmpty>
       ) : (
-        <ul className="fog-settings-list" aria-label="接続済み AI クライアント">
+        <RowList aria-label="接続しているAI">
           {shown.map((connection) => (
-            <li key={connection.connectionId} className="fog-settings-row">
-              <span>{connection.clientName}</span>
-              <span className="fog-meta">
-                接続済み: {formatDay(connection.connectedAt)}
-                {" / "}
-                最終利用:{" "}
-                {connection.lastUsedAt === null
-                  ? "未使用"
-                  : formatDateTime(connection.lastUsedAt)}
-              </span>
-              <button
-                type="button"
-                className="fog-text-button"
-                onClick={() => setConfirming(connection)}
-                aria-label={`${connection.clientName} の接続を解除`}
+            <li key={connection.connectionId}>
+              <Row
+                actions={
+                  <Button
+                    variant="danger-text"
+                    onClick={() => setConfirming(connection)}
+                    aria-label={`${connection.clientName} の接続を解除`}
+                  >
+                    接続を解除
+                  </Button>
+                }
+                error={
+                  failure?.connectionId === connection.connectionId ? (
+                    <RowError message={failure.message} />
+                  ) : undefined
+                }
               >
-                接続を解除
-              </button>
+                <ItemName>{connection.clientName}</ItemName>
+                <ItemMeta>
+                  接続: {dayFormatter.format(connection.connectedAt)}
+                  <br />
+                  最終利用:{" "}
+                  {connection.lastUsedAt === null
+                    ? "未使用"
+                    : minuteFormatter.format(connection.lastUsedAt)}
+                </ItemMeta>
+              </Row>
             </li>
           ))}
-        </ul>
-      )}
-      {error !== null && (
-        <p className="fog-error" role="alert">
-          {error}
-        </p>
+        </RowList>
       )}
       <ConfirmDialog
         open={confirming !== null}
@@ -116,9 +150,9 @@ export function AiConnectionsList({
         description={
           confirming === null
             ? ""
-            : `「${confirming.clientName}」の接続を解除すると、このクライアントは fog を操作できなくなります。再び使うには認可をやり直します。`
+            : `解除後は、${confirming.clientName} から操作できなくなります。`
         }
-        confirmLabel="解除する"
+        confirmLabel="接続を解除"
         danger
         onConfirm={onConfirm}
         onCancel={() => setConfirming(null)}

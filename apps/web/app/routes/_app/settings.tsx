@@ -41,11 +41,12 @@ function SettingsPage() {
   const { Settings } = Route.useLoaderData();
   const { sso, sso_error: ssoError } = Route.useSearch();
   return (
-    <div className="flex flex-col gap-section pb-sheet-end">
-      <SsoNotice sso={sso} ssoError={ssoError} />
-      <Suspense fallback={<SettingsSkeleton />}>
-        <Deferred promise={Settings} />
-      </Suspense>
+    <div className="pb-sheet-end">
+      <SsoNotice sso={sso} ssoError={ssoError}>
+        <Suspense fallback={<SettingsSkeleton />}>
+          <Deferred promise={Settings} />
+        </Suspense>
+      </SsoNotice>
     </div>
   );
 }
