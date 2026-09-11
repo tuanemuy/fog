@@ -4,13 +4,19 @@ import { Link } from "@tanstack/react-router";
 import {
   type FormEvent,
   useEffect,
-  useId,
+  useRef,
   useState,
   useTransition,
 } from "react";
+import { Button } from "@/components/ui/Button";
+import { FormError } from "@/components/ui/FormError";
+import { Icon } from "@/components/ui/Icon";
+import { Row } from "@/components/ui/Row";
+import { RowError } from "@/components/ui/RowError";
 import { renderErrorMessage } from "@/presentation/errorDisplay";
 import type { SerializedError } from "@/presentation/errorResponse";
 import { isRecord } from "@/presentation/serverFnResult";
+import { ItemDescription, ItemName } from "../SettingsSection";
 
 export const EXPORT_ACTION = "/export";
 export const EXPORT_DESCRIPTION = "Markdown形式。ゴミ箱・履歴は含まれません";
@@ -63,16 +69,26 @@ async function failureOf(response: Response): Promise<SerializedError> {
   };
 }
 
+/** Hands the zip to the browser's own save through a throwaway `<a download>`. */
+function save(url: string, filename: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.click();
+}
+
 /**
- * P-13's export row (S-ST-02): idle → 生成中 → the zip. The form posts to
- * `/export` on its own with scripting off; with it, the submit is a
- * `fetch` so the row can show 「生成中…」, the response becomes a Blob
- * that is saved once through an `<a download>` and stays offered as
- * 「ダウンロード」 until the next run. The zone travels as a hidden
- * input (design D-09).
+ * P-13's export row (S-ST-02, `spec/design/pages/settings.html`): idle →
+ * 生成中 → the zip. The form posts to `/export` on its own with scripting
+ * off; with it, the submit is a `fetch` so the row can show 「生成中…」, the
+ * response becomes a Blob that is saved once and stays offered as
+ * 「ダウンロード」 while the screen is open. A failure stays under the row
+ * with 「リトライ」; a lost session instead names the login that brings the
+ * user back here. The zone travels as a hidden input (design D-09).
  */
 export function ExportPanel() {
-  const id = useId();
+  const form = useRef<HTMLFormElement>(null);
   const [timezone, setTimezone] = useState("UTC");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [, startTransition] = useTransition();
@@ -87,15 +103,13 @@ export function ExportPanel() {
     return () => URL.revokeObjectURL(url);
   }, [phase]);
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = event.currentTarget;
+  const run = (target: HTMLFormElement) => {
     setPhase({ kind: "generating" });
     startTransition(async () => {
       try {
-        const response = await fetch(form.action, {
+        const response = await fetch(target.action, {
           method: "POST",
-          body: new FormData(form),
+          body: new FormData(target),
           credentials: "same-origin",
         });
         if (!response.ok) {
@@ -113,11 +127,7 @@ export function ExportPanel() {
         const blob = await response.blob();
         const filename = filenameOf(response, "fog-export.zip");
         const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = filename;
-        anchor.rel = "noopener";
-        anchor.click();
+        save(url, filename);
         setPhase({ kind: "done", url, filename });
       } catch {
         setPhase({
@@ -129,62 +139,68 @@ export function ExportPanel() {
     });
   };
 
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    run(event.currentTarget);
+  };
+
   return (
     <form
+      ref={form}
       method="post"
       action={EXPORT_ACTION}
       onSubmit={onSubmit}
-      className="fog-export-row"
       aria-label="データのエクスポート"
       aria-busy={phase.kind === "generating"}
     >
       <input type="hidden" name="timezone" value={timezone} />
-      <div className="fog-export-info">
-        <div className="fog-export-title" id={`${id}-title`}>
-          エクスポート
-        </div>
-        <p className="fog-export-desc">{EXPORT_DESCRIPTION}</p>
-        {phase.kind === "error" && (
-          <p className="fog-error" role="alert">
-            {phase.message}
-            {phase.unauthenticated && (
-              <>
-                {" "}
-                <Link to="/login" search={{ redirect: "/settings" }}>
-                  ログインする
-                </Link>
-              </>
-            )}
-          </p>
-        )}
-      </div>
-      {phase.kind === "generating" ? (
-        <span className="fog-export-status" role="status">
-          <span className="fog-spinner" aria-hidden="true" />
-          生成中…
-        </span>
-      ) : phase.kind === "done" ? (
-        <span className="fog-export-actions">
-          <a
-            className="fog-secondary"
-            href={phase.url}
-            download={phase.filename}
-          >
-            ダウンロード
-          </a>
-          <button
-            type="button"
-            className="fog-text-button"
-            onClick={() => setPhase({ kind: "idle" })}
-          >
-            もう一度生成
-          </button>
-        </span>
-      ) : (
-        <button type="submit" className="fog-secondary">
-          エクスポート
-        </button>
-      )}
+      <Row
+        actions={
+          phase.kind === "generating" ? (
+            <span
+              role="status"
+              className="flex items-center gap-sm whitespace-nowrap text-sm text-neutral-600"
+            >
+              <Icon name="spinner" size="sm" />
+              生成中…
+            </span>
+          ) : phase.kind === "done" ? (
+            <Button
+              variant="fill-sm"
+              onClick={() => save(phase.url, phase.filename)}
+            >
+              ダウンロード
+            </Button>
+          ) : (
+            <Button variant="fill-sm" type="submit">
+              エクスポート
+            </Button>
+          )
+        }
+        error={
+          phase.kind !== "error" ? undefined : phase.unauthenticated ? (
+            <FormError>
+              {phase.message}{" "}
+              <Link to="/login" search={{ redirect: "/settings" }}>
+                ログインする
+              </Link>
+            </FormError>
+          ) : (
+            <RowError
+              message={phase.message}
+              retry={{
+                label: "リトライ",
+                onRetry: () => {
+                  if (form.current !== null) run(form.current);
+                },
+              }}
+            />
+          )
+        }
+      >
+        <ItemName>エクスポート</ItemName>
+        <ItemDescription>{EXPORT_DESCRIPTION}</ItemDescription>
+      </Row>
     </form>
   );
 }

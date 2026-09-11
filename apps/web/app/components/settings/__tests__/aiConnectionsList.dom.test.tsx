@@ -1,8 +1,11 @@
 import type { AiClientConnectionView } from "@repo/core/application/identity/view";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
-import { AiConnectionsList } from "@/components/settings/AiConnectionsList";
+import {
+  AiConnectionsList,
+  emptyMessage,
+} from "@/components/settings/AiConnectionsList";
 import { AppServerError } from "@/presentation/errorResponse";
 
 const mocks = vi.hoisted(() => ({
@@ -45,54 +48,60 @@ const connections: AiClientConnectionView[] = [
   },
 ];
 
+const MCP_URL = "http://localhost:3000/mcp";
+
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("AiConnectionsList", () => {
-  it("draws the active connections with their dates, never a revoked one", async () => {
-    await renderWithRouter(
-      <AiConnectionsList
-        connections={connections}
-        mcpUrl="http://localhost:3000/mcp"
-      />,
-      { path: "/settings" },
-    );
-    const list = screen.getByRole("list", { name: "接続済み AI クライアント" });
-    expect(list.querySelectorAll("li")).toHaveLength(2);
-    expect(screen.getByText("Claude")).toBeTruthy();
-    expect(screen.getByText("Cursor")).toBeTruthy();
-    expect(screen.queryByText("Old Client")).toBeNull();
-    expect(screen.getByText(/最終利用: 未使用/)).toBeTruthy();
-    expect(screen.getAllByText(/接続済み: 2026/)).toHaveLength(2);
-    expect(screen.getByText(/最終利用: 2026/)).toBeTruthy();
-    expect(screen.queryByText("http://localhost:3000/mcp")).toBeNull();
+const drawList = (list: readonly AiClientConnectionView[] = connections) =>
+  renderWithRouter(<AiConnectionsList connections={list} mcpUrl={MCP_URL} />, {
+    path: "/settings",
   });
 
-  it("with no connection, says so and shows the MCP URL to add", async () => {
-    await renderWithRouter(
-      <AiConnectionsList connections={[]} mcpUrl="http://localhost:3000/mcp" />,
-      { path: "/settings" },
-    );
-    expect(screen.getByText("接続はありません。")).toBeTruthy();
-    expect(screen.getByText("http://localhost:3000/mcp")).toBeTruthy();
+const rows = () =>
+  within(screen.getByRole("list", { name: "接続しているAI" })).getAllByRole(
+    "listitem",
+  );
+
+function row(index: number): HTMLElement {
+  const found = rows()[index];
+  if (found === undefined) throw new Error(`no row ${index}`);
+  return found;
+}
+
+describe("AiConnectionsList", () => {
+  it("draws the active connections with their dates in Asia/Tokyo, never a revoked one", async () => {
+    await drawList();
+    expect(rows().map((row) => row.textContent)).toEqual([
+      "Claude接続: 2026年9月1日最終利用: 2026年9月7日 21:34接続を解除",
+      "Cursor接続: 2026年9月2日最終利用: 未使用接続を解除",
+    ]);
+    expect(screen.queryByText("Old Client")).toBeNull();
+    expect(screen.queryByText(emptyMessage(MCP_URL))).toBeNull();
+  });
+
+  it("with no connection, says so in one line that carries the MCP URL to add", async () => {
+    await drawList([]);
+    expect(screen.getByText(emptyMessage(MCP_URL))).toBeTruthy();
+    expect(emptyMessage(MCP_URL)).toContain(MCP_URL);
     expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("revoke asks first; cancelling keeps the row and calls nothing", async () => {
-    await renderWithRouter(
-      <AiConnectionsList
-        connections={connections}
-        mcpUrl="http://localhost:3000/mcp"
-      />,
-      { path: "/settings" },
-    );
+    await drawList();
     fireEvent.click(
       screen.getByRole("button", { name: "Claude の接続を解除" }),
     );
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain("「Claude」の接続を解除すると");
-    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }));
+    expect(
+      within(dialog).getByRole("heading", { name: "接続を解除しますか？" }),
+    ).toBeTruthy();
+    expect(dialog.textContent).toContain(
+      "解除後は、Claude から操作できなくなります。",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "キャンセル" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Claude")).toBeTruthy();
     expect(mocks.revokeAiClientConnectionFn).not.toHaveBeenCalled();
@@ -102,19 +111,13 @@ describe("AiConnectionsList", () => {
     mocks.revokeAiClientConnectionFn.mockResolvedValue({
       connectionId: "conn-1",
     });
-    const { router } = await renderWithRouter(
-      <AiConnectionsList
-        connections={connections}
-        mcpUrl="http://localhost:3000/mcp"
-      />,
-      { path: "/settings" },
-    );
+    const { router } = await drawList();
     const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(
       screen.getByRole("button", { name: "Claude の接続を解除" }),
     );
-    await screen.findByRole("dialog");
-    fireEvent.click(screen.getByRole("button", { name: "解除する" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "接続を解除" }));
     await waitFor(() => expect(screen.queryByText("Claude")).toBeNull());
     expect(screen.getByText("Cursor")).toBeTruthy();
     expect(mocks.revokeAiClientConnectionFn).toHaveBeenCalledWith({
@@ -124,7 +127,7 @@ describe("AiConnectionsList", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("a failure puts the row back with its reason", async () => {
+  it("a failure puts the row back with its reason under that row", async () => {
     mocks.revokeAiClientConnectionFn.mockRejectedValue(
       new AppServerError({
         kind: "system",
@@ -132,20 +135,16 @@ describe("AiConnectionsList", () => {
         message: "boom",
       }),
     );
-    await renderWithRouter(
-      <AiConnectionsList
-        connections={connections}
-        mcpUrl="http://localhost:3000/mcp"
-      />,
-      { path: "/settings" },
-    );
+    await drawList();
     fireEvent.click(
       screen.getByRole("button", { name: "Cursor の接続を解除" }),
     );
-    await screen.findByRole("dialog");
-    fireEvent.click(screen.getByRole("button", { name: "解除する" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "接続を解除" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("システムエラーが発生しました");
-    expect(await screen.findByText("Cursor")).toBeTruthy();
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(row(1).contains(alert)).toBe(true);
+    expect(row(0).contains(alert)).toBe(false);
   });
 });
