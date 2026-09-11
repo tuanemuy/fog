@@ -28,6 +28,22 @@
     color: var(--color-neutral-900);
   }
 
+  /* spec/design/index.md「タッチを第一級に」: タップで既定のハイライトの
+     四角が出ると、操作面の形がプリミティブの定義から外れる */
+  button,
+  a,
+  input,
+  textarea,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* シートがスクロールコンテナなので、指定メモ・日付ジャンプの着地点が枠の
+     上端に張り付かないための余白は、着地する要素ごとではなくコンテナが持つ */
+  [data-scroll-restoration-id] {
+    scroll-padding-top: var(--space-lg);
+  }
+
   /* spec/design/tokens.md: `prefers-reduced-motion: reduce` では
      transition を無効化する（全画面共通） */
   @media (prefers-reduced-motion: reduce) {

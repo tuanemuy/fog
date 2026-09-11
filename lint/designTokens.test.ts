@@ -59,7 +59,14 @@ type CssBlock = {
 
 const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-const walkCss = (source: string): { decls: CssDecl[]; blocks: CssBlock[] } => {
+type CssWalk = {
+  readonly decls: CssDecl[];
+  readonly blocks: CssBlock[];
+  /** The walk ended inside a string, a block, or a half-read declaration. */
+  readonly unterminated: boolean;
+};
+
+const walkCss = (source: string): CssWalk => {
   const decls: CssDecl[] = [];
   const blocks: CssBlock[] = [];
   const stack: string[] = [];
@@ -83,6 +90,14 @@ const walkCss = (source: string): { decls: CssDecl[]; blocks: CssBlock[] } => {
         quote = null;
       }
       if (ch === "\n") line += 1;
+      continue;
+    }
+    // An escape outside a string: Tailwind escapes the class name into the
+    // selector (`.before\:content-\[\'–\'\]`), so a `\'` here must not open a
+    // string — the walk would then swallow the rest of the stylesheet.
+    if (ch === "\\") {
+      append(ch + (source[i + 1] ?? ""));
+      i += 1;
       continue;
     }
     if (ch === "/" && source[i + 1] === "*") {
@@ -124,7 +139,11 @@ const walkCss = (source: string): { decls: CssDecl[]; blocks: CssBlock[] } => {
     append(ch);
     if (ch === "\n") line += 1;
   }
-  return { decls, blocks };
+  return {
+    decls,
+    blocks,
+    unterminated: quote !== null || stack.length > 0 || buf.trim() !== "",
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -508,10 +527,18 @@ const siblingMisuse = (candidate: string): string | null => {
   return null;
 };
 
-/** Token names a candidate reads as `(--token)` or a bare `[var(--token)]`. */
+/**
+ * Token names a candidate reads as `(--token)` or a bare `[var(--token)]`,
+ * including the typed forms Tailwind also accepts (`(length:--token)` /
+ * `[length:var(--token)]`).
+ */
 const tokenReferences = (candidate: string): string[] => [
-  ...[...candidate.matchAll(/(?<!var)\((--[\w-]+)\)/g)].map(([, name]) => name),
-  ...[...candidate.matchAll(/\[var\((--[\w-]+)\)\]/g)].map(([, name]) => name),
+  ...[...candidate.matchAll(/(?<!var)\((?:[\w-]+:)?(--[\w-]+)\)/g)].map(
+    ([, name]) => name,
+  ),
+  ...[...candidate.matchAll(/\[(?:[\w-]+:)?var\((--[\w-]+)\)\]/g)].map(
+    ([, name]) => name,
+  ),
 ];
 
 // ===========================================================================
@@ -694,6 +721,18 @@ describe("design tokens — no raw value outside tokens.css", () => {
     expect(allCandidates.length).toBeGreaterThan(0);
     expect(utilityDecls.length).toBeGreaterThan(0);
     expect(validCandidates.has("sr-only")).toBe(true);
+  });
+
+  // A walk that stops early leaves every check that reads it green over a
+  // fraction of the stylesheet, which the check above cannot tell from a full
+  // pass.
+  it("walks each stylesheet to its end", () => {
+    expect(generated.unterminated, "the generated CSS").toBe(false);
+    expect(styleFiles.filter((f) => walked(f).unterminated)).toEqual([]);
+    expect(
+      utilityBlocks.filter((b) => b.prelude.startsWith("@media")).length,
+      "the variants that compile to `@media` (`hover:`, `lg:`) must be reached",
+    ).toBeGreaterThan(0);
   });
 
   it("generates no utility with a raw value outside the allowlist", () => {
@@ -1020,6 +1059,10 @@ describe("design tokens — what the checks reach", () => {
   it("reads `(--token)` and bare `[var(--token)]` references", () => {
     expect(tokenReferences("p-(--space-md)")).toEqual(["--space-md"]);
     expect(tokenReferences("p-[var(--space-md)]")).toEqual(["--space-md"]);
+    expect(tokenReferences("text-(length:--text-sm)")).toEqual(["--text-sm"]);
+    expect(tokenReferences("text-[length:var(--text-sm)]")).toEqual([
+      "--text-sm",
+    ]);
     expect(tokenReferences("top-[calc(100%+var(--space-xs))]")).toEqual([]);
     expect(tokenReferences("p-md")).toEqual([]);
   });
@@ -1039,5 +1082,22 @@ describe("design tokens — what the checks reach", () => {
       "@media (width >= 1px)",
       ".y",
     ]);
+  });
+
+  it("walks past an escaped quote in a selector", () => {
+    const walk = walkCss(
+      String.raw`.content-\[\'a\'\] { color: var(--a) } @media (width >= 1px) { .y { color: var(--b) } }`,
+    );
+    expect(walk.decls.map((d) => [d.value, d.context])).toEqual([
+      ["var(--a)", [String.raw`.content-\[\'a\'\]`]],
+      ["var(--b)", ["@media (width >= 1px)", ".y"]],
+    ]);
+    expect(walk.unterminated).toBe(false);
+  });
+
+  it("reports a walk that ran off the end", () => {
+    expect(walkCss(".x { color: var(--a) }").unterminated).toBe(false);
+    expect(walkCss(".x { color: var(--a)").unterminated).toBe(true);
+    expect(walkCss(`.x { content: "a }`).unterminated).toBe(true);
   });
 });
