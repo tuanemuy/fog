@@ -6,7 +6,6 @@ import { routeHead } from "@/presentation/head";
 
 const searchSchema = z.object({
   token: z.string().min(1).max(512).optional(),
-  sent: z.coerce.number().int().optional(),
 });
 
 /**
@@ -19,7 +18,7 @@ export const Route = createFileRoute("/_sheet/password-reset")({
   validateSearch: searchSchema,
   head: ({ match }) => {
     const head = routeHead(match, {
-      title: "パスワードのリセット — fog",
+      title: "パスワードリセット — fog",
       path: "/password-reset",
     });
     return {
@@ -34,7 +33,7 @@ export const Route = createFileRoute("/_sheet/password-reset")({
 });
 
 function PasswordResetPage() {
-  const { token, sent } = Route.useSearch();
+  const { token } = Route.useSearch();
   if (token !== undefined) return <PasswordResetForm token={token} />;
-  return <PasswordResetRequestForm sent={sent === 1} />;
+  return <PasswordResetRequestForm />;
 }
