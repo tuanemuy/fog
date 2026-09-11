@@ -22,6 +22,7 @@ import {
 import {
   type RestoreDestination,
   RestoreDestinationDialog,
+  type RestoreDestinationError,
 } from "../RestoreDestinationDialog";
 import {
   isEmptyTrashResult,
@@ -113,10 +114,23 @@ export function groupRows(items: readonly TrashItemView[]): Row[] {
 }
 
 type Notice = Readonly<{ text: string; memoId?: string }>;
-type RowFailure = Readonly<{ key: string; message: string; retry: () => void }>;
+type RowFailure = Readonly<{
+  key: string;
+  message: string;
+  retry: () => void;
+  retryLabel?: string;
+}>;
+
+// Failures that belong to the list rather than to one row: 空にする, and a
+// row that vanished under this tab (its row is already gone).
+const LIST_FAILURE = "list";
 type Pending =
   | Readonly<{ kind: "confirmSet"; item: TrashItemView; topicName: string }>
-  | Readonly<{ kind: "destination"; item: TrashItemView; error: string | null }>
+  | Readonly<{
+      kind: "destination";
+      item: TrashItemView;
+      error: RestoreDestinationError | null;
+    }>
   | Readonly<{ kind: "hardDelete"; item: TrashItemView; children: number }>
   | Readonly<{ kind: "empty" }>;
 
@@ -173,6 +187,11 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
     await router.invalidate();
   };
 
+  const reload = () => {
+    setFailure(null);
+    startAction(settle);
+  };
+
   /** Runs one row action optimistically; on a rejection the row returns with its message. */
   const act = (
     item: TrashItemView,
@@ -192,9 +211,16 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       } catch (error) {
         const serialized = toDisplayError(error);
         if (serialized.kind === "notFound") {
-          // Somebody else already handled it (another tab, the purge job).
+          // The row left the trash elsewhere — hard-deleted in another tab
+          // or by the purge job, or restored there — so this tab cannot tell
+          // which. Say it failed, name both outcomes, and resync the list.
           dropRows([key]);
-          setNotice({ text: `「${titleOf(item)}」は既に処理済みです` });
+          setFailure({
+            key: LIST_FAILURE,
+            message: `「${titleOf(item)}」はゴミ箱に見つかりません。完全に削除されたか、別の画面で復元されています`,
+            retry: reload,
+            retryLabel: "一覧を読み直す",
+          });
           await settle();
           return;
         }
@@ -330,11 +356,17 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       } catch (error) {
         setDialogBusy(false);
         const serialized = toDisplayError(error);
-        const message =
-          serialized.kind === "notFound"
-            ? "そのトピックは選べません。候補を読み直してください"
-            : displayError(error);
-        setPendingDialog({ kind: "destination", item, error: message });
+        setPendingDialog({
+          kind: "destination",
+          item,
+          error:
+            serialized.kind === "notFound"
+              ? {
+                  message: "そのトピックは選べません。候補を読み直してください",
+                  stale: true,
+                }
+              : { message: displayError(error), stale: false },
+        });
       }
     });
   };
@@ -369,7 +401,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         setDialogBusy(false);
         if (result.failedCount > 0) {
           setFailure({
-            key: "empty",
+            key: LIST_FAILURE,
             message: `${result.failedCount}件は削除できませんでした。もう一度お試しください`,
             retry: confirmEmpty,
           });
@@ -383,7 +415,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       } catch (error) {
         setDialogBusy(false);
         setFailure({
-          key: "empty",
+          key: LIST_FAILURE,
           message: `空にできませんでした: ${displayError(error)}`,
           retry: confirmEmpty,
         });
@@ -441,7 +473,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           )}
         </p>
       )}
-      {failure !== null && failure.key === "empty" && (
+      {failure !== null && failure.key === LIST_FAILURE && (
         <p className="fog-error" role="alert">
           {failure.message}
           <button
@@ -449,7 +481,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
             className="fog-text-button"
             onClick={failure.retry}
           >
-            再試行
+            {failure.retryLabel ?? "再試行"}
           </button>
         </p>
       )}

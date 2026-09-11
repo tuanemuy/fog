@@ -297,6 +297,9 @@ describe("TrashBoard", () => {
     );
     const alert = await within(picker).findByRole("alert");
     expect(alert.textContent).toContain("そのトピックは選べません");
+    expect(
+      within(alert).getByRole("button", { name: "候補を読み直す" }),
+    ).toBeTruthy();
     expect(mocks.restoreDocumentFn).toHaveBeenLastCalledWith({
       data: {
         documentId: "d1",
@@ -322,6 +325,59 @@ describe("TrashBoard", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "「2024年Q1レビュー」を復元しました",
     );
+  });
+
+  it("draws the destination picker as a card; a blank new name says so, and a name error offers no candidate reload", async () => {
+    mocks.restoreDocumentFn
+      .mockResolvedValueOnce({
+        result: "destinationSelectionRequired",
+        documentId: "d1",
+      })
+      .mockRejectedValueOnce(
+        new AppServerError({
+          kind: "business",
+          code: "TOPIC_NAME_TOO_LONG",
+          message: "x",
+        }),
+      );
+    mocks.loadRestoreDestinationsFn.mockResolvedValue({ topics: [] });
+    await draw(list([DOC]));
+    fireEvent.click(
+      screen.getByRole("button", { name: "2024年Q1レビュー を復元" }),
+    );
+    const picker = await screen.findByRole("dialog");
+    const form = within(picker).getByRole("form", { name: "復元先のトピック" });
+    expect(form.classList.contains("fog-dialog-box")).toBe(true);
+    await waitFor(() =>
+      expect(
+        (
+          within(picker).getByLabelText(
+            "新しいトピックを作る",
+          ) as HTMLInputElement
+        ).checked,
+      ).toBe(true),
+    );
+    const name = within(picker).getByLabelText(
+      "トピック名",
+    ) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: "   " } });
+    fireEvent.submit(form);
+    const blank = within(picker).getByRole("alert");
+    expect(blank.textContent).toBe("トピック名を入力してください");
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(name.getAttribute("aria-describedby")).toBe(blank.id);
+    expect(mocks.restoreDocumentFn).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(name, { target: { value: "長すぎる名前" } });
+    expect(within(picker).queryByRole("alert")).toBeNull();
+    fireEvent.submit(form);
+    const rejected = await within(picker).findByRole("alert");
+    expect(rejected.textContent).toBe(
+      "トピック名は100文字以内で入力してください",
+    );
+    expect(
+      within(picker).queryByRole("button", { name: "候補を読み直す" }),
+    ).toBeNull();
   });
 
   it("offers only 新規 when there is no live topic to choose", async () => {
@@ -398,7 +454,7 @@ describe("TrashBoard", () => {
     expect(mocks.emptyTrashFn).toHaveBeenCalledTimes(2);
   });
 
-  it("treats a not-found as already handled and drops the row", async () => {
+  it("says a row that left the trash elsewhere is gone, drops it, and offers a reload", async () => {
     mocks.hardDeleteTrashItemFn.mockRejectedValueOnce(
       new AppServerError({
         kind: "notFound",
@@ -406,7 +462,7 @@ describe("TrashBoard", () => {
         message: "x",
       }),
     );
-    await draw(list([MEMO]));
+    const { router } = await draw(list([MEMO]));
     fireEvent.click(
       screen.getByRole("button", { name: "昼に食べた店 を完全に削除" }),
     );
@@ -415,8 +471,22 @@ describe("TrashBoard", () => {
         name: "完全に削除",
       }),
     );
-    await waitFor(() => expect(screen.queryByText("昼に食べた店")).toBeNull());
-    expect(screen.getByText(/既に処理済みです/)).toBeTruthy();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "「昼に食べた店」はゴミ箱に見つかりません。完全に削除されたか、別の画面で復元されています",
+    );
+    expect(
+      screen.queryByRole("button", { name: "昼に食べた店 を復元" }),
+    ).toBeNull();
+    expect(screen.queryByRole("status")?.textContent ?? "").not.toContain(
+      "処理済み",
+    );
+    const invalidate = vi.spyOn(router, "invalidate");
+    fireEvent.click(
+      within(alert).getByRole("button", { name: "一覧を読み直す" }),
+    );
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
   it("loads the next page on もっと読む", async () => {

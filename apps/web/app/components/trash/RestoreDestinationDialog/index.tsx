@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { displayError } from "@/presentation/errorDisplay";
+import { blankFieldMessage, displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { loadRestoreDestinationsFn } from "../actions";
 import { isTopicList } from "../schema";
@@ -19,11 +19,20 @@ export type RestoreDestination =
   | Readonly<{ kind: "existing"; topicId: string }>
   | Readonly<{ kind: "new"; name: string; description: string | null }>;
 
+/**
+ * A rejection of the previous choice, shown inside the dialog. `stale` marks
+ * the one a fresh candidate list can fix (the chosen topic is gone), which
+ * is the only case that offers 「候補を読み直す」.
+ */
+export type RestoreDestinationError = Readonly<{
+  message: string;
+  stale: boolean;
+}>;
+
 export type RestoreDestinationDialogProps = Readonly<{
   documentTitle: string;
   pending: boolean;
-  /** A rejection of the previous choice, shown inside the dialog. */
-  error: string | null;
+  error: RestoreDestinationError | null;
   onChoose: (destination: RestoreDestination) => void;
   onCancel: () => void;
 }>;
@@ -52,7 +61,9 @@ export function RestoreDestinationDialog({
     state: "loading",
   });
   const [mode, setMode] = useState<"existing" | "new">("existing");
+  const [nameMissing, setNameMissing] = useState(false);
   const nameId = useId();
+  const nameErrorId = useId();
   const descriptionId = useId();
   const selectId = useId();
 
@@ -98,7 +109,10 @@ export function RestoreDestinationDialog({
     const name = (
       form.elements.namedItem("name") as HTMLInputElement
     ).value.trim();
-    if (name.length === 0) return;
+    if (name.length === 0) {
+      setNameMissing(true);
+      return;
+    }
     const description = (
       form.elements.namedItem("description") as HTMLTextAreaElement
     ).value.trim();
@@ -119,11 +133,16 @@ export function RestoreDestinationDialog({
       aria-labelledby="restore-destination-title"
       onClose={onCancel}
     >
-      <form method="dialog" onSubmit={submit} aria-label="復元先のトピック">
+      <form
+        method="dialog"
+        onSubmit={submit}
+        aria-label="復元先のトピック"
+        className="fog-dialog-box fog-destination-box"
+      >
         <h2 id="restore-destination-title" className="fog-dialog-title">
           「{documentTitle}」の復元先を選んでください
         </h2>
-        <p className="fog-dialog-description">
+        <p className="fog-dialog-text">
           元のトピックは完全に削除されています。既存のトピックへ戻すか、新しいトピックを作って戻します。
         </p>
         <fieldset className="fog-destination-choice" disabled={pending}>
@@ -202,7 +221,15 @@ export function RestoreDestinationDialog({
               maxLength={100}
               disabled={pending}
               autoComplete="off"
+              onChange={() => setNameMissing(false)}
+              aria-invalid={nameMissing || undefined}
+              aria-describedby={nameMissing ? nameErrorId : undefined}
             />
+            {nameMissing && (
+              <p className="fog-error" id={nameErrorId} role="alert">
+                {blankFieldMessage("topicName")}
+              </p>
+            )}
             <label htmlFor={descriptionId}>説明（任意）</label>
             <textarea
               id={descriptionId}
@@ -215,8 +242,8 @@ export function RestoreDestinationDialog({
         )}
         {error !== null && (
           <p className="fog-error" role="alert">
-            {error}
-            {candidates.state === "ready" && (
+            {error.message}
+            {error.stale && candidates.state === "ready" && (
               <button
                 type="button"
                 className="fog-text-button"
