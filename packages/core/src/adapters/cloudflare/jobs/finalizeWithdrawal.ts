@@ -3,6 +3,7 @@ import type {
   UnitOfWorkProvider,
   UserDataUnitOfWorkContext,
 } from "@repo/core/application/execution/unitOfWork";
+import { finishWithdrawalProcedure } from "@repo/core/application/identity/finishWithdrawal";
 import type { CredentialLocatorDto } from "@repo/core/application/identity/gateway";
 import { WITHDRAWAL_OPERATION_ID } from "@repo/core/application/identity/jobKeys";
 import {
@@ -169,21 +170,10 @@ export function createFinalizeWithdrawalHandler(
 
     // Duty (1) and the tombstone, in one transaction; duty (3) is what is
     // absent from it (the records stay, the withdrawal's included).
-    const now = deps.now().getTime();
+    const now = deps.now();
     deps.provider().run((ctx) => {
-      sql.exec("DELETE FROM credential_locators");
-      sql.exec(
-        `UPDATE ai_client_connections SET status = 'revoked', revoked_at = ?, version = version + 1, updated_at = ?
-         WHERE status = 'active'`,
-        now,
-        now,
-      );
+      finishWithdrawalProcedure(ctx, now);
       sql.exec("DELETE FROM oauth_consumed_codes");
-      ctx.accountStore.finishDeletion();
-      ctx.updateOperation({
-        operationId: WITHDRAWAL_OPERATION_ID,
-        phase: "done",
-      });
       return undefined;
     });
     return { kind: "finished" };

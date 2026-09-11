@@ -336,6 +336,24 @@ describe("resume-signup in terminal mode: S1〜S4 and the withdrawal it starts",
       await stalledSignup();
     expect((await emailMapping(email)).row?.status).toBe("reserved");
     expect((await accountOf(userId)).account?.status).toBe("active");
+    // An active AI connection seeded while the account is still active: the
+    // last transaction revokes it through the repository (version + 1),
+    // and an already revoked one is left as it was.
+    const seededAt = Date.now() - 60_000;
+    await inUserDataStorage(userId, (sql) => {
+      sql.exec(
+        `INSERT INTO ai_client_connections (id, client_name, scope, status, connected_at, revoked_at, last_used_at, created_at_reset_version, version, created_at, updated_at)
+         VALUES ('01a0aaaa-0000-7000-8000-000000000001', 'Seeded', 'ai', 'active', ?, NULL, NULL, 0, 0, ?, ?),
+                ('01a0aaaa-0000-7000-8000-000000000002', 'Old', 'ai', 'revoked', ?, ?, NULL, 0, 1, ?, ?)`,
+        seededAt,
+        seededAt,
+        seededAt,
+        seededAt,
+        seededAt,
+        seededAt,
+        seededAt,
+      );
+    });
 
     await inDirectoryStorage(bucket.generation, bucket.bucketIndex, (sql) => {
       forceTerminal(sql, key, `forward-exhausted ${operationId}`);
@@ -366,6 +384,24 @@ describe("resume-signup in terminal mode: S1〜S4 and the withdrawal it starts",
       );
       await wakeUser(userId);
     }
+    const revoked = await inUserDataStorage(userId, (sql) =>
+      sql
+        .exec<{
+          id: string;
+          status: string;
+          version: number;
+          revoked_at: number | null;
+        }>(
+          "SELECT id, status, version, revoked_at FROM ai_client_connections ORDER BY id",
+        )
+        .toArray(),
+    );
+    expect(revoked.map((c) => [c.status, c.version])).toEqual([
+      ["revoked", 1],
+      ["revoked", 1],
+    ]);
+    expect(revoked[0]?.revoked_at).toBeGreaterThan(seededAt);
+    expect(revoked[1]?.revoked_at).toBe(seededAt);
     const done = await accountOf(userId);
     expect(done.account).toMatchObject({
       status: "deleted",
