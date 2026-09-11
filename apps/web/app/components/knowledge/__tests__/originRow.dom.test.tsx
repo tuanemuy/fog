@@ -31,7 +31,7 @@ describe("OriginRow", () => {
     expect(screen.queryByRole("link")).toBeNull();
     const row = document.querySelector(".fog-origin-row");
     expect(row?.getAttribute("aria-disabled")).toBe("true");
-    expect(row?.textContent).toContain("削除されたメモ");
+    expect(row?.textContent).toContain("削除済みのメモ");
     expect(row?.textContent).not.toContain("抜粋");
   });
 });

@@ -29,7 +29,7 @@ function JumpIcon() {
 /**
  * One memo cited by a document — P-08's 「元になったメモ」 and P-07's 関連メモ.
  * A live memo links to its position on the timeline (`/?memo=`); a memo in
- * the trash reads 「削除されたメモ」 and does not navigate. A hard-deleted
+ * the trash reads 「削除済みのメモ」 and does not navigate. A hard-deleted
  * memo never reaches here (ADR-003).
  */
 export function OriginRow({ memo }: { memo: RelatedMemoView }) {
@@ -41,7 +41,7 @@ export function OriginRow({ memo }: { memo: RelatedMemoView }) {
       <div className="fog-origin-row deleted" aria-disabled="true">
         <span className="fog-origin-main">
           {time}
-          <span className="fog-origin-text">削除されたメモ</span>
+          <span className="fog-origin-text">削除済みのメモ</span>
         </span>
         <JumpIcon />
       </div>
