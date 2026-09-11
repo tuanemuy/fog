@@ -66,12 +66,18 @@ function openMenu() {
   return screen.getByRole("menu");
 }
 
+const editor = () =>
+  screen.queryByRole("textbox", {
+    name: "メモを編集",
+  }) as HTMLTextAreaElement | null;
+
 function startEditing() {
   fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "編集" }));
-  const form = screen.getByRole("form", { name: "メモを編集" });
+  const textarea = editor() as HTMLTextAreaElement;
+  const form = textarea.closest("form") as HTMLFormElement;
   return {
     form,
-    textarea: within(form).getByLabelText("本文") as HTMLTextAreaElement,
+    textarea,
     save: () =>
       within(form).getByRole("button", { name: /保存/ }) as HTMLButtonElement,
   };
@@ -88,9 +94,19 @@ describe("MemoEntry", () => {
     expect(time?.getAttribute("datetime")).toBe("2026-01-01T14:05:00.000Z");
     expect(time?.textContent).toBe("23:05");
     expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("button", { name: "メモの操作" })).toBeTruthy();
+    const article = container.querySelector("article");
+    expect(article?.getAttribute("aria-busy")).toBeNull();
+    expect(article?.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("marks the memo a position-specified visit asked for as current", async () => {
+    const { container } = await renderWithRouter(
+      <MemoEntry memo={memo("body", new Date(0))} highlighted />,
+    );
     expect(
-      container.querySelector("article")?.getAttribute("aria-busy"),
-    ).toBeNull();
+      container.querySelector("article")?.getAttribute("aria-current"),
+    ).toBe("true");
   });
 
   it("renders a Markdown list as list items", async () => {
@@ -167,11 +183,14 @@ describe("MemoEntry menu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("closes on Escape", async () => {
+  it("closes on Escape and hands focus back to the trigger", async () => {
     await renderWithRouter(<MemoEntry memo={memo("body", new Date(0))} />);
-    openMenu();
-    fireEvent.keyDown(document, { key: "Escape" });
+    const menu = openMenu();
+    fireEvent.keyDown(document.activeElement ?? menu, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "メモの操作" }),
+    );
   });
 });
 
@@ -186,10 +205,13 @@ describe("MemoEntry inline edit", () => {
     version: 2,
   };
 
-  it("opens the editor with the body and refuses a blank draft", async () => {
+  it("opens the editor with the body, focused, and refuses a blank draft", async () => {
     await renderWithRouter(<MemoEntry memo={item} />);
+    expect(editor()).toBeNull();
     const { textarea, save } = startEditing();
     expect(textarea.value).toBe("original body");
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+    expect(screen.queryByRole("menu")).toBeNull();
     expect(save().disabled).toBe(false);
     fireEvent.change(textarea, { target: { value: "   " } });
     expect(save().disabled).toBe(true);
@@ -216,7 +238,7 @@ describe("MemoEntry inline edit", () => {
     expect(container.querySelector("article")?.getAttribute("aria-busy")).toBe(
       "true",
     );
-    expect(screen.getByRole("form", { name: "メモを編集" })).toBeTruthy();
+    expect(editor()).not.toBeNull();
 
     edit.resolve({
       result: "saved",
@@ -225,9 +247,7 @@ describe("MemoEntry inline edit", () => {
     } satisfies EditMemoView);
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(savedView));
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.queryByRole("form", { name: "メモを編集" })).toBeNull(),
-    );
+    await waitFor(() => expect(editor()).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -244,9 +264,7 @@ describe("MemoEntry inline edit", () => {
     const invalidate = vi.spyOn(router, "invalidate");
     const { form } = startEditing();
     fireEvent.submit(form);
-    await waitFor(() =>
-      expect(screen.queryByRole("form", { name: "メモを編集" })).toBeNull(),
-    );
+    await waitFor(() => expect(editor()).toBeNull());
     expect(onSaved).not.toHaveBeenCalled();
     expect(invalidate).not.toHaveBeenCalled();
     expect(screen.getByText("original body")).toBeTruthy();
@@ -275,18 +293,20 @@ describe("MemoEntry inline edit", () => {
     await renderWithRouter(<MemoEntry memo={item} />);
     const { form, textarea, save } = startEditing();
     fireEvent.change(textarea, { target: { value: "mine" } });
+    expect(save().textContent).toBe("保存");
     fireEvent.submit(form);
 
     const alert = await screen.findByRole("alert");
     await waitFor(() => {
-      expect(alert.textContent).toContain("Claude");
+      expect(alert.textContent).toContain(
+        "編集中に Claude がこのメモを更新しました。",
+      );
       expect(alert.textContent).toContain("somebody else wrote this");
       expect(save().textContent).toBe("そのまま保存");
     });
-    expect(screen.getByRole("form", { name: "メモを編集" })).toBeTruthy();
-    expect(
-      (within(form).getByLabelText("本文") as HTMLTextAreaElement).value,
-    ).toBe("mine");
+    expect(form.contains(alert)).toBe(true);
+    expect(editor()).not.toBeNull();
+    expect(editor()?.value).toBe("mine");
 
     fireEvent.submit(form);
     await waitFor(() =>
@@ -294,9 +314,7 @@ describe("MemoEntry inline edit", () => {
         data: { memoId: "m1", body: "mine", expectedVersion: 5 },
       }),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole("form", { name: "メモを編集" })).toBeNull(),
-    );
+    await waitFor(() => expect(editor()).toBeNull());
   });
 
   it("keeps the editor and the draft on a rejection", async () => {
@@ -315,18 +333,16 @@ describe("MemoEntry inline edit", () => {
     await waitFor(() =>
       expect(alert.textContent).toBe("メモを入力してください"),
     );
-    expect(screen.getByRole("form", { name: "メモを編集" })).toBeTruthy();
-    expect(
-      (within(form).getByLabelText("本文") as HTMLTextAreaElement).value,
-    ).toBe("will fail");
+    expect(editor()).not.toBeNull();
+    expect(editor()?.value).toBe("will fail");
   });
 
   it("discards the draft on cancel", async () => {
     await renderWithRouter(<MemoEntry memo={item} />);
     const { form, textarea } = startEditing();
     fireEvent.change(textarea, { target: { value: "discarded" } });
-    fireEvent.click(within(form).getByRole("button", { name: "取り消し" }));
-    expect(screen.queryByRole("form", { name: "メモを編集" })).toBeNull();
+    fireEvent.click(within(form).getByRole("button", { name: "キャンセル" }));
+    expect(editor()).toBeNull();
     expect(screen.getByText("original body")).toBeTruthy();
     expect(screen.queryByText("discarded")).toBeNull();
     expect(mocks.editMemoFn).not.toHaveBeenCalled();

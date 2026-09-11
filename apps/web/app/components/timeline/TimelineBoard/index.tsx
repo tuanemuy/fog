@@ -10,16 +10,26 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   type FormEvent,
+  Fragment,
   useActionState,
   useCallback,
   useEffect,
+  useId,
   useOptimistic,
   useRef,
   useState,
   useTransition,
 } from "react";
-import { useSheetScrollContainer } from "@/components/layout/ShellSlots";
+import {
+  HeaderActions,
+  useSheetScrollContainer,
+} from "@/components/layout/ShellSlots";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { IconButton } from "@/components/ui/IconButton";
+import { RowError } from "@/components/ui/RowError";
+import { useToast } from "@/components/ui/Toast";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import {
@@ -28,7 +38,11 @@ import {
   formatDay,
 } from "@/presentation/time";
 import { loadTimelinePageFn, postMemoFn, softDeleteMemoFn } from "../actions";
+import { Composer } from "../Composer";
+import { DateJump } from "../DateJump";
+import { FilterBar } from "../FilterBar";
 import { type DisplayMemo, MemoEntry } from "../MemoEntry";
+import { PageEdge } from "../PageEdge";
 import {
   isPostMemoResult,
   isSoftDeleteMemoResult,
@@ -36,6 +50,12 @@ import {
   TIMELINE_PAGE_LIMIT,
 } from "../schema";
 import { compactSearch, type TimelineSearch, timelineModeOf } from "../search";
+import {
+  DAY_ENTRIES_CLASS,
+  DAY_GROUP_CLASS,
+  DAY_HEADING_CLASS,
+  DAY_HEADING_NOTE_CLASS,
+} from "../styles";
 
 export type TimelineTarget = Readonly<{
   memoId: string;
@@ -53,6 +73,17 @@ type ListAction =
   | Readonly<{ kind: "remove"; id: string }>;
 
 type Direction = "older" | "newer";
+
+/** Whether the keyword bar is shown, and whether it was just opened by hand. */
+type FilterBarState = "closed" | "shown" | "opened";
+
+/** The toast a position-specified visit raises when its memo is not there. */
+const MISSING_TARGET_TOAST: Readonly<
+  Record<Exclude<MemoTargetState, "found">, string>
+> = {
+  notFound: "メモが見つかりませんでした",
+  trashed: "メモはゴミ箱にあります",
+};
 
 /** Newest first, ties broken by id — the order the repository promises. */
 function byTimeline(a: TimelineItemView, b: TimelineItemView): number {
@@ -95,59 +126,15 @@ export function groupByDay(
   return [...groups.entries()];
 }
 
-function SearchIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="15"
-      height="15"
-      viewBox="0 0 20 20"
-      fill="none"
-    >
-      <circle cx="9" cy="9" r="5.5" stroke="currentColor" strokeWidth="1.7" />
-      <path
-        d="M13.5 13.5L17 17"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function CalendarIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="19"
-      height="19"
-      viewBox="0 0 20 20"
-      fill="none"
-    >
-      <rect
-        x="3"
-        y="4.5"
-        width="14"
-        height="12"
-        rx="2.5"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-      <path
-        d="M3 8.5H17M7 2.8V6M13 2.8V6"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 /**
  * The list owner: the client island seeded by the loader that runs the
  * membership-changing mutations (posting with an optimistic entry, deleting
  * with an optimistic removal), pulls pages in from both sentinels, and
  * carries the filter / jump / position state the URL expresses.
+ *
+ * It is drawn inside the `AppShell`: the filter and the date jump go into
+ * the header (`HeaderActions`), the composer into the shell's bottom dock,
+ * and a success or a missing target is a toast on the shell.
  */
 export function TimelineBoard({
   initial,
@@ -158,12 +145,14 @@ export function TimelineBoard({
 }) {
   const router = useRouter();
   const navigate = useNavigate();
+  const toast = useToast();
   const post = useServerFn(postMemoFn);
   const fetchPage = useServerFn(loadTimelinePageFn);
   const softDelete = useServerFn(softDeleteMemoFn);
   const mode = timelineModeOf(search);
   const keyword = mode.kind === "memo" ? null : mode.keyword;
   const plainList = mode.kind === "list" && keyword === null;
+  const filterBarId = useId();
 
   const [draft, setDraft] = useState("");
   const [loaded, setLoaded] = useState<TimelineItemView[]>([]);
@@ -172,7 +161,7 @@ export function TimelineBoard({
     older: string | null | undefined;
     newer: string | null | undefined;
   }>({ older: undefined, newer: undefined });
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailure, setLoadFailure] = useState<Direction | null>(null);
   const [loadingOlder, startOlder] = useTransition();
   const [loadingNewer, startNewer] = useTransition();
   const busy = useRef<Record<Direction, boolean>>({
@@ -183,8 +172,9 @@ export function TimelineBoard({
   const newerSentinel = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLElement>(null);
   const sheet = useSheetScrollContainer();
-  const [filterOpen, setFilterOpen] = useState(search.q !== undefined);
-  const [dateOpen, setDateOpen] = useState(false);
+  const [filterBar, setFilterBar] = useState<FilterBarState>(
+    search.q === undefined ? "closed" : "shown",
+  );
   const [deleteTarget, setDeleteTarget] = useState<DisplayMemo | null>(null);
   const [deleteFailure, setDeleteFailure] = useState<{
     memo: DisplayMemo;
@@ -216,6 +206,7 @@ export function TimelineBoard({
       const cursor = direction === "older" ? olderCursor : newerCursor;
       if (!cursor || busy.current[direction]) return;
       busy.current[direction] = true;
+      setLoadFailure(null);
       const start = direction === "older" ? startOlder : startNewer;
       start(async () => {
         try {
@@ -231,9 +222,10 @@ export function TimelineBoard({
             ...current,
             [direction]: result.nextCursor,
           }));
-          setLoadError(null);
-        } catch (failure) {
-          setLoadError(displayError(failure));
+        } catch {
+          // The sentence is fixed, as for a failed route load: the error's
+          // own words do not reach the page.
+          setLoadFailure(direction);
         } finally {
           busy.current[direction] = false;
         }
@@ -243,7 +235,7 @@ export function TimelineBoard({
   );
 
   useEffect(() => {
-    if (loadError) return;
+    if (loadFailure) return;
     const watched: [Element, Direction][] = [];
     if (olderCursor && !loadingOlder && olderSentinel.current) {
       watched.push([olderSentinel.current, "older"]);
@@ -270,7 +262,7 @@ export function TimelineBoard({
   }, [
     olderCursor,
     newerCursor,
-    loadError,
+    loadFailure,
     loadingOlder,
     loadingNewer,
     loadMore,
@@ -287,6 +279,17 @@ export function TimelineBoard({
     }
   }, [target]);
 
+  // …and when the memo is not there, say so once and show the plain list
+  // (P-04). Keyed on the state, not the object, so a refetch of the same URL
+  // does not say it again.
+  const missingTarget =
+    mode.kind === "memo" && target !== null && target.state !== "found"
+      ? target.state
+      : null;
+  useEffect(() => {
+    if (missingTarget !== null) toast(MISSING_TARGET_TOAST[missingTarget]);
+  }, [missingTarget, toast]);
+
   // A date jump: start the viewport at the memo the day resolved to. When
   // that memo heads its day group the group scrolls, so the day heading is
   // what the reader sees first; otherwise the memo row itself does.
@@ -295,14 +298,29 @@ export function TimelineBoard({
     if (pivotId === null) return;
     const element = document.getElementById(`memo-${pivotId}`);
     if (!element || typeof element.scrollIntoView !== "function") return;
-    // Already at the head of the list: scrolling would only hide the notice.
+    // Already at the head of the list: scrolling would gain nothing.
     if (list.current?.querySelector("article") === element) {
       return;
     }
-    const group = element.closest(".fog-day");
+    const group = element.closest("[data-day-group]");
     const headsGroup = group?.querySelector("article") === element;
     (headsGroup && group ? group : element).scrollIntoView({ block: "start" });
   }, [pivotId]);
+
+  // A jump to a day without memos lands on the nearest one; the heading it
+  // lands under says which day was asked for (状態の例「日付ジャンプ — 指定日
+  // にメモが無いとき」).
+  const pivot =
+    pivotId === null ? undefined : optimistic.find((m) => m.id === pivotId);
+  const missingDayNote =
+    mode.kind === "date" &&
+    pivot !== undefined &&
+    !initial.items.some((memo) => calendarDateOf(memo.postedAt) === mode.date)
+      ? {
+          day: formatDay(pivot.postedAt),
+          text: `${formatCalendarDate(mode.date)}のメモはありません`,
+        }
+      : null;
 
   // One post per submit event. Two submits dispatched in the same frame
   // (`requestSubmit()` twice, Enter and a click) both arrive before the
@@ -340,6 +358,7 @@ export function TimelineBoard({
           "postMemoFn",
         );
         setDraft("");
+        toast("メモを追加しました");
         // A new memo lives at the head of the plain timeline; a filtered
         // or repositioned window would not contain it.
         if (plainList) await router.invalidate();
@@ -370,6 +389,7 @@ export function TimelineBoard({
         setRemoved((current) => new Set(current).add(memo.id));
         setLoaded((current) => current.filter((item) => item.id !== memo.id));
         setDeleteTarget(null);
+        toast("メモを削除しました");
         await router.invalidate();
       } catch (failure) {
         setDeleteTarget(null);
@@ -388,41 +408,8 @@ export function TimelineBoard({
       ]);
     });
 
-  const submitFilter = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const q = String(new FormData(event.currentTarget).get("q") ?? "").trim();
-    void goto(q.length > 0 ? { q, date: search.date } : { date: search.date });
-  };
-
-  const submitDate = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const date = String(new FormData(event.currentTarget).get("date") ?? "");
-    if (date.length === 0) return;
-    setDateOpen(false);
-    void goto({ date, q: search.q });
-  };
-
-  const notice = (() => {
-    if (mode.kind === "memo" && target !== null) {
-      if (target.state === "notFound") {
-        return "指定されたメモは見つかりません。通常のタイムラインを表示しています";
-      }
-      if (target.state === "trashed") {
-        return "指定されたメモはゴミ箱にあります。通常のタイムラインを表示しています";
-      }
-      return null;
-    }
-    if (mode.kind === "date" && optimistic.length > 0) {
-      const label = formatCalendarDate(mode.date);
-      const onTheDay = initial.items.some(
-        (memo) => calendarDateOf(memo.postedAt) === mode.date,
-      );
-      return onTheDay
-        ? `${label}に移動しました`
-        : `${label}にメモはありません。前後で最も近いメモの位置を表示しています`;
-    }
-    return null;
-  })();
+  const filterBarOpen = filterBar !== "closed";
+  const clearFilter = () => void goto({ date: search.date });
 
   const groups = groupByDay(optimistic);
   return (
@@ -431,171 +418,104 @@ export function TimelineBoard({
       aria-label="メモ一覧"
       aria-busy={pending || loadingOlder || loadingNewer || deleting}
     >
-      <div className="fog-toolbar">
-        <button
-          type="button"
-          className="fog-icon-btn"
-          aria-label="キーワードで絞り込む"
-          aria-expanded={filterOpen}
-          onClick={() => setFilterOpen((open) => !open)}
-        >
-          <SearchIcon />
-        </button>
-        <button
-          type="button"
-          className="fog-icon-btn"
-          aria-label="日付を指定して移動"
-          aria-expanded={dateOpen}
-          onClick={() => setDateOpen((open) => !open)}
-        >
-          <CalendarIcon />
-        </button>
-      </div>
-      {filterOpen && (
-        <search>
-          <form className="fog-filter-bar" onSubmit={submitFilter}>
-            <SearchIcon />
-            <input
-              type="text"
-              name="q"
-              defaultValue={search.q ?? ""}
-              placeholder="タイムラインを絞り込む…"
-              aria-label="キーワードで絞り込む"
-              maxLength={500}
-            />
-            <button type="submit" className="fog-secondary">
-              絞り込む
-            </button>
-            {search.q !== undefined && (
-              <button
-                type="button"
-                className="fog-filter-clear"
-                aria-label="絞り込みを解除"
-                onClick={() => void goto({ date: search.date })}
-              >
-                ×
-              </button>
-            )}
-          </form>
-        </search>
-      )}
-      {dateOpen && (
-        <form
-          className="fog-date-jump"
-          aria-label="日付を指定して移動"
-          onSubmit={submitDate}
-        >
-          <label htmlFor="timeline-jump-date">日付</label>
-          <input
-            id="timeline-jump-date"
-            type="date"
-            name="date"
-            required
-            defaultValue={search.date ?? ""}
-          />
-          <button type="submit" className="fog-secondary">
-            移動
-          </button>
-        </form>
-      )}
-      {notice && (
-        <p className="fog-notice" role="status">
-          {notice}
-          {mode.kind === "date" && (
-            <button
-              type="button"
-              className="fog-text-button"
-              onClick={() => void goto({ q: search.q })}
-            >
-              先頭に戻る
-            </button>
-          )}
-        </p>
-      )}
-      {deleteFailure && (
-        <p className="fog-error" role="alert">
-          {deleteFailure.message}
-          <button
-            type="button"
-            className="fog-text-button"
-            onClick={() => runDelete(deleteFailure.memo)}
-          >
-            再試行
-          </button>
-        </p>
+      <HeaderActions>
+        <IconButton
+          icon="search"
+          label="キーワードで絞り込む"
+          size="md"
+          placement="header"
+          aria-expanded={filterBarOpen}
+          aria-controls={filterBarOpen ? filterBarId : undefined}
+          onClick={() => setFilterBar(filterBarOpen ? "closed" : "opened")}
+        />
+        <DateJump
+          date={search.date}
+          onJump={(date) => void goto({ date, q: search.q })}
+        />
+      </HeaderActions>
+      {filterBarOpen && (
+        <FilterBar
+          id={filterBarId}
+          keyword={search.q}
+          focusOnOpen={filterBar === "opened"}
+          onFilter={(q) =>
+            void goto(
+              q.length > 0 ? { q, date: search.date } : { date: search.date },
+            )
+          }
+          onClear={clearFilter}
+        />
       )}
       {newerCursor && (
-        <div ref={newerSentinel} className="fog-load-more">
-          <button
-            type="button"
-            className="fog-secondary"
-            onClick={() => loadMore("newer")}
-            disabled={loadingNewer}
-          >
-            {loadingNewer ? "読み込み中…" : "新しいメモを読み込む"}
-          </button>
-        </div>
+        <PageEdge
+          sentinelRef={newerSentinel}
+          loading={loadingNewer}
+          loadingLabel="新しいメモを読み込み中"
+          failed={loadFailure === "newer"}
+          onRetry={() => loadMore("newer")}
+        />
       )}
       {optimistic.length === 0 ? (
         keyword !== null ? (
-          <div className="fog-empty">
-            <h2>「{keyword}」に一致するメモは見つかりませんでした</h2>
-            <p>
-              <button
-                type="button"
-                className="fog-secondary"
-                onClick={() => void goto({ date: search.date })}
-              >
+          <EmptyState
+            message={`「${keyword}」に一致するメモは見つかりませんでした`}
+            action={
+              <Button variant="text" onClick={clearFilter}>
                 絞り込みを解除
-              </button>
-            </p>
-          </div>
+              </Button>
+            }
+          />
         ) : (
-          <div className="fog-empty">
-            <span className="fog-empty-mark" aria-hidden="true">
-              ＋
-            </span>
-            <h2>最初のメモを残そう</h2>
-            <p>
-              思いつきも、今日の出来事も。下の入力欄から気軽に書き留めてください。
-            </p>
-          </div>
+          <EmptyState message="最初のメモを書いてみましょう" />
         )
       ) : (
-        groups.map(([day, entries]) => (
-          <section className="fog-day" key={day}>
-            <h2>{day}</h2>
-            {entries.map((memo) => (
-              <MemoEntry
-                key={memo.id}
-                memo={memo}
-                highlighted={
-                  target?.state === "found" && target.memoId === memo.id
-                }
-                onDelete={setDeleteTarget}
-                onSaved={onSaved}
-              />
-            ))}
-          </section>
-        ))
+        <div>
+          {groups.map(([day, entries]) => (
+            <section key={day} className={DAY_GROUP_CLASS} data-day-group="">
+              <h2 className={DAY_HEADING_CLASS}>
+                {day}
+                {missingDayNote?.day === day && (
+                  <span className={DAY_HEADING_NOTE_CLASS}>
+                    {missingDayNote.text}
+                  </span>
+                )}
+              </h2>
+              <div className={DAY_ENTRIES_CLASS}>
+                {entries.map((memo) => (
+                  <Fragment key={memo.id}>
+                    <MemoEntry
+                      memo={memo}
+                      highlighted={
+                        target?.state === "found" && target.memoId === memo.id
+                      }
+                      onDelete={setDeleteTarget}
+                      onSaved={onSaved}
+                    />
+                    {deleteFailure?.memo.id === memo.id && (
+                      <RowError
+                        message={deleteFailure.message}
+                        retry={{
+                          label: "再試行",
+                          onRetry: () => runDelete(deleteFailure.memo),
+                        }}
+                      />
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
-      {loadError && (
-        <p className="fog-error" role="alert">
-          {loadError}
-        </p>
+      {olderCursor && (
+        <PageEdge
+          sentinelRef={olderSentinel}
+          loading={loadingOlder}
+          loadingLabel="過去のメモを読み込み中"
+          failed={loadFailure === "older"}
+          onRetry={() => loadMore("older")}
+        />
       )}
-      <div ref={olderSentinel} className="fog-load-more">
-        {olderCursor && (
-          <button
-            type="button"
-            className="fog-secondary"
-            onClick={() => loadMore("older")}
-            disabled={loadingOlder}
-          >
-            {loadingOlder ? "読み込み中…" : "過去のメモを読み込む"}
-          </button>
-        )}
-      </div>
       <ConfirmDialog
         open={deleteTarget !== null}
         title="メモを削除しますか？"
@@ -610,40 +530,14 @@ export function TimelineBoard({
           if (!deleting) setDeleteTarget(null);
         }}
       />
-      <div className="fog-composer-wrap">
-        <form
-          className="fog-composer"
-          action={action}
-          onSubmit={guardSubmit}
-          aria-label="メモを投稿"
-        >
-          <label className="fog-sr-only" htmlFor="memo-composer">
-            メモ
-          </label>
-          <textarea
-            id="memo-composer"
-            name="body"
-            placeholder="いま思ったことを書く"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={pending}
-            rows={2}
-            maxLength={10_000}
-          />
-          <button
-            className="fog-primary"
-            type="submit"
-            disabled={pending || draft.trim().length === 0}
-          >
-            {pending ? "投稿中…" : "投稿"}
-          </button>
-          {state.error && (
-            <p className="fog-error" role="alert">
-              {state.error}
-            </p>
-          )}
-        </form>
-      </div>
+      <Composer
+        draft={draft}
+        onDraftChange={setDraft}
+        action={action}
+        onSubmit={guardSubmit}
+        pending={pending}
+        error={state.error}
+      />
     </section>
   );
 }
