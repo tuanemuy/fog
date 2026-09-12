@@ -1,6 +1,6 @@
 "use client";
 
-import { getRouteApi, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useTransition } from "react";
 import { HeaderActions } from "@/components/layout/ShellSlots";
@@ -14,11 +14,6 @@ import { readServerFnResult } from "@/presentation/serverFnResult";
 import { trashDocumentFn } from "../actions";
 import { isTrashDocumentResult } from "../schema";
 import { SHEET_ALERTS_CLASS } from "../styles";
-
-// The id of the screen these operations sit on, read without importing the
-// route module: that module pulls `@tanstack/react-start/rsc` in, which is
-// not the island's to carry.
-const route = getRouteApi("/_app/documents_/$documentId");
 
 /**
  * P-08's operations, as the header's icons (`spec/design/pages/document.html`,
@@ -53,20 +48,28 @@ export function DocumentActions({
         );
         trashed = true;
         toast("ドキュメントを削除しました");
-        // The topic screen is cached with this document still in its list.
-        // This screen is the one just deleted, so its own loader stays out of
-        // the re-read: it would draw 「ドキュメントが見つかりません」 over the
-        // page — dialog included — before the navigation lands.
-        await router.invalidate({
-          filter: (match) => match.routeId !== route.id,
-        });
+        // Everything the router holds was read before this delete, the topic
+        // screen ahead included. Dropping the cache is what makes that screen
+        // load fresh, and it is the only reconciliation that leaves this
+        // screen's own loader alone: `router.invalidate()` ends in `load()`,
+        // which re-runs the loaders of the matches still mounted whenever
+        // they are stale (`staleTime: 0` under `pnpm dev`) — this one would
+        // answer `notFound()` and draw 「ドキュメントが見つかりません」 over
+        // the page before the navigation lands.
+        router.clearCache();
         await router.navigate({ to: "/topics/$topicId", params: { topicId } });
+        // The page just left is in the cache now, holding the document that
+        // is no longer there.
+        router.clearCache();
       } catch (failure) {
-        // The server already confirmed the delete, so a failure past that
-        // point is the reconciliation's: reporting it here would offer a
-        // retry of something already in the trash.
-        if (trashed) return;
+        // The delete is confirmed or refused by this point; either way the
+        // dialog has had its answer, and leaving it open would let a second
+        // confirm send an id that is already in the trash.
         setConfirming(false);
+        // The server already confirmed the delete, so a failure past that
+        // point is the navigation's: reporting it here would offer a retry
+        // of something already in the trash.
+        if (trashed) return;
         setError(displayError(failure));
       }
     });

@@ -3,6 +3,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  notFound,
   RouterProvider,
   type StaticDataRouteOption,
 } from "@tanstack/react-router";
@@ -79,18 +80,95 @@ export type RouterRender = RenderResult & {
 };
 
 /**
- * The `filter` the first `router.invalidate()` call carried, read loosely so
- * a real route id can be handed to it: the harness's stub tree carries none
- * of the app's route ids in its match union, and a filter that keeps a
- * screen out of the re-read is asked about the screen by id.
+ * The invocation order of every `router.clearCache()` call that dropped the
+ * whole cache. The router makes its own calls while it loads
+ * (`clearExpiredCache`, which passes a filter), so only the argument-less ones
+ * came from the component under test.
  */
-export function invalidateFilter(invalidate: {
-  mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> };
-}): ((match: { routeId: string }) => boolean) | undefined {
-  const opts = invalidate.mock.calls[0]?.[0] as
-    | { filter?: (match: { routeId: string }) => boolean }
-    | undefined;
-  return opts?.filter;
+export function cacheDrops(clearCache: {
+  mock: {
+    calls: ReadonlyArray<ReadonlyArray<unknown>>;
+    invocationCallOrder: readonly number[];
+  };
+}): number[] {
+  return clearCache.mock.calls.flatMap((args, index) =>
+    args.length === 0 ? [clearCache.mock.invocationCallOrder[index] ?? 0] : [],
+  );
+}
+
+/** A screen of the tree `renderWithReloadingRoutes` builds. */
+export type ReloadingScreen = {
+  path: StubPath;
+  element: ReactElement;
+  /** What the route draws once its subject is gone. */
+  missing: string;
+  /** Once this reads true, the loader answers `notFound()`. */
+  gone?: () => boolean;
+};
+
+/**
+ * Draws `screens` as real routes that do have loaders: each carries
+ * `staleTime: 0` — what the two deleting screens carry under `pnpm dev`, where
+ * a load at the same location re-reads the matches already on the page — and a
+ * loader that answers `notFound()` once the screen's `gone` reads true, the way
+ * a screen whose subject was just moved to the trash does. `runs` counts every
+ * loader run by path and `missing` collects the paths whose 「…が見つかりません」
+ * was drawn at any point, so a delete can be judged by what it re-read rather
+ * than by which router method it called.
+ *
+ * The stub tree above cannot answer that: its routes have no loaders, so a
+ * reconciliation that re-reads the screen it is leaving looks the same there
+ * as one that does not.
+ *
+ * `runs` already counts more than one run per path before the render settles
+ * (mounting `RouterProvider` loads at the unchanged location, which at
+ * `staleTime: 0` re-reads): take the count as a baseline after the render and
+ * compare against it.
+ *
+ * Returns the render plus the router, `runs` (loader runs by path) and
+ * `missing` (the paths whose sentence was drawn).
+ */
+export async function renderWithReloadingRoutes(
+  screens: readonly ReloadingScreen[],
+  at: string,
+) {
+  const runs = new Map<string, number>();
+  const missing = new Set<string>();
+  const rootRoute = createRootRoute();
+  // The rest of `STUB_PATHS` comes along loaderless, so the shell's own links
+  // resolve here the same way they do in the harness above.
+  const children = STUB_PATHS.map((stubPath) => {
+    const screen = screens.find((s) => s.path === stubPath);
+    if (screen === undefined) {
+      return createRoute({
+        getParentRoute: () => rootRoute,
+        path: stubPath,
+        component: () => null,
+      });
+    }
+    return createRoute({
+      getParentRoute: () => rootRoute,
+      path: stubPath,
+      staleTime: 0,
+      loader: () => {
+        runs.set(stubPath, (runs.get(stubPath) ?? 0) + 1);
+        if (screen.gone?.() === true) throw notFound();
+        return null;
+      },
+      notFoundComponent: () => {
+        missing.add(stubPath);
+        return <p>{screen.missing}</p>;
+      },
+      component: () => screen.element,
+    });
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren(children),
+    history: createMemoryHistory({ initialEntries: [at] }),
+  });
+  await router.load();
+  const result = render(<RouterProvider router={router} />);
+  return { ...result, router, runs, missing };
 }
 
 /**

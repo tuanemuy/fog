@@ -1,7 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  invalidateFilter,
+  cacheDrops,
+  renderWithReloadingRoutes,
   renderWithRouter,
 } from "@/components/__tests__/renderWithRouter";
 import { TopicHeader } from "@/components/topics/TopicHeader";
@@ -233,6 +234,7 @@ describe("TopicHeader", () => {
     );
     const navigate = vi.spyOn(router, "navigate");
     const invalidate = vi.spyOn(router, "invalidate");
+    const clearCache = vi.spyOn(router, "clearCache");
     fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
     let dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("heading").textContent).toBe(
@@ -253,25 +255,68 @@ describe("TopicHeader", () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ to: "/topics" }),
     );
-    // The topic list is cached with this topic still on it.
-    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
-      navigate.mock.invocationCallOrder[0] ?? 0,
-    );
-    // ...and it marks the list without re-reading the screen just deleted,
-    // whose loader would draw 「トピックが見つかりません」.
-    const filter = invalidateFilter(invalidate);
-    expect(filter?.({ routeId: "/_app/topics_/$topicId" })).toBe(false);
-    expect(filter?.({ routeId: "/_app/topics" })).toBe(true);
+    // The topic list is cached with this topic still on it, so the whole cache
+    // goes before the navigation reads it, and again after it, because the
+    // screen being left lands in that same cache holding the topic that is no
+    // longer there.
+    await waitFor(() => expect(cacheDrops(clearCache)).toHaveLength(2));
+    const [before, after] = cacheDrops(clearCache);
+    const moved = navigate.mock.invocationCallOrder[0] ?? 0;
+    expect(before).toBeLessThan(moved);
+    expect(after).toBeGreaterThan(moved);
+    // `invalidate` is the reconciliation this must not use: it ends in
+    // `load()`, which re-reads this very screen. `keeps the screen it is
+    // deleting out of the re-read` is the same statement drawn.
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
-  it("keeps a confirmed delete from being told as failed when the reconciliation fails", async () => {
+  it("keeps the screen it is deleting out of the re-read", async () => {
+    let trashed = false;
+    mocks.trashTopicFn.mockImplementation(async () => {
+      trashed = true;
+      return { topicId: "t1", trashedDocumentIds: [] };
+    });
+    const { runs, missing } = await renderWithReloadingRoutes(
+      [
+        {
+          path: "/topics/$topicId",
+          missing: "トピックが見つかりません",
+          gone: () => trashed,
+          element: <TopicHeader topic={topicView("t1", "x")} />,
+        },
+        {
+          path: "/topics",
+          missing: "トピック一覧が見つかりません",
+          element: <p>トピック一覧</p>,
+        },
+      ],
+      "/topics/t1",
+    );
+    const readsBefore = runs.get("/topics/$topicId") ?? 0;
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
+    );
+    await screen.findByText("トピック一覧");
+    // The topic is in the trash, so this screen's loader answers `notFound()`
+    // from here on. Running it at all — which `router.invalidate()` does at
+    // `staleTime: 0`, the setting this screen carries under `pnpm dev` —
+    // draws 「トピックが見つかりません」 over the head on the way out.
+    expect(runs.get("/topics/$topicId")).toBe(readsBefore);
+    expect([...missing]).toEqual([]);
+    // The list ahead is read on the way in, not drawn from what the router
+    // held before the delete.
+    expect(runs.get("/topics") ?? 0).toBeGreaterThan(0);
+  });
+
+  it("keeps a confirmed delete from being told as failed, and unrepeatable, when the move fails", async () => {
     const trash = deferred<unknown>();
     mocks.trashTopicFn.mockReturnValue(trash.promise);
     const { router } = await renderWithRouter(
       <TopicHeader topic={topicView("t1", "x")} />,
       { path: "/topics/$topicId" },
     );
-    vi.spyOn(router, "invalidate").mockRejectedValue(
+    const navigate = vi.spyOn(router, "navigate").mockRejectedValue(
       new AppServerError({
         kind: "system",
         code: "X",
@@ -279,7 +324,6 @@ describe("TopicHeader", () => {
         retryable: true,
       }),
     );
-    const navigate = vi.spyOn(router, "navigate");
     fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
@@ -289,10 +333,14 @@ describe("TopicHeader", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "削除中…" })).toBeNull(),
     );
-    // The topic is in the trash; a failure told here would describe the
-    // re-read, not the delete.
+    // The topic is in the trash; a failure told here would describe the move,
+    // not the delete.
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    // ...and a second 削除 in the dialog would send an id already trashed,
+    // which is why the dialog is not left standing with its button live.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mocks.trashTopicFn).toHaveBeenCalledTimes(1);
   });
 
   it("tells a rejected delete under the head and stays", async () => {

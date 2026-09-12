@@ -1,7 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  invalidateFilter,
+  cacheDrops,
+  renderWithReloadingRoutes,
   renderWithRouter,
 } from "@/components/__tests__/renderWithRouter";
 import { DocumentActions } from "@/components/documents/DocumentActions";
@@ -100,12 +101,13 @@ describe("DocumentActions", () => {
     expect(mocks.trashDocumentFn).not.toHaveBeenCalled();
   });
 
-  it("trashes on confirm, reconciles before leaving for the topic and says so in a toast", async () => {
+  it("trashes on confirm, drops the cache around the move to the topic and says so in a toast", async () => {
     const trash = deferred<unknown>();
     mocks.trashDocumentFn.mockReturnValue(trash.promise);
     const { router, del } = await draw();
     const navigate = vi.spyOn(router, "navigate");
     const invalidate = vi.spyOn(router, "invalidate");
+    const clearCache = vi.spyOn(router, "clearCache");
     await confirmDelete(del);
     expect(mocks.trashDocumentFn).toHaveBeenCalledWith({
       data: { documentId: "d1" },
@@ -121,24 +123,73 @@ describe("DocumentActions", () => {
     expect(screen.getByRole("status").textContent).toBe(
       "ドキュメントを削除しました",
     );
-    // The topic screen is cached with this document still on it, so the
-    // reconciliation has to land before the navigation reads that cache.
-    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
-      navigate.mock.invocationCallOrder[0] ?? 0,
-    );
-    // ...and it marks the destination without re-reading the screen just
-    // deleted, whose loader would draw 「ドキュメントが見つかりません」.
-    const filter = invalidateFilter(invalidate);
-    expect(filter?.({ routeId: "/_app/documents_/$documentId" })).toBe(false);
-    expect(filter?.({ routeId: "/_app/topics_/$topicId" })).toBe(true);
+    // The topic screen is cached with this document still on it, so the whole
+    // cache goes before the navigation reads it, and again after it, because
+    // the page being left lands in that same cache holding the document that
+    // is no longer there.
+    await waitFor(() => expect(cacheDrops(clearCache)).toHaveLength(2));
+    const [before, after] = cacheDrops(clearCache);
+    const moved = navigate.mock.invocationCallOrder[0] ?? 0;
+    expect(before).toBeLessThan(moved);
+    expect(after).toBeGreaterThan(moved);
+    // `invalidate` is the reconciliation this must not use: it ends in
+    // `load()`, which re-reads this very screen. `keeps the screen it is
+    // deleting out of the re-read` is the same statement drawn.
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
-  it("keeps a confirmed delete told as done when the reconciliation fails", async () => {
+  it("keeps the screen it is deleting out of the re-read", async () => {
+    let trashed = false;
+    mocks.trashDocumentFn.mockImplementation(async () => {
+      trashed = true;
+      return { deleted: true };
+    });
+    const { runs, missing } = await renderWithReloadingRoutes(
+      [
+        {
+          path: "/documents/$documentId",
+          missing: "ドキュメントが見つかりません",
+          gone: () => trashed,
+          element: (
+            <AppShell>
+              <DocumentActions documentId="d1" topicId="t1" />
+            </AppShell>
+          ),
+        },
+        {
+          path: "/topics/$topicId",
+          missing: "トピックが見つかりません",
+          element: <AppShell>トピックの画面</AppShell>,
+        },
+      ],
+      "/documents/d1",
+    );
+    const readsBefore = runs.get("/documents/$documentId") ?? 0;
+    await confirmDelete(
+      await within(screen.getByRole("banner")).findByRole("button", {
+        name: "削除",
+      }),
+    );
+    await screen.findByText("トピックの画面");
+    // The document is in the trash, so this screen's loader answers
+    // `notFound()` from here on. Running it at all — which
+    // `router.invalidate()` does at `staleTime: 0`, the setting this screen
+    // carries under `pnpm dev` — draws 「ドキュメントが見つかりません」 over
+    // the page on the way out.
+    expect(runs.get("/documents/$documentId")).toBe(readsBefore);
+    expect([...missing]).toEqual([]);
+    // The topic ahead is read on the way in, not drawn from what the router
+    // held before the delete.
+    expect(runs.get("/topics/$topicId") ?? 0).toBeGreaterThan(0);
+  });
+
+  it("keeps a confirmed delete told as done, and unrepeatable, when the move fails", async () => {
     const trash = deferred<unknown>();
     mocks.trashDocumentFn.mockReturnValue(trash.promise);
     const { router, del } = await draw();
-    vi.spyOn(router, "invalidate").mockRejectedValue(SYSTEM_ERROR);
-    const navigate = vi.spyOn(router, "navigate");
+    const navigate = vi
+      .spyOn(router, "navigate")
+      .mockRejectedValue(SYSTEM_ERROR);
     await confirmDelete(del);
     await screen.findByRole("button", { name: "削除中…" });
     trash.resolve({ deleted: true });
@@ -150,7 +201,11 @@ describe("DocumentActions", () => {
     );
     // The document is in the trash: a 再試行 here would retry nothing.
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    // ...and neither would a second 削除 in the dialog, which is why the
+    // dialog is not left standing over the page with its button live.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mocks.trashDocumentFn).toHaveBeenCalledTimes(1);
   });
 
   it("shows the failure at the head of the sheet, stays, and retries the confirmed delete", async () => {

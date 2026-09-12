@@ -820,17 +820,22 @@ ADR-033 の「`FormLink` は `components/auth` に残す」はこれで置き換
 
 ---
 
-## ADR-048: 削除の 2 経路は、現在のマッチを外した `invalidate` と「確定後は失敗と言わない」catch にする
+## ADR-048: 削除の 2 経路は、遷移の前後でキャッシュを捨てる。`invalidate` は使わない
 
 ### Context
-`TopicHeader:confirmDelete` と `DocumentActions:runDelete` の `router.invalidate()` が、行き先に印を付けるだけでなく**いま消した画面のローダー**を読み直し、「トピックが見つかりません」「ドキュメントが見つかりません」を描いてから遷移していた（review-003-scope W-001）。同時に、その読み直しが `try` の中にあるので、成功した削除が `catch` に落ちて「失敗」と再試行を出しうる。
+`TopicHeader:confirmDelete` と `DocumentActions:runDelete` の `router.invalidate()` が、行き先に印を付けるだけでなく**いま消した画面のローダー**を読み直し、「トピックが見つかりません」「ドキュメントが見つかりません」を描いてから遷移していた（review-003-scope W-001）。
 
-レビューの提案は `router.invalidate({ filter: (match) => match.routeId !== Route.id })`。ただし `Route` を route モジュールから import すると、島が `@tanstack/react-start/rsc` を含む route の依存を抱え込み、DOM テストからも描けなくなる。
+最初の修正は `router.invalidate({ filter: (match) => match.routeId !== route.id })`（現在のマッチにだけ印を付けない）だったが、これは `staleTime` がマッチを新鮮に保っている本番でしか効かない。`invalidate` は印を付けたあと必ず `load()` を呼び（`router-core@1.169.2` `router.js:697`）、同じ場所への `load()` は `forceStaleReload: true` を渡す（同 `:553`）。受け取る側は `staleMatchShouldReload = age >= staleAge && (!!forceStaleReload || …)` なので、`staleTime: 0`（＝ `pnpm dev` の設定）では**印を付けなかったマッチも読み直される**。R-4 の実測でも、ドキュメント 4 回中 2 回・トピック 2 回中 1 回で「見つかりません」が 1 フレーム出た（review-004-scope W-001 / manual-test R-4）。
+
+同じ catch には、確定後の失敗を握り潰したまま**確認ダイアログを活性で残す**穴もあった（review-004-scope W-002）。ゴミ箱にある対象へもう一度「削除」を押せてしまい、`findById` が `null` を返して「見つかりません」＋「再試行」が別の入口から戻る。
 
 ### Decision
-- 現在のマッチを外す点は提案どおり。ただし route id は `getRouteApi("/_app/topics_/$topicId")` / `getRouteApi("/_app/documents_/$documentId")` の `.id` から取る。生成された route ツリーに対して型で照合されるので、ルートが動けば `pnpm typecheck` が落ちる
-- サーバーが削除を確定したら `trashed` を立て、`catch` はそれが立っていれば何も表示せずに戻る。確定後の失敗は読み直し側のものなので、削除の失敗として扱わない
+- 反映は `invalidate` ではなく `router.clearCache()` で行う。`clearCache` は `cachedMatches` から外すだけで `load()` を呼ばない（`router.js:721-725`）ので、**いま画面にあるマッチのローダーは走らない**。行き先はキャッシュから消えているため、遷移が新しいマッチとして読み直す
+- 削除が確定したら「遷移の前」と「遷移の後」の 2 回捨てる。前の 1 回は行き先を消した状態にするため、後の 1 回は**離れた画面が今度はキャッシュに入る**ため（削除済みの対象を抱えたまま「戻る」で再表示されるのを防ぐ）
+- サーバーが削除を確定したら `trashed` を立て、`catch` はまず `setConfirming(false)` でダイアログを閉じ、`trashed` が立っていれば何も表示せずに戻る。確定後の失敗は遷移側のものなので、削除の失敗として扱わない
 
 ### Consequences
-- 良い点: 消した画面の「見つかりません」が出なくなり、ゴミ箱にある対象への「再試行」も出なくなる
-- トレードオフ: 確定後に読み直しが失敗すると、画面には何も出ないまま留まる（確認ダイアログが開いたまま）。削除自体は成功しているので、遷移だけが起きない
+- 良い点: 消した画面の「見つかりません」が dev でも本番でも出ない。ゴミ箱にある対象への「再試行」も、ダイアログからの再実行も出口が無い
+- トレードオフ: 捨てるのはルータのキャッシュ全体で、削除と無関係な画面も次回の訪問で読み直しになる。削除の直後はどの画面も削除前に読んだ内容なので、選り分ける意味が薄いと判断した
+- トレードオフ: 確定後に遷移が失敗すると、ダイアログは閉じたまま削除済みの画面に留まる（`DocumentActions` はトーストが結果を伝える。`TopicHeader` は何も伝えない）。削除自体は成功しているので、遷移だけが起きない
+- テスト: 「消した画面を読み直さない」は `renderWithReloadingRoutes`（`apps/web/app/components/__tests__/renderWithRouter.tsx`）で本物のローダーを持つ route ツリーを描き、`staleTime: 0` のまま削除を走らせてローダーの実行回数と「…が見つかりません」の描画を見る。`invalidate({ filter })` に戻すと両島とも赤
