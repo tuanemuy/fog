@@ -436,6 +436,14 @@ const runDelete = (memo: DisplayMemo) => {
 };
 ```
 
+#### A delete that leaves the screen drops the cache instead of invalidating
+
+`router.invalidate()` marks matches stale **and then calls `load()`**, and that load carries `forceStaleReload`, so at `staleTime: 0` — `pnpm dev`'s setting — it re-runs the loader of the match the caller is standing on, including one a `filter` deliberately did not mark. On a screen whose own subject was just trashed that loader answers `notFound()`, and 「…が見つかりません」 is drawn for a frame before the navigation lands.
+
+So a mutation that deletes what the screen is showing and then navigates away reconciles with `router.clearCache()`, which drops matches without loading any, called **twice**: once before the move, so the destination is re-read as a new match, and once after, so the screen being left does not sit in the cache holding the deleted subject and come back through the browser's 戻る. `TopicHeader` (`apps/web/app/components/topics/TopicHeader`) and `DocumentActions` (`apps/web/app/components/documents/DocumentActions`) are the two places. Its cost is that the whole router cache goes, so unrelated screens re-read on their next visit. Mutations that stay on the page keep `router.invalidate()`.
+
+Once the server has confirmed such a delete, a later failure belongs to the navigation and not to the delete: the `catch` closes the confirmation and reports nothing, so the dialog cannot be used to confirm a second delete of something already in the trash. Both halves are held by `renderWithReloadingRoutes` (see the DOM section of `docs/test.md`), which draws the two screens over real loaders at `staleTime: 0` and judges which loaders re-ran.
+
 The leaf (`MemoEntry`) only asks for the delete through a callback and owns nothing about it — the failure message is rendered by the board next to the row that stayed, because the leaf would have been unmounted by the optimistic removal. An item-owned change (inline edit, `editMemoFn` with the OCC `expectedVersion`) stays in the leaf with its own `useOptimistic` and error text, and reports the saved memo back to the owner (`onSaved`) so the owner's copy of the list is current before `router.invalidate()` re-bases it.
 
 ### Failures such as Conflict
@@ -456,7 +464,7 @@ try {
 
 - `useServerFn(fn)` auto-detects `isRedirect` and converts it into a router navigation. This avoids falling through the client's try/catch when the usecase does `throw redirect({ to: "/login" })`.
 - A `useActionState` action may be async. State updates both before and after `await` enter the same transition. Passing it to `<form action={formAction}>` lets it progressively enhance even on a client where JS has not yet arrived.
-- When you want to update a loader-owned RSC on success, explicitly `await router.invalidate()` inside the action / transition. "When to invalidate" is the caller's responsibility.
+- When you want to update a loader-owned RSC on success, explicitly `await router.invalidate()` inside the action / transition. "When to invalidate" is the caller's responsibility. A delete that navigates away from the deleted subject is the one case that reconciles with `router.clearCache()` instead (above).
 - Per-field messages come from branching on `extractSerializedError(e)` (`kind` / `code`, and `fieldErrors` on a `validation` error). Validation is consolidated on the server-side Zod, so it arrives in the same envelope no matter which entry point (server function / route loader / test) calls it; there is no client-side form library and no duplicated schema on the client.
 - An item-local `useOptimistic` only works on **state that the item owns**. Membership changes belong to the owner island (`TimelineBoard`, `TrashBoard`, `TopicList`): add optimistically prepends, remove filters, `router.invalidate()` re-bases onto the settled value, and delete is never placed in the leaf.
 
