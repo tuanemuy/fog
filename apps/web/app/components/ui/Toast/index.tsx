@@ -32,7 +32,7 @@ export type ToastProps = Readonly<{ message: string }>;
  * One toast (`spec/design/pages/settings.html`, `.toast`): a dark pill with
  * one sentence and nothing else. It holds no control — it leaves on its own
  * after a few seconds, and anything that has to be acted on stays on the
- * screen instead (ADR-010 of Issue #22). Drawn by `ToastRegion`; a screen
+ * screen instead. Drawn by `ToastRegion`; a screen
  * raises one through `useToast`, never by drawing this.
  */
 export function Toast({ message }: ToastProps) {

@@ -1,8 +1,8 @@
 "use client";
 
 import { type FormEvent, useEffect, useRef } from "react";
-import { Icon } from "@/components/ui/Icon";
 import { IconButton } from "@/components/ui/IconButton";
+import { SearchPill } from "@/components/ui/SearchPill";
 
 export type FilterBarProps = Readonly<{
   id: string;
@@ -16,11 +16,10 @@ export type FilterBarProps = Readonly<{
 
 /**
  * The keyword bar at the top of the sheet, opened from the header's search
- * (`spec/design/pages/timeline.html`, `.filter-bar`): the search glyph, the
- * input (Enter filters), and, while a keyword is applied, the × that clears
- * it. The bare input draws no ring of its own; the bar rings while it has
- * keyboard focus. It carries the space under itself on its own
- * `next-sibling:` side, so the space goes away with the bar.
+ * (`spec/design/pages/timeline.html`, `.filter-bar`): the shared pill (Enter
+ * filters) and, while a keyword is applied, the × that clears it. It carries
+ * the space under itself on its own `next-sibling:` side, so the space goes
+ * away with the bar.
  */
 export function FilterBar({
   id,
@@ -41,24 +40,17 @@ export function FilterBar({
   };
 
   return (
-    <search id={id} className="next-sibling:mt-lg">
-      <form
+    <div className="next-sibling:mt-lg">
+      <SearchPill
+        id={id}
+        label="キーワードで絞り込む"
+        placeholder="タイムラインを絞り込む…"
+        type="text"
+        name="q"
+        defaultValue={keyword ?? ""}
+        ref={input}
         onSubmit={submit}
-        className="flex items-center gap-sm rounded-full bg-neutral-50 px-md py-sm has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-focus"
       >
-        <span className="flex shrink-0 text-neutral-500">
-          <Icon name="search" size="sm" />
-        </span>
-        <input
-          ref={input}
-          type="text"
-          name="q"
-          defaultValue={keyword ?? ""}
-          placeholder="タイムラインを絞り込む…"
-          aria-label="キーワードで絞り込む"
-          maxLength={500}
-          className="min-w-[0] flex-1 bg-transparent font-base text-sm leading-tight text-neutral-900 outline-none placeholder:text-neutral-400"
-        />
         {keyword === undefined ? null : (
           <IconButton
             icon="close"
@@ -68,7 +60,7 @@ export function FilterBar({
             onClick={onClear}
           />
         )}
-      </form>
-    </search>
+      </SearchPill>
+    </div>
   );
 }

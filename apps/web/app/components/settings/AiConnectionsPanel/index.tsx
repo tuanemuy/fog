@@ -30,7 +30,7 @@ export function notRevokedMessage(failedCount: number): string {
  * `.revoke-all`), confirmed before it runs. The action is idempotent and an
  * OCC conflict on one connection does not stop the rest (design △-9), so an
  * answer can be a success and a partial failure at once. The two are split
- * (ADR-010 of Issue #22): what was revoked is a toast; what could not be is a
+ * — what was revoked is a toast; what could not be is a
  * row error that stays, with the retry. The per-connection listing is
  * `AiConnectionsList`.
  */

@@ -40,15 +40,15 @@ const SIDE_LINK_CLASS =
  *
  * Inside the sheet the shell holds the text column: the top and side
  * padding and `--content-max`, the same on every screen. The bottom is the
- * screen's (ADR-026 of Issue #22): `pb-sheet-end`, or `pb-sheet-end-composer`
+ * screen's: `pb-sheet-end`, or `pb-sheet-end-composer`
  * on a screen whose composer floats over the foot of the sheet.
  *
- * The header is drawn from the deepest route's `staticData.header`
- * (ADR-006 of Issue #22); a screen puts its data-dependent controls into it
+ * The header is drawn from the deepest route's `staticData.header`; a screen
+ * puts its data-dependent controls into it
  * with `HeaderActions`. A route that declares `h1: "sheet"` keeps its `h1`
  * in the sheet, so whatever is drawn in place of that screen — a route
  * error, a 404 — is told that the heading is its to draw
- * (`usePageHeadingOwner`). The shell hosts the toasts (ADR-010): the region
+ * (`usePageHeadingOwner`). The shell hosts the toasts: the region
  * floats at the bottom of the column, and `BottomDock` stacks whatever the
  * screen floats there (the composer) under it.
  */

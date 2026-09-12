@@ -4,7 +4,7 @@ export type SkProps = Readonly<{
 }>;
 
 /**
- * Skeleton text laid over the real DOM (ADR-005 of Issue #22): the loading
+ * Skeleton text laid over the real DOM: the loading
  * screen is built from the same primitives and elements as the loaded one,
  * and only the text is wrapped in `Sk`, which hides the glyphs behind a flat
  * block. The line keeps its real height, so the swap to loaded content does

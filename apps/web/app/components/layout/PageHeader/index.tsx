@@ -15,7 +15,7 @@ import type { FileRouteTypes } from "@/routeTree.gen";
 export type HeaderEntity = "topic" | "memo" | "document";
 
 /**
- * A route's header, declared as `staticData.header` (ADR-006 of Issue #22).
+ * A route's header, declared as `staticData.header`.
  *
  * - `top` — one of the five destinations: the lockup, with `title` as the
  *   page's visually hidden `h1`.
@@ -118,7 +118,7 @@ const isPlainClick = (event: MouseEvent) =>
   !event.altKey;
 
 /**
- * Back through the in-app history when there is one (ADR-006); otherwise —
+ * Back through the in-app history when there is one; otherwise —
  * a page opened from a direct link — to the declared place. It is a link to
  * that place, so it works before hydration and in a new tab too.
  */

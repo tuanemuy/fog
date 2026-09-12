@@ -2,8 +2,8 @@ import type { DocumentRevisionMetaView } from "@repo/core/application/knowledge/
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion, withToasts } from "@/components/__tests__/toastFrame";
 import { DocumentRevisionHistory } from "@/components/documents/DocumentRevisionHistory";
-import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
 import { AppServerError } from "@/presentation/errorResponse";
 import { formatDateTime } from "@/presentation/time";
 
@@ -79,15 +79,14 @@ function diffOf(base: number, target: number, titles = ["同じ", "同じ"]) {
 
 async function draw(revisions: readonly DocumentRevisionMetaView[]) {
   return renderWithRouter(
-    <ToastProvider>
+    withToasts(
       <DocumentRevisionHistory
         documentId="d1"
         title="設計メモ"
         latestRevision={revisions[revisions.length - 1]?.revisionNumber ?? 1}
         revisions={revisions}
-      />
-      <ToastRegion />
-    </ToastProvider>,
+      />,
+    ),
     { path: "/documents/$documentId/history" },
   );
 }
@@ -106,13 +105,7 @@ function diffRegion() {
   return screen.getByRole("region", { name: /の差分$/ });
 }
 
-function toasts() {
-  const region = screen
-    .getAllByRole("status")
-    .find((el) => el.getAttribute("aria-atomic") === "false");
-  if (region === undefined) throw new Error("no toast region");
-  return within(region);
-}
+const toasts = () => within(toastRegion());
 
 describe("DocumentRevisionHistory", () => {
   it("heads the sheet with the document's title, then 履歴", async () => {

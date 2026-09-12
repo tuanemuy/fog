@@ -5,8 +5,8 @@ import type {
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { withToasts } from "@/components/__tests__/toastFrame";
 import { CurrentUserPanel } from "@/components/settings/CurrentUserPanel";
-import { withToasts } from "./toastFrame";
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-start")>()),

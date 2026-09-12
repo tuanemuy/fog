@@ -22,8 +22,8 @@ function SkeletonRow({ name, meta }: Readonly<{ name: string; meta: string }>) {
 }
 
 /**
- * The done page while `PasswordResetDoneFeed` streams in (ADR-005 of Issue
- * #22): the same blocks, labels and button, with one row per block whose
+ * The done page while `PasswordResetDoneFeed` streams in: the same blocks,
+ * labels and button, with one row per block whose
  * text is laid over by `Sk`. The labels are fixed words, so they are drawn
  * as they will be. One polite loading label speaks for the region; the rest
  * is hidden from assistive technology, and the button cannot be pressed.

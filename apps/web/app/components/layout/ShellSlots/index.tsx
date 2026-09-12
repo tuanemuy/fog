@@ -56,8 +56,8 @@ function usePortalTarget(
 }
 
 /**
- * Puts a screen's controls into the header, left of the nav menu (ADR-006 of
- * Issue #22): the actions that need the screen's data or state — delete with
+ * Puts a screen's controls into the header, left of the nav menu: the
+ * actions that need the screen's data or state — delete with
  * the topic id, save with the form, the timeline's filter and date jump. The
  * portal is opened once the header has mounted, so the controls are not in
  * the server HTML and appear after hydration. Throws outside the shell,

@@ -29,6 +29,7 @@ const WEB_ROOT = join(REPO_ROOT, "apps", "web");
 const APP_ROOT = join(WEB_ROOT, "app");
 const STYLES = join(APP_ROOT, "styles");
 const UI_ROOT = join(APP_ROOT, "components", "ui");
+const LINT_DIR = join(REPO_ROOT, "lint");
 const TOKENS_MD = join(REPO_ROOT, "spec", "design", "tokens.md");
 const ADR_DIR = join(REPO_ROOT, "spec", "adr");
 
@@ -266,7 +267,7 @@ const rawMediaLengths = (
 };
 
 // A class selector in a hand-written rule is the second way a look could be
-// redefined from outside the component that owns it (ADR-004): `styles/` holds
+// redefined from outside the component that owns it: `styles/` holds
 // the tokens, the theme projection and the base layer, and names no class.
 // `@keyframes` steps (`from` / `to` / `50%`) are not selectors.
 const CLASS_SELECTOR = /(?<![\w\\-])\.-?[_a-z]/i;
@@ -435,6 +436,16 @@ for (const file of scanner.files) {
 }
 const origin = (candidate: string): string =>
   [...(candidateFiles.get(candidate) ?? [])].join(", ") || "unknown source";
+
+/** Every `.ts` / `.tsx` under a directory, for the scans that read prose. */
+const sourceFilesUnder = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === "node_modules" ? [] : sourceFilesUnder(path);
+    }
+    return SOURCE_EXT.has(extname(entry.name)) ? [path] : [];
+  });
 
 const isAppSource = (path: string): boolean =>
   SOURCE_EXT.has(extname(path)) &&
@@ -660,16 +671,30 @@ describe("design tokens — references", () => {
     expect(found).toEqual([]);
   });
 
+  // A citation sends the reader to `spec/adr/` wherever it is written, so the
+  // scan covers the app's sources and these checks as well as `styles/`.
   it("cites only ADRs that exist in spec/adr/", () => {
     const adrs = new Set(
       readdirSync(ADR_DIR)
         .map((f) => /^(\d+)-/.exec(f)?.[1])
         .filter((n): n is string => n !== undefined),
     );
-    const found = styleFiles.flatMap((f) =>
-      [...(styleSource.get(f) ?? "").matchAll(/ADR-(\d+)/g)]
+    const citing = [
+      ...styleFiles.map((f) => ({
+        label: `styles/${f}`,
+        source: styleSource.get(f) ?? "",
+      })),
+      ...[...sourceFilesUnder(APP_ROOT), ...sourceFilesUnder(LINT_DIR)].map(
+        (path) => ({
+          label: relative(REPO_ROOT, path),
+          source: readIfPresent(path) ?? "",
+        }),
+      ),
+    ];
+    const found = citing.flatMap(({ label, source }) =>
+      [...source.matchAll(/ADR-(\d+)/g)]
         .filter(([, n]) => !adrs.has(n.padStart(3, "0")))
-        .map(([text]) => `styles/${f}: ${text}`),
+        .map(([cited]) => `${label}: ${cited}`),
     );
     expect(found).toEqual([]);
   });
@@ -847,10 +872,11 @@ describe("design tokens — no override path onto a primitive", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Class names that reach no stylesheet. With Tailwind's default theme dropped
-// (ADR-001), a name that reads a scale the tokens do not carry — `min-w-0`,
+// Class names that reach no stylesheet. With Tailwind's default theme dropped,
+// a name that reads a scale the tokens do not carry — `min-w-0`,
 // `p-0`, `gap-0` — is not an error: it simply generates nothing, and the
-// declaration it was meant to write is silently missing (ADR-018).
+// declaration it was meant to write is silently missing (the zero a component
+// does mean is written as an arbitrary value).
 //
 // The class lists are read from the sources rather than from the scan, because
 // the scanner offers prose words as candidates too: a string literal counts as

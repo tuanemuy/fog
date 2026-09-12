@@ -112,6 +112,25 @@ function drawAt(
     },
     component: () => <p>トピックの中身</p>,
   });
+  // A screen whose own title is the page's `h1` (`h1: "sheet"`): the header
+  // keeps no heading, so whatever is drawn in its place has to carry one.
+  const sheetHeaded = createRoute({
+    getParentRoute: () => app,
+    path: "/documents/$documentId",
+    staticData: {
+      header: {
+        kind: "back",
+        entity: "document",
+        back: "/topics",
+        h1: "sheet",
+      },
+    },
+    loader: ({ params }) => {
+      if (params.documentId === "gone") throw notFound();
+      return failWhen(steps.screen)();
+    },
+    component: () => <p>ドキュメントの中身</p>,
+  });
   const streamed = createRoute({
     getParentRoute: () => app,
     path: "/stream",
@@ -154,7 +173,7 @@ function drawAt(
   const { options } = production;
   const router = createRouter({
     routeTree: root.addChildren([
-      app.addChildren([timeline, topic, streamed]),
+      app.addChildren([timeline, topic, sheetHeaded, streamed]),
       sheet.addChildren([login, guarded.addChildren([done])]),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -201,7 +220,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the production boundaries (ADR-009 of Issue #22)", () => {
+describe("the production boundaries", () => {
   it("are the router's defaults for every screen, logged by the router", () => {
     expect(production.options.defaultErrorComponent).toBe(RouteError);
     expect(production.options.defaultNotFoundComponent).toBe(NotFound);
@@ -295,6 +314,28 @@ describe("in the app shell", () => {
     expect(appSheet().contains(content)).toBe(true);
     expect(streamLoader).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // The shell hands the sheet to the screen when the route declares
+  // `h1: "sheet"`, so the page keeps its one heading in every state.
+  it("makes the failure of a screen that owns the h1 that heading, in the sheet", async () => {
+    drawAt("/documents/d1", { screen: { fail: true } });
+    const alert = await screen.findByRole("alert");
+    expect(appSheet().contains(alert)).toBe(true);
+    expect(within(alert).getByRole("heading", { level: 1 }).textContent).toBe(
+      "読み込めませんでした",
+    );
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(document.body.textContent).not.toContain(LEAK);
+  });
+
+  it("makes the not-found of such a screen that heading too", async () => {
+    drawAt("/documents/gone", {});
+    const sentence = await screen.findByText("ページが見つかりません");
+    expect(appSheet().contains(sentence)).toBe(true);
+    expect(sentence.tagName).toBe("H1");
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByText("ドキュメントの中身")).toBeNull();
   });
 
   it("draws a screen's not-found in the sheet with the way back to the timeline", async () => {

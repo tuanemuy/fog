@@ -1,6 +1,6 @@
 // The timeline's own shapes (`spec/design/pages/timeline.html`), shared by the
 // loaded list and its skeleton so the one swaps in for the other without a
-// shift (ADR-005 of Issue #22).
+// shift.
 
 /** A day's group: the break above every group but the first (`.day-head`). */
 export const DAY_GROUP_CLASS = "not-first:pt-lg";

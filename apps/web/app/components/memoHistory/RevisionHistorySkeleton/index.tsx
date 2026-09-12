@@ -24,7 +24,7 @@ const STAND_IN_TIME = "2026年7月20日 12:42";
 /**
  * The history screens while their fragment streams in: the same title,
  * section and version rows as the loaded screen, the text laid over by
- * `Sk` (ADR-005 of Issue #22), so the swap moves nothing. 「履歴」 is the
+ * `Sk`, so the swap moves nothing. 「履歴」 is the
  * screen's own word, not loaded data, and is drawn as it will stay. P-10
  * leaves the `h1` to the document's title, so the loading label stands in
  * for it until that title arrives.

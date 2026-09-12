@@ -91,7 +91,7 @@ describe("Composer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  // ADR-011: where the browser cannot size the input by its content, the
+  // Where the browser cannot size the input by its content, the
   // composer does it on every change.
   it("sizes the input to its content where the browser cannot", async () => {
     vi.stubGlobal("CSS", { supports: () => false });

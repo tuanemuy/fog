@@ -1,8 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastsShown, withToasts } from "@/components/__tests__/toastFrame";
 import { AiConnectionsPanel } from "@/components/settings/AiConnectionsPanel";
-import { toastsShown, withToasts } from "./toastFrame";
 
 const mocks = vi.hoisted(() => ({
   revokeAllAiClientConnectionsFn: vi.fn<(input: unknown) => Promise<unknown>>(),
@@ -64,7 +64,7 @@ describe("AiConnectionsPanel", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  // △-9 and ADR-010 of Issue #22: a partial failure is split — the part
+  // Design △-9: a partial failure is split — the part
   // that went through is a toast, the part that did not stays on the row
   // with a retry.
   it("splits a partial failure: the revoked count as a toast, the rest under the row with a retry", async () => {

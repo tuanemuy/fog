@@ -16,8 +16,8 @@ export function getRouter() {
     // at the previous one's offset.
     scrollToTopSelectors: [SHEET_SCROLL_SELECTOR],
     defaultPreload: "intent",
-    // ADR-009 of Issue #22: a screen's failure and its not-found are drawn
-    // in its layout's frame by these two. The root and the two layouts
+    // A screen's failure and its not-found are drawn in its layout's frame
+    // by these two. The root and the two layouts
     // under it declare their own error component; no route declares a
     // not-found component, because a loader's `notFound()` is drawn by the
     // nearest route up the tree that has one — any declared above a screen
@@ -42,7 +42,7 @@ declare module "@tanstack/react-router" {
   }
   interface StaticDataRouteOption {
     /**
-     * The header `AppShell` draws for this route (ADR-006 of Issue #22).
+     * The header `AppShell` draws for this route.
      * Every screen under `_app` declares one; the deepest declaring match
      * wins. The auth sheet (`_sheet`) draws no header, and its screens
      * declare none.

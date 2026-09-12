@@ -7,8 +7,8 @@ import { requireSessionBeforeLoad } from "@/presentation/authGuard";
 import { routeTree } from "@/routeTree.gen";
 
 /**
- * ADR-008 of Issue #22: the screens on the auth sheet, by the URL each is
- * served at, and whether it needs a session.
+ * The screens on the auth sheet, by the URL each is served at, and whether
+ * it needs a session.
  */
 const AUTH_SHEET_SCREENS: Readonly<Record<string, boolean>> = {
   "/login": false,

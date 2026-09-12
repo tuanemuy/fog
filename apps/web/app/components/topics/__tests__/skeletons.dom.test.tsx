@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TopicDetailSkeleton } from "@/components/topics/TopicDetailSkeleton";
 import { TopicsSkeleton } from "@/components/topics/TopicsSkeleton";
 
-// ADR-005 of Issue #22: a skeleton is the screen's own DOM with its text
+// A skeleton is the screen's own DOM with its text
 // laid over — one busy region with one label, stand-in text hidden from
 // assistive technology, and nothing to press.
 function expectOneBusyRegion() {

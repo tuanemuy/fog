@@ -10,8 +10,8 @@ import { useOptimistic, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Icon } from "@/components/ui/Icon";
 import { InlineAlert } from "@/components/ui/InlineAlert";
+import { LoadingRow } from "@/components/ui/LoadingRow";
 import { Row, type RowLevel } from "@/components/ui/Row";
 import { RowError } from "@/components/ui/RowError";
 import { RowList } from "@/components/ui/RowList";
@@ -413,8 +413,10 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
     });
   };
 
+  // The confirmation stays up while the trash empties — it is the one place
+  // the wait is shown, and closing it first would leave the screen unchanged
+  // with nothing running on it.
   const confirmEmpty = () => {
-    setPendingDialog(null);
     setFailure(null);
     setDialogBusy(true);
     startAction(async () => {
@@ -425,7 +427,8 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           "emptyTrashFn",
         );
         setDialogBusy(false);
-        // Mixed outcomes split (ADR-010 of Issue #22): what was erased is a
+        setPendingDialog(null);
+        // Mixed outcomes split: what was erased is a
         // toast, what was not stays on the list with its retry.
         if (result.failedCount > 0) {
           if (result.deletedCount > 0) {
@@ -444,6 +447,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         await settle();
       } catch (error) {
         setDialogBusy(false);
+        setPendingDialog(null);
         setFailure({
           key: LIST_FAILURE,
           message: `空にできませんでした: ${displayError(error)}`,
@@ -556,32 +560,25 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
             })}
           </RowList>
         )}
-        {totalCount > loaded && (
-          <div className="pt-lg">
-            {moreError !== null ? (
+        {totalCount > loaded &&
+          (moreError !== null ? (
+            <div className="pt-lg">
               <InlineAlert
                 tone="error"
                 retry={{ label: "再試行", onRetry: loadMore }}
               >
                 {moreError}
               </InlineAlert>
-            ) : loadingMore ? (
-              <p
-                role="status"
-                className="flex items-center justify-center gap-sm font-base text-xs font-medium leading-tight tracking-label text-neutral-400"
-              >
-                <Icon name="spinner" size="xs" />
-                読み込み中
-              </p>
-            ) : (
-              <div className="flex justify-center">
-                <Button variant="outline" onClick={loadMore}>
-                  もっと読む
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          ) : loadingMore ? (
+            <LoadingRow label="読み込み中" />
+          ) : (
+            <div className="flex justify-center pt-lg">
+              <Button variant="outline" onClick={loadMore}>
+                もっと読む
+              </Button>
+            </div>
+          ))}
       </div>
 
       <ConfirmDialog
@@ -604,6 +601,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         confirmLabel="空にする"
         pendingLabel="空にしています…"
         danger
+        pending={dialogBusy}
         onConfirm={confirmEmpty}
         onCancel={() => setPendingDialog(null)}
       />

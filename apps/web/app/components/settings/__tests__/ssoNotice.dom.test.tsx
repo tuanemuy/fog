@@ -2,6 +2,7 @@ import type { CredentialView } from "@repo/core/application/identity/view";
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastsShown, withToasts } from "@/components/__tests__/toastFrame";
 import type { SsoErrorCode } from "@/components/auth/schema";
 import { CredentialList } from "@/components/settings/CredentialList";
 import {
@@ -9,7 +10,6 @@ import {
   SsoNotice,
   ssoLinkErrorMessage,
 } from "@/components/settings/SsoNotice";
-import { toastsShown, withToasts } from "./toastFrame";
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-start")>()),

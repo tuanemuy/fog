@@ -5,6 +5,7 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion } from "@/components/__tests__/toastFrame";
 import { DocumentEditor } from "@/components/documents/DocumentEditor";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppServerError } from "@/presentation/errorResponse";
@@ -103,10 +104,6 @@ async function saveButton() {
   return (await within(screen.getByRole("banner")).findByRole("button", {
     name: /保存/,
   })) as HTMLButtonElement;
-}
-
-function toastRegion() {
-  return screen.getByRole("status");
 }
 
 async function drawCreate() {

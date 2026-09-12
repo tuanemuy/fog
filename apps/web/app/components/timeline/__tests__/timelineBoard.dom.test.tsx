@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion } from "@/components/__tests__/toastFrame";
 import { AppShell } from "@/components/layout/AppShell";
 import type { TimelineSearch } from "@/components/timeline/search";
 import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
@@ -155,16 +156,6 @@ function composer() {
       name: "メモを追加",
     }) as HTMLButtonElement,
   };
-}
-
-/** The shell's toast region: the one live region outside the sheet. */
-function toastRegion(): HTMLElement {
-  const sheet = screen.getByRole("main");
-  const region = screen
-    .getAllByRole("status")
-    .find((status) => !sheet.contains(status));
-  if (region === undefined) throw new Error("no toast region");
-  return region;
 }
 
 /**

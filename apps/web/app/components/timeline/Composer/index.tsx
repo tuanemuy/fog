@@ -19,8 +19,8 @@ export type ComposerProps = Readonly<{
 
 // A one-line pill whose height is exactly twice `--radius-lg`: the block
 // padding is that radius less half a line, and the radius stays the same as
-// it grows, so the corners never stretch into ovals (ADR-011 of Issue #22,
-// `.composer.grows` in `spec/design/pages/timeline.html`).
+// it grows, so the corners never stretch into ovals (`.composer.grows` in
+// `spec/design/pages/timeline.html`).
 const FORM_CLASS =
   "pointer-events-auto flex w-full max-w-narrow items-end gap-md rounded-lg bg-bg-input p-(--pad-input) py-[calc(var(--radius-lg)_-_0.5lh)] font-base text-base leading-normal text-neutral-900 shadow-md backdrop-blur-glass focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus";
 

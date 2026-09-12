@@ -11,7 +11,7 @@ import {
 } from "../SettingsSection";
 
 /**
- * `CurrentUserPanel` before it streams in (ADR-005 of Issue #22): the same
+ * `CurrentUserPanel` before it streams in: the same
  * sections, rows and buttons, with the data's text laid over by `Sk` and
  * every control disabled. The section labels are the real ones — they do not
  * depend on the data. One polite status names the region; everything under

@@ -19,6 +19,7 @@ import { IconButton } from "@/components/ui/IconButton";
 import { InlineAlert } from "@/components/ui/InlineAlert";
 import { Row } from "@/components/ui/Row";
 import { RowList } from "@/components/ui/RowList";
+import { SearchPill } from "@/components/ui/SearchPill";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { SourceMemoLine } from "../SourceMemoLine";
@@ -32,13 +33,6 @@ export type PickedMemo = Readonly<{
 
 /** How many candidates one search shows (decision △-2). */
 export const PICKER_PAGE_LIMIT = 20;
-
-// `.picker-search` in `document-edit.html`: a filled pill whose ring shows
-// while anything inside it has the focus; the input itself draws none.
-const SEARCH_BOX_CLASS =
-  "flex items-center gap-md rounded-full bg-neutral-50 p-(--pad-btn-sm) focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus";
-const SEARCH_INPUT_CLASS =
-  "min-w-[0] flex-1 bg-transparent font-base text-base leading-tight text-neutral-900 outline-none placeholder:text-neutral-400";
 
 /**
  * P-09's source-memo picker (`spec/design/pages/document-edit.html`, 出典の
@@ -130,22 +124,15 @@ export function SourceMemoPicker({
 
   return (
     <div className="mt-md">
-      <search className={SEARCH_BOX_CLASS}>
-        <span className="flex shrink-0 text-neutral-500">
-          <Icon name="search" size="sm" />
-        </span>
-        <input
-          ref={focusInput}
-          type="text"
-          enterKeyHint="search"
-          aria-label="メモを検索"
-          placeholder="メモを検索"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={onKeyDown}
-          maxLength={500}
-          className={SEARCH_INPUT_CLASS}
-        />
+      <SearchPill
+        label="メモを検索"
+        placeholder="メモを検索"
+        type="text"
+        value={query}
+        ref={focusInput}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={onKeyDown}
+      >
         <IconButton
           icon="close"
           label="検索を閉じる"
@@ -159,7 +146,7 @@ export function SourceMemoPicker({
             setError(null);
           }}
         />
-      </search>
+      </SearchPill>
       <div className="mt-sm" aria-busy={searching || undefined}>
         {error !== null ? (
           <InlineAlert

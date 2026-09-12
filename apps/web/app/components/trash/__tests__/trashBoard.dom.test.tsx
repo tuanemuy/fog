@@ -5,12 +5,12 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion, withToasts } from "@/components/__tests__/toastFrame";
 import {
   groupRows,
   remainingLabel,
   TrashBoard,
 } from "@/components/trash/TrashBoard";
-import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
 import { AppServerError } from "@/presentation/errorResponse";
 
 const mocks = vi.hoisted(() => ({
@@ -101,21 +101,10 @@ function list(
 // The board raises its successes as toasts, so it is drawn with the frame's
 // half of them: the provider and one region.
 async function draw(initial: TrashListView) {
-  return renderWithRouter(
-    <ToastProvider>
-      <TrashBoard initial={initial} />
-      <aside aria-label="トースト">
-        <ToastRegion />
-      </aside>
-    </ToastProvider>,
-    { path: "/trash" },
-  );
+  return renderWithRouter(withToasts(<TrashBoard initial={initial} />), {
+    path: "/trash",
+  });
 }
-
-const toasts = () =>
-  within(screen.getByRole("complementary", { name: "トースト" })).getByRole(
-    "status",
-  );
 
 /** The list item holding the row titled `title` (a nested one for a set's document). */
 const itemOf = (title: string) => {
@@ -265,7 +254,7 @@ describe("TrashBoard", () => {
     await waitFor(() => expect(screen.queryByText("旧サイト運用")).toBeNull());
     expect(screen.queryByText("ドメイン管理の手続き")).toBeNull();
     await waitFor(() =>
-      expect(toasts().textContent).toBe("トピックを復元しました"),
+      expect(toastRegion().textContent).toBe("トピックを復元しました"),
     );
   });
 
@@ -296,15 +285,15 @@ describe("TrashBoard", () => {
     ).toBe(false);
     expect(line?.contains(button("昼に食べた店 を復元"))).toBe(true);
     expect(within(itemOf("2024年Q1レビュー")).queryByRole("alert")).toBeNull();
-    expect(toasts().textContent).toBe("");
+    expect(toastRegion().textContent).toBe("");
 
     fireEvent.click(within(alert).getByRole("button", { name: "リトライ" }));
     await waitFor(() => expect(screen.queryByText("昼に食べた店")).toBeNull());
     await waitFor(() =>
-      expect(toasts().textContent).toBe("メモを復元しました"),
+      expect(toastRegion().textContent).toBe("メモを復元しました"),
     );
-    expect(within(toasts()).queryAllByRole("link")).toEqual([]);
-    expect(within(toasts()).queryAllByRole("button")).toEqual([]);
+    expect(within(toastRegion()).queryAllByRole("link")).toEqual([]);
+    expect(within(toastRegion()).queryAllByRole("button")).toEqual([]);
     expect(
       screen.queryByRole("link", { name: "タイムラインで見る" }),
     ).toBeNull();
@@ -346,7 +335,7 @@ describe("TrashBoard", () => {
       data: { documentId: "d2", confirmSetRestore: true },
     });
     await waitFor(() =>
-      expect(toasts().textContent).toBe("トピックごと復元しました"),
+      expect(toastRegion().textContent).toBe("トピックごと復元しました"),
     );
   });
 
@@ -463,7 +452,7 @@ describe("TrashBoard", () => {
     });
     expect(screen.queryByText("2024年Q1レビュー")).toBeNull();
     await waitFor(() =>
-      expect(toasts().textContent).toBe("ドキュメントを復元しました"),
+      expect(toastRegion().textContent).toBe("ドキュメントを復元しました"),
     );
   });
 
@@ -551,7 +540,44 @@ describe("TrashBoard", () => {
     });
     expect(button("空にする（1）")).toBeTruthy();
     await waitFor(() =>
-      expect(toasts().textContent).toBe("完全に削除しました"),
+      expect(toastRegion().textContent).toBe("完全に削除しました"),
+    );
+  });
+
+  it("keeps the confirmation up while the trash empties, saying so on its button", async () => {
+    let release: (value: unknown) => void = () => {};
+    mocks.emptyTrashFn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    await draw(list([MEMO, DOC]));
+    fireEvent.click(button("空にする（2）"));
+    const confirm = await screen.findByRole("dialog", {
+      name: "ゴミ箱を空にしますか？",
+    });
+    expect(
+      within(confirm).getByRole("button", { name: "空にする" }),
+    ).toBeTruthy();
+
+    fireEvent.click(within(confirm).getByRole("button", { name: "空にする" }));
+
+    const pending = await within(confirm).findByRole("button", {
+      name: "空にしています…",
+    });
+    expect((pending as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (
+        within(confirm).getByRole("button", {
+          name: "キャンセル",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    release({ deletedCount: 2, failedCount: 0 });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(toastRegion().textContent).toBe("ゴミ箱を空にしました"),
     );
   });
 
@@ -573,13 +599,13 @@ describe("TrashBoard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("1件は削除できませんでした");
     await waitFor(() =>
-      expect(toasts().textContent).toBe("1件を完全に削除しました"),
+      expect(toastRegion().textContent).toBe("1件を完全に削除しました"),
     );
-    expect(toasts().textContent).not.toContain("削除できませんでした");
+    expect(toastRegion().textContent).not.toContain("削除できませんでした");
 
     fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
     await waitFor(() =>
-      expect(toasts().textContent).toContain("ゴミ箱を空にしました"),
+      expect(toastRegion().textContent).toContain("ゴミ箱を空にしました"),
     );
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(mocks.emptyTrashFn).toHaveBeenCalledTimes(2);
@@ -608,7 +634,7 @@ describe("TrashBoard", () => {
     expect(
       screen.queryByRole("button", { name: "昼に食べた店 を復元" }),
     ).toBeNull();
-    expect(toasts().textContent).toBe("");
+    expect(toastRegion().textContent).toBe("");
     const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(
       within(alert).getByRole("button", { name: "一覧を読み直す" }),

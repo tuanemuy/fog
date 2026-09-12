@@ -5,8 +5,8 @@ import { toSafeRedirect } from "./redirectSearch";
 /**
  * The `beforeLoad` of every layout whose screens need a session: `_app`
  * (the app shell) and `_sheet/_authenticated` (the two auth-sheet screens a
- * session reaches — AI client authorization and the reset's done page;
- * ADR-008 of Issue #22). One definition, so the two layouts cannot drift.
+ * session reaches — AI client authorization and the reset's done page).
+ * One definition, so the two layouts cannot drift.
  *
  * A navigation aid, never the guard: it bounces an unauthenticated visitor
  * to `/login` with the current URL to return to, and every server execution

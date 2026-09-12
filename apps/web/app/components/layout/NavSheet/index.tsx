@@ -14,7 +14,7 @@ export type NavSheetProps = Readonly<{
 
 // The card slides up from under the bottom edge. `transition-discrete` keeps
 // the closing dialog drawn until the slide ends; without `@starting-style`
-// support it opens and closes without the slide (ADR-007 of Issue #22).
+// support it opens and closes without the slide.
 const DIALOG_CLASS =
   "fixed inset-x-sheet-inset top-auto bottom-[0] m-[0] w-auto max-w-none translate-y-full bg-transparent transition-[translate,overlay,display] transition-discrete duration-default open:translate-y-[0] starting:open:translate-y-full backdrop:bg-overlay lg:hidden";
 
@@ -25,7 +25,7 @@ const ITEM_CLASS =
  * The mobile nav (`spec/design/pages/*.html`, `.nav-sheet`): a white card
  * with a handle, rising from the bottom edge on the sheet's horizontal frame,
  * listing the five destinations with the current one marked. It is a native
- * modal `<dialog>` (ADR-007 of Issue #22), so focus is held inside, the page
+ * modal `<dialog>`, so focus is held inside, the page
  * behind is inert and Escape closes it; a press on the overlay and choosing
  * an item close it too. Opened from the header's menu; hidden from `lg`,
  * where the sidebar lists the same items.

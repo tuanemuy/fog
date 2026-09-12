@@ -18,7 +18,7 @@ const STAND_INS = [
 ] as const;
 
 /**
- * Shaped to `TrashBoard` from the same parts (ADR-005 of Issue #22): the
+ * Shaped to `TrashBoard` from the same parts: the
  * header, then three rows whose text is laid over by `Sk` and whose buttons
  * are drawn disabled. The one busy status and its label are the whole of
  * what assistive technology reads; the stand-in rows are hidden from it.

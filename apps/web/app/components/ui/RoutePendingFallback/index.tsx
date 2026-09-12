@@ -13,7 +13,7 @@ const LINE_CLASS = "font-base text-base leading-normal";
  *
  * It stands in for no screen in particular, so it is a title and two lines of
  * body text built from real text elements with the text laid over by `Sk`
- * (ADR-005 of Issue #22): it does not animate. `LoadingRegion` gives the one
+ * (`Sk` does not animate). `LoadingRegion` gives the one
  * polite announcement. It holds no padding or width of its own: the frame it
  * is drawn in does.
  */

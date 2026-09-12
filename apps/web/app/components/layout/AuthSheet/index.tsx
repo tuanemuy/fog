@@ -11,13 +11,13 @@ import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
  * (`spec/design/pages/login.html`, `.auth-container` / `.auth-sheet`): one
  * white card in the middle of the page, both ways, with the lockup at its
  * head. The `_sheet` layout draws it around login, signup, the password
- * reset and its done page, and AI client authorization (ADR-008 of Issue
- * #22); the screen draws only what comes after the lockup.
+ * reset and its done page, and AI client authorization; the screen draws
+ * only what comes after the lockup.
  *
  * The card holds its own padding on all four sides and the same on top and
  * bottom: it does not scroll, so the escape room at the foot of the app's
  * sheet would only push its content up (`spec/design/index.md`「余白と区切り」).
- * It hosts the toasts (ADR-010), fixed at the bottom centre of the page.
+ * It hosts the toasts, fixed at the bottom centre of the page.
  *
  * The frame draws no heading: the screen's `AuthSheetTitle` is the page's
  * `h1`, and a route error or 404 standing in for the screen makes its
@@ -79,7 +79,7 @@ export function AuthSheetDescription({
 
 /**
  * The error component of the root and of the two layouts under it, `_app`
- * and `_sheet` (ADR-009 of Issue #22): their failure takes the frame down
+ * and `_sheet`: their failure takes the frame down
  * with it, so the route error is drawn on the auth sheet instead of bare.
  */
 export function AuthSheetRouteError() {

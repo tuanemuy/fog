@@ -10,6 +10,7 @@ import { type FormEvent, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { ButtonLink } from "@/components/ui/ButtonLink";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadingRow } from "@/components/ui/LoadingRow";
 import { RowLink } from "@/components/ui/RowLink";
 import { RowList } from "@/components/ui/RowList";
 import { toDisplayError } from "@/presentation/errorDisplay";
@@ -17,7 +18,6 @@ import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDateTime } from "@/presentation/time";
 import { searchMoreFn } from "../actions";
 import { SearchBox } from "../SearchBox";
-import { SearchLoading } from "../SearchLoading";
 import { isSearchOutput } from "../schema";
 import { compactSearch, type SearchPageSearch } from "../search";
 import {
@@ -289,9 +289,7 @@ function ResultList({
           />
         </div>
       )}
-      {moreError === null && loadingMore && (
-        <SearchLoading label="読み込み中" />
-      )}
+      {moreError === null && loadingMore && <LoadingRow label="読み込み中" />}
       {moreError === null && !loadingMore && nextCursor !== null && (
         <div className="flex justify-center pt-lg">
           <Button variant="outline" onClick={onMore}>

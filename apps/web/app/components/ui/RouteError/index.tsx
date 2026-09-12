@@ -10,7 +10,7 @@ import { usePageHeadingOwner } from "@/components/ui/PageHeading";
  * The route error and the failed load of a streamed fragment
  * (`spec/design/pages/timeline.html`, 状態の例): 「読み込めませんでした」 and
  * 「再試行」, drawn where the screen was. The router's default error
- * component (ADR-009 of Issue #22); the layouts wrap it in the auth sheet.
+ * component; the layouts wrap it in the auth sheet.
  *
  * The sentence is fixed: nothing of the error — a message a layer wrote, a
  * value that came off the wire — reaches the page. Logging is the router's

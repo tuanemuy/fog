@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastsShown, withToasts } from "@/components/__tests__/toastFrame";
 import {
   CEILING_MESSAGE,
   RETENTION_SAVED_MESSAGE,
@@ -8,7 +9,6 @@ import {
   RULE_MESSAGE,
 } from "@/components/settings/RetentionForm";
 import { AppServerError } from "@/presentation/errorResponse";
-import { toastsShown, withToasts } from "./toastFrame";
 
 const mocks = vi.hoisted(() => ({
   changeTrashRetentionDaysFn:

@@ -1,6 +1,6 @@
+import { LoadingRow } from "@/components/ui/LoadingRow";
 import { Sk } from "@/components/ui/Sk";
 import { SearchBox } from "../SearchBox";
-import { SearchLoading } from "../SearchLoading";
 import { CHIP_CLASS, CHIP_IDLE_CLASS, CHIP_LIST_CLASS } from "../styles";
 
 const STAND_IN_CHIPS = ["すべて", "読書メモ", "引っ越し", "確定申告 2025"];
@@ -29,7 +29,7 @@ export function SearchSkeleton({ q }: SearchSkeletonProps) {
           </li>
         ))}
       </ul>
-      <SearchLoading label={q === undefined ? "読み込み中" : "検索中"} />
+      <LoadingRow label={q === undefined ? "読み込み中" : "検索中"} />
     </div>
   );
 }

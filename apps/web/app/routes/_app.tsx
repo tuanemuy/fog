@@ -10,7 +10,7 @@ import { requireSessionBeforeLoad } from "@/presentation/authGuard";
  *
  * A screen's failure is drawn in the sheet by the router's default; a
  * failure of this layout itself — the session check, the shell — is drawn
- * on the auth sheet (ADR-009 of Issue #22).
+ * on the auth sheet.
  */
 export const Route = createFileRoute("/_app")({
   beforeLoad: requireSessionBeforeLoad,

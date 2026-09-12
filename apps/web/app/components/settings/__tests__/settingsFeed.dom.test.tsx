@@ -2,9 +2,9 @@ import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { withToasts } from "@/components/__tests__/toastFrame";
 import { SettingsFeed } from "@/components/settings/SettingsFeed";
 import { SettingsUnavailable } from "@/components/settings/SettingsUnavailable";
-import { withToasts } from "./toastFrame";
 
 const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn<() => Promise<string>>(),

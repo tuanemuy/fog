@@ -298,7 +298,7 @@ describe("AppShell", () => {
     }
   });
 
-  // ADR-026 of Issue #22: the column is the same on every screen, the foot
+  // The column is the same on every screen, the foot
   // is not (the composer's screen needs more), so the screen owns only that.
   it("holds the text column in the sheet — top and side padding, content-max — and leaves the bottom to the screen", async () => {
     await renderWithRouter(

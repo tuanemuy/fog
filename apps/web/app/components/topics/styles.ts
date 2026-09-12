@@ -1,5 +1,5 @@
 // The text of the topic screens, shared by the loaded DOM and its skeleton
-// (ADR-005 of Issue #22): the skeleton lays `Sk` over the same elements, so
+// the skeleton lays `Sk` over the same elements, so
 // both read their line heights from one definition.
 
 /** A topic row's name line (`spec/design/pages/topics.html`, `.t-name`). */

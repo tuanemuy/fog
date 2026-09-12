@@ -1,6 +1,7 @@
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
+
 // The document screens' own pieces (`spec/design/pages/document.html` /
 // `document-edit.html`). The loaded screens and their skeletons read the same
-import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 // strings, so a line keeps its height when the skeleton gives way to it.
 
 /** `.doc-context`: the topic the document belongs to, over its title. */

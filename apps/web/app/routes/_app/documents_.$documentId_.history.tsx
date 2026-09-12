@@ -28,7 +28,7 @@ const renderDocumentHistory = createServerFn({ method: "GET" })
 
 /**
  * P-10. The memo history's shape under the document's title, which the
- * sheet draws as the page's `h1` (ADR-023 of Issue #22).
+ * sheet draws as the page's `h1`.
  */
 export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
   staticData: {

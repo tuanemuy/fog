@@ -5,8 +5,8 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion, withToasts } from "@/components/__tests__/toastFrame";
 import { RevisionHistory } from "@/components/memoHistory/RevisionHistory";
-import { ToastProvider, ToastRegion } from "@/components/ui/Toast";
 import { AppServerError } from "@/presentation/errorResponse";
 import { formatDateTime } from "@/presentation/time";
 
@@ -91,23 +91,12 @@ function linesOf(role: "deletion" | "insertion") {
 
 function render(revisions: RevisionSummaryView[]) {
   return renderWithRouter(
-    <ToastProvider>
-      <RevisionHistory memoId="m1" revisions={revisions} />
-      <ToastRegion />
-    </ToastProvider>,
+    withToasts(<RevisionHistory memoId="m1" revisions={revisions} />),
     { path: "/memos/$memoId/history" },
   );
 }
 
-// The frame's toast region: the one live region that announces additions
-// only (`aria-atomic="false"`), unlike the busy diff box.
-function toasts() {
-  const region = screen
-    .getAllByRole("status")
-    .find((el) => el.getAttribute("aria-atomic") === "false");
-  if (region === undefined) throw new Error("no toast region");
-  return within(region);
-}
+const toasts = () => within(toastRegion());
 
 describe("RevisionHistory with one revision", () => {
   it("shows the row without selection or rollback", async () => {

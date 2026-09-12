@@ -12,7 +12,7 @@ export type LoadingRegionProps = Readonly<{
 }>;
 
 /**
- * The region a skeleton fills (ADR-005 of Issue #22): one polite loading
+ * The region a skeleton fills: one polite loading
  * label for the whole of it, and `aria-busy` while it stands in. The
  * stand-in text inside is hidden from assistive technology (`Sk`), so this
  * label is the only thing it says.

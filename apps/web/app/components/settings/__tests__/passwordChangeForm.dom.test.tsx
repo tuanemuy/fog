@@ -1,12 +1,12 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastsShown, withToasts } from "@/components/__tests__/toastFrame";
 import {
   PASSWORD_CHANGED_MESSAGE,
   PasswordChangeForm,
 } from "@/components/settings/PasswordChangeForm";
 import { AppServerError } from "@/presentation/errorResponse";
-import { toastsShown, withToasts } from "./toastFrame";
 
 const mocks = vi.hoisted(() => ({
   changePasswordFn: vi.fn<(input: { data: unknown }) => Promise<unknown>>(),
