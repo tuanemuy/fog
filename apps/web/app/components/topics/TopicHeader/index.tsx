@@ -1,7 +1,7 @@
 "use client";
 
 import type { TopicView } from "@repo/core/application/knowledge/view";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { getRouteApi, useNavigate, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   type FormEvent,
@@ -29,6 +29,11 @@ import {
   TOPIC_STATUS_CLASS,
   TOPIC_TITLE_CLASS,
 } from "../styles";
+
+// The id of the screen this head sits on, read without importing the route
+// module: that module pulls `@tanstack/react-start/rsc` in, which is not the
+// island's to carry.
+const route = getRouteApi("/_app/topics_/$topicId");
 
 type Patch = Readonly<{
   name?: string;
@@ -140,16 +145,27 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
   const confirmDelete = () => {
     setError(null);
     startDelete(async () => {
+      let trashed = false;
       try {
         readServerFnResult(
           await trash({ data: { topicId: topic.id } }),
           isTrashTopicResult,
           "trashTopicFn",
         );
-        // The topic list is cached with this topic still on it.
-        await router.invalidate();
+        trashed = true;
+        // The topic list is cached with this topic still on it. This screen
+        // is the one just deleted, so its own loader stays out of the
+        // re-read: it would draw 「トピックが見つかりません」 over the head
+        // before the navigation lands.
+        await router.invalidate({
+          filter: (match) => match.routeId !== route.id,
+        });
         await navigate({ to: "/topics" });
       } catch (failure) {
+        // The server already confirmed the delete, so a failure past that
+        // point is the reconciliation's: reporting it here would call a
+        // finished delete failed.
+        if (trashed) return;
         setConfirming(false);
         setError(displayError(failure));
       }

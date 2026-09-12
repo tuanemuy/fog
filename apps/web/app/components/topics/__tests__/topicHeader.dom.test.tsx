@@ -1,6 +1,9 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import {
+  invalidateFilter,
+  renderWithRouter,
+} from "@/components/__tests__/renderWithRouter";
 import { TopicHeader } from "@/components/topics/TopicHeader";
 import { AppServerError } from "@/presentation/errorResponse";
 import { deferred, topicView } from "./fixtures";
@@ -254,6 +257,42 @@ describe("TopicHeader", () => {
     expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
       navigate.mock.invocationCallOrder[0] ?? 0,
     );
+    // ...and it marks the list without re-reading the screen just deleted,
+    // whose loader would draw 「トピックが見つかりません」.
+    const filter = invalidateFilter(invalidate);
+    expect(filter?.({ routeId: "/_app/topics_/$topicId" })).toBe(false);
+    expect(filter?.({ routeId: "/_app/topics" })).toBe(true);
+  });
+
+  it("keeps a confirmed delete from being told as failed when the reconciliation fails", async () => {
+    const trash = deferred<unknown>();
+    mocks.trashTopicFn.mockReturnValue(trash.promise);
+    const { router } = await renderWithRouter(
+      <TopicHeader topic={topicView("t1", "x")} />,
+      { path: "/topics/$topicId" },
+    );
+    vi.spyOn(router, "invalidate").mockRejectedValue(
+      new AppServerError({
+        kind: "system",
+        code: "X",
+        message: "x",
+        retryable: true,
+      }),
+    );
+    const navigate = vi.spyOn(router, "navigate");
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
+    );
+    await screen.findByRole("button", { name: "削除中…" });
+    trash.resolve({ topicId: "t1", trashedDocumentIds: [] });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "削除中…" })).toBeNull(),
+    );
+    // The topic is in the trash; a failure told here would describe the
+    // re-read, not the delete.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("tells a rejected delete under the head and stays", async () => {

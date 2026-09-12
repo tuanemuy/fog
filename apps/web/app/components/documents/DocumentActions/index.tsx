@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useTransition } from "react";
 import { HeaderActions } from "@/components/layout/ShellSlots";
@@ -14,6 +14,11 @@ import { readServerFnResult } from "@/presentation/serverFnResult";
 import { trashDocumentFn } from "../actions";
 import { isTrashDocumentResult } from "../schema";
 import { SHEET_ALERTS_CLASS } from "../styles";
+
+// The id of the screen these operations sit on, read without importing the
+// route module: that module pulls `@tanstack/react-start/rsc` in, which is
+// not the island's to carry.
+const route = getRouteApi("/_app/documents_/$documentId");
 
 /**
  * P-08's operations, as the header's icons (`spec/design/pages/document.html`,
@@ -39,17 +44,28 @@ export function DocumentActions({
 
   const runDelete = () =>
     startDelete(async () => {
+      let trashed = false;
       try {
         readServerFnResult(
           await trash({ data: { documentId } }),
           isTrashDocumentResult,
           "trashDocumentFn",
         );
+        trashed = true;
         toast("ドキュメントを削除しました");
         // The topic screen is cached with this document still in its list.
-        await router.invalidate();
+        // This screen is the one just deleted, so its own loader stays out of
+        // the re-read: it would draw 「ドキュメントが見つかりません」 over the
+        // page — dialog included — before the navigation lands.
+        await router.invalidate({
+          filter: (match) => match.routeId !== route.id,
+        });
         await router.navigate({ to: "/topics/$topicId", params: { topicId } });
       } catch (failure) {
+        // The server already confirmed the delete, so a failure past that
+        // point is the reconciliation's: reporting it here would offer a
+        // retry of something already in the trash.
+        if (trashed) return;
         setConfirming(false);
         setError(displayError(failure));
       }

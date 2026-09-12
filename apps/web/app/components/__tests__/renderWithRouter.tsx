@@ -79,6 +79,21 @@ export type RouterRender = RenderResult & {
 };
 
 /**
+ * The `filter` the first `router.invalidate()` call carried, read loosely so
+ * a real route id can be handed to it: the harness's stub tree carries none
+ * of the app's route ids in its match union, and a filter that keeps a
+ * screen out of the re-read is asked about the screen by id.
+ */
+export function invalidateFilter(invalidate: {
+  mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> };
+}): ((match: { routeId: string }) => boolean) | undefined {
+  const opts = invalidate.mock.calls[0]?.[0] as
+    | { filter?: (match: { routeId: string }) => boolean }
+    | undefined;
+  return opts?.filter;
+}
+
+/**
  * Draws `element` as the root of a memory-history router positioned at
  * `path`, so `Link`, `useRouter` and `useRouterState` resolve against the
  * stub tree above. `staticData` is handed to the named stubs as their route

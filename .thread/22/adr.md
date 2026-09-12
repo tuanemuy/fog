@@ -817,3 +817,20 @@ ADR-033 の「`FormLink` は `components/auth` に残す」はこれで置き換
 ### Consequences
 - 良い点: 押したのに何も起きない、という無反応が無くなり、成功を騙る文も無くなる
 - トレードオフ: 文言が 1 つ増える。別タブで全部失効された後にしか出ない
+
+---
+
+## ADR-048: 削除の 2 経路は、現在のマッチを外した `invalidate` と「確定後は失敗と言わない」catch にする
+
+### Context
+`TopicHeader:confirmDelete` と `DocumentActions:runDelete` の `router.invalidate()` が、行き先に印を付けるだけでなく**いま消した画面のローダー**を読み直し、「トピックが見つかりません」「ドキュメントが見つかりません」を描いてから遷移していた（review-003-scope W-001）。同時に、その読み直しが `try` の中にあるので、成功した削除が `catch` に落ちて「失敗」と再試行を出しうる。
+
+レビューの提案は `router.invalidate({ filter: (match) => match.routeId !== Route.id })`。ただし `Route` を route モジュールから import すると、島が `@tanstack/react-start/rsc` を含む route の依存を抱え込み、DOM テストからも描けなくなる。
+
+### Decision
+- 現在のマッチを外す点は提案どおり。ただし route id は `getRouteApi("/_app/topics_/$topicId")` / `getRouteApi("/_app/documents_/$documentId")` の `.id` から取る。生成された route ツリーに対して型で照合されるので、ルートが動けば `pnpm typecheck` が落ちる
+- サーバーが削除を確定したら `trashed` を立て、`catch` はそれが立っていれば何も表示せずに戻る。確定後の失敗は読み直し側のものなので、削除の失敗として扱わない
+
+### Consequences
+- 良い点: 消した画面の「見つかりません」が出なくなり、ゴミ箱にある対象への「再試行」も出なくなる
+- トレードオフ: 確定後に読み直しが失敗すると、画面には何も出ないまま留まる（確認ダイアログが開いたまま）。削除自体は成功しているので、遷移だけが起きない

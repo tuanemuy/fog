@@ -1,6 +1,9 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import {
+  invalidateFilter,
+  renderWithRouter,
+} from "@/components/__tests__/renderWithRouter";
 import { DocumentActions } from "@/components/documents/DocumentActions";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppServerError } from "@/presentation/errorResponse";
@@ -123,6 +126,31 @@ describe("DocumentActions", () => {
     expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
       navigate.mock.invocationCallOrder[0] ?? 0,
     );
+    // ...and it marks the destination without re-reading the screen just
+    // deleted, whose loader would draw 「ドキュメントが見つかりません」.
+    const filter = invalidateFilter(invalidate);
+    expect(filter?.({ routeId: "/_app/documents_/$documentId" })).toBe(false);
+    expect(filter?.({ routeId: "/_app/topics_/$topicId" })).toBe(true);
+  });
+
+  it("keeps a confirmed delete told as done when the reconciliation fails", async () => {
+    const trash = deferred<unknown>();
+    mocks.trashDocumentFn.mockReturnValue(trash.promise);
+    const { router, del } = await draw();
+    vi.spyOn(router, "invalidate").mockRejectedValue(SYSTEM_ERROR);
+    const navigate = vi.spyOn(router, "navigate");
+    await confirmDelete(del);
+    await screen.findByRole("button", { name: "削除中…" });
+    trash.resolve({ deleted: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "削除中…" })).toBeNull(),
+    );
+    expect(screen.getByRole("status").textContent).toBe(
+      "ドキュメントを削除しました",
+    );
+    // The document is in the trash: a 再試行 here would retry nothing.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("shows the failure at the head of the sheet, stays, and retries the confirmed delete", async () => {

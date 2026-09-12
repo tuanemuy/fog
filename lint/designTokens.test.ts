@@ -15,6 +15,10 @@ import { describe, expect, it } from "vitest";
 // descendant-targeting) outside `components/ui`, a class selector in the
 // hand-written CSS, and a `@custom-variant` / `@utility` in `styles/` that
 // gives such a selector a name (`next-sibling:mt-*` is the one exception).
+// The third of those reads the `styles/` files themselves, so it also holds
+// that `index.css` imports nothing but `tailwindcss` and its two siblings,
+// and that no file there loads a `@plugin` — either would define names the
+// scan never sees.
 //
 // It lives in `lint/` for the same reason `banList.test.ts` does: it reads
 // across `spec/` and `apps/web`.
@@ -920,6 +924,24 @@ describe("design tokens — no override path onto a primitive", () => {
       ),
       "a named variant or utility styles the element it is put on; `next-sibling:mt-*` is the one exception",
     ).toEqual([]);
+    // The scan above reads the `styles/` files themselves, so a name defined
+    // in CSS pulled in from outside them, or registered from a plugin's JS,
+    // would be invisible to it.
+    expect(
+      styleFiles.flatMap((f) => [
+        ...[...(styleSource.get(f) ?? "").matchAll(/@import\s+[^;]+/g)].map(
+          (m) => `styles/${f}: ${collapse(m[0])}`,
+        ),
+        ...[...(styleSource.get(f) ?? "").matchAll(/@plugin\s+[^;]+/g)].map(
+          (m) => `styles/${f}: ${collapse(m[0])}`,
+        ),
+      ]),
+      "a fourth path would be a variant defined outside `styles/`: CSS read in by `@import`, or a `@plugin` registering one from JS",
+    ).toEqual([
+      `styles/${ENTRY_CSS}: @import "tailwindcss"`,
+      `styles/${ENTRY_CSS}: @import "./${TOKENS_CSS}"`,
+      `styles/${ENTRY_CSS}: @import "./${THEME_CSS}"`,
+    ]);
   });
 });
 
