@@ -15,6 +15,8 @@ plan.md のスコープ（`apps/web` の見た目の載せ替え）に収まら�
   （`TRASH_PAGE_LIMIT` 100 件）に無いセット削除のドキュメントは、トピックの下に置けないので普通の
   ドキュメントの行として出る。`spec/pages/index.md` P-12 の「セット関係が分かる表示」を、
   100 件を超えるゴミ箱ではインデントで満たせない
+- **dev サーバーに 1 回だけ出た React の警告 `Can't perform a React state update on a component that hasn't mounted yet.`**（動作検証 13:45:02、TC-06 の時間帯）。**この PR の変更が原因ではない**: `apps/web/app` に描画中に始まる非同期の副作用は無く（`.then(` / `.catch(` は Zod のスキーマだけ、`setTimeout` は `ui/Toast` の 4 秒の消灯と `topics/TopicRow` の長押しの 2 か所だけで、どちらも commit 済みの持ち場から張る）、DOM テスト 440 件でも出ず、TC-06 の全経路（投稿・削除・`?memo=missing`・ゴミ箱の復元・保持期限の保存・4 秒の消灯と遷移の競合・冷えた再読み込み 10 回・ナビの連打）を再現しても再現しない。ルーター実行時（`defaultPendingMs` のタイマー、ハイドレーション中の外部ストア通知）が配置途中のツリーへ更新を積んだ一度きりの競合と見られる。再現手順が要るので Issue 化は再現待ち
+
 - **メモ履歴に「現在の内容」が無い**（step-13）。モックは一覧の上に現在の本文を
   置くが、P-05 に無く、`listMemoRevisions` はメモ本文を返さない。削除済みメモの
   履歴も読めるので `getMemo` では代わりにならない
