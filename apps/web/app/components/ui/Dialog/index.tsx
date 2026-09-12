@@ -15,7 +15,10 @@ export type DialogProps = Readonly<{
   description?: string;
   /** Escape and a press on the backdrop reach this; so does the cancel. */
   onClose: () => void;
-  /** While what the dialog started is in flight, the backdrop does not close it. */
+  /**
+   * While what the dialog started is in flight, neither the backdrop nor
+   * Escape closes it.
+   */
   locked?: boolean;
   /** The body between the sentence and the controls. */
   children: ReactNode;
@@ -68,6 +71,10 @@ export function DialogActions({ children }: Readonly<{ children: ReactNode }>) {
  * destination). `showModal()` runs on mount, so the caller mounts it only
  * while it is open; Escape and backdrop presses reach `onClose` through the
  * element's own `close` event.
+ *
+ * While `locked`, Escape is refused on the `cancel` event rather than
+ * swallowed after the fact: the element would otherwise close itself while
+ * the caller kept it mounted, and a mounted element is never shown again.
  */
 export function Dialog({
   title,
@@ -98,6 +105,9 @@ export function Dialog({
       ref={ref}
       className="m-auto w-sheet max-w-narrow bg-transparent backdrop:bg-overlay"
       aria-labelledby={titleId}
+      onCancel={(event) => {
+        if (locked) event.preventDefault();
+      }}
       onClose={onClose}
       onClick={(event) => {
         if (event.target === event.currentTarget && !locked) onClose();

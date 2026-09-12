@@ -5,6 +5,7 @@ import { useActionState, useId, useState } from "react";
 import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { Button } from "@/components/ui/Button";
 import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
 import { TextField } from "@/components/ui/TextField";
 import { displayError, renderErrorMessage } from "@/presentation/errorDisplay";
 import {
@@ -14,7 +15,6 @@ import {
 import { DEFAULT_REDIRECT_PATH } from "@/presentation/redirectSearch";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { loginFn, registerFn } from "../actions";
-import { FormLink } from "../FormLink";
 import { renderSsoError, SsoButtons } from "../SsoButtons";
 import { isSessionStartedResult, type SsoErrorCode } from "../schema";
 

@@ -1,11 +1,7 @@
 import { LoadingRegion } from "@/components/ui/LoadingRegion";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 import { Sk } from "@/components/ui/Sk";
-import {
-  DOC_BODY_CLASS,
-  DOC_CONTEXT_CLASS,
-  DOC_META_CLASS,
-  DOC_TITLE_CLASS,
-} from "../styles";
+import { DOC_BODY_CLASS, DOC_CONTEXT_CLASS, DOC_META_CLASS } from "../styles";
 
 /**
  * - `read` — P-08: the topic, the title, the update time and the body
@@ -33,7 +29,7 @@ export function DocumentSkeleton({ mode }: { mode: DocumentSkeletonMode }) {
       <p className={DOC_CONTEXT_CLASS}>
         <Sk>ブランド刷新</Sk>
       </p>
-      <p className={DOC_TITLE_CLASS}>
+      <p className={SHEET_TITLE_CLASS}>
         <Sk>サイト構成の方針</Sk>
       </p>
       {mode === "read" ? (

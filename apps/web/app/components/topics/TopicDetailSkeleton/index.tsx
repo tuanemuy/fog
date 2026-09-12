@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/Button";
 import { LoadingRegion } from "@/components/ui/LoadingRegion";
+import { MenuPlaceholder } from "@/components/ui/MenuPlaceholder";
 import { RowList } from "@/components/ui/RowList";
 import { SheetSection } from "@/components/ui/SheetSection";
 import { Sk } from "@/components/ui/Sk";
@@ -11,7 +12,6 @@ import {
   TOPIC_STATUS_CLASS,
   TOPIC_TITLE_CLASS,
 } from "../styles";
-import { MenuPlaceholder } from "../TopicsSkeleton";
 
 const DOCUMENTS = [
   { title: "サイト構成の方針", meta: "7月20日 更新" },

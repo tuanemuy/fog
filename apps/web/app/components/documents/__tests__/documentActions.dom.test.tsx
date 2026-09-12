@@ -97,11 +97,12 @@ describe("DocumentActions", () => {
     expect(mocks.trashDocumentFn).not.toHaveBeenCalled();
   });
 
-  it("trashes on confirm, leaves for the topic and says so in a toast", async () => {
+  it("trashes on confirm, reconciles before leaving for the topic and says so in a toast", async () => {
     const trash = deferred<unknown>();
     mocks.trashDocumentFn.mockReturnValue(trash.promise);
     const { router, del } = await draw();
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     await confirmDelete(del);
     expect(mocks.trashDocumentFn).toHaveBeenCalledWith({
       data: { documentId: "d1" },
@@ -116,6 +117,11 @@ describe("DocumentActions", () => {
     );
     expect(screen.getByRole("status").textContent).toBe(
       "ドキュメントを削除しました",
+    );
+    // The topic screen is cached with this document still on it, so the
+    // reconciliation has to land before the navigation reads that cache.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
     );
   });
 

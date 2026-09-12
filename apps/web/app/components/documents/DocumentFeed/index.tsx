@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { KnowledgeNotFound } from "@/components/knowledge/KnowledgeNotFound";
 import { OriginList } from "@/components/knowledge/OriginRow";
 import { Markdown } from "@/components/ui/Markdown";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 import { extractSerializedError } from "@/presentation/errorResponse";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
@@ -12,7 +13,6 @@ import {
   DOC_CONTEXT_CLASS,
   DOC_CONTEXT_LINK_CLASS,
   DOC_META_CLASS,
-  DOC_TITLE_CLASS,
 } from "../styles";
 
 const TITLE_ID = "document-title";
@@ -73,7 +73,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
           {topic.name}
         </Link>
       </p>
-      <h1 id={TITLE_ID} className={DOC_TITLE_CLASS}>
+      <h1 id={TITLE_ID} className={SHEET_TITLE_CLASS}>
         {document.title}
       </h1>
       <p className={DOC_META_CLASS}>

@@ -783,3 +783,37 @@ ADR-033 は追加の基準を「2 つ以上の画面が同じ形を別々に組�
 ### Consequences
 - 良い点: コード中の `ADR-NNN` は `spec/adr/` を指す、が例外なく成り立ち、テストが守る
 - トレードオフ: Issue を越えて効く判断を残したいときは、`spec/` か `docs/` に上げてから引く手間が要る
+
+---
+
+## ADR-046: 画面の見出し・フォームのリンク・メニューの空き箱を `components/ui` の 1 実装に寄せる
+
+### Context
+ADR-033 は追加の基準を「2 つ以上の画面が同じ形を別々に組んだか」に置きながら、`FormLink` を「認証の 2 画面だけが使う」として `components/auth` に残した。レビュー（review-002-frontend W-001）の実測では、設定画面が同じ役割を `FORM_LINK_CLASS` として複製していて、その前提が崩れている。同じ形の重複はほかに 2 つあった。シート見出しの文字列（`HISTORY_SUBJECT_CLASS` と `DOC_TITLE_CLASS` がバイト単位で同一、`TOPIC_TITLE_CLASS` は `min-w-[0]` が付くだけ）と、スケルトンのメニューの空き箱（`topics/TopicsSkeleton` が export する `MenuPlaceholder` を `TimelineSkeleton` だけが直書きで再実装）である。
+
+### Decision
+3 つとも `components/ui` に寄せる。
+
+- `SHEET_TITLE_CLASS`（`components/ui/SheetTitle`）— シートの固有名。P-07・P-08・P-10 の `h1`、2 つのスケルトン、編集画面のタイトル入力がこれを読む。レイアウトは持たず、フレックス行に入るトピック名だけが `min-w-[0]` を自分で足す
+- `FormLink`（`components/ui/FormLink`）— 認証シートと設定画面が使うテキストリンク。文字サイズは置き場の行が決める（認証シートは既にそうしていた）ので、設定画面の行に `font-base text-sm leading-tight` を移す
+- `MenuPlaceholder`（`components/ui/MenuPlaceholder`）— スケルトンの `…` の空き箱。トピック一覧・トピック詳細・タイムラインの 3 スケルトンが読む
+
+ADR-033 の「`FormLink` は `components/auth` に残す」はこれで置き換わる。
+
+### Consequences
+- 良い点: 同じ役割の文字列が 1 か所から来る。画面をまたぐ見出しの字送りが 1 定義で決まる
+- トレードオフ: `components/ui` に、コンポーネントを持たない定数だけのモジュール（`SheetTitle`）が 1 つ増える（`SheetSection` の `SHEET_SECTION_CLASS` と同じ形）
+
+---
+
+## ADR-047: 何も失効しなかった「すべて失効」は、成功ではなく「何も無かった」と言う
+
+### Context
+`revokedCount: 0, failedCount: 0` のとき「失効しました（0 件）」と成功を名乗っていた（review-002-frontend W-006）。レビューの提案は条件を `revokedCount > 0` だけにする、つまりトーストを出さないことだった。押した結果が画面に何も出ないのは、失効できたのかどうかが利用者に伝わらない。
+
+### Decision
+`revokedCount > 0` のときだけ従来の成功トーストを出し、`revokedCount === 0 && failedCount === 0` のときは「失効する接続はありませんでした」をトーストで出す。ADR-010 の分類では「付け先の項目が無い一度きりの通知」で、画面は既にあるべき姿（接続が無い）になっているので、操作を持たないトーストが当たる。`failedCount > 0` の側は変わらず行のインラインに残る。
+
+### Consequences
+- 良い点: 押したのに何も起きない、という無反応が無くなり、成功を騙る文も無くなる
+- トレードオフ: 文言が 1 つ増える。別タブで全部失効された後にしか出ない

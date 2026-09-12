@@ -305,7 +305,7 @@ describe("DocumentEditor: create", () => {
     expect(within(sources).queryByRole("alert")).toBeNull();
   });
 
-  it("sends the picked sources, shows the save in flight, then leaves for the new document with a toast", async () => {
+  it("sends the picked sources, shows the save in flight, then reconciles and leaves for the new document with a toast", async () => {
     mocks.loadTimelinePageFn.mockResolvedValue({
       items: [timelineItem("m1", "打ち合わせ")],
       nextCursor: null,
@@ -314,6 +314,7 @@ describe("DocumentEditor: create", () => {
     mocks.createDocumentFn.mockReturnValue(create.promise);
     const { router, save } = await drawCreate();
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(screen.getByRole("button", { name: "出典を追加" }));
     fireEvent.click(await screen.findByRole("button", { name: "出典に追加" }));
 
@@ -344,6 +345,9 @@ describe("DocumentEditor: create", () => {
       }),
     );
     expect(toastRegion().textContent).toBe("保存しました");
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("keeps the input, shows the failure at the head of the sheet and retries the save", async () => {
@@ -407,6 +411,7 @@ describe("DocumentEditor: edit", () => {
     });
     const { router, save } = await drawEdit();
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     const { title, body } = editorForm("ドキュメントを編集");
     expect(title.value).toBe("設計メモ");
     expect(body.value).toBe("本文");
@@ -446,6 +451,11 @@ describe("DocumentEditor: edit", () => {
       }),
     );
     expect(toastRegion().textContent).toBe("保存しました");
+    // `/documents/$documentId` is cached with `staleTime: Infinity`, so
+    // without this the screen behind 「保存しました」 is the body from before.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("leaves the sources out when the document has none", async () => {

@@ -11,13 +11,13 @@ import { DiffView } from "@/components/memoHistory/DiffView";
 import { RevisionDiff } from "@/components/memoHistory/RevisionDiff";
 import {
   HISTORY_SECTION_CLASS,
-  HISTORY_SUBJECT_CLASS,
   NO_SELECTION,
   RevisionList,
   type RevisionSelection,
 } from "@/components/memoHistory/RevisionList";
 import { RollbackControl } from "@/components/memoHistory/RollbackControl";
 import { actorLabel } from "@/components/timeline/MemoEntry";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDateTime } from "@/presentation/time";
@@ -117,6 +117,9 @@ export function DocumentRevisionHistory({
       "rollbackDocumentFn",
     );
     if (!result.changed) return "unchanged" as const;
+    // The document screen is cached with the body from before the rollback;
+    // invalidating before the navigation is what makes it show the new one.
+    await router.invalidate();
     await router.navigate({
       to: "/documents/$documentId",
       params: { documentId },
@@ -129,7 +132,7 @@ export function DocumentRevisionHistory({
   const showDiff = canCompare && base !== null && base !== shownTarget;
   return (
     <div>
-      <h1 className={HISTORY_SUBJECT_CLASS}>{title}</h1>
+      <h1 className={SHEET_TITLE_CLASS}>{title}</h1>
       <section className={HISTORY_SECTION_CLASS}>
         <RevisionList
           revisions={revisions.map((revision) => ({

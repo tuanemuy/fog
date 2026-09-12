@@ -248,6 +248,8 @@ describe("RevisionHistory rollback", () => {
       memo: { id: "m1" },
     });
     const { router } = await render(THREE);
+    const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     const dialog = await openConfirm();
     expect(toasts().queryByText(`${TIME[0]} の内容に戻しました`)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "戻す" }));
@@ -260,6 +262,10 @@ describe("RevisionHistory rollback", () => {
       await toasts().findByText(`${TIME[0]} の内容に戻しました`),
     ).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+    // The window at `?memo=m1` is cached with the body from before.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("says in a toast when the content is already the same, and stays", async () => {

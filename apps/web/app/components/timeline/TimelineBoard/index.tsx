@@ -161,7 +161,12 @@ export function TimelineBoard({
     older: string | null | undefined;
     newer: string | null | undefined;
   }>({ older: undefined, newer: undefined });
-  const [loadFailure, setLoadFailure] = useState<Direction | null>(null);
+  // A failure belongs to the end it happened at. The two ends are both
+  // reachable at once (a `?memo=` / `?date=` window has a cursor on each
+  // side), and the failed end's sentinel is replaced by its retry — the only
+  // way back to it — so one end's failure must not stop the other's watch.
+  const [olderFailed, setOlderFailed] = useState(false);
+  const [newerFailed, setNewerFailed] = useState(false);
   const [loadingOlder, startOlder] = useTransition();
   const [loadingNewer, startNewer] = useTransition();
   const busy = useRef<Record<Direction, boolean>>({
@@ -206,7 +211,8 @@ export function TimelineBoard({
       const cursor = direction === "older" ? olderCursor : newerCursor;
       if (!cursor || busy.current[direction]) return;
       busy.current[direction] = true;
-      setLoadFailure(null);
+      const setFailed = direction === "older" ? setOlderFailed : setNewerFailed;
+      setFailed(false);
       const start = direction === "older" ? startOlder : startNewer;
       start(async () => {
         try {
@@ -225,7 +231,7 @@ export function TimelineBoard({
         } catch {
           // The sentence is fixed, as for a failed route load: the error's
           // own words do not reach the page.
-          setLoadFailure(direction);
+          setFailed(true);
         } finally {
           busy.current[direction] = false;
         }
@@ -235,12 +241,11 @@ export function TimelineBoard({
   );
 
   useEffect(() => {
-    if (loadFailure) return;
     const watched: [Element, Direction][] = [];
-    if (olderCursor && !loadingOlder && olderSentinel.current) {
+    if (olderCursor && !loadingOlder && !olderFailed && olderSentinel.current) {
       watched.push([olderSentinel.current, "older"]);
     }
-    if (newerCursor && !loadingNewer && newerSentinel.current) {
+    if (newerCursor && !loadingNewer && !newerFailed && newerSentinel.current) {
       watched.push([newerSentinel.current, "newer"]);
     }
     if (watched.length === 0) return;
@@ -262,7 +267,8 @@ export function TimelineBoard({
   }, [
     olderCursor,
     newerCursor,
-    loadFailure,
+    olderFailed,
+    newerFailed,
     loadingOlder,
     loadingNewer,
     loadMore,
@@ -451,7 +457,7 @@ export function TimelineBoard({
           sentinelRef={newerSentinel}
           loading={loadingNewer}
           loadingLabel="新しいメモを読み込み中"
-          failed={loadFailure === "newer"}
+          failed={newerFailed}
           onRetry={() => loadMore("newer")}
         />
       )}
@@ -512,7 +518,7 @@ export function TimelineBoard({
           sentinelRef={olderSentinel}
           loading={loadingOlder}
           loadingLabel="過去のメモを読み込み中"
-          failed={loadFailure === "older"}
+          failed={olderFailed}
           onRetry={() => loadMore("older")}
         />
       )}

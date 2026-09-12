@@ -46,6 +46,8 @@ export function DocumentActions({
           "trashDocumentFn",
         );
         toast("ドキュメントを削除しました");
+        // The topic screen is cached with this document still in its list.
+        await router.invalidate();
         await router.navigate({ to: "/topics/$topicId", params: { topicId } });
       } catch (failure) {
         setConfirming(false);

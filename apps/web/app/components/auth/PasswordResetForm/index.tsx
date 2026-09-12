@@ -5,11 +5,11 @@ import { useActionState, useId, useState } from "react";
 import { AuthSheetTitle } from "@/components/layout/AuthSheet";
 import { Button } from "@/components/ui/Button";
 import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
 import { TextField } from "@/components/ui/TextField";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { executePasswordResetFn } from "../actions";
-import { FormLink } from "../FormLink";
 import { isSessionStartedResult } from "../schema";
 
 /**

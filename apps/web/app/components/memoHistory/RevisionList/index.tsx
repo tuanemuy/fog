@@ -22,13 +22,6 @@ export type RevisionSelection = Readonly<{
 export const NO_SELECTION: RevisionSelection = { base: null, target: null };
 
 /**
- * The name of what the history is of, when the sheet shows it above the
- * history (`.doc-title` in `spec/design/pages/document-history.html`).
- */
-export const HISTORY_SUBJECT_CLASS =
-  "font-base text-xl font-bold leading-tight text-neutral-900 wrap-anywhere";
-
-/**
  * The history under something else on the sheet: it opens with the hairline
  * and the gap that separate it from what is above (`.history-section`).
  */

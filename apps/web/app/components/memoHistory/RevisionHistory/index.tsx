@@ -99,7 +99,10 @@ export function RevisionHistory({ memoId, revisions }: RevisionHistoryProps) {
       "rollbackMemoFn",
     );
     if (result.result === "unchanged") return "unchanged" as const;
-    // Decision J-D: back to the timeline at the memo's position.
+    // Decision J-D: back to the timeline at the memo's position. The cached
+    // window there still holds the body from before the rollback, so it is
+    // invalidated before the navigation rather than after.
+    await router.invalidate();
     await router.navigate({ to: "/", search: { memo: memoId } });
     return "rolledBack" as const;
   };

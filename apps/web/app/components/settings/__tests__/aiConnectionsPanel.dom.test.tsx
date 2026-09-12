@@ -101,6 +101,23 @@ describe("AiConnectionsPanel", () => {
     expect(toastsShown()).toEqual([]);
   });
 
+  // Reachable after every connection was revoked in another tab: nothing to
+  // revoke, nothing that failed. Saying 「失効しました（0 件）」 would claim a
+  // success that did not happen.
+  it("says nothing was there to revoke when neither count moved", async () => {
+    mocks.revokeAllAiClientConnectionsFn.mockResolvedValue({
+      revokedCount: 0,
+      failedCount: 0,
+    });
+    await drawPanel();
+    await revokeAll();
+    await waitFor(() =>
+      expect(toastsShown()).toEqual(["失効する接続はありませんでした"]),
+    );
+    expect(toastsShown().join("")).not.toContain("失効しました");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("treats an answer without the failure count as a system error, on the row", async () => {
     mocks.revokeAllAiClientConnectionsFn.mockResolvedValue({ revokedCount: 3 });
     await drawPanel();

@@ -18,9 +18,11 @@ function FormAnchor(props: FormAnchorProps) {
 }
 
 /**
- * A text link on the auth sheet (`.form-link` in
- * `spec/design/pages/login.html`): the entries under the form (アカウント登録,
- * パスワードを忘れた) and the one link inside a form error that resolves it
- * (ログイン, パスワードリセット). It takes the size of the sentence it sits in.
+ * A text link beside or inside a form (`.form-link` in
+ * `spec/design/pages/login.html` and `settings.html`): the entries under the
+ * auth sheet's form (アカウント登録, パスワードを忘れた), the one link inside a
+ * form error that resolves it (ログイン, パスワードリセット), and the way to a
+ * reset beside the password change. It takes the size of the sentence or the
+ * row it sits in, which is what the owner of that line sets.
  */
 export const FormLink = createLink(FormAnchor);

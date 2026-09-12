@@ -3,10 +3,10 @@
 import { LoadingRegion } from "@/components/ui/LoadingRegion";
 import { RowList } from "@/components/ui/RowList";
 import { SectionLabel } from "@/components/ui/SectionLabel";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 import { Sk } from "@/components/ui/Sk";
 import {
   HISTORY_SECTION_CLASS,
-  HISTORY_SUBJECT_CLASS,
   RevisionRowText,
   StaticRevisionRow,
 } from "../RevisionList";
@@ -52,7 +52,7 @@ export function RevisionHistorySkeleton({
     <LoadingRegion asPageHeading={subject === "document"}>
       {subject === "document" ? (
         <>
-          <p className={HISTORY_SUBJECT_CLASS}>
+          <p className={SHEET_TITLE_CLASS}>
             <Sk>ドキュメントのタイトル</Sk>
           </p>
           <div className={HISTORY_SECTION_CLASS}>{history}</div>

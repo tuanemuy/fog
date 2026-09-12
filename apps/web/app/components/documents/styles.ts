@@ -1,4 +1,5 @@
 import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 
 // The document screens' own pieces (`spec/design/pages/document.html` /
 // `document-edit.html`). The loaded screens and their skeletons read the same
@@ -12,10 +13,6 @@ export const DOC_CONTEXT_CLASS =
 export const DOC_CONTEXT_LINK_CLASS =
   "rounded-sm text-neutral-600 no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
-/** `.doc-title`, which the title input of the editor shares. */
-export const DOC_TITLE_CLASS =
-  "font-base text-xl font-bold leading-tight text-neutral-900 wrap-anywhere";
-
 /** `.doc-meta`: the update time under the title. */
 export const DOC_META_CLASS =
   "mt-sm flex items-center gap-md font-base text-xs leading-tight text-neutral-400 tabular-nums";
@@ -28,7 +25,7 @@ export const DOC_BODY_CLASS = "mt-section";
  * body run on as one seamless editor, so neither draws a border or a ring —
  * the caret is where the focus shows.
  */
-export const TITLE_INPUT_CLASS = `block w-full min-w-[0] bg-transparent outline-none placeholder:text-neutral-400 ${DOC_TITLE_CLASS}`;
+export const TITLE_INPUT_CLASS = `block w-full min-w-[0] bg-transparent outline-none placeholder:text-neutral-400 ${SHEET_TITLE_CLASS}`;
 
 /**
  * `.body-input`: the body in the reading leading, growing with its content so

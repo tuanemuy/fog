@@ -1,4 +1,5 @@
 import { LoadingRegion } from "@/components/ui/LoadingRegion";
+import { MenuPlaceholder } from "@/components/ui/MenuPlaceholder";
 import { Sk } from "@/components/ui/Sk";
 import {
   DAY_ENTRIES_CLASS,
@@ -43,9 +44,7 @@ export function TimelineSkeleton() {
               <span className={TIME_LABEL_CLASS}>
                 <Sk>{time}</Sk>
               </span>
-              <span aria-hidden="true" className="flex p-xs">
-                <span className="size-icon-sm" />
-              </span>
+              <MenuPlaceholder />
             </div>
             <div className={ENTRY_BODY_CLASS}>
               <p className="font-base text-base leading-normal">

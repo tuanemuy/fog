@@ -1,3 +1,5 @@
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
+
 // The text of the topic screens, shared by the loaded DOM and its skeleton
 // the skeleton lays `Sk` over the same elements, so
 // both read their line heights from one definition.
@@ -16,9 +18,8 @@ export const TOPIC_DESC_CLASS =
 /** The title line of P-07: the name and its menu (`.topic-head`). */
 export const TOPIC_HEAD_CLASS = "flex items-center justify-between gap-sm";
 
-/** P-07's name (`.topic-title`). */
-export const TOPIC_TITLE_CLASS =
-  "min-w-[0] font-base text-xl font-bold leading-tight text-neutral-900 wrap-anywhere";
+/** P-07's name (`.topic-title`): the sheet's title, shrinkable in the head row. */
+export const TOPIC_TITLE_CLASS = `min-w-[0] ${SHEET_TITLE_CLASS}`;
 
 /** P-07's description (`.topic-desc`). */
 export const TOPIC_DETAIL_DESC_CLASS =

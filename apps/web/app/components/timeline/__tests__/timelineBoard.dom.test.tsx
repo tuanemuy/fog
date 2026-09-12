@@ -511,6 +511,60 @@ describe("TimelineBoard infinite scroll", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  // A `?memo=` window has a cursor at both ends, and there are no
+  // 「もっと読む」 buttons: the failed end's only way back is its own 再試行,
+  // and the other end has nothing but its sentinel.
+  it("stops only the end that failed, leaving the other end loading and the failed one its retry", async () => {
+    mocks.loadTimelinePageFn
+      .mockResolvedValueOnce({
+        status: 500,
+        unhandled: true,
+      } as unknown as TimelinePageView)
+      .mockResolvedValueOnce({
+        items: [memo("newer", "newer memo", JAN_2_EARLY)],
+        nextCursor: null,
+      });
+    await renderBoard(
+      {
+        items: [memo("m1", "pivot", JAN_1_LATE)],
+        pivotId: null,
+        olderCursor: "cursor-older",
+        newerCursor: "cursor-newer",
+        target: { memoId: "m1", state: "found" },
+      },
+      { memo: "m1" },
+      "/?memo=m1",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    expect(sentinel("newer")).toBeDefined();
+
+    intersect(sentinel("older") as Element);
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("読み込めませんでした")).toBeTruthy();
+
+    const newer = await waitFor(() => {
+      const found = sentinel("newer");
+      if (found === undefined) throw new Error("the newer sentinel is gone");
+      return found;
+    });
+    intersect(newer);
+    expect(mocks.loadTimelinePageFn).toHaveBeenLastCalledWith({
+      data: {
+        cursor: "cursor-newer",
+        direction: "newer",
+        limit: 50,
+        keyword: null,
+      },
+    });
+    await screen.findByText("newer memo");
+    // The older end's retry is still the way back to it.
+    expect(
+      within(await screen.findByRole("alert")).getByRole("button", {
+        name: "再試行",
+      }),
+    ).toBeTruthy();
+  });
+
   it("loads the newer page from the top sentinel and prepends it", async () => {
     const newer = deferred<TimelinePageView>();
     mocks.loadTimelinePageFn.mockReturnValue(newer.promise);

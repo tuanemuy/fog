@@ -146,6 +146,8 @@ export function TopicHeader({ topic }: { topic: TopicView }) {
           isTrashTopicResult,
           "trashTopicFn",
         );
+        // The topic list is cached with this topic still on it.
+        await router.invalidate();
         await navigate({ to: "/topics" });
       } catch (failure) {
         setConfirming(false);

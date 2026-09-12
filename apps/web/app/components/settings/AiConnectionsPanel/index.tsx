@@ -25,14 +25,23 @@ export function notRevokedMessage(failedCount: number): string {
 }
 
 /**
+ * The run that found nothing to revoke — every connection was already gone
+ * (revoked in another tab, expired). Nothing failed, so there is no item to
+ * hang a message on, and the screen is already what it should be: a one-off
+ * notice, which is a toast.
+ */
+export const NOTHING_REVOKED_MESSAGE = "失効する接続はありませんでした";
+
+/**
  * P-03's AI-connection step (S-AC-06 「すべて失効」): the row at the end of
  * the connection list (`spec/design/pages/password-reset.html`,
  * `.revoke-all`), confirmed before it runs. The action is idempotent and an
  * OCC conflict on one connection does not stop the rest (design △-9), so an
  * answer can be a success and a partial failure at once. The two are split
  * — what was revoked is a toast; what could not be is a
- * row error that stays, with the retry. The per-connection listing is
- * `AiConnectionsList`.
+ * row error that stays, with the retry. A run that revoked nothing and
+ * failed at nothing says so instead of claiming a success. The
+ * per-connection listing is `AiConnectionsList`.
  */
 export function AiConnectionsPanel() {
   const revokeAll = useServerFn(revokeAllAiClientConnectionsFn);
@@ -48,8 +57,10 @@ export function AiConnectionsPanel() {
           "revokeAllAiClientConnectionsFn",
         );
         await router.invalidate();
-        if (result.revokedCount > 0 || result.failedCount === 0) {
+        if (result.revokedCount > 0) {
           toast(revokedMessage(result.revokedCount));
+        } else if (result.failedCount === 0) {
+          toast(NOTHING_REVOKED_MESSAGE);
         }
         return {
           failure:

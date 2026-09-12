@@ -119,6 +119,10 @@ export function DocumentEditor(props: DocumentEditorProps) {
             "createDocumentFn",
           );
           toast("保存しました");
+          // Before the navigation, not after: the destination's cached match
+          // is invalidated too, so the screen that opens is the saved one
+          // rather than the version the router already holds.
+          await router.invalidate();
           await router.navigate({
             to: "/documents/$documentId",
             params: { documentId: created.id },
@@ -144,6 +148,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
           return { error: null };
         }
         toast("保存しました");
+        await router.invalidate();
         await router.navigate({
           to: "/documents/$documentId",
           params: { documentId: props.document.id },

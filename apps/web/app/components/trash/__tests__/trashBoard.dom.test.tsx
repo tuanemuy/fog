@@ -2,7 +2,13 @@ import type {
   TrashItemView,
   TrashListView,
 } from "@repo/core/application/trash/view";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { toastRegion, withToasts } from "@/components/__tests__/toastFrame";
@@ -115,6 +121,24 @@ const itemOf = (title: string) => {
 
 const button = (name: string) =>
   screen.getByRole("button", { name }) as HTMLButtonElement;
+
+/**
+ * Escape on a native `<dialog>`, which jsdom does not implement: the
+ * cancelable `cancel` event, and, unless it is refused, the close it asks
+ * for. Answers whether the dialog refused it.
+ */
+function pressEscape(dialog: HTMLDialogElement): boolean {
+  let refused = false;
+  act(() => {
+    refused = !dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    if (refused) return;
+    // jsdom has no `close()`; what closing is, to the page, is the attribute
+    // going away and the `close` event React listens for.
+    dialog.removeAttribute("open");
+    dialog.dispatchEvent(new Event("close"));
+  });
+  return refused;
+}
 
 describe("remainingLabel / groupRows", () => {
   it("rounds the days up and says imminent past the deadline", () => {
@@ -506,6 +530,54 @@ describe("TrashBoard", () => {
     expect(
       within(picker).queryByRole("button", { name: "候補を読み直す" }),
     ).toBeNull();
+  });
+
+  it("keeps the destination picker up when Escape is pressed mid-restore, and it stays usable afterwards", async () => {
+    let settle: (value: unknown) => void = () => {};
+    mocks.restoreDocumentFn
+      .mockResolvedValueOnce({
+        result: "destinationSelectionRequired",
+        documentId: "d1",
+      })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+      );
+    mocks.loadRestoreDestinationsFn.mockResolvedValue({
+      topics: [{ id: "tA", name: "読書メモ", status: "active" }],
+    });
+    await draw(list([DOC]));
+    fireEvent.click(button("2024年Q1レビュー を復元"));
+    const picker = (await screen.findByRole("dialog", {
+      name: "復元先のトピック",
+    })) as HTMLDialogElement;
+    await waitFor(() =>
+      expect(within(picker).getAllByRole("radio")).toHaveLength(2),
+    );
+    fireEvent.click(within(picker).getByRole("button", { name: "復元" }));
+    await waitFor(() =>
+      expect(
+        within(picker).getByRole("button", { name: "復元中…" }),
+      ).toBeTruthy(),
+    );
+
+    // The dialog is the same element for as long as the restore runs, so a
+    // close it does not refuse is one it never comes back from.
+    expect(pressEscape(picker)).toBe(true);
+    expect(picker.hasAttribute("open")).toBe(true);
+    expect(screen.getByRole("dialog", { name: "復元先のトピック" })).toBe(
+      picker,
+    );
+
+    settle({ result: "destinationSelectionRequired", documentId: "d1" });
+    await waitFor(() =>
+      expect(within(picker).getByRole("button", { name: "復元" })).toBeTruthy(),
+    );
+    expect(within(picker).getAllByRole("radio")).toHaveLength(2);
+    // Once nothing is in flight, Escape closes it as it always did.
+    expect(pressEscape(picker)).toBe(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("confirms a hard delete — naming the set for a topic, not for a lone item — then removes the rows with a toast", async () => {

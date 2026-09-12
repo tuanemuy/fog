@@ -1,20 +1,9 @@
 import { LoadingRegion } from "@/components/ui/LoadingRegion";
+import { MenuPlaceholder } from "@/components/ui/MenuPlaceholder";
 import { Row } from "@/components/ui/Row";
 import { RowList } from "@/components/ui/RowList";
 import { Sk } from "@/components/ui/Sk";
 import { TOPIC_DESC_CLASS, TOPIC_NAME_CLASS } from "../styles";
-
-/**
- * Where a `…` menu's trigger will be: its box (the row placement's padding
- * around the small glyph), empty, and nothing to press.
- */
-export function MenuPlaceholder() {
-  return (
-    <span aria-hidden="true" className="flex p-xs">
-      <span className="size-icon-sm" />
-    </span>
-  );
-}
 
 const ROWS = [
   { name: "ブランド刷新", description: "サイトとロゴの見直し。秋の展示会まで" },

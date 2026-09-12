@@ -225,6 +225,7 @@ describe("DocumentRevisionHistory", () => {
     });
     const { router } = await draw(THREE);
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(row(1));
     fireEvent.click(screen.getByRole("button", { name: "この内容に戻す" }));
     const dialog = screen.getByRole("dialog", {
@@ -247,6 +248,10 @@ describe("DocumentRevisionHistory", () => {
     expect(
       await toasts().findByText(`${TIME[0]} の内容に戻しました`),
     ).toBeTruthy();
+    // The document screen is cached with the body from before the rollback.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("says so in a toast when the rollback changes nothing, and reports a rejection under the button", async () => {

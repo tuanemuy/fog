@@ -7,11 +7,6 @@ plan.md のスコープ（`apps/web` の見た目の載せ替え）に収まら�
 
 ## 挙動
 
-- **戻す操作がキャッシュを読み直さずに遷移する**（step-13）。メモ / ドキュメントの
-  ロールバックは、成功後に `staleTime: Infinity` のルート（`/documents/$documentId`、
-  `?memo=` つきのタイムライン）へ `router.invalidate()` なしで遷移する。先に開いて
-  いた版がキャッシュに残っていると、戻す前の内容が出うる。CLAUDE.md の
-  「Every mutation reconciles with `router.invalidate()`」との差。ブラウザでは未確認
 - **ゴミ箱と確認ダイアログが保持日数を出せない**（step-11・15）。モックは
   「30日後に完全に削除されます」と書くが、保持期限は P-13 で変えられ、
   `listTrash` の結果にも確認ダイアログにも日数が無い。画面は「保持期限を過ぎると」

@@ -1,10 +1,10 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
 import { TextField } from "@/components/ui/TextField";
 import { useToast } from "@/components/ui/Toast";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
@@ -45,10 +45,6 @@ export function classifyPasswordChangeError(
   }
   return { ...INITIAL, formError: message };
 }
-
-// `.form-link` in `spec/design/pages/settings.html`.
-const FORM_LINK_CLASS =
-  "rounded-sm font-base text-sm leading-tight text-primary-dark no-underline transition-colors hover:text-primary-darker focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 /**
  * P-13's password change (S-AC-07, logged in). Shown only for an account
@@ -114,13 +110,13 @@ export function PasswordChangeForm() {
         readOnly={pending}
         error={state.newError}
       />
-      <div className="flex flex-wrap items-center gap-x-lg gap-y-sm">
+      {/* The row sets the size of the sentence: `FormLink` takes it from
+          here, and the button carries its own step's. */}
+      <div className="flex flex-wrap items-center gap-x-lg gap-y-sm font-base text-sm leading-tight">
         <Button variant="fill-sm" type="submit" disabled={pending}>
           {pending ? "変更中…" : "パスワードを変更"}
         </Button>
-        <Link to="/password-reset" className={FORM_LINK_CLASS}>
-          パスワードを忘れた
-        </Link>
+        <FormLink to="/password-reset">パスワードを忘れた</FormLink>
       </div>
     </form>
   );

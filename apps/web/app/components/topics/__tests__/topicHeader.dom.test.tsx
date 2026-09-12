@@ -229,6 +229,7 @@ describe("TopicHeader", () => {
       { path: "/topics/$topicId" },
     );
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
     let dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("heading").textContent).toBe(
@@ -248,6 +249,10 @@ describe("TopicHeader", () => {
     );
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ to: "/topics" }),
+    );
+    // The topic list is cached with this topic still on it.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
     );
   });
 
