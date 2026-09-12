@@ -36,7 +36,7 @@ export const NOTHING_REVOKED_MESSAGE = "失効する接続はありませんで�
  * P-03's AI-connection step (S-AC-06 「すべて失効」): the row at the end of
  * the connection list (`spec/design/pages/password-reset.html`,
  * `.revoke-all`), confirmed before it runs. The action is idempotent and an
- * OCC conflict on one connection does not stop the rest (design △-9), so an
+ * OCC conflict on one connection does not stop the rest, so an
  * answer can be a success and a partial failure at once. The two are split
  * — what was revoked is a toast; what could not be is a
  * row error that stays, with the retry. A run that revoked nothing and

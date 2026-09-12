@@ -36,7 +36,7 @@ const NUMBER_INPUT_CLASS =
  * the number, its unit and 「保存」, stacked on a narrow screen. While the
  * request runs the field is read-only and the button says 「保存中…」; a
  * rejection keeps the draft and names the rule under the row; the success is
- * a toast. The domain has no upper bound (decision △-4); the transport's DoS
+ * a toast. The domain has no upper bound; the transport's DoS
  * ceiling is checked here too, so a value past it gets words instead of the
  * schema's English. The submit dispatches the action itself rather than
  * through `<form action>`: that path resets the form afterwards, and a

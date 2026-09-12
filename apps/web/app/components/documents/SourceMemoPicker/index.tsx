@@ -31,15 +31,15 @@ export type PickedMemo = Readonly<{
   postedAt: Date;
 }>;
 
-/** How many candidates one search shows (decision △-2). */
+/** How many candidates one search shows. */
 export const PICKER_PAGE_LIMIT = 20;
 
 /**
  * P-09's source-memo picker (`spec/design/pages/document-edit.html`, 出典の
  * 検索と選択): 「出典を追加」 turns into the search box in its place, which
  * lists the most recent memos at once and a keyword's matches on Enter — the
- * timeline's keyword filter re-used as the search (decision △-2, a substring
- * match over the user's own memos, 20 at most). Only active memos come back,
+ * timeline's keyword filter re-used as the search (a substring match over
+ * the user's own memos, 20 at most). Only active memos come back,
  * so the trash never offers itself as a source. Closing the box brings the
  * button back.
  */

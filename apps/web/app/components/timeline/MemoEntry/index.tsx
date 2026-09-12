@@ -43,7 +43,7 @@ import {
 
 export type DisplayMemo = TimelineItemView & { pending?: boolean };
 
-/** Decision J-H: the user reads as 「あなた」; an AI client by its name. */
+/** The user reads as 「あなた」; an AI client by its name. */
 export function actorLabel(actor: ActorView): string {
   return actor.kind === "user" ? "あなた" : actor.clientName;
 }

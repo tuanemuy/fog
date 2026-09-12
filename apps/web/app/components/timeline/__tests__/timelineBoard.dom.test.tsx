@@ -759,8 +759,8 @@ describe("TimelineBoard: date jump", () => {
     expect(screen.queryByText(/のメモはありません/)).toBeNull();
   });
 
-  // B-1: the viewport starts at the memo the day resolved to, not at the
-  // newest row of the window.
+  // The viewport starts at the memo the day resolved to, not at the newest
+  // row of the window.
   it("scrolls the pivot's day group into view when the pivot heads it", async () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;

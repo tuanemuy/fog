@@ -51,12 +51,12 @@ type EditorState = Readonly<{ error: string | null }>;
 
 /**
  * P-09 in both modes (`spec/design/pages/document-edit.html`). The form owns
- * the save (CLAUDE.md, "add is dispatched from the form's action"); its
- * submit button sits in the header (`HeaderActions`), outside the form's
- * DOM and tied to it by `form`. Title and body run on as one seamless editor
- * under the topic. Create posts no change reason (the application writes
- * 「作成」, △-3) and picks its sources here; edit shows the existing sources
- * read-only (△-4), takes an optional reason (blank → 「手動編集」) and carries
+ * the save, and survives it; its submit button sits in the header
+ * (`HeaderActions`), outside the form's DOM and tied to it by `form`. Title
+ * and body run on as one seamless editor under the topic. Create posts no
+ * change reason (the application writes 「作成」) and picks its sources here;
+ * edit shows the existing sources read-only, takes an optional reason
+ * (blank → 「手動編集」) and carries
  * the `version` it opened with as the OCC token, answering a conflict with
  * the warning at the head of the sheet and 「そのまま保存」. A saved document
  * is announced by a toast on the way back to it.

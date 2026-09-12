@@ -85,7 +85,7 @@ function save(url: string, filename: string): void {
  * response becomes a Blob that is saved once and stays offered as
  * 「ダウンロード」 while the screen is open. A failure stays under the row
  * with 「リトライ」; a lost session instead names the login that brings the
- * user back here. The zone travels as a hidden input (design D-09).
+ * user back here. The zone travels as a hidden input.
  */
 export function ExportPanel() {
   const form = useRef<HTMLFormElement>(null);

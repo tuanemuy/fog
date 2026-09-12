@@ -60,10 +60,9 @@ export const Route = createRootRoute({
 
 /**
  * A URL no route serves is answered here (`notFoundMode: "root"`), and the
- * root has no frame of its own: the router's default 404 is drawn on the
- * auth sheet. The root declares no not-found
- * component — one here would also catch a screen's `notFound()` and pull it
- * out of the app shell (`router.tsx`).
+ * root has no frame of its own: the router's default 404 is drawn on the auth
+ * sheet. The root declares no not-found component — one here would also catch
+ * a screen's `notFound()` and pull it out of the app shell (`router.tsx`).
  */
 function RootComponent() {
   const unknownUrl = Route.useMatch({

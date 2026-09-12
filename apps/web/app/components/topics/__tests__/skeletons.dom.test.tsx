@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { TopicDetailSkeleton } from "@/components/topics/TopicDetailSkeleton";
 import { TopicsSkeleton } from "@/components/topics/TopicsSkeleton";
 
-// A skeleton is the screen's own DOM with its text
-// laid over — one busy region with one label, stand-in text hidden from
-// assistive technology, and nothing to press.
+// A skeleton is the screen's own DOM with its text laid over — one busy
+// region with one label, stand-in text hidden from assistive technology, and
+// nothing to press.
 function expectOneBusyRegion() {
   const region = screen.getByRole("status");
   expect(region.getAttribute("aria-busy")).toBe("true");

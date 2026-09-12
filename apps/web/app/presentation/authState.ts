@@ -10,8 +10,8 @@ import { noStoreMiddleware } from "./noStoreMiddleware";
  * execution point that reads protected data calls `requireUserId()` itself.
  * Because every protected document passes through here
  * (`requireSessionBeforeLoad`, the `beforeLoad` of `_app` and
- * `_sheet/_authenticated`), `noStoreMiddleware` on this function is what
- * puts `Cache-Control: no-store` on every route under those layouts.
+ * `_sheet/_authenticated`), `noStoreMiddleware` on this function is what puts
+ * `Cache-Control: no-store` on every route under those layouts.
  *
  * Referenced only from route modules, which the RSC manifest already sees;
  * no side-effect import in `__root.tsx` is needed.

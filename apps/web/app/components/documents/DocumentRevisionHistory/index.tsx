@@ -35,7 +35,7 @@ export type DocumentRevisionHistoryProps = Readonly<{
 /**
  * P-10: the document's title as the page's `h1`, then the history in the
  * memo history's shape (who · why, when), two-point selection like the memo
- * history — with the difference (decision △-5) that the first click already
+ * history — with the difference that the first click already
  * shows the diff against the latest revision, and the second click switches
  * it to base → target. 「この内容に戻す」 acts on the base. A single revision
  * has nothing to compare or restore to.

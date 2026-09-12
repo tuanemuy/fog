@@ -16,12 +16,11 @@ export function getRouter() {
     // at the previous one's offset.
     scrollToTopSelectors: [SHEET_SCROLL_SELECTOR],
     defaultPreload: "intent",
-    // A screen's failure and its not-found are drawn in its layout's frame
-    // by these two. The root and the two layouts
-    // under it declare their own error component; no route declares a
-    // not-found component, because a loader's `notFound()` is drawn by the
-    // nearest route up the tree that has one — any declared above a screen
-    // would pull its 404 out of the frame.
+    // A screen's failure and its not-found are drawn in its layout's frame by
+    // these two. The root and the two layouts under it declare their own error
+    // component; no route declares a not-found component, because a loader's
+    // `notFound()` is drawn by the nearest route up the tree that has one —
+    // any declared above a screen would pull its 404 out of the frame.
     defaultErrorComponent: RouteError,
     defaultNotFoundComponent: NotFound,
     defaultOnCatch: reportRouteError,

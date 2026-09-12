@@ -19,7 +19,7 @@ import { SHEET_ALERTS_CLASS } from "../styles";
  * P-08's operations, as the header's icons (`spec/design/pages/document.html`,
  * `.ops-actions`): edit and history are links, delete is a confirmed soft
  * delete that leaves the screen for the topic with a toast. The page itself
- * goes away, so no optimistic state is kept here (PH-03 §4.5). A failed
+ * goes away, so no optimistic state is kept here. A failed
  * delete stays on the page, at the head of the sheet where this is placed,
  * with a retry of the delete already confirmed.
  */

@@ -1,8 +1,8 @@
 import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 
-// The text of the topic screens, shared by the loaded DOM and its skeleton
-// the skeleton lays `Sk` over the same elements, so
-// both read their line heights from one definition.
+// The text of the topic screens, shared by the loaded DOM and its skeleton:
+// the skeleton lays `Sk` over the same elements, so both read their line
+// heights from one definition.
 
 /** A topic row's name line (`spec/design/pages/topics.html`, `.t-name`). */
 export const TOPIC_NAME_CLASS = "flex items-center gap-sm font-medium";

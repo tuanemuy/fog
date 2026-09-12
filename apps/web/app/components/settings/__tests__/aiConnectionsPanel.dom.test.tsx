@@ -64,9 +64,8 @@ describe("AiConnectionsPanel", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  // Design △-9: a partial failure is split — the part
-  // that went through is a toast, the part that did not stays on the row
-  // with a retry.
+  // A partial failure is split — the part that went through is a toast, the
+  // part that did not stays on the row with a retry.
   it("splits a partial failure: the revoked count as a toast, the rest under the row with a retry", async () => {
     mocks.revokeAllAiClientConnectionsFn
       .mockResolvedValueOnce({ revokedCount: 2, failedCount: 1 })
