@@ -22,7 +22,7 @@ describe("ConfirmDialog", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("names itself by the title and wires both buttons", () => {
+  it("names itself by the title and stacks confirm above cancel", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
     render(
@@ -34,16 +34,38 @@ describe("ConfirmDialog", () => {
       />,
     );
     const dialog = screen.getByRole("dialog", { name: base.title });
-    expect(within(dialog).getByText(base.description)).toBeTruthy();
-    const confirm = within(dialog).getByRole("button", { name: "削除" });
-    expect(confirm.classList.contains("fog-primary")).toBe(true);
-    fireEvent.click(confirm);
+    const title = within(dialog).getByRole("heading", { name: base.title });
+    const sentence = within(dialog).getByText(base.description);
+    expect(title.nextElementSibling).toBe(sentence);
+    const buttons = within(dialog).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "削除",
+      "キャンセル",
+    ]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "削除" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "キャンセル" }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("paints a destructive confirmation red", () => {
+  it("confirms with the primary fill unless the action is destructive, which gets the red outline and ring", () => {
+    const { unmount } = render(
+      <ConfirmDialog
+        {...base}
+        confirmLabel="戻す"
+        open
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const primary = screen.getByRole("button", { name: "戻す" });
+    expect(primary.classList.contains("bg-primary-dark")).toBe(true);
+    expect(primary.classList.contains("text-error")).toBe(false);
+    expect(primary.classList.contains("focus-visible:outline-focus")).toBe(
+      true,
+    );
+    unmount();
+
     render(
       <ConfirmDialog
         {...base}
@@ -53,14 +75,32 @@ describe("ConfirmDialog", () => {
         onCancel={() => {}}
       />,
     );
+    const danger = screen.getByRole("button", { name: "削除" });
+    expect(danger.classList.contains("text-error")).toBe(true);
+    expect(danger.classList.contains("bg-primary-dark")).toBe(false);
     expect(
-      screen
-        .getByRole("button", { name: "削除" })
-        .classList.contains("fog-danger"),
+      danger.classList.contains("focus-visible:outline-focus-danger"),
     ).toBe(true);
+    const cancel = screen.getByRole("button", { name: "キャンセル" });
+    expect(cancel.classList.contains("text-neutral-600")).toBe(true);
+    expect(
+      cancel.classList.contains("focus-visible:outline-focus-danger"),
+    ).toBe(false);
+  });
+
+  it("cancels on a click on the backdrop, not on one inside the box", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog {...base} open onConfirm={() => {}} onCancel={onCancel} />,
+    );
+    fireEvent.click(screen.getByText(base.description));
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it("disables both buttons and relabels while pending", () => {
+    const onCancel = vi.fn();
     render(
       <ConfirmDialog
         {...base}
@@ -68,7 +108,7 @@ describe("ConfirmDialog", () => {
         pending
         cancelLabel="やめる"
         onConfirm={() => {}}
-        onCancel={() => {}}
+        onCancel={onCancel}
       />,
     );
     const confirm = screen.getByRole("button", { name: "削除中…" });
@@ -77,5 +117,7 @@ describe("ConfirmDialog", () => {
       (screen.getByRole("button", { name: "やめる" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,26 @@
-import { createRouter } from "@tanstack/react-router";
-import { screen, within } from "@testing-library/react";
+import {
+  type AnyRoute,
+  createRouter,
+  type StaticDataRouteOption,
+} from "@tanstack/react-router";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
-import { AppShell, NAV_ITEMS, titleFor } from "@/components/layout/AppShell";
+import {
+  renderWithRouter,
+  STUB_PATHS,
+  type StubStaticData,
+} from "@/components/__tests__/renderWithRouter";
+import { AppShell } from "@/components/layout/AppShell";
+import { NAV_ITEMS } from "@/components/layout/navigation";
+import type { HeaderEntity } from "@/components/layout/PageHeader";
+import {
+  BottomDock,
+  HeaderActions,
+  useSheetScrollContainer,
+} from "@/components/layout/ShellSlots";
+import { useToast } from "@/components/ui/Toast";
+import { getRouter } from "@/router";
 import { routeTree } from "@/routeTree.gen";
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
@@ -19,10 +37,42 @@ const SPEC_DESTINATIONS = [
   "/settings",
 ] as const;
 
+/** logo.md: the noun each page with a back button names. */
+const BACK_ENTITIES: Readonly<Record<string, HeaderEntity>> = {
+  "/topics/$topicId": "topic",
+  "/memos/$memoId/history": "memo",
+  "/documents/$documentId": "document",
+  "/documents/$documentId/edit": "document",
+  "/documents/$documentId/history": "document",
+  "/topics/$topicId/documents/new": "document",
+};
+
+const productionRouter = () => createRouter({ routeTree });
+
 /** Full paths the production route tree actually serves. */
 function productionPaths(): string[] {
-  return Object.keys(createRouter({ routeTree }).routesByPath);
+  return Object.keys(productionRouter().routesByPath);
 }
+
+function productionRoute(path: string): AnyRoute | undefined {
+  return new Map<string, AnyRoute>(
+    Object.entries(productionRouter().routesByPath),
+  ).get(path);
+}
+
+/** The screens drawn inside the shell: every route under `_app`. */
+function screensInTheShell(): AnyRoute[] {
+  const routes: AnyRoute[] = Object.values(productionRouter().routesById);
+  return routes.filter((route) => route.id.startsWith("/_app/"));
+}
+
+/** The production routes' header declarations, handed to the stub tree. */
+const PRODUCTION_STATIC_DATA: StubStaticData = Object.fromEntries(
+  STUB_PATHS.map((path) => [
+    path,
+    (productionRoute(path)?.options.staticData ?? {}) as StaticDataRouteOption,
+  ]),
+);
 
 function mainNav() {
   return screen.getByRole("navigation", { name: "メインナビゲーション" });
@@ -59,29 +109,42 @@ describe("NAV_ITEMS", () => {
       "ゴミ箱",
       "設定",
     ]);
+    expect(NAV_ITEMS[1]?.match("/documents/x")).toBe(true);
+    expect(NAV_ITEMS[1]?.match("/topics/x")).toBe(true);
   });
 });
 
-describe("titleFor", () => {
-  it("names the timeline, the memo history and the settings screens", () => {
-    expect(titleFor("/")).toBe("タイムライン");
-    expect(titleFor("/memos/abc/history")).toBe("メモ履歴");
-    expect(titleFor("/settings")).toBe("設定");
+describe("header declarations", () => {
+  it("are made by every screen the shell draws", () => {
+    const screens = screensInTheShell();
+    expect(screens.length).toBeGreaterThan(0);
+    for (const route of screens) {
+      expect(route.options.staticData?.header, route.id).toBeDefined();
+    }
   });
 
-  it("names the knowledge screens", () => {
-    expect(titleFor("/search")).toBe("検索");
-    expect(titleFor("/trash")).toBe("ゴミ箱");
-    expect(titleFor("/topics")).toBe("トピック");
-    expect(titleFor("/topics/abc")).toBe("トピック詳細");
-    expect(titleFor("/topics/abc/documents/new")).toBe("ドキュメント作成");
-    expect(titleFor("/documents/abc")).toBe("ドキュメント");
-    expect(titleFor("/documents/abc/edit")).toBe("ドキュメント編集");
-    expect(titleFor("/documents/abc/history")).toBe("ドキュメント履歴");
+  it("give the five destinations the lockup, titled as the nav names them", () => {
+    for (const item of NAV_ITEMS) {
+      expect(productionRoute(item.to)?.options.staticData?.header).toEqual({
+        kind: "top",
+        title: item.label,
+      });
+    }
   });
 
-  it("falls back to the product name elsewhere", () => {
-    expect(titleFor("/nowhere")).toBe("fog");
+  it("name what a page with a back button is about, and lead back to a served route", () => {
+    const backPages = screensInTheShell().filter(
+      (route) => route.options.staticData?.header?.kind === "back",
+    );
+    expect(backPages.map((route) => route.fullPath).sort()).toEqual(
+      Object.keys(BACK_ENTITIES).sort(),
+    );
+    for (const route of backPages) {
+      const header = route.options.staticData?.header;
+      if (header?.kind !== "back") throw new Error(route.id);
+      expect(header.entity, route.fullPath).toBe(BACK_ENTITIES[route.fullPath]);
+      expect(productionPaths(), route.fullPath).toContain(header.back);
+    }
   });
 });
 
@@ -103,8 +166,20 @@ describe("AppShell", () => {
     expect(screen.getByText("child")).toBeTruthy();
   });
 
-  it("marks the timeline item current on /", async () => {
-    await renderWithRouter(<AppShell>x</AppShell>, { path: "/" });
+  it("puts the lockup, not a text wordmark, on the sidebar's link home", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>);
+    const home = screen.getByRole("link", { name: "fog タイムライン" });
+    expect(home.getAttribute("href")).toBe("/");
+    expect(within(home).getByRole("img", { name: "fog" }).tagName).toBe("svg");
+    expect(home.textContent).toBe("");
+    expect(home.closest("aside")?.classList.contains("lg:flex")).toBe(true);
+  });
+
+  it("marks the timeline item current on / and titles the page from its declaration", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>, {
+      path: "/",
+      staticData: PRODUCTION_STATIC_DATA,
+    });
     const nav = within(mainNav());
     expect(
       nav
@@ -114,13 +189,16 @@ describe("AppShell", () => {
     expect(
       nav.getByRole("link", { name: "設定" }).getAttribute("aria-current"),
     ).toBeNull();
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "タイムライン",
-    );
+    const h1 = screen.getByRole("heading", { level: 1 });
+    expect(h1.textContent).toBe("タイムライン");
+    expect(h1.classList.contains("sr-only")).toBe(true);
   });
 
   it("marks the settings item current on /settings", async () => {
-    await renderWithRouter(<AppShell>x</AppShell>, { path: "/settings" });
+    await renderWithRouter(<AppShell>x</AppShell>, {
+      path: "/settings",
+      staticData: PRODUCTION_STATIC_DATA,
+    });
     const nav = within(mainNav());
     expect(
       nav.getByRole("link", { name: "設定" }).getAttribute("aria-current"),
@@ -133,8 +211,11 @@ describe("AppShell", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("設定");
   });
 
-  it("marks the topics item current on /topics", async () => {
-    await renderWithRouter(<AppShell>x</AppShell>, { path: "/topics" });
+  it("marks the topics item current under a topic and draws its back header", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>, {
+      path: "/topics/$topicId",
+      staticData: PRODUCTION_STATIC_DATA,
+    });
     const nav = within(mainNav());
     expect(
       nav.getByRole("link", { name: "トピック" }).getAttribute("aria-current"),
@@ -144,23 +225,200 @@ describe("AppShell", () => {
         .getByRole("link", { name: "タイムライン" })
         .getAttribute("aria-current"),
     ).toBeNull();
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "トピック",
-    );
-    expect(NAV_ITEMS[1]?.match("/documents/x")).toBe(true);
-    expect(NAV_ITEMS[1]?.match("/topics/x")).toBe(true);
+    // The topic's own name is the `h1` (the route declares `h1: "sheet"`),
+    // so the header's English word is a label and no heading of the frame's.
+    const header = screen.getByRole("banner");
+    const label = within(header).getByText("topic");
+    expect(label.tagName).toBe("SPAN");
+    expect(label.getAttribute("lang")).toBe("en");
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(
+      within(header).getByRole("link", { name: "戻る" }).getAttribute("href"),
+    ).toBe("/topics");
   });
 
-  it("offers a dialog-backed mobile menu and a skip link to #main", async () => {
+  // No nav item links to these paths, so the mark is the shell's `match`
+  // and not the router's own active-link logic.
+  it.each([
+    ["/documents/$documentId", "トピック", "タイムライン"],
+    ["/memos/$memoId/history", "タイムライン", "トピック"],
+  ] as const)(
+    "marks the destination a page on %s belongs to",
+    async (path, current, other) => {
+      await renderWithRouter(<AppShell>x</AppShell>, { path });
+      const nav = within(mainNav());
+      expect(
+        nav.getByRole("link", { name: current }).getAttribute("aria-current"),
+      ).toBe("page");
+      expect(
+        nav.getByRole("link", { name: other }).getAttribute("aria-current"),
+      ).toBeNull();
+    },
+  );
+
+  it("titles a route that declares no header with the product name", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>, { path: "/settings" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("fog");
+  });
+
+  it("offers an icon menu for the nav sheet and a skip link to #main", async () => {
     await renderWithRouter(<AppShell>x</AppShell>);
-    expect(
-      screen
-        .getByRole("button", { name: "メニューを開く" })
-        .getAttribute("aria-haspopup"),
-    ).toBe("dialog");
+    const menu = screen.getByRole("button", { name: "メニュー" });
+    expect(menu.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(menu.textContent).toBe("");
+    expect(menu.querySelector("svg")?.getAttribute("data-icon")).toBe("menu");
     expect(
       screen.getByRole("link", { name: "本文へ移動" }).getAttribute("href"),
     ).toBe("#main");
     expect(screen.getByRole("main").id).toBe("main");
+  });
+
+  it("scrolls the sheet — the element the router resets and restores — not the window", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>);
+    const selectors = getRouter().options.scrollToTopSelectors ?? [];
+    expect(selectors).toHaveLength(1);
+    const [selector] = selectors;
+    if (typeof selector !== "string") throw new Error("not a selector");
+    const sheet = screen.getByRole("main");
+    expect(document.querySelector(selector)).toBe(sheet);
+    expect(sheet.classList.contains("overflow-y-auto")).toBe(true);
+    expect(sheet.contains(screen.getByRole("banner"))).toBe(false);
+  });
+
+  it("puts the header and the sheet on one horizontal frame", async () => {
+    await renderWithRouter(<AppShell>x</AppShell>);
+    const frame = ["mx-auto", "w-sheet", "md:w-sheet-md"];
+    for (const element of [
+      screen.getByRole("banner"),
+      screen.getByRole("main"),
+    ]) {
+      for (const utility of frame) {
+        expect(element.classList.contains(utility), utility).toBe(true);
+      }
+    }
+  });
+
+  // The column is the same on every screen, the foot
+  // is not (the composer's screen needs more), so the screen owns only that.
+  it("holds the text column in the sheet — top and side padding, content-max — and leaves the bottom to the screen", async () => {
+    await renderWithRouter(
+      <AppShell>
+        <p>body</p>
+      </AppShell>,
+    );
+    const column = screen.getByText("body").parentElement;
+    expect(column?.parentElement).toBe(screen.getByRole("main"));
+    const utilities = [...(column?.classList ?? [])];
+    for (const utility of [
+      "mx-auto",
+      "max-w-content",
+      "pt-2xl",
+      "px-lg",
+      "sm:px-2xl",
+    ]) {
+      expect(utilities, utility).toContain(utility);
+    }
+    expect(
+      utilities.filter((utility) => /(^|:)(p|py|pb)-/.test(utility)),
+    ).toEqual([]);
+  });
+
+  it("hands the sheet to the screen as its scroll container", async () => {
+    function ReadsContainer() {
+      const container = useSheetScrollContainer();
+      const [id, setId] = useState("none");
+      useEffect(() => setId(container.current?.id ?? "viewport"), [container]);
+      return <p>scrolls in {id}</p>;
+    }
+    await renderWithRouter(
+      <AppShell>
+        <ReadsContainer />
+      </AppShell>,
+    );
+    expect(await screen.findByText("scrolls in main")).toBeTruthy();
+  });
+
+  it("reads as the viewport outside the shell", async () => {
+    function ReadsContainer() {
+      const container = useSheetScrollContainer();
+      const [id, setId] = useState("none");
+      useEffect(() => setId(container.current?.id ?? "viewport"), [container]);
+      return <p>scrolls in {id}</p>;
+    }
+    render(<ReadsContainer />);
+    expect(await screen.findByText("scrolls in viewport")).toBeTruthy();
+  });
+});
+
+describe("AppShell slots", () => {
+  it("puts a screen's header actions into the header, outside the sheet", async () => {
+    await renderWithRouter(
+      <AppShell>
+        <p>body</p>
+        <HeaderActions>
+          <button type="button">保存</button>
+        </HeaderActions>
+      </AppShell>,
+    );
+    const save = await within(screen.getByRole("banner")).findByRole("button", {
+      name: "保存",
+    });
+    const sheet = screen.getByRole("main");
+    expect(sheet.contains(save)).toBe(false);
+    expect(sheet.contains(screen.getByText("body"))).toBe(true);
+    const menu = screen.getByRole("button", { name: "メニュー" });
+    expect(
+      save.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("hosts the toasts outside the sheet, above what a screen docks at the bottom", async () => {
+    function Screen() {
+      const toast = useToast();
+      return (
+        <>
+          <button type="button" onClick={() => toast("メモを削除しました")}>
+            削除
+          </button>
+          <BottomDock>
+            <form aria-label="メモを投稿" />
+          </BottomDock>
+        </>
+      );
+    }
+    await renderWithRouter(
+      <AppShell>
+        <Screen />
+      </AppShell>,
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "削除" }));
+    expect(within(region).getByText("メモを削除しました")).toBeTruthy();
+    const sheet = screen.getByRole("main");
+    expect(sheet.contains(region)).toBe(false);
+    const docked = await screen.findByRole("form", { name: "メモを投稿" });
+    expect(sheet.contains(docked)).toBe(false);
+    expect(docked.parentElement?.parentElement).toBe(region.parentElement);
+    expect(
+      region.compareDocumentPosition(docked) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("refuses to portal anything without the shell", () => {
+    expect(() =>
+      render(
+        <HeaderActions>
+          <button type="button">保存</button>
+        </HeaderActions>,
+      ),
+    ).toThrow(/AppShell/);
+    expect(() =>
+      render(
+        <BottomDock>
+          <form aria-label="メモを投稿" />
+        </BottomDock>,
+      ),
+    ).toThrow(/AppShell/);
   });
 });

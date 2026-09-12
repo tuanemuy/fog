@@ -68,10 +68,11 @@ const INVALID_CREDENTIALS: SerializedError = {
   message: "Invalid credentials",
 };
 
-const EMAIL_MESSAGE = "メールアドレスの形式が正しくありません";
-const PASSWORD_MESSAGE = "パスワードは8文字以上128文字以下で入力してください";
+const EMAIL_MESSAGE = "有効なメールアドレスを入力してください";
+const PASSWORD_MESSAGE = "8文字以上で入力してください";
 const CREDENTIALS_MESSAGE = "メールアドレスまたはパスワードが正しくありません";
-const PASSWORD_HINT = "8文字以上128文字以下で設定してください。";
+const DUPLICATE_MESSAGE = "このメールアドレスは既に登録されています。";
+const PASSWORD_HELPER = "8文字以上";
 const PROVIDERS = ["google", "apple"] as const;
 
 describe("classifyAuthError", () => {
@@ -91,7 +92,7 @@ describe("classifyAuthError", () => {
   it("turns a duplicate address into a form error that offers login", () => {
     expect(classifyAuthError(EMAIL_ALREADY_REGISTERED, "signup")).toEqual({
       fieldErrors: {},
-      formError: "このメールアドレスは既に登録されています",
+      formError: DUPLICATE_MESSAGE,
       duplicate: true,
     });
   });
@@ -123,21 +124,33 @@ function fill(email: string, password: string) {
   });
 }
 
-describe("AuthForm — SSO and reset entries", () => {
-  it("offers the providers with the origin and the redirect carried, and the reset link on login", async () => {
+/** The form's failure is the box at its head, above the first field. */
+function expectAtTheHeadOfTheForm(alert: HTMLElement) {
+  const email = screen.getByLabelText("メールアドレス");
+  const form = email.closest("form");
+  expect(form?.firstElementChild).toBe(alert);
+}
+
+describe("AuthForm — SSO and the entries under the form", () => {
+  it("offers the providers with the origin and the redirect carried, each with its glyph, and the two entries on login", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
       <AuthForm mode="login" redirectTo="/topics" ssoProviders={PROVIDERS} />,
       { path: "/login" },
     );
-    expect(
-      screen.getByRole("link", { name: "Google で続行" }).getAttribute("href"),
-    ).toBe("/auth/sso/google/start?redirect=%2Ftopics");
-    expect(
-      screen.getByRole("link", { name: "Apple で続行" }).getAttribute("href"),
-    ).toBe("/auth/sso/apple/start?redirect=%2Ftopics");
+    const google = screen.getByRole("link", { name: "Google で続行" });
+    expect(google.getAttribute("href")).toBe(
+      "/auth/sso/google/start?redirect=%2Ftopics",
+    );
+    expect(google.querySelector("svg[data-icon='google']")).not.toBeNull();
+    const apple = screen.getByRole("link", { name: "Apple で続行" });
+    expect(apple.getAttribute("href")).toBe(
+      "/auth/sso/apple/start?redirect=%2Ftopics",
+    );
+    expect(apple.querySelector("svg[data-icon='apple']")).not.toBeNull();
+    expect(screen.getByText("または")).toBeTruthy();
     expect(
       screen
-        .getByRole("link", { name: "パスワードをお忘れの方" })
+        .getByRole("link", { name: "パスワードを忘れた" })
         .getAttribute("href"),
     ).toBe("/password-reset");
     expectInternalHrefsToResolve();
@@ -168,7 +181,20 @@ describe("AuthForm — SSO and reset entries", () => {
     expect(screen.queryByText("または")).toBeNull();
   });
 
-  it("signup carries its origin so an error returns here, and has no reset link", async () => {
+  it("names a provider it has no drawing for by its name alone", async () => {
+    await renderWithRouter(
+      <AuthForm
+        mode="login"
+        redirectTo={undefined}
+        ssoProviders={["github"]}
+      />,
+      { path: "/login" },
+    );
+    const link = screen.getByRole("link", { name: "github で続行" });
+    expect(link.querySelector("svg")).toBeNull();
+  });
+
+  it("signup says 登録 on the providers, carries its origin so an error returns here, and has no reset entry", async () => {
     await renderWithRouter(
       <AuthForm
         mode="signup"
@@ -180,14 +206,16 @@ describe("AuthForm — SSO and reset entries", () => {
       },
     );
     expect(
-      screen.getByRole("link", { name: "Google で続行" }).getAttribute("href"),
+      screen.getByRole("link", { name: "Google で登録" }).getAttribute("href"),
     ).toBe("/auth/sso/google/start?from=signup");
+    expect(screen.getByRole("link", { name: "Apple で登録" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Google で続行" })).toBeNull();
     expect(
-      screen.queryByRole("link", { name: "パスワードをお忘れの方" }),
+      screen.queryByRole("link", { name: "パスワードを忘れた" }),
     ).toBeNull();
   });
 
-  it("draws a held address from the SSO callback as an error with the login entry", async () => {
+  it("draws a held address from the SSO callback at the head of the form, with the login entry", async () => {
     await renderWithRouter(
       <AuthForm
         mode="signup"
@@ -199,9 +227,8 @@ describe("AuthForm — SSO and reset entries", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("既に登録されています");
-    expect(
-      within(alert).getByRole("link", { name: "ログインする" }),
-    ).toBeTruthy();
+    expect(within(alert).getByRole("link", { name: "ログイン" })).toBeTruthy();
+    expectAtTheHeadOfTheForm(alert);
   });
 
   it("draws an unverified provider address as an error on login", async () => {
@@ -214,14 +241,46 @@ describe("AuthForm — SSO and reset entries", () => {
       />,
       { path: "/login" },
     );
-    expect(screen.getByRole("alert").textContent).toBe(
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe(
       "外部アカウントのメールアドレスが確認されていません",
     );
+    expect(within(alert).queryByRole("link")).toBeNull();
+    expectAtTheHeadOfTheForm(alert);
+  });
+
+  it("replaces the SSO failure with the failure of the attempt made on the page", async () => {
+    mocks.registerFn.mockRejectedValue(
+      new AppServerError(EMAIL_ALREADY_REGISTERED),
+    );
+    await renderWithRouter(
+      <AuthForm
+        mode="signup"
+        redirectTo={undefined}
+        ssoError="failed"
+        ssoProviders={PROVIDERS}
+      />,
+      { path: "/signup" },
+    );
+    expect(screen.getByRole("alert").textContent).toContain(
+      "外部アカウントでの認証に失敗しました",
+    );
+    fill("dup@example.com", "password1");
+    fireEvent.click(screen.getByRole("button", { name: "登録する" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        DUPLICATE_MESSAGE,
+      ),
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(
+      screen.queryByText(/外部アカウントでの認証に失敗しました/),
+    ).toBeNull();
   });
 });
 
 describe("AuthForm", () => {
-  it("signup shows the password hint and links to /login with the redirect", async () => {
+  it("signup shows the password requirement under its label and links to /login with the redirect", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
       <AuthForm
         mode="signup"
@@ -233,7 +292,11 @@ describe("AuthForm", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "アカウント登録",
     );
-    expect(screen.getByText(PASSWORD_HINT)).toBeTruthy();
+    const helper = screen.getByText(PASSWORD_HELPER);
+    expect(
+      screen.getByLabelText("パスワード").getAttribute("aria-describedby"),
+    ).toBe(helper.id);
+    expect(screen.getByRole("button", { name: "登録する" })).toBeTruthy();
     const link = screen.getByRole("link", { name: "ログイン" });
     const href = link.getAttribute("href") ?? "";
     const url = new URL(href, "http://harness.local");
@@ -243,7 +306,7 @@ describe("AuthForm", () => {
     expectInternalHrefsToResolve();
   });
 
-  it("login links to /signup and omits the hint", async () => {
+  it("login links to /signup and omits the requirement", async () => {
     const { expectInternalHrefsToResolve } = await renderWithRouter(
       <AuthForm mode="login" redirectTo={undefined} ssoProviders={PROVIDERS} />,
       { path: "/login" },
@@ -251,7 +314,10 @@ describe("AuthForm", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "ログイン",
     );
-    expect(screen.queryByText(PASSWORD_HINT)).toBeNull();
+    expect(screen.queryByText(PASSWORD_HELPER)).toBeNull();
+    expect(
+      screen.getByLabelText("パスワード").getAttribute("aria-describedby"),
+    ).toBeNull();
     const link = screen.getByRole("link", { name: "アカウント登録" });
     const url = new URL(
       link.getAttribute("href") ?? "",
@@ -261,6 +327,31 @@ describe("AuthForm", () => {
     expect(url.searchParams.get("redirect")).toBeNull();
     expect(screen.queryByRole("link", { name: "ログイン" })).toBeNull();
     expectInternalHrefsToResolve();
+  });
+
+  it("disables the fields and the button while the attempt is in flight, and says so on the button", async () => {
+    let settle!: (value: unknown) => void;
+    mocks.loginFn.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    await renderWithRouter(
+      <AuthForm mode="login" redirectTo="/settings" ssoProviders={[]} />,
+      { path: "/login" },
+    );
+    fill("user@example.com", "password1");
+    fireEvent.click(screen.getByRole("button", { name: "ログイン" }));
+    const busy = await screen.findByRole("button", { name: "ログイン中…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByLabelText("メールアドレス") as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("パスワード") as HTMLInputElement).disabled,
+    ).toBe(true);
+    settle({ userId: "u1" });
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/settings"));
   });
 
   it("login navigates to the carried target once the session is confirmed", async () => {
@@ -292,16 +383,17 @@ describe("AuthForm", () => {
       },
     );
     fill("user@example.com", "password1");
-    fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
+    fireEvent.click(screen.getByRole("button", { name: "登録する" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("システムエラーが発生しました");
+    expectAtTheHeadOfTheForm(alert);
     expect(assign).not.toHaveBeenCalled();
     expect(
       screen.getByLabelText("メールアドレス").getAttribute("aria-invalid"),
     ).toBeNull();
   });
 
-  it("login draws a rejected attempt as one form message, no field error", async () => {
+  it("login draws a rejected attempt as one message at the head of the form, no field error", async () => {
     mocks.loginFn.mockRejectedValue(new AppServerError(INVALID_CREDENTIALS));
     await renderWithRouter(
       <AuthForm mode="login" redirectTo={undefined} ssoProviders={PROVIDERS} />,
@@ -315,6 +407,7 @@ describe("AuthForm", () => {
     const alerts = await screen.findAllByRole("alert");
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.textContent).toBe(CREDENTIALS_MESSAGE);
+    expectAtTheHeadOfTheForm(alerts[0] as HTMLElement);
     expect(mocks.loginFn).toHaveBeenCalledWith({
       data: { email: "user@example.com", password: "password1" },
     });
@@ -327,7 +420,7 @@ describe("AuthForm", () => {
     expect(within(alerts[0] as HTMLElement).queryByRole("link")).toBeNull();
   });
 
-  it("signup draws an invalid address next to the email field", async () => {
+  it("signup draws an invalid address under the email field", async () => {
     mocks.registerFn.mockRejectedValue(new AppServerError(INVALID_EMAIL));
     await renderWithRouter(
       <AuthForm
@@ -340,7 +433,7 @@ describe("AuthForm", () => {
       },
     );
     fill("bad@example.com", "password1");
-    fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
+    fireEvent.click(screen.getByRole("button", { name: "登録する" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(EMAIL_MESSAGE);
@@ -348,13 +441,37 @@ describe("AuthForm", () => {
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(email.getAttribute("aria-describedby")).toBe(alert.id);
     expect(
+      email.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
       screen.getByLabelText("パスワード").getAttribute("aria-invalid"),
     ).toBeNull();
-    expect(screen.getByText(PASSWORD_HINT)).toBeTruthy();
+    expect(screen.getByText(PASSWORD_HELPER)).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
-  it("signup draws a duplicate address as a form error with a login link", async () => {
+  it("signup draws a too-weak password under the password field, keeping its requirement", async () => {
+    mocks.registerFn.mockRejectedValue(new AppServerError(PASSWORD_TOO_WEAK));
+    await renderWithRouter(
+      <AuthForm mode="signup" redirectTo={undefined} ssoProviders={[]} />,
+      { path: "/signup" },
+    );
+    fill("user@example.com", "short");
+    fireEvent.click(screen.getByRole("button", { name: "登録する" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(PASSWORD_MESSAGE);
+    const password = screen.getByLabelText("パスワード");
+    expect(password.getAttribute("aria-invalid")).toBe("true");
+    expect(password.getAttribute("aria-describedby")).toBe(
+      `${alert.id} ${screen.getByText(PASSWORD_HELPER).id}`,
+    );
+    expect(
+      screen.getByLabelText("メールアドレス").getAttribute("aria-invalid"),
+    ).toBeNull();
+  });
+
+  it("signup draws a duplicate address at the head of the form with a login link", async () => {
     mocks.registerFn.mockRejectedValue(
       new AppServerError(EMAIL_ALREADY_REGISTERED),
     );
@@ -367,13 +484,12 @@ describe("AuthForm", () => {
       { path: "/signup" },
     );
     fill("dup@example.com", "password1");
-    fireEvent.click(screen.getByRole("button", { name: "アカウント登録" }));
+    fireEvent.click(screen.getByRole("button", { name: "登録する" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(
-      "このメールアドレスは既に登録されています",
-    );
-    const link = within(alert).getByRole("link", { name: "ログインする" });
+    expect(alert.textContent).toContain(DUPLICATE_MESSAGE);
+    expectAtTheHeadOfTheForm(alert);
+    const link = within(alert).getByRole("link", { name: "ログイン" });
     const url = new URL(
       link.getAttribute("href") ?? "",
       "http://harness.local",

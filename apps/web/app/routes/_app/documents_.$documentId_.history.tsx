@@ -3,9 +3,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
 import { z } from "zod";
-import { MemoHistorySkeleton } from "@/components/memoHistory/MemoHistorySkeleton";
+import { RevisionHistorySkeleton } from "@/components/memoHistory/RevisionHistorySkeleton";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { streamingRouteOptions } from "@/presentation/streamingRoute";
@@ -27,8 +26,19 @@ const renderDocumentHistory = createServerFn({ method: "GET" })
     };
   });
 
-/** P-10. Same shape as the memo history; the skeleton is the same rows. */
+/**
+ * P-10. The memo history's shape under the document's title, which the
+ * sheet draws as the page's `h1`.
+ */
 export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
+  staticData: {
+    header: {
+      kind: "back",
+      entity: "document",
+      back: "/documents/$documentId",
+      h1: "sheet",
+    },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {
@@ -43,19 +53,13 @@ export const Route = createFileRoute("/_app/documents_/$documentId_/history")({
       path: `/documents/${params.documentId}/history`,
     }),
   component: DocumentHistoryPage,
-  errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function DocumentHistoryPage() {
   const { History } = Route.useLoaderData();
   return (
-    <div className="fog-content">
-      <Suspense fallback={<MemoHistorySkeleton />}>
+    <div className="pb-sheet-end">
+      <Suspense fallback={<RevisionHistorySkeleton subject="document" />}>
         <Deferred promise={History} />
       </Suspense>
     </div>

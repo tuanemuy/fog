@@ -8,7 +8,7 @@ Basic design principles:
 
 - **Choose RSC with an awareness of its "owner".** An RSC is nothing more than a React Flight payload returned from `createServerFn`. Decide first where you call it from = who holds that payload.
 - **Keep data fetching, authorization, and usecase invocation entirely inside server components.** Treat the loader as "a thin proxy for pulling a server component in as an RSC payload".
-- **`throw` errors.** There is no need to convert them to status codes and return them via `data()`. Throwing `redirect({ to })` lets the router pick it up, and any other exception falls back to the route's `errorComponent`. Absence that is a screen state (a deleted document) is rendered by the server component itself, not thrown.
+- **`throw` errors.** There is no need to convert them to status codes and return them via `data()`. Throwing `redirect({ to })` lets the router pick it up, and any other exception falls back to the router's default error component, drawn in the screen's frame (see "Error / Not Found"). Absence that is a screen state (a deleted document) is rendered by the server component itself, not thrown.
 - **Carve out only the parts that need client state with `"use client"`.** Make only the parts that hold forms or interactions into client components.
 - **When calling a server function from the client, wrap it with `useServerFn(fn)` and read what it resolves to through `readServerFnResult`.** The first makes `throw redirect({ to })` inside the usecase navigate automatically; the second turns a response of an unexpected shape into a system error instead of a phantom success.
 - **The primitives are React 19's own** — `useActionState` for forms, `useTransition` + `useOptimistic` for inline actions, plain `<form>` elements, `router.invalidate()` to reconcile. No query cache, no form library, no toast library: none of these is a dependency of `apps/web`.
@@ -60,6 +60,7 @@ const renderTimeline = createServerFn({ method: "GET" })
   });
 
 export const Route = createFileRoute("/_app/")({
+  staticData: { header: { kind: "top", title: "タイムライン" } },
   // Mandatory for the streaming variant: a re-run loader hands out a fresh
   // promise and would re-suspend the boundary on every revisit.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
@@ -73,30 +74,28 @@ export const Route = createFileRoute("/_app/")({
   head: ({ match }) =>
     routeHead(match, { title: "タイムライン — fog", path: "/" }),
   component: TimelinePage,
-  errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function TimelinePage() {
   const { Timeline } = Route.useLoaderData();
   return (
-    <Suspense fallback={<TimelineSkeleton />}>
-      <Deferred promise={Timeline} />
-    </Suspense>
+    <div className="pb-sheet-end-composer">
+      <Suspense fallback={<TimelineSkeleton />}>
+        <Deferred promise={Timeline} />
+      </Suspense>
+    </div>
   );
 }
 ```
+
+The wrapper is the screen's share of the sheet's inner padding: the app shell holds the top and side padding and the text column's width, the same on every screen, and the screen holds only the foot — `pb-sheet-end`, or `pb-sheet-end-composer` where the composer floats over it. No test checks that a screen sets its foot; a missing one shows as the last row flush with the sheet's bottom edge.
 
 Two helpers carry the pattern:
 
 - `streamingRouteOptions` (`apps/web/app/presentation/streamingRoute.ts`) is spread into every streaming route. It sets `pendingComponent: () => null`, so the fragment skeleton is the only fallback, and `ssr: !import.meta.env.DEV`: under `vite dev` an SSR response carrying an RSC payload never emits the stream end, so the streamed leaf stays unhydrated; the production build (`pnpm build && pnpm preview`) streams and hydrates correctly. Limit: browser checks under `pnpm dev` therefore do not cover the SSR streaming path — verify that on the preview build.
 - `Deferred` (`apps/web/app/components/ui/Deferred/index.tsx`) resolves the promise on the client with `use(useDeferredValue(promise))`. The `useDeferredValue` is what keeps the already-resolved content on screen when `router.invalidate()` hands out a *replacement* promise after a mutation: router state arrives through an external store and cannot ride a transition, so without it the boundary would drop back to its fallback and an optimistic entry would flash away before the refetched list replaced it.
 
-Skeletons are shaped to the real DOM of the fragment they stand in for, so the swap happens without layout shift: `TimelineSkeleton`, `TopicsSkeleton`, `TopicDetailSkeleton`, `DocumentSkeleton`, `SearchSkeleton`, `TrashSkeleton`, `MemoHistorySkeleton`, `SettingsSkeleton`, each next to its feed under `apps/web/app/components/<area>/`, all built from the generic `apps/web/app/components/ui/Skeleton`. Each carries one `role="status"` announcement; the bars are `aria-hidden` and respect `prefers-reduced-motion`.
+A skeleton is the loaded screen's own DOM with the text laid over, not a row of bars standing in for it: it is built from the same primitives and elements as the fragment it replaces, and only the text is wrapped in `Sk` (`apps/web/app/components/ui/Sk`), which hides the glyphs behind a flat block and keeps the line's real height — so the swap moves nothing. `Sk` does not animate, and nothing else in a skeleton does either. The skeletons are `TimelineSkeleton`, `TopicsSkeleton`, `TopicDetailSkeleton`, `DocumentSkeleton` (read / edit), `SearchSkeleton`, `TrashSkeleton`, `RevisionHistorySkeleton`, `SettingsSkeleton` and `PasswordResetDoneSkeleton`, each next to its feed under `apps/web/app/components/<area>/`; `RoutePendingFallback` (`apps/web/app/components/ui/RoutePendingFallback`) is the route-level one. All but `SearchSkeleton` wrap their whole area in one `LoadingRegion` (`apps/web/app/components/ui/LoadingRegion`) — the single `role="status"` with `aria-busy` and the loading label — hide the stand-ins from assistive technology and draw the controls out of reach. On a route that declares `h1: "sheet"`, that label is the page's `h1` while the name it will carry has not arrived. `SearchSkeleton` is the exception because its fragment draws the search box and the chips as well as the results: it keeps those on the same DOM, inert, and puts a spinner row where the results will be.
 
 **Route-level pending is a separate mechanism**, wired in `apps/web/app/router.tsx` as `defaultPendingComponent: RoutePendingFallback` with `defaultPendingMs: 200` / `defaultPendingMinMs: 300`. It shows for any route whose loader stays unresolved past the threshold. A streaming route is not automatically exempt: on client navigation its loader still awaits the `/_serverFn/…` round trip that hands over the unresolved promise, and if that hop is slower than `defaultPendingMs` the route-level fallback would show first and the fragment skeleton after. `streamingRouteOptions`' `pendingComponent: () => null` is what prevents the double fallback.
 
@@ -245,12 +244,12 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
     });
   } catch (error) {
     if (extractSerializedError(error).kind === "notFound") {
-      return <KnowledgeNotFound subject="ドキュメント" />;
+      return <KnowledgeNotFound subject="ドキュメント" asPageHeading />;
     }
     throw error;
   }
   const { document, sources, topic } = data;
-  return <article className="fog-document">{/* … */}</article>;
+  return <article aria-labelledby={TITLE_ID}>{/* … */}</article>;
 }
 ```
 
@@ -258,7 +257,7 @@ export async function DocumentFeed({ documentId }: { documentId: string }) {
 
 - Because we `await` inside the server component, there is no need to assemble the data in the loader.
 - `guardStreamedRender` (`apps/web/app/presentation/errorResponseMiddleware.ts`) wraps the read of every streamed leaf. The HTTP status is already committed by the time the leaf renders, so what it does is classify the failure the way the middleware would — for redaction and for the `system` / `unknown` logging branch — and rethrow. What reaches the client through the RSC error frame is `kind: "unknown"` unless the `serialized` payload survives that boundary; both fail towards less information.
-- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. `notFoundComponent` in `apps/web/app/routes/__root.tsx` is for URLs that match no route.
+- A `notFound` from the usecase is **rendered**, not thrown: `KnowledgeNotFound` (`apps/web/app/components/knowledge/KnowledgeNotFound`) is the 「見つからない」 state of P-07 / P-08 / P-09 / P-10 with the way back to the topic list. It takes `asPageHeading` from the leaf rather than reading the frame's heading context, because it is drawn in the streamed RSC tree where that context does not reach; the leaves of the routes whose `h1` lives in the sheet pass it. The router's default 404 is for URLs that match no route (see "Error / Not Found").
 - Consolidate the DI / module loading for usecase invocation on the `serverData` wrapper. Calling `getContainer()` directly requires writing `import "@tanstack/react-start/server-only";` every time, and the moment someone adds a single static import line, the server graph risks leaking into the client; the wrapper's dynamic import structurally blocks this.
 - The leaf hands its data to the client island and keys the island on the URL (`TimelineFeed` → `<TimelineBoard key={…} initial={…} search={…} />`), so a `router.invalidate()` for the same URL keeps the island — with its scrolled-in pages — and a URL change remounts it.
 
@@ -269,8 +268,8 @@ The route's only responsibility is "pass URL parameters to the server component 
 ### Points
 
 - The loader merely calls the server function bridge. Confine `renderServerComponent(<RSC />)` and server-only imports to the bridge's handler side.
-- **Place the shared shell in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as navigation is lost and flickers. Here the pathless layout `apps/web/app/routes/_app.tsx` renders `AppShell` (`apps/web/app/components/layout/AppShell`) around an `<Outlet />`; every protected screen is a child of it, and only the leaf goes into the RSC payload. `login.tsx` / `signup.tsx` / `password-reset.tsx` sit outside the layout.
-- `_app.tsx`'s `beforeLoad` is the navigation aid: it reads `readAuthStateFn` (`apps/web/app/presentation/authState.ts`) and bounces an unauthenticated visitor to `/login` with a same-origin `?redirect=` (`toSafeRedirect`). The guard proper is `requireUserId()` in every server execution point — `beforeLoad` only saves a round trip.
+- **Place the shared shell in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as navigation is lost and flickers. Here the pathless layout `apps/web/app/routes/_app.tsx` renders `AppShell` (`apps/web/app/components/layout/AppShell`) around an `<Outlet />`; every screen with the app's navigation is a child of it, and only the leaf goes into the RSC payload. Its sibling `apps/web/app/routes/_sheet.tsx` renders `AuthSheet` (`apps/web/app/components/layout/AuthSheet`) for the screens without navigation: login, signup and the password reset directly under it, and AI client authorization and the reset's done page under the nested pathless `_sheet/_authenticated.tsx`.
+- The `beforeLoad` of `_app.tsx` and `_sheet/_authenticated.tsx` is the navigation aid, one shared function: `requireSessionBeforeLoad` (`apps/web/app/presentation/authGuard.ts`) reads `readAuthStateFn` (`apps/web/app/presentation/authState.ts`) and bounces an unauthenticated visitor to `/login` with a same-origin `?redirect=` (`toSafeRedirect`). Reading through `readAuthStateFn` is also what marks every document under those layouts `Cache-Control: no-store`. The guard proper is `requireUserId()` in every server execution point — `beforeLoad` only saves a round trip.
 - `head` goes through `routeHead` (`apps/web/app/presentation/head.ts`) so every route carries a title and canonical path.
 - Since `staleTime` remains in effect even after navigation, the cache can be reused when you return to the same URL. When you want to force a refetch, use `useRouter().invalidate()` on the client.
 - Input validation uses `.inputValidator(...)`. **Do not use the old API `.validator(...)`.**
@@ -437,6 +436,14 @@ const runDelete = (memo: DisplayMemo) => {
 };
 ```
 
+#### A delete that leaves the screen drops the cache instead of invalidating
+
+`router.invalidate()` marks matches stale **and then calls `load()`**, and that load carries `forceStaleReload`, so at `staleTime: 0` — `pnpm dev`'s setting — it re-runs the loader of the match the caller is standing on, including one a `filter` deliberately did not mark. On a screen whose own subject was just trashed that loader answers `notFound()`, and 「…が見つかりません」 is drawn for a frame before the navigation lands.
+
+So a mutation that deletes what the screen is showing and then navigates away reconciles with `router.clearCache()`, which drops matches without loading any, called **twice**: once before the move, so the destination is re-read as a new match, and once after, so the screen being left does not sit in the cache holding the deleted subject and come back through the browser's 戻る. `TopicHeader` (`apps/web/app/components/topics/TopicHeader`) and `DocumentActions` (`apps/web/app/components/documents/DocumentActions`) are the two places. Its cost is that the whole router cache goes, so unrelated screens re-read on their next visit. Mutations that stay on the page keep `router.invalidate()`.
+
+Once the server has confirmed such a delete, a later failure belongs to the navigation and not to the delete: the `catch` closes the confirmation and reports nothing, so the dialog cannot be used to confirm a second delete of something already in the trash. Both halves are held by `renderWithReloadingRoutes` (see the DOM section of `docs/test.md`), which draws the two screens over real loaders at `staleTime: 0` and judges which loaders re-ran.
+
 The leaf (`MemoEntry`) only asks for the delete through a callback and owns nothing about it — the failure message is rendered by the board next to the row that stayed, because the leaf would have been unmounted by the optimistic removal. An item-owned change (inline edit, `editMemoFn` with the OCC `expectedVersion`) stays in the leaf with its own `useOptimistic` and error text, and reports the saved memo back to the owner (`onSaved`) so the owner's copy of the list is current before `router.invalidate()` re-bases it.
 
 ### Failures such as Conflict
@@ -457,25 +464,30 @@ try {
 
 - `useServerFn(fn)` auto-detects `isRedirect` and converts it into a router navigation. This avoids falling through the client's try/catch when the usecase does `throw redirect({ to: "/login" })`.
 - A `useActionState` action may be async. State updates both before and after `await` enter the same transition. Passing it to `<form action={formAction}>` lets it progressively enhance even on a client where JS has not yet arrived.
-- When you want to update a loader-owned RSC on success, explicitly `await router.invalidate()` inside the action / transition. "When to invalidate" is the caller's responsibility.
+- When you want to update a loader-owned RSC on success, explicitly `await router.invalidate()` inside the action / transition. "When to invalidate" is the caller's responsibility. A delete that navigates away from the deleted subject is the one case that reconciles with `router.clearCache()` instead (above).
 - Per-field messages come from branching on `extractSerializedError(e)` (`kind` / `code`, and `fieldErrors` on a `validation` error). Validation is consolidated on the server-side Zod, so it arrives in the same envelope no matter which entry point (server function / route loader / test) calls it; there is no client-side form library and no duplicated schema on the client.
 - An item-local `useOptimistic` only works on **state that the item owns**. Membership changes belong to the owner island (`TimelineBoard`, `TrashBoard`, `TopicList`): add optimistically prepends, remove filters, `router.invalidate()` re-bases onto the settled value, and delete is never placed in the leaf.
 
 ## Error / Not Found
 
-Define `errorComponent` per route; every `_app/*` route renders the same 「読み込めませんでした」 block with `sanitizeRouteError`. Exceptions thrown inside a server component bubble up here.
-
-The site-wide final fallback is the `errorComponent` / `notFoundComponent` in `apps/web/app/routes/__root.tsx`. The hierarchy is as follows:
+No screen defines an `errorComponent` or a `notFoundComponent`. `apps/web/app/router.tsx` sets the router's defaults — `RouteError` (`apps/web/app/components/ui/RouteError`) and `NotFound` (`apps/web/app/components/ui/NotFound`) — and the frame they are drawn in is decided by where the failure happens:
 
 ```
-Exception source (loader / server component / server function)
+Exception source (loader / beforeLoad / a streamed fragment's promise / a render)
     ↓ throw
-Matched child route .errorComponent  ←  stops here if defined
-    ↓ if undefined, bubble up
-__root.tsx .errorComponent          ←  final fallback (sanitizeRouteError)
+The failing route's boundary: the router's default RouteError,
+drawn in the parent layout's Outlet  ←  a screen under _app: in the app shell's sheet
+                                     ←  a screen under _sheet: in the auth sheet's card
+    ↓ the failing route is __root, _app or _sheet itself (its guard, its frame)
+AuthSheetRouteError                  ←  RouteError on an auth sheet of its own
 ```
 
-`redirect()` is caught by the router itself rather than the errorComponent and routed to navigation. `notFoundComponent` in `__root.tsx` answers URLs that match no route; a missing entity inside a matched route is a screen state rendered by the leaf (`KnowledgeNotFound`), see "Server component" above.
+- `RouteError` is 「読み込めませんでした」 and 「再試行」, one alert. The sentence is fixed — nothing of the error reaches the page — and the router's `defaultOnCatch` (`reportRouteError`, `apps/web/app/presentation/errorDisplay.ts`) logs it. 再試行 calls `router.invalidate()`: the loaders rerun and the boundary resets once that load settles, so a streamed fragment whose promise rejected (it throws out of `Deferred` into the route's boundary, where its skeleton was) renders afresh from the new promise.
+- `__root`, `_app` and `_sheet` declare `errorComponent: AuthSheetRouteError` (`apps/web/app/components/layout/AuthSheet`): their own failure takes their frame down with it, so it is drawn on the auth sheet instead of bare. A signed-in user whose `_app` check fails therefore sees it without the navigation.
+- A loader's `notFound()` is drawn by the nearest route up the tree that declares a not-found component, so none does: the screen that threw it draws the default `NotFound` in its own frame. A URL no route serves is answered at the root (`notFoundMode: "root"`), whose component frames it on the auth sheet — never inside whichever layout matched a prefix of it.
+- On the auth sheet the frame draws no heading, so the sentence of `RouteError` / `NotFound` becomes the page's `h1` there (`PageHeadingOwnerProvider`, `apps/web/app/components/ui/PageHeading`); in the app shell the header keeps the `h1`.
+
+`redirect()` is caught by the router itself rather than the error component and routed to navigation. A missing entity inside a matched route is a screen state rendered by the leaf (`KnowledgeNotFound`), see "Server component" above.
 
 ### Propagating server function exceptions in structured form
 
@@ -494,7 +506,7 @@ An exception thrown by `createServerFn`'s `handler` reaches the client, but if i
 
 (`apps/web/app/presentation/errorResponse.ts`).
 
-`displayError` / `sanitizeRouteError` (`apps/web/app/presentation/errorDisplay.ts`) dispatch through a `Record<SerializedErrorKind, handler>`-typed table, so adding a new variant to `SerializedError.kind` produces a compile error. The aim is to guarantee exhaustiveness at the type level.
+`displayError` (`apps/web/app/presentation/errorDisplay.ts`) dispatches through a `Record<SerializedErrorKind, handler>`-typed table, so adding a new variant to `SerializedError.kind` produces a compile error. The aim is to guarantee exhaustiveness at the type level.
 
 ## Summary: must-haves for the current `@tanstack/react-start`
 

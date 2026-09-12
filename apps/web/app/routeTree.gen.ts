@@ -9,37 +9,28 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as PasswordResetRouteImport } from './routes/password-reset'
-import { Route as LoginRouteImport } from './routes/login'
+import { Route as SheetRouteImport } from './routes/_sheet'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as SheetSignupRouteImport } from './routes/_sheet/signup'
+import { Route as SheetPasswordResetRouteImport } from './routes/_sheet/password-reset'
+import { Route as SheetLoginRouteImport } from './routes/_sheet/login'
+import { Route as SheetAuthenticatedRouteImport } from './routes/_sheet/_authenticated'
 import { Route as AppTrashRouteImport } from './routes/_app/trash'
 import { Route as AppTopicsRouteImport } from './routes/_app/topics'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppTopicsTopicIdRouteImport } from './routes/_app/topics_.$topicId'
-import { Route as AppPasswordResetDoneRouteImport } from './routes/_app/password-reset.done'
 import { Route as AppDocumentsDocumentIdRouteImport } from './routes/_app/documents_.$documentId'
-import { Route as AppAiClientsAuthorizeRouteImport } from './routes/_app/ai-clients.authorize'
+import { Route as SheetAuthenticatedPasswordResetDoneRouteImport } from './routes/_sheet/_authenticated/password-reset.done'
+import { Route as SheetAuthenticatedAiClientsAuthorizeRouteImport } from './routes/_sheet/_authenticated/ai-clients.authorize'
 import { Route as AppMemosMemoIdHistoryRouteImport } from './routes/_app/memos_.$memoId.history'
 import { Route as AppDocumentsDocumentIdHistoryRouteImport } from './routes/_app/documents_.$documentId_.history'
 import { Route as AppDocumentsDocumentIdEditRouteImport } from './routes/_app/documents_.$documentId_.edit'
 import { Route as AppTopicsTopicIdDocumentsNewRouteImport } from './routes/_app/topics_.$topicId_.documents.new'
 
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PasswordResetRoute = PasswordResetRouteImport.update({
-  id: '/password-reset',
-  path: '/password-reset',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
+const SheetRoute = SheetRouteImport.update({
+  id: '/_sheet',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -50,6 +41,25 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const SheetSignupRoute = SheetSignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => SheetRoute,
+} as any)
+const SheetPasswordResetRoute = SheetPasswordResetRouteImport.update({
+  id: '/password-reset',
+  path: '/password-reset',
+  getParentRoute: () => SheetRoute,
+} as any)
+const SheetLoginRoute = SheetLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => SheetRoute,
+} as any)
+const SheetAuthenticatedRoute = SheetAuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => SheetRoute,
 } as any)
 const AppTrashRoute = AppTrashRouteImport.update({
   id: '/trash',
@@ -76,21 +86,23 @@ const AppTopicsTopicIdRoute = AppTopicsTopicIdRouteImport.update({
   path: '/topics/$topicId',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPasswordResetDoneRoute = AppPasswordResetDoneRouteImport.update({
-  id: '/password-reset/done',
-  path: '/password-reset/done',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppDocumentsDocumentIdRoute = AppDocumentsDocumentIdRouteImport.update({
   id: '/documents_/$documentId',
   path: '/documents/$documentId',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAiClientsAuthorizeRoute = AppAiClientsAuthorizeRouteImport.update({
-  id: '/ai-clients/authorize',
-  path: '/ai-clients/authorize',
-  getParentRoute: () => AppRoute,
-} as any)
+const SheetAuthenticatedPasswordResetDoneRoute =
+  SheetAuthenticatedPasswordResetDoneRouteImport.update({
+    id: '/password-reset/done',
+    path: '/password-reset/done',
+    getParentRoute: () => SheetAuthenticatedRoute,
+  } as any)
+const SheetAuthenticatedAiClientsAuthorizeRoute =
+  SheetAuthenticatedAiClientsAuthorizeRouteImport.update({
+    id: '/ai-clients/authorize',
+    path: '/ai-clients/authorize',
+    getParentRoute: () => SheetAuthenticatedRoute,
+  } as any)
 const AppMemosMemoIdHistoryRoute = AppMemosMemoIdHistoryRouteImport.update({
   id: '/memos_/$memoId/history',
   path: '/memos/$memoId/history',
@@ -117,146 +129,134 @@ const AppTopicsTopicIdDocumentsNewRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
-  '/login': typeof LoginRoute
-  '/password-reset': typeof PasswordResetRoute
-  '/signup': typeof SignupRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/trash': typeof AppTrashRoute
-  '/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
+  '/login': typeof SheetLoginRoute
+  '/password-reset': typeof SheetPasswordResetRoute
+  '/signup': typeof SheetSignupRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
-  '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
   '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
   '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/ai-clients/authorize': typeof SheetAuthenticatedAiClientsAuthorizeRoute
+  '/password-reset/done': typeof SheetAuthenticatedPasswordResetDoneRoute
   '/topics/$topicId/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRoutesByTo {
-  '/login': typeof LoginRoute
-  '/password-reset': typeof PasswordResetRoute
-  '/signup': typeof SignupRoute
+  '/': typeof AppIndexRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
   '/topics': typeof AppTopicsRoute
   '/trash': typeof AppTrashRoute
-  '/': typeof AppIndexRoute
-  '/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
+  '/login': typeof SheetLoginRoute
+  '/password-reset': typeof SheetPasswordResetRoute
+  '/signup': typeof SheetSignupRoute
   '/documents/$documentId': typeof AppDocumentsDocumentIdRoute
-  '/password-reset/done': typeof AppPasswordResetDoneRoute
   '/topics/$topicId': typeof AppTopicsTopicIdRoute
   '/documents/$documentId/edit': typeof AppDocumentsDocumentIdEditRoute
   '/documents/$documentId/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/memos/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/ai-clients/authorize': typeof SheetAuthenticatedAiClientsAuthorizeRoute
+  '/password-reset/done': typeof SheetAuthenticatedPasswordResetDoneRoute
   '/topics/$topicId/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
-  '/login': typeof LoginRoute
-  '/password-reset': typeof PasswordResetRoute
-  '/signup': typeof SignupRoute
+  '/_sheet': typeof SheetRouteWithChildren
   '/_app/search': typeof AppSearchRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/topics': typeof AppTopicsRoute
   '/_app/trash': typeof AppTrashRoute
+  '/_sheet/_authenticated': typeof SheetAuthenticatedRouteWithChildren
+  '/_sheet/login': typeof SheetLoginRoute
+  '/_sheet/password-reset': typeof SheetPasswordResetRoute
+  '/_sheet/signup': typeof SheetSignupRoute
   '/_app/': typeof AppIndexRoute
-  '/_app/ai-clients/authorize': typeof AppAiClientsAuthorizeRoute
   '/_app/documents_/$documentId': typeof AppDocumentsDocumentIdRoute
-  '/_app/password-reset/done': typeof AppPasswordResetDoneRoute
   '/_app/topics_/$topicId': typeof AppTopicsTopicIdRoute
   '/_app/documents_/$documentId_/edit': typeof AppDocumentsDocumentIdEditRoute
   '/_app/documents_/$documentId_/history': typeof AppDocumentsDocumentIdHistoryRoute
   '/_app/memos_/$memoId/history': typeof AppMemosMemoIdHistoryRoute
+  '/_sheet/_authenticated/ai-clients/authorize': typeof SheetAuthenticatedAiClientsAuthorizeRoute
+  '/_sheet/_authenticated/password-reset/done': typeof SheetAuthenticatedPasswordResetDoneRoute
   '/_app/topics_/$topicId_/documents/new': typeof AppTopicsTopicIdDocumentsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/login'
-    | '/password-reset'
-    | '/signup'
     | '/search'
     | '/settings'
     | '/topics'
     | '/trash'
-    | '/ai-clients/authorize'
+    | '/login'
+    | '/password-reset'
+    | '/signup'
     | '/documents/$documentId'
-    | '/password-reset/done'
     | '/topics/$topicId'
     | '/documents/$documentId/edit'
     | '/documents/$documentId/history'
     | '/memos/$memoId/history'
+    | '/ai-clients/authorize'
+    | '/password-reset/done'
     | '/topics/$topicId/documents/new'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/login'
-    | '/password-reset'
-    | '/signup'
+    | '/'
     | '/search'
     | '/settings'
     | '/topics'
     | '/trash'
-    | '/'
-    | '/ai-clients/authorize'
+    | '/login'
+    | '/password-reset'
+    | '/signup'
     | '/documents/$documentId'
-    | '/password-reset/done'
     | '/topics/$topicId'
     | '/documents/$documentId/edit'
     | '/documents/$documentId/history'
     | '/memos/$memoId/history'
+    | '/ai-clients/authorize'
+    | '/password-reset/done'
     | '/topics/$topicId/documents/new'
   id:
     | '__root__'
     | '/_app'
-    | '/login'
-    | '/password-reset'
-    | '/signup'
+    | '/_sheet'
     | '/_app/search'
     | '/_app/settings'
     | '/_app/topics'
     | '/_app/trash'
+    | '/_sheet/_authenticated'
+    | '/_sheet/login'
+    | '/_sheet/password-reset'
+    | '/_sheet/signup'
     | '/_app/'
-    | '/_app/ai-clients/authorize'
     | '/_app/documents_/$documentId'
-    | '/_app/password-reset/done'
     | '/_app/topics_/$topicId'
     | '/_app/documents_/$documentId_/edit'
     | '/_app/documents_/$documentId_/history'
     | '/_app/memos_/$memoId/history'
+    | '/_sheet/_authenticated/ai-clients/authorize'
+    | '/_sheet/_authenticated/password-reset/done'
     | '/_app/topics_/$topicId_/documents/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  PasswordResetRoute: typeof PasswordResetRoute
-  SignupRoute: typeof SignupRoute
+  SheetRoute: typeof SheetRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/password-reset': {
-      id: '/password-reset'
-      path: '/password-reset'
-      fullPath: '/password-reset'
-      preLoaderRoute: typeof PasswordResetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
+    '/_sheet': {
+      id: '/_sheet'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof SheetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -272,6 +272,34 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_sheet/signup': {
+      id: '/_sheet/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SheetSignupRouteImport
+      parentRoute: typeof SheetRoute
+    }
+    '/_sheet/password-reset': {
+      id: '/_sheet/password-reset'
+      path: '/password-reset'
+      fullPath: '/password-reset'
+      preLoaderRoute: typeof SheetPasswordResetRouteImport
+      parentRoute: typeof SheetRoute
+    }
+    '/_sheet/login': {
+      id: '/_sheet/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof SheetLoginRouteImport
+      parentRoute: typeof SheetRoute
+    }
+    '/_sheet/_authenticated': {
+      id: '/_sheet/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof SheetAuthenticatedRouteImport
+      parentRoute: typeof SheetRoute
     }
     '/_app/trash': {
       id: '/_app/trash'
@@ -308,13 +336,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTopicsTopicIdRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/password-reset/done': {
-      id: '/_app/password-reset/done'
-      path: '/password-reset/done'
-      fullPath: '/password-reset/done'
-      preLoaderRoute: typeof AppPasswordResetDoneRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/documents_/$documentId': {
       id: '/_app/documents_/$documentId'
       path: '/documents/$documentId'
@@ -322,12 +343,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocumentsDocumentIdRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/ai-clients/authorize': {
-      id: '/_app/ai-clients/authorize'
+    '/_sheet/_authenticated/password-reset/done': {
+      id: '/_sheet/_authenticated/password-reset/done'
+      path: '/password-reset/done'
+      fullPath: '/password-reset/done'
+      preLoaderRoute: typeof SheetAuthenticatedPasswordResetDoneRouteImport
+      parentRoute: typeof SheetAuthenticatedRoute
+    }
+    '/_sheet/_authenticated/ai-clients/authorize': {
+      id: '/_sheet/_authenticated/ai-clients/authorize'
       path: '/ai-clients/authorize'
       fullPath: '/ai-clients/authorize'
-      preLoaderRoute: typeof AppAiClientsAuthorizeRouteImport
-      parentRoute: typeof AppRoute
+      preLoaderRoute: typeof SheetAuthenticatedAiClientsAuthorizeRouteImport
+      parentRoute: typeof SheetAuthenticatedRoute
     }
     '/_app/memos_/$memoId/history': {
       id: '/_app/memos_/$memoId/history'
@@ -366,9 +394,7 @@ interface AppRouteChildren {
   AppTopicsRoute: typeof AppTopicsRoute
   AppTrashRoute: typeof AppTrashRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppAiClientsAuthorizeRoute: typeof AppAiClientsAuthorizeRoute
   AppDocumentsDocumentIdRoute: typeof AppDocumentsDocumentIdRoute
-  AppPasswordResetDoneRoute: typeof AppPasswordResetDoneRoute
   AppTopicsTopicIdRoute: typeof AppTopicsTopicIdRoute
   AppDocumentsDocumentIdEditRoute: typeof AppDocumentsDocumentIdEditRoute
   AppDocumentsDocumentIdHistoryRoute: typeof AppDocumentsDocumentIdHistoryRoute
@@ -382,9 +408,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTopicsRoute: AppTopicsRoute,
   AppTrashRoute: AppTrashRoute,
   AppIndexRoute: AppIndexRoute,
-  AppAiClientsAuthorizeRoute: AppAiClientsAuthorizeRoute,
   AppDocumentsDocumentIdRoute: AppDocumentsDocumentIdRoute,
-  AppPasswordResetDoneRoute: AppPasswordResetDoneRoute,
   AppTopicsTopicIdRoute: AppTopicsTopicIdRoute,
   AppDocumentsDocumentIdEditRoute: AppDocumentsDocumentIdEditRoute,
   AppDocumentsDocumentIdHistoryRoute: AppDocumentsDocumentIdHistoryRoute,
@@ -394,11 +418,40 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface SheetAuthenticatedRouteChildren {
+  SheetAuthenticatedAiClientsAuthorizeRoute: typeof SheetAuthenticatedAiClientsAuthorizeRoute
+  SheetAuthenticatedPasswordResetDoneRoute: typeof SheetAuthenticatedPasswordResetDoneRoute
+}
+
+const SheetAuthenticatedRouteChildren: SheetAuthenticatedRouteChildren = {
+  SheetAuthenticatedAiClientsAuthorizeRoute:
+    SheetAuthenticatedAiClientsAuthorizeRoute,
+  SheetAuthenticatedPasswordResetDoneRoute:
+    SheetAuthenticatedPasswordResetDoneRoute,
+}
+
+const SheetAuthenticatedRouteWithChildren =
+  SheetAuthenticatedRoute._addFileChildren(SheetAuthenticatedRouteChildren)
+
+interface SheetRouteChildren {
+  SheetAuthenticatedRoute: typeof SheetAuthenticatedRouteWithChildren
+  SheetLoginRoute: typeof SheetLoginRoute
+  SheetPasswordResetRoute: typeof SheetPasswordResetRoute
+  SheetSignupRoute: typeof SheetSignupRoute
+}
+
+const SheetRouteChildren: SheetRouteChildren = {
+  SheetAuthenticatedRoute: SheetAuthenticatedRouteWithChildren,
+  SheetLoginRoute: SheetLoginRoute,
+  SheetPasswordResetRoute: SheetPasswordResetRoute,
+  SheetSignupRoute: SheetSignupRoute,
+}
+
+const SheetRouteWithChildren = SheetRoute._addFileChildren(SheetRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
-  LoginRoute: LoginRoute,
-  PasswordResetRoute: PasswordResetRoute,
-  SignupRoute: SignupRoute,
+  SheetRoute: SheetRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

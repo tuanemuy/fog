@@ -6,8 +6,9 @@ import { defineConfig } from "vitest/config";
 // functions of their props, and `async` data-loading leaves — the last by
 // `await`ing the component and rendering the element it returned. What it
 // does not draw: routes, loaders, `renderServerComponent` (Flight),
-// hydration and CSS. `docs/test.md` (the DOM section) is the authority on
-// that boundary.
+// hydration and CSS — except the stub route tree the route-boundary test
+// draws. `docs/test.md` (the DOM section) is the authority on that
+// boundary.
 //
 // `include` is an explicit allow-list rooted at `apps/web/app/`, matching
 // the shape `vitest.config.d1.ts` / `vitest.config.do.ts` already use: a

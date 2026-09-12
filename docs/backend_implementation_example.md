@@ -83,7 +83,7 @@ apps/web/app/
 ├── presentation/
 │   ├── errorResponse.ts           AppServerError, serializeError, extractSerializedError, asSerializedError, isAppServerError, redactForClient, httpStatusFor
 │   ├── errorResponseMiddleware.ts errorResponseMiddleware (wraps inputValidator + handler)
-│   ├── errorDisplay.ts            displayError, sanitizeRouteError
+│   ├── errorDisplay.ts            displayError, reportRouteError (the router's defaultOnCatch)
 │   ├── serverAction.ts            loadServerDeps, serverData — internal-only, intentionally schemaless
 │   ├── serverFnResult.ts          readServerFnResult — the client-side shape check on a server function's answer
 │   ├── validator.ts               validateInput(schema) — transport-boundary shape check

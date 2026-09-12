@@ -2,12 +2,14 @@ import type {
   AiClientConnectionView,
   CurrentUserView,
 } from "@repo/core/application/identity/view";
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 import { AiConnectionsList } from "../AiConnectionsList";
 import { CredentialList } from "../CredentialList";
 import { ExportPanel } from "../ExportPanel";
 import { LogoutButton } from "../LogoutButton";
 import { PasswordChangeForm } from "../PasswordChangeForm";
 import { RetentionForm } from "../RetentionForm";
+import { SettingsSection } from "../SettingsSection";
 
 /** The password section exists only for an account that can log in with one (S-AC-07). */
 export function hasPasswordCredential(user: CurrentUserView): boolean {
@@ -15,10 +17,11 @@ export function hasPasswordCredential(user: CurrentUserView): boolean {
 }
 
 /**
- * The display half of P-13: the address, the login methods with their
- * unlink and link actions, the password change, the trash retention, the
- * export and the AI connections. Never shows a verifier or a provider
- * subject: the view has none.
+ * The display half of P-13 (`spec/design/pages/settings.html`): the AI
+ * connections, the login methods with their unlink and link actions, the
+ * trash retention, the export, and the account — the password change and
+ * the reset link where the account has a password, then logout. Never shows
+ * a verifier or a provider subject: the view has none.
  */
 export function CurrentUserPanel({
   user,
@@ -32,66 +35,31 @@ export function CurrentUserPanel({
   aiConnections: readonly AiClientConnectionView[];
   mcpUrl: string;
 }) {
+  const withPassword = hasPasswordCredential(user);
   return (
-    <div className="fog-content fog-settings">
-      <section aria-labelledby="settings-account">
-        <h2 id="settings-account" className="fog-section-heading">
-          アカウント
-        </h2>
-        <dl className="fog-settings-list">
-          <div className="fog-settings-row">
-            <dt>メールアドレス</dt>
-            <dd>{user.email}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section aria-labelledby="settings-credentials">
-        <h2 id="settings-credentials" className="fog-section-heading">
-          ログイン手段
-        </h2>
+    <div>
+      <SettingsSection id="settings-ai" label="AI">
+        <AiConnectionsList connections={aiConnections} mcpUrl={mcpUrl} />
+      </SettingsSection>
+      <SettingsSection id="settings-credentials" label="ログイン手段">
         <CredentialList
           credentials={user.credentials}
           linkProviders={ssoProviders}
+          email={user.email}
         />
-      </section>
-
-      {hasPasswordCredential(user) && (
-        <section aria-labelledby="settings-password">
-          <h2 id="settings-password" className="fog-section-heading">
-            パスワードの変更
-          </h2>
-          <PasswordChangeForm />
-        </section>
-      )}
-
-      <section aria-labelledby="settings-trash">
-        <h2 id="settings-trash" className="fog-section-heading">
-          ゴミ箱の保持期限
-        </h2>
+      </SettingsSection>
+      <SettingsSection id="settings-trash" label="ゴミ箱">
         <RetentionForm retentionDays={user.trashRetentionDays} />
-      </section>
-
-      <section aria-labelledby="settings-data">
-        <h2 id="settings-data" className="fog-section-heading">
-          データ
-        </h2>
+      </SettingsSection>
+      <SettingsSection id="settings-data" label="データ">
         <ExportPanel />
-      </section>
-
-      <section aria-labelledby="settings-ai">
-        <h2 id="settings-ai" className="fog-section-heading">
-          AI クライアント接続
-        </h2>
-        <AiConnectionsList connections={aiConnections} mcpUrl={mcpUrl} />
-      </section>
-
-      <section aria-labelledby="settings-session">
-        <h2 id="settings-session" className="fog-section-heading">
-          セッション
-        </h2>
-        <LogoutButton />
-      </section>
+      </SettingsSection>
+      <SettingsSection id="settings-account" label="アカウント">
+        {withPassword && <PasswordChangeForm />}
+        <div className={withPassword ? SHEET_SECTION_CLASS : undefined}>
+          <LogoutButton />
+        </div>
+      </SettingsSection>
     </div>
   );
 }

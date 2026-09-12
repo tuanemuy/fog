@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import {
@@ -80,7 +80,7 @@ describe("ExportPanel", () => {
     expect(screen.getByRole("button", { name: "エクスポート" })).toBeTruthy();
   });
 
-  it("shows 「生成中…」 without the button while the request runs, then saves the zip once and keeps offering it", async () => {
+  it("shows 「生成中…」 without the button while the request runs, then saves the zip once and keeps offering it as 「ダウンロード」", async () => {
     const pending = deferred<Response>();
     fetchMock.mockReturnValue(pending.promise);
     await renderPanel();
@@ -101,30 +101,49 @@ describe("ExportPanel", () => {
     expect((init.body as FormData).get("timezone")).toBeTruthy();
 
     pending.resolve(zipResponse());
-    const link = await screen.findByRole("link", { name: "ダウンロード" });
-    expect(link.getAttribute("download")).toBe("fog-export-20260720.zip");
-    expect(link.getAttribute("href")).toBe("blob:fog/export");
+    const download = await screen.findByRole("button", {
+      name: "ダウンロード",
+    });
     expect(clicks).toEqual(["fog-export-20260720.zip|blob:fog/export"]);
     expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "エクスポート" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "もう一度生成" }));
-    expect(screen.getByRole("button", { name: "エクスポート" })).toBeTruthy();
+    // A second save is the same Blob, not a second request.
+    fireEvent.click(download);
+    expect(clicks).toEqual([
+      "fog-export-20260720.zip|blob:fog/export",
+      "fog-export-20260720.zip|blob:fog/export",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("lets the Blob go when the screen does", async () => {
+    fetchMock.mockResolvedValue(zipResponse());
+    const { unmount } = await renderPanel();
+    fireEvent.submit(
+      screen.getByRole("form", { name: "データのエクスポート" }),
+    );
+    await screen.findByRole("button", { name: "ダウンロード" });
+    unmount();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fog/export");
   });
 
-  it("a failure is named in the row and the button comes back", async () => {
-    fetchMock.mockResolvedValue(
-      Response.json(
-        {
-          error: {
-            kind: "system",
-            code: "EXPORT_TOO_LARGE",
-            message: "System error",
+  it("a failure stays under the row with 「リトライ」, which runs it again; the button comes back", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error: {
+              kind: "system",
+              code: "EXPORT_TOO_LARGE",
+              message: "System error",
+            },
           },
-        },
-        { status: 500 },
-      ),
-    );
+          { status: 500 },
+        ),
+      )
+      .mockResolvedValueOnce(zipResponse());
     await renderPanel();
     fireEvent.submit(
       screen.getByRole("form", { name: "データのエクスポート" }),
@@ -133,8 +152,15 @@ describe("ExportPanel", () => {
     expect(alert.textContent).toContain(
       "データ量が上限を超えているためエクスポートできません",
     );
+    expect(within(alert).queryByRole("link")).toBeNull();
     expect(screen.getByRole("button", { name: "エクスポート" })).toBeTruthy();
     expect(clicks).toEqual([]);
+
+    fireEvent.click(within(alert).getByRole("button", { name: "リトライ" }));
+    await screen.findByRole("button", { name: "ダウンロード" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(clicks).toEqual(["fog-export-20260720.zip|blob:fog/export"]);
   });
 
   it("a lost session says so and links to the login that returns here", async () => {
@@ -153,8 +179,14 @@ describe("ExportPanel", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(UNAUTHENTICATED_MESSAGE);
     expect(
-      screen.getByRole("link", { name: "ログインする" }).getAttribute("href"),
+      within(alert)
+        .getByRole("link", { name: "ログインする" })
+        .getAttribute("href"),
     ).toBe("/login?redirect=%2Fsettings");
+    // Running it again cannot help without a session.
+    expect(
+      within(alert).queryByRole("button", { name: "リトライ" }),
+    ).toBeNull();
     expectInternalHrefsToResolve();
   });
 
@@ -165,6 +197,6 @@ describe("ExportPanel", () => {
       screen.getByRole("form", { name: "データのエクスポート" }),
     );
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("システムエラーが発生しました");
+    expect(alert.textContent).toBe("システムエラーが発生しましたリトライ");
   });
 });

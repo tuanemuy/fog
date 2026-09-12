@@ -1,13 +1,22 @@
+import { ButtonAnchor } from "@/components/ui/ButtonAnchor";
+import { Icon, type IconName } from "@/components/ui/Icon";
 import type { SsoErrorCode } from "../schema";
 
-/** Wording per provider name; a name the list carries but this table lacks falls back to the name itself. */
-const LABELS: Readonly<Record<string, string>> = {
-  google: "Google で続行",
-  apple: "Apple で続行",
+type Provider = Readonly<{ name: string; icon: IconName }>;
+
+/** The providers the mocks draw; a name the list carries but this table lacks is shown as itself, without a glyph. */
+const PROVIDERS: Readonly<Record<string, Provider>> = {
+  google: { name: "Google", icon: "google" },
+  apple: { name: "Apple", icon: "apple" },
 };
 
-export function ssoButtonLabel(provider: string): string {
-  return LABELS[provider] ?? `${provider} で続行`;
+/** 「Google で続行」 on login, 「Google で登録」 on signup (`login.html` / `signup.html`). */
+export function ssoButtonLabel(
+  provider: string,
+  mode: "login" | "signup",
+): string {
+  const name = PROVIDERS[provider]?.name ?? provider;
+  return `${name} で${mode === "signup" ? "登録" : "続行"}`;
 }
 
 /** `/auth/sso/:provider/start` with the page it started from and the return path. */
@@ -43,10 +52,12 @@ export function renderSsoError(
 }
 
 /**
- * The SSO half of P-01 / P-02: plain anchors, because the round trip is a
- * redirect chain the bare handler owns, not a server function. Drawn from
- * `AppConfig.ssoProviders` — only a provider with an adapter is offered —
- * and absent altogether when none is configured.
+ * The SSO half of P-01 / P-02 (`.sso-group` in `login.html`): outline
+ * buttons, one per provider, stretched to the sheet's width. They are
+ * `ButtonAnchor`s, because the round trip is a redirect chain the bare
+ * handler owns — neither a server function nor a route the router serves.
+ * Drawn from `AppConfig.ssoProviders` — only a provider with
+ * an adapter is offered — and absent altogether when none is configured.
  */
 export function SsoButtons({
   mode,
@@ -59,16 +70,23 @@ export function SsoButtons({
 }) {
   if (providers.length === 0) return null;
   return (
-    <nav className="fog-auth-sso" aria-label="外部アカウントで続行">
-      {providers.map((provider) => (
-        <a
-          key={provider}
-          className="fog-secondary"
-          href={ssoStartHref(provider, mode, redirectTo)}
-        >
-          {ssoButtonLabel(provider)}
-        </a>
-      ))}
+    <nav
+      className="mt-lg flex flex-col gap-sm"
+      aria-label="外部アカウントで続行"
+    >
+      {providers.map((provider) => {
+        const icon = PROVIDERS[provider]?.icon;
+        return (
+          <ButtonAnchor
+            key={provider}
+            variant="outline"
+            href={ssoStartHref(provider, mode, redirectTo)}
+          >
+            {icon === undefined ? null : <Icon name={icon} size="md" />}
+            {ssoButtonLabel(provider, mode)}
+          </ButtonAnchor>
+        );
+      })}
     </nav>
   );
 }
