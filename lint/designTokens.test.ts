@@ -10,10 +10,11 @@ import { describe, expect, it } from "vitest";
 // utility CSS Tailwind generates from `apps/web`'s sources — the latter is
 // where an arbitrary value (`p-[13px]`) or a bare number (`border-3`) lands,
 // so it is checked as CSS rather than as className text. On top of that it
-// closes the two paths by which a primitive's look could be redefined from
+// closes the three paths by which a primitive's look could be redefined from
 // outside it: a wrapper's other-element variants (`*:` / `**:` /
-// descendant-targeting) outside `components/ui`, and a class selector in the
-// hand-written CSS.
+// descendant-targeting) outside `components/ui`, a class selector in the
+// hand-written CSS, and a `@custom-variant` / `@utility` in `styles/` that
+// gives such a selector a name (`next-sibling:mt-*` is the one exception).
 //
 // It lives in `lint/` for the same reason `banList.test.ts` does: it reads
 // across `spec/` and `apps/web`.
@@ -254,12 +255,18 @@ const rawValues = (prop: string, value: string): string[] => {
   return found;
 };
 
-/** Lengths in an `@media` prelude that are not one of the breakpoints. */
-const rawMediaLengths = (
+/**
+ * Lengths in an at-rule's prelude that are not one of the breakpoints. Every
+ * conditional at-rule is read, not only `@media`: the same raw length reaches
+ * the stylesheet through `@container` (`@[500px]:p-md`) and through
+ * `@supports` (`supports-[width:13px]:p-md`). `@keyframes` is out, as the
+ * allowlist puts its steps out.
+ */
+const rawPreludeLengths = (
   prelude: string,
   breakpoints: ReadonlySet<string>,
 ): string[] => {
-  if (!prelude.startsWith("@media")) return [];
+  if (!prelude.startsWith("@") || prelude.startsWith("@keyframes")) return [];
   return [...prelude.matchAll(NUMBER)]
     .filter(([, num, unit]) => unit !== undefined && Number(num) !== 0)
     .map(([text]) => text)
@@ -492,18 +499,47 @@ const combinatorsAtTopLevel = (selector: string): string[] => {
   return found;
 };
 
-// The part of an arbitrary variant's selector that follows `&`: a combinator
-// there means the rule lands on some other element, not the one carrying the
-// class. `[.dark_&]` keeps the subject; `[&_p]` / `[&>*]` / `[&+*]` move it.
-const targetCombinators = (variant: string): string[] => {
-  if (!variant.startsWith("[") || !variant.endsWith("]")) return [];
-  const selector = variant.slice(1, -1).replaceAll("_", " ");
-  if (selector.startsWith("@")) return [];
+// The part of a selector that follows `&`: a combinator there means the rule
+// lands on some other element, not the one carrying the class. `.dark &` keeps
+// the subject; `& p` / `& > *` / `& + *` move it.
+const selectorCombinators = (selector: string): string[] => {
   const amp = selector.lastIndexOf("&");
   return combinatorsAtTopLevel(
     amp === -1 ? ` ${selector}` : selector.slice(amp + 1),
   );
 };
+
+// The same question asked of an arbitrary variant, whose selector is written
+// in the className: `[.dark_&]` keeps the subject; `[&_p]` / `[&>*]` / `[&+*]`
+// move it.
+const targetCombinators = (variant: string): string[] => {
+  if (!variant.startsWith("[") || !variant.endsWith("]")) return [];
+  const selector = variant.slice(1, -1).replaceAll("_", " ");
+  if (selector.startsWith("@")) return [];
+  return selectorCombinators(selector);
+};
+
+// A `@custom-variant` / `@utility` names a selector, and the name is all a
+// className then shows — so `targetCombinators`, which reads the selector out
+// of the className, sees nothing of where the rule lands. The definitions are
+// written in `styles/`, and these read them there: the inline form
+// (`@custom-variant name (& + *);`) by its text, the block form
+// (`@utility name { & p { … } }`) by the preludes nested under it.
+const INLINE_CUSTOM_VARIANT = /@custom-variant\s+([^\s({]+)\s*\(([^)]*)\)/g;
+const DEFINITION_AT_RULE = /^@(?:custom-variant|utility)\b/;
+
+const definedVariantNames = (source: string): string[] =>
+  [...source.matchAll(/@custom-variant\s+([^\s({]+)/g)].map(([, name]) => name);
+
+/** Selectors `styles/` names, minus the one declared sibling variant. */
+const namedSelectors = (file: string): string[] => [
+  ...[...(styleSource.get(file) ?? "").matchAll(INLINE_CUSTOM_VARIANT)]
+    .filter(([, name]) => name !== NEXT_SIBLING_VARIANT)
+    .map(([, , selector]) => selector),
+  ...walked(file)
+    .blocks.filter((b) => b.context.some((c) => DEFINITION_AT_RULE.test(c)))
+    .map((b) => b.prelude),
+];
 
 // Built-in variants and utilities whose rule lands on other elements.
 const OTHER_ELEMENT_VARIANTS = new Set(["*", "**", "marker", "selection"]);
@@ -734,7 +770,7 @@ describe("design tokens — no raw value outside tokens.css", () => {
             ),
           ),
         ...walked(f).blocks.flatMap((b) =>
-          rawMediaLengths(b.prelude, breakpointValues).map(
+          rawPreludeLengths(b.prelude, breakpointValues).map(
             (r) => `${where(f, b.line)} ${b.prelude}: ${r}`,
           ),
         ),
@@ -769,7 +805,7 @@ describe("design tokens — no raw value outside tokens.css", () => {
         ),
       ),
       ...utilityBlocks.flatMap((b) =>
-        rawMediaLengths(b.prelude, breakpointValues).map(
+        rawPreludeLengths(b.prelude, breakpointValues).map(
           (r) => `${b.prelude}: ${r} under ${b.context.join(" > ")}`,
         ),
       ),
@@ -864,10 +900,26 @@ describe("design tokens — no override path onto a primitive", () => {
     ).toEqual([]);
   });
 
-  it("defines the next-sibling variant in index.css", () => {
+  it("defines the next-sibling variant in index.css and no other name", () => {
     expect(styleSource.get(ENTRY_CSS)).toContain(
       `@custom-variant ${NEXT_SIBLING_VARIANT} (& + *);`,
     );
+    expect(
+      styleFiles.flatMap((f) =>
+        definedVariantNames(styleSource.get(f) ?? "").map(
+          (name) => `styles/${f}: ${name}`,
+        ),
+      ),
+      "a second named variant reopens the override path: the className shows the name, not the selector",
+    ).toEqual([`styles/${ENTRY_CSS}: ${NEXT_SIBLING_VARIANT}`]);
+    expect(
+      styleFiles.flatMap((f) =>
+        namedSelectors(f)
+          .filter((selector) => selectorCombinators(selector).length > 0)
+          .map((selector) => `styles/${f}: ${selector}`),
+      ),
+      "a named variant or utility styles the element it is put on; `next-sibling:mt-*` is the one exception",
+    ).toEqual([]);
   });
 });
 
@@ -911,9 +963,11 @@ const stripComments = (source: string): string =>
 
 const STRING_LITERAL = /"([^"\\\n]*)"|'([^'\\\n]*)'|`((?:[^`\\$]|\$(?!\{))*)`/g;
 const INTERPOLATION = /\$\{(?:[^{}]|\{[^{}]*\})*\}/g;
-// A token is candidate-shaped when it opens the way a utility does. SVG path
-// data (`M118`, `-107.5Q441`, `4.5v3.7`) and sentences do not.
-const CANDIDATE_TOKEN = /^(?:-?[a-z]|\[|!)\S*$/;
+// A token is candidate-shaped when it opens the way a utility does — `@` among
+// them, since a container-query variant (`@lg:p-md`) opens with it and a class
+// list holding one is still a class list. SVG path data (`M118`, `-107.5Q441`,
+// `4.5v3.7`) and sentences do not.
+const CANDIDATE_TOKEN = /^(?:-?[a-z]|\[|!|@)\S*$/;
 
 /** The tokens of a string literal, dropping the halves an `${…}` splits. */
 const literalTokens = (raw: string): string[] => {
@@ -977,6 +1031,7 @@ describe("design tokens — every class name reaches the stylesheet", () => {
     ]);
     expect(literalTokens(`text-${hole("size")} p-md`)).toEqual(["p-md"]);
     expect(CANDIDATE_TOKEN.test("before:content-['–']")).toBe(true);
+    expect(CANDIDATE_TOKEN.test("@lg:p-md")).toBe(true);
     expect(CANDIDATE_TOKEN.test("M118")).toBe(false);
     expect(CANDIDATE_TOKEN.test("-107.5Q441")).toBe(false);
   });
@@ -1041,12 +1096,18 @@ describe("design tokens — what the checks reach", () => {
     expect(rawValues("padding", "0 0px 0rem")).toEqual([]);
   });
 
-  it("checks @media lengths against the breakpoints", () => {
+  it("checks every at-rule prelude against the breakpoints", () => {
     const bp = new Set(["640px", "1024px"]);
-    expect(rawMediaLengths("@media (width >= 640px)", bp)).toEqual([]);
-    expect(rawMediaLengths("@media (width >= 500px)", bp)).toEqual(["500px"]);
-    expect(rawMediaLengths("@media (hover: hover)", bp)).toEqual([]);
-    expect(rawMediaLengths("@layer utilities", bp)).toEqual([]);
+    expect(rawPreludeLengths("@media (width >= 640px)", bp)).toEqual([]);
+    expect(rawPreludeLengths("@media (width >= 500px)", bp)).toEqual(["500px"]);
+    expect(rawPreludeLengths("@container (width >= 500px)", bp)).toEqual([
+      "500px",
+    ]);
+    expect(rawPreludeLengths("@supports (width: 13px)", bp)).toEqual(["13px"]);
+    expect(rawPreludeLengths("@media (hover: hover)", bp)).toEqual([]);
+    expect(rawPreludeLengths("@layer utilities", bp)).toEqual([]);
+    expect(rawPreludeLengths("@keyframes spin", bp)).toEqual([]);
+    expect(rawPreludeLengths(".w-[13px]", bp)).toEqual([]);
   });
 
   it("finds a class selector and leaves element and keyframe rules alone", () => {
@@ -1072,6 +1133,16 @@ describe("design tokens — what the checks reach", () => {
     expect(overridePath("backdrop:bg-overlay")).toBeNull();
     expect(overridePath("[@media(hover:hover)]:p-md")).toBeNull();
     expect(overridePath("p-(--pad-btn)")).toBeNull();
+  });
+
+  it("finds the combinator a named selector puts after `&`", () => {
+    expect(selectorCombinators("&")).toEqual([]);
+    expect(selectorCombinators("&:hover")).toEqual([]);
+    expect(selectorCombinators("&:where(.dark, .dark *)")).toEqual([]);
+    expect(selectorCombinators(".dark &")).toEqual([]);
+    expect(selectorCombinators("& > *")).not.toEqual([]);
+    expect(selectorCombinators("& p")).not.toEqual([]);
+    expect(selectorCombinators("& + *")).not.toEqual([]);
   });
 
   it("allows a sibling only through next-sibling:mt-*", () => {

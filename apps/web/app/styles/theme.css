@@ -11,7 +11,10 @@
 
    A token goes into whatever namespace can carry it, even when its name does
    not look like a scale step: single-value widths ride `--spacing-*`,
-   max-widths ride `--container-*`. What no namespace can hold — the
+   max-widths ride `--container-*` — and only the ones a className reads are
+   projected, so a token another token composes (`--sheet-max` inside
+   `--sheet-w`) or one only the mocks use (`--container-padding`) has no
+   utility even though a namespace could hold it. What no namespace can hold — the
    multi-value shorthands `--pad-menu` / `--pad-btn` / `--pad-btn-sm` /
    `--pad-input`, `--border-input`, `--gradient-page` and the `--transition-*`
    shorthands — stays out and is consumed as `p-(--pad-btn)`. A token that is
@@ -104,7 +107,6 @@
   --spacing-safe-t-lg: var(--space-safe-t-lg);
   --spacing-safe-b-xl: var(--space-safe-b-xl);
   --spacing-safe-b-2xl: var(--space-safe-b-2xl);
-  --spacing-container-padding: var(--container-padding);
 
   /* Spacing — single-value role sizes (`py-row`, `size-icon-md`, `w-sheet`) */
   --spacing-row: var(--pad-row);
@@ -126,7 +128,6 @@
      `max-w-max` is Tailwind's built-in `max-width: max-content` */
   --container-page: var(--container-max);
   --container-content: var(--content-max);
-  --container-sheet: var(--sheet-max);
   --container-narrow: var(--narrow-max);
 
   /* Radius */
@@ -145,12 +146,12 @@
   --blur-glass: var(--blur-glass);
 
   /* Transition — plain `transition*` utilities take the fast pair; the
-     slower one is `duration-default` */
+     slower one is `duration-default`. The easing is the default of every
+     transition, so no `ease-*` utility is projected for it */
   --default-transition-duration: var(--duration-fast);
   --default-transition-timing-function: var(--ease-default);
   --transition-duration-fast: var(--duration-fast);
   --transition-duration-default: var(--duration-default);
-  --ease-default: var(--ease-default);
 
   /* Animation — the spinner is the only one (spec/design/index.md: motion
      beyond the two transitions is out of scope). `index.css` turns it off

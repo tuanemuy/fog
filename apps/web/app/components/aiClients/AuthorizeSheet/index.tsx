@@ -47,7 +47,9 @@ const GLYPH_CLASS = "flex h-[1lh] shrink-0 items-center text-neutral-500";
 
 /**
  * The two decisions. The label of the one in flight says so (「許可中…」);
- * both stay disabled until the navigation to the client takes over.
+ * both stay disabled while the request is in flight — the navigation to the
+ * client is asked for as the action ends, so they are pressable again for the
+ * moment the browser takes to leave.
  */
 function DecisionButtons() {
   const { pending, data } = useFormStatus();

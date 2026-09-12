@@ -34,7 +34,7 @@
   a,
   input,
   textarea,
-  summary {
+  label {
     -webkit-tap-highlight-color: transparent;
   }
 

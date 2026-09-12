@@ -315,7 +315,7 @@ Web フォントは使わない。`--font-base` の OS 標準スタックのみ�
 
 - `0`（単位の有無を問わない）
 - `1px` と `-1px`（ヘアライン）
-- `2px` と `-2px`（フォーカスリングの `outline` と `outline-offset` だけ）
+- `2px` と `-2px`（フォーカスリングの `outline` / `outline-width` / `outline-offset` だけ。`outline-2` は `outline-width` として出る）
 - ブレークポイントの値（上の表の 5 つ。`theme.css` の `--breakpoint-*` と、`@media` の条件だけ）
 - 相対単位: `%`・ビューポート単位（`vw`・`vh`・`dvh` など）・`fr`・`lh`（行数で数える寸法。1 行の高さは行間トークンから決まる）
 - `em`（`margin` だけ。「余白の向き」の例外）
