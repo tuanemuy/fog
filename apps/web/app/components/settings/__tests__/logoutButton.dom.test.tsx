@@ -59,6 +59,11 @@ describe("LogoutButton", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("システムエラーが発生しました");
     expect(assign).not.toHaveBeenCalled();
+    // First in the form, above the button it belongs to.
+    const button = screen.getByRole("button", { name: "ログアウト" });
+    expect(
+      alert.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   // A resolved value that is not the server function's — the platform

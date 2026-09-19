@@ -2,24 +2,24 @@
 
 import type { SourceDocumentView } from "@repo/core/application/memo/view";
 import { Link } from "@tanstack/react-router";
+import { Icon } from "@/components/ui/Icon";
 
-function ArrowIcon() {
+// `.doc-link` in `spec/design/pages/timeline.html`: a pill with the input
+// border. The trashed entry is the same pill, dashed and grayed. The dash
+// rides `aria-disabled:` because the border shorthand is generated after a
+// plain `border-dashed` and would win over it.
+const CHIP_BASE =
+  "inline-flex items-center gap-xs rounded-full bg-bg-card px-md py-xs font-base text-xs font-medium leading-tight [border:var(--border-input)]";
+const LIVE_CHIP_CLASS = `${CHIP_BASE} text-neutral-600 transition-colors hover:border-primary-light hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus`;
+const TRASHED_CHIP_CLASS = `${CHIP_BASE} cursor-default text-neutral-400 aria-disabled:border-dashed`;
+
+function ChipGlyph({ trashed }: Readonly<{ trashed: boolean }>) {
   return (
-    <svg
-      aria-hidden="true"
-      width="12"
-      height="12"
-      viewBox="0 0 20 20"
-      fill="none"
+    <span
+      className={`flex shrink-0 ${trashed ? "text-neutral-300" : "text-primary"}`}
     >
-      <path
-        d="M5 15L15 5M15 5H7.5M15 5V12.5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      <Icon name="jump" size="xs" />
+    </span>
   );
 }
 
@@ -35,25 +35,28 @@ export function SourceDocumentLinks({
 }) {
   if (documents.length === 0) return null;
   return (
-    <nav className="fog-doc-links" aria-label="出典になっているドキュメント">
+    <nav
+      className="mt-sm flex flex-wrap items-center gap-sm"
+      aria-label="出典になっているドキュメント"
+    >
       {documents.map((document) =>
         document.isTrashed ? (
           <span
             key={document.documentId}
-            className="fog-doc-link"
+            className={TRASHED_CHIP_CLASS}
             aria-disabled="true"
           >
-            <ArrowIcon />
+            <ChipGlyph trashed />
             削除済みのドキュメント
           </span>
         ) : (
           <Link
             key={document.documentId}
-            className="fog-doc-link"
+            className={LIVE_CHIP_CLASS}
             to="/documents/$documentId"
             params={{ documentId: document.documentId }}
           >
-            <ArrowIcon />
+            <ChipGlyph trashed={false} />
             {document.title}
           </Link>
         ),

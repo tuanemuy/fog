@@ -4,12 +4,20 @@ import type {
   DocumentDiffView,
   DocumentRevisionMetaView,
 } from "@repo/core/application/knowledge/view";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useTransition } from "react";
 import { DiffView } from "@/components/memoHistory/DiffView";
+import { RevisionDiff } from "@/components/memoHistory/RevisionDiff";
+import {
+  HISTORY_SECTION_CLASS,
+  NO_SELECTION,
+  RevisionList,
+  type RevisionSelection,
+} from "@/components/memoHistory/RevisionList";
+import { RollbackControl } from "@/components/memoHistory/RollbackControl";
 import { actorLabel } from "@/components/timeline/MemoEntry";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { SHEET_TITLE_CLASS } from "@/components/ui/SheetTitle";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { formatDateTime } from "@/presentation/time";
@@ -24,14 +32,13 @@ export type DocumentRevisionHistoryProps = Readonly<{
   revisions: readonly DocumentRevisionMetaView[];
 }>;
 
-type Selection = Readonly<{ base: number | null; target: number | null }>;
-
 /**
- * P-10: the history ascending (who · why, when), two-point selection like
- * the memo history — with the difference (decision △-5) that the first
- * click already shows the diff against the latest revision, and the second
- * click switches it to base → target. 「この内容に戻す」 acts on the base.
- * A single revision has nothing to compare or restore to.
+ * P-10: the document's title as the page's `h1`, then the history in the
+ * memo history's shape (who · why, when), two-point selection like the memo
+ * history — with the difference that the first click already
+ * shows the diff against the latest revision, and the second click switches
+ * it to base → target. 「この内容に戻す」 acts on the base. A single revision
+ * has nothing to compare or restore to.
  */
 export function DocumentRevisionHistory({
   documentId,
@@ -43,17 +50,15 @@ export function DocumentRevisionHistory({
   const fetchDiff = useServerFn(diffDocumentRevisionsFn);
   const rollback = useServerFn(rollbackDocumentFn);
   const canCompare = revisions.length > 1;
-  const [selection, setSelection] = useState<Selection>({
-    base: null,
-    target: null,
-  });
+  const [selection, setSelection] = useState<RevisionSelection>(NO_SELECTION);
   const [diff, setDiff] = useState<DocumentDiffView | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [loadingDiff, startDiff] = useTransition();
-  const [confirming, setConfirming] = useState(false);
-  const [rollingBack, startRollback] = useTransition();
-  const [rollbackError, setRollbackError] = useState<string | null>(null);
-  const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
+
+  const timeOf = (revisionNumber: number) => {
+    const found = revisions.find((r) => r.revisionNumber === revisionNumber);
+    return found === undefined ? "" : formatDateTime(found.createdAt);
+  };
 
   const loadDiff = (base: number, target: number) =>
     startDiff(async () => {
@@ -91,7 +96,7 @@ export function DocumentRevisionHistory({
       return;
     }
     if (revisionNumber === base) {
-      setSelection({ base: null, target: null });
+      setSelection(NO_SELECTION);
       setDiff(null);
       return;
     }
@@ -105,151 +110,71 @@ export function DocumentRevisionHistory({
     loadDiff(base, revisionNumber);
   };
 
-  const confirmRollback = () => {
-    const base = selection.base;
-    if (base === null) return;
-    startRollback(async () => {
-      try {
-        const result = readServerFnResult(
-          await rollback({ data: { documentId, revisionNumber: base } }),
-          isRollbackDocumentResult,
-          "rollbackDocumentFn",
-        );
-        if (result.changed) {
-          await router.navigate({
-            to: "/documents/$documentId",
-            params: { documentId },
-          });
-          return;
-        }
-        setConfirming(false);
-        setRollbackNotice("現在の内容は既にこのリビジョンと同じです");
-        setRollbackError(null);
-      } catch (failure) {
-        setConfirming(false);
-        setRollbackNotice(null);
-        setRollbackError(displayError(failure));
-      }
+  const rollbackToBase = async (base: number) => {
+    const result = readServerFnResult(
+      await rollback({ data: { documentId, revisionNumber: base } }),
+      isRollbackDocumentResult,
+      "rollbackDocumentFn",
+    );
+    if (!result.changed) return "unchanged" as const;
+    // The document screen is cached with the body from before the rollback;
+    // invalidating before the navigation is what makes it show the new one.
+    await router.invalidate();
+    await router.navigate({
+      to: "/documents/$documentId",
+      params: { documentId },
     });
+    return "rolledBack" as const;
   };
 
   const { base, target } = selection;
   const shownTarget = target ?? latestRevision;
   const showDiff = canCompare && base !== null && base !== shownTarget;
   return (
-    <div className="fog-history">
-      <Link
-        to="/documents/$documentId"
-        params={{ documentId }}
-        className="fog-context-link"
-      >
-        ← {title}
-      </Link>
-      <div className="fog-section-heading">
-        <h3>履歴</h3>
-        {canCompare && (
-          <span className="fog-meta">
-            {base === null
-              ? "比較元のリビジョンを選んでください"
-              : target === null
-                ? "比較先を選ぶと二点の差分に切り替わります"
-                : `リビジョン ${base} → ${target}`}
-          </span>
-        )}
-      </div>
-      <ol className="fog-revision-list" aria-label="リビジョン一覧">
-        {revisions.map((revision) => {
-          const n = revision.revisionNumber;
-          const body = (
-            <>
-              <span className="fog-revision-info">
-                <span className="fog-revision-time">
-                  {formatDateTime(revision.createdAt)}
-                </span>
-                <span className="fog-revision-meta">
-                  {actorLabel(revision.actor)} · {revision.changeReason} ·
-                  リビジョン {n}
-                </span>
-              </span>
-              {n === base && <span className="fog-badge">比較元</span>}
-              {n === target && <span className="fog-badge">比較先</span>}
-            </>
-          );
-          return (
-            <li key={n}>
-              {canCompare ? (
-                <button
-                  type="button"
-                  className="fog-revision-row"
-                  aria-pressed={n === base || n === target}
-                  onClick={() => select(n)}
-                >
-                  {body}
-                </button>
-              ) : (
-                <div className="fog-revision-row">{body}</div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-      {showDiff && (
-        <section className="fog-diff-section" aria-label="差分">
-          <p className="fog-diff-label">
-            リビジョン {base} → リビジョン {shownTarget}
-            {target === null ? "（最新）" : ""} の差分
-          </p>
-          {loadingDiff && <p role="status">差分を読み込み中…</p>}
-          {diffError && (
-            <p className="fog-error" role="alert">
-              {diffError}
-            </p>
-          )}
-          {diff && !loadingDiff && (
-            <>
-              {diff.base.title !== diff.target.title && (
-                <p className="fog-diff-title">
-                  タイトル: <del>{diff.base.title}</del> →{" "}
-                  <ins>{diff.target.title}</ins>
-                </p>
-              )}
-              <DiffView base={diff.base.body} target={diff.target.body} />
-            </>
-          )}
-        </section>
-      )}
-      {canCompare && base !== null && (
-        <div className="fog-action-row">
-          <button
-            type="button"
-            className="fog-primary"
-            onClick={() => setConfirming(true)}
+    <div>
+      <h1 className={SHEET_TITLE_CLASS}>{title}</h1>
+      <section className={HISTORY_SECTION_CLASS}>
+        <RevisionList
+          revisions={revisions.map((revision) => ({
+            revisionNumber: revision.revisionNumber,
+            createdAt: revision.createdAt,
+            meta: `${actorLabel(revision.actor)} · ${revision.changeReason}`,
+          }))}
+          selection={selection}
+          onSelect={canCompare ? select : null}
+        />
+        {showDiff && (
+          <RevisionDiff
+            label={`${timeOf(base)} → ${timeOf(shownTarget)}${target === null ? "（最新）" : ""} の差分`}
+            loading={loadingDiff}
+            error={diffError}
+            onRetry={() => loadDiff(base, shownTarget)}
           >
-            この内容に戻す
-          </button>
-        </div>
-      )}
-      {rollbackNotice && (
-        <p className="fog-notice" role="status">
-          {rollbackNotice}
-        </p>
-      )}
-      {rollbackError && (
-        <p className="fog-error" role="alert">
-          {rollbackError}
-        </p>
-      )}
-      <ConfirmDialog
-        open={confirming}
-        title="この内容に戻しますか？"
-        description={`リビジョン ${base ?? ""} と同じ内容が新しいリビジョンとして積まれます。これまでの履歴は消えません。`}
-        confirmLabel="戻す"
-        pending={rollingBack}
-        onConfirm={confirmRollback}
-        onCancel={() => {
-          if (!rollingBack) setConfirming(false);
-        }}
-      />
+            {diff && (
+              <>
+                {diff.base.title !== diff.target.title && (
+                  <p className="font-base text-sm leading-normal text-neutral-600 wrap-anywhere next-sibling:mt-md">
+                    タイトル:{" "}
+                    <del className="text-error-dark">{diff.base.title}</del>
+                    {" → "}
+                    <ins className="text-success-dark no-underline">
+                      {diff.target.title}
+                    </ins>
+                  </p>
+                )}
+                <DiffView base={diff.base.body} target={diff.target.body} />
+              </>
+            )}
+          </RevisionDiff>
+        )}
+        {canCompare && base !== null && (
+          <RollbackControl
+            key={base}
+            baseTime={timeOf(base)}
+            rollback={() => rollbackToBase(base)}
+          />
+        )}
+      </section>
     </div>
   );
 }

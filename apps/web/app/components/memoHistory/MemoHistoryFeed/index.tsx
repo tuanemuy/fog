@@ -1,4 +1,5 @@
-import { Link } from "@tanstack/react-router";
+import { ButtonLink } from "@/components/ui/ButtonLink";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { extractSerializedError } from "@/presentation/errorResponse";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
@@ -17,15 +18,14 @@ const loadRevisions = serverData(
 /** P-05's "not found" state: a wrong or deleted id, with the way back. */
 export function MemoHistoryNotFound() {
   return (
-    <div className="fog-history fog-empty" role="status">
-      <h2>メモが見つかりません</h2>
-      <p>削除されたか、URL のメモ ID が正しくありません。</p>
-      <p>
-        <Link to="/" className="fog-secondary fog-link-button">
+    <EmptyState
+      message="メモが見つかりません"
+      action={
+        <ButtonLink variant="fill" to="/">
           タイムラインへ
-        </Link>
-      </p>
-    </div>
+        </ButtonLink>
+      }
+    />
   );
 }
 

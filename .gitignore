@@ -1,6 +1,10 @@
 .DS_Store
 node_modules/
 
+# A common global excludesFile ignores macOS `Icon\r` files with a bare `Icon`
+# pattern, which also swallows this component directory.
+!apps/web/app/components/ui/Icon/
+
 # TanStack Start / Vite
 .tanstack/
 .output/
@@ -41,6 +45,12 @@ wrangler.state.production.toml
 # transcribed into `.thread/{N}/adr.md`.
 .thread/*/review/
 .thread/*/plan-review/
+
+# Per-session agent scaffolding: a run's own work log and the local agent
+# configuration. Unlike `.thread/`, none of it is a record of this repository.
+.spec-implement/
+.claude/
+.codex/
 
 # Fixture written by `lint/pluginWiring.test.ts` and removed in its `finally`.
 # It has to sit under a linted root (`packages/**`) for the test to mean

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import {
@@ -44,18 +44,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const button = (name: string) =>
+  screen.getByRole("button", { name }) as HTMLButtonElement;
+
 describe("AuthorizeSheet", () => {
-  it("names the client and the account, and lists what is allowed and what is not", async () => {
+  it("names the client and the account, and lists what is allowed and what is not under their labels", async () => {
     await renderWithRouter(<AuthorizeSheet request="blob" view={view} />, {
       path: "/ai-clients/authorize",
     });
     expect(screen.getByText("Claude")).toBeTruthy();
-    expect(screen.getByText("user@example.com")).toBeTruthy();
-    for (const item of [...ALLOWED_OPERATIONS, ...DENIED_OPERATIONS]) {
-      expect(screen.getByText(item)).toBeTruthy();
-    }
-    expect(screen.getByRole("button", { name: "許可する" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "拒否する" })).toBeTruthy();
+    expect(screen.getByText("user@example.com として接続")).toBeTruthy();
+    const allowed = screen.getByRole("region", { name: "許可される操作" });
+    expect(
+      within(allowed)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([...ALLOWED_OPERATIONS]);
+    const denied = screen.getByRole("region", { name: "できないこと" });
+    expect(
+      within(denied)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([...DENIED_OPERATIONS]);
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["許可される操作", "できないこと"]);
+    expect(button("許可する").disabled).toBe(false);
+    expect(button("拒否する").disabled).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("approve posts the request, disables both buttons while pending, then leaves for the redirect", async () => {
@@ -65,18 +83,10 @@ describe("AuthorizeSheet", () => {
     await renderWithRouter(<AuthorizeSheet request="blob" view={view} />, {
       path: "/ai-clients/authorize",
     });
-    fireEvent.click(screen.getByRole("button", { name: "許可する" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "処理中…" })).toBeTruthy(),
-    );
-    expect(
-      (screen.getByRole("button", { name: "処理中…" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    expect(
-      (screen.getByRole("button", { name: "拒否する" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    fireEvent.click(button("許可する"));
+    await waitFor(() => expect(button("許可中…")).toBeTruthy());
+    expect(button("許可中…").disabled).toBe(true);
+    expect(button("拒否する").disabled).toBe(true);
     expect(mocks.approveAiClientAuthorizationFn).toHaveBeenCalledWith({
       data: { request: "blob" },
     });
@@ -91,15 +101,20 @@ describe("AuthorizeSheet", () => {
     expect(mocks.denyAiClientAuthorizationFn).not.toHaveBeenCalled();
   });
 
-  it("deny runs the other action and follows its redirect", async () => {
-    mocks.denyAiClientAuthorizationFn.mockResolvedValue({
-      redirectTo: "http://127.0.0.1:8765/callback?error=access_denied",
-    });
+  it("deny disables both buttons without claiming to approve, and follows its redirect", async () => {
+    const pending = deferred<unknown>();
+    mocks.denyAiClientAuthorizationFn.mockReturnValue(pending.promise);
     vi.stubGlobal("location", { ...window.location, assign: mocks.assign });
     await renderWithRouter(<AuthorizeSheet request="blob" view={view} />, {
       path: "/ai-clients/authorize",
     });
-    fireEvent.click(screen.getByRole("button", { name: "拒否する" }));
+    fireEvent.click(button("拒否する"));
+    await waitFor(() => expect(button("拒否する").disabled).toBe(true));
+    expect(button("許可する").disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "許可中…" })).toBeNull();
+    pending.resolve({
+      redirectTo: "http://127.0.0.1:8765/callback?error=access_denied",
+    });
     await waitFor(() =>
       expect(mocks.assign).toHaveBeenCalledWith(
         "http://127.0.0.1:8765/callback?error=access_denied",
@@ -108,7 +123,7 @@ describe("AuthorizeSheet", () => {
     expect(mocks.approveAiClientAuthorizationFn).not.toHaveBeenCalled();
   });
 
-  it("a request that expired between the load and the click is the error, and the page stays", async () => {
+  it("a request that expired between the load and the click is the error at the head of the decision, and the page stays", async () => {
     mocks.approveAiClientAuthorizationFn.mockRejectedValue(
       new AppServerError({
         kind: "validation",
@@ -120,20 +135,29 @@ describe("AuthorizeSheet", () => {
     await renderWithRouter(<AuthorizeSheet request="blob" view={view} />, {
       path: "/ai-clients/authorize",
     });
-    fireEvent.click(screen.getByRole("button", { name: "許可する" }));
+    fireEvent.click(button("許可する"));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(INVALID_REQUEST_MESSAGE);
+    expect(
+      screen.getByRole("form", { name: "アクセス許可の決定" })
+        .firstElementChild,
+    ).toBe(alert);
+    expect(button("許可する").disabled).toBe(false);
     expect(mocks.assign).not.toHaveBeenCalled();
   });
 
-  it("an invalid request draws the error and no 「許可する」", async () => {
-    const { expectInternalHrefsToResolve } = await renderWithRouter(
+  it("an invalid request draws the error in place of the lists and the buttons", async () => {
+    await renderWithRouter(
       <AuthorizeSheet request={undefined} view={{ ok: false }} />,
       { path: "/ai-clients/authorize?error=invalid_request" },
+    );
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "アクセス許可",
     );
     expect(screen.getByRole("alert").textContent).toBe(INVALID_REQUEST_MESSAGE);
     expect(screen.queryByRole("button", { name: "許可する" })).toBeNull();
     expect(screen.queryByRole("button", { name: "拒否する" })).toBeNull();
-    expectInternalHrefsToResolve();
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
   });
 });

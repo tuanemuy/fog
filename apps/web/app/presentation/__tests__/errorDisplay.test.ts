@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   displayError,
   renderErrorMessage,
-  sanitizeRouteError,
+  reportRouteError,
 } from "../errorDisplay";
 import {
   AppServerError,
@@ -148,7 +148,7 @@ describe("renderErrorMessage", () => {
         code: IdentityErrorCode.InvalidEmail,
         message: "Invalid email address",
       },
-      "メールアドレスの形式が正しくありません",
+      "有効なメールアドレスを入力してください",
     ],
     [
       "a weak password",
@@ -157,7 +157,7 @@ describe("renderErrorMessage", () => {
         code: IdentityErrorCode.PasswordTooWeak,
         message: "Password must be between 8 and 128 characters",
       },
-      "パスワードは8文字以上128文字以下で入力してください",
+      "8文字以上で入力してください",
     ],
     [
       "an over-long memo body",
@@ -364,7 +364,7 @@ describe("renderErrorMessage", () => {
         code: "TOO_MANY_ATTEMPTS",
         message: "Attempts are limited for now",
       },
-      "試行回数の上限に達しました。しばらくしてからお試しください",
+      "試行が制限されています。しばらくしてからお試しください",
     ],
     [
       "the last login method",
@@ -611,18 +611,29 @@ describe("displayError", () => {
   );
 });
 
-describe("sanitizeRouteError", () => {
+describe("reportRouteError", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  it("renders the failure and never returns what it logged", () => {
+  it("logs what the boundary caught under vite dev", () => {
+    vi.stubEnv("DEV", true);
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const error = new Error("connect ECONNREFUSED 10.0.0.4:5432");
 
-    const rendered = sanitizeRouteError(error);
+    reportRouteError(error);
 
-    expect(rendered).toBe("エラーが発生しました");
-    expect(logged).toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith("Route error:", error);
+  });
+
+  it("logs only that one happened in a production build", () => {
+    vi.stubEnv("DEV", false);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    reportRouteError(new Error("connect ECONNREFUSED 10.0.0.4:5432"));
+
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith("Route error");
   });
 });

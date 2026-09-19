@@ -30,7 +30,6 @@
       "packages/**",
       "infra/**",
       "lint/**",
-      "!**/components/ui/**",
       "!**/styles/**",
       "!**/templates/**"
     ],

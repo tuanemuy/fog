@@ -39,7 +39,7 @@ export async function DocumentHistoryFeed({
     });
   } catch (error) {
     if (extractSerializedError(error).kind === "notFound") {
-      return <KnowledgeNotFound subject="ドキュメント" />;
+      return <KnowledgeNotFound subject="ドキュメント" asPageHeading />;
     }
     throw error;
   }

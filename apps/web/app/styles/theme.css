@@ -1,16 +1,36 @@
 /* Projects the tokens in `tokens.css` into Tailwind's `@theme` namespaces so
-   they become utilities (`bg-*`, `text-*`, `rounded-*`, …). Kept in lockstep
-   with `tokens.css`: a token that is not listed here has no utility, and a
-   name listed here that no longer exists there resolves to nothing.
+   they become utilities (`bg-*`, `text-*`, `p-*`, `rounded-*`, …).
+
+   `--*: initial` drops Tailwind's default theme first, so a default-scale
+   name (`p-4`, `bg-red-500`, `rounded-xl`, `max-w-2xl`) generates nothing:
+   the only utilities with a value are the ones projected here. Every
+   projection is a `var()` to a token — this file holds no token value. The
+   two exceptions are the breakpoints (a media query cannot read `var()`; the
+   values mirror tokens.md's `--bp-*`) and the spinner's animation, which is
+   declared together with its `@keyframes`.
 
    A token goes into whatever namespace can carry it, even when its name does
-   not look like a scale step: single-value widths and paddings ride
-   `--spacing-*`, max-widths ride `--container-*`. Only values no namespace can
-   hold — the multi-value shorthands `--pad-btn` / `--pad-input` / `--pad-menu`
-   and `--border-input` — stay out and are consumed as `p-(--pad-btn)`-style
-   arbitrary values (ADR-053 narrowed ADR-017 to just those). */
+   not look like a scale step: single-value widths ride `--spacing-*`,
+   max-widths ride `--container-*` — and only the ones a className reads are
+   projected, so a token another token composes (`--sheet-max` inside
+   `--sheet-w`) or one only the mocks use (`--container-padding`) has no
+   utility even though a namespace could hold it. What no namespace can hold — the
+   multi-value shorthands `--pad-menu` / `--pad-btn` / `--pad-btn-sm` /
+   `--pad-input`, `--border-input`, `--gradient-page` and the `--transition-*`
+   shorthands — stays out and is consumed as `p-(--pad-btn)`. A token that is
+   projected is consumed by its utility name, never as `(--token)`
+   (`lint/designTokens.test.ts` holds both rules). */
 @theme {
-  /* Colors */
+  --*: initial;
+
+  /* Breakpoints — tokens.md の --bp-* と同じ値 */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  /* Colors — `--color-bg-section` は使わない面なので投影しない */
   --color-primary-lighter: var(--color-primary-lighter);
   --color-primary-light: var(--color-primary-light);
   --color-primary: var(--color-primary);
@@ -53,6 +73,8 @@
 
   /* Typography */
   --font-base: var(--font-base);
+  --font-brand: var(--font-brand);
+  --default-font-family: var(--font-base);
 
   --text-xs: var(--text-xs);
   --text-sm: var(--text-sm);
@@ -72,7 +94,7 @@
 
   --tracking-label: var(--tracking-label);
 
-  /* Spacing */
+  /* Spacing — the scale, plus the safe-area variants (`pt-safe-t-lg`) */
   --spacing-xs: var(--space-xs);
   --spacing-sm: var(--space-sm);
   --spacing-md: var(--space-md);
@@ -80,41 +102,33 @@
   --spacing-xl: var(--space-xl);
   --spacing-2xl: var(--space-2xl);
   --spacing-section: var(--space-section);
-
-  /* Spacing — safe-area 込みの段（`pt-safe-t-xl` / `pb-safe-b-2xl`） */
+  --spacing-sheet-end: var(--space-sheet-end);
+  --spacing-sheet-end-composer: var(--space-sheet-end-composer);
   --spacing-safe-t-lg: var(--space-safe-t-lg);
-  --spacing-safe-t-xl: var(--space-safe-t-xl);
   --spacing-safe-b-xl: var(--space-safe-b-xl);
   --spacing-safe-b-2xl: var(--space-safe-b-2xl);
 
-  /* Spacing — 単値の役割寸法。スケールの段ではないが `--spacing-*` に載るので
-     ユーティリティになる（複合値の `--pad-btn` / `--pad-input` / `--pad-menu`
-     だけは名前空間に載らず `p-(--pad-btn)` のまま） */
+  /* Spacing — single-value role sizes (`py-row`, `size-icon-md`, `w-sheet`) */
   --spacing-row: var(--pad-row);
-  --spacing-sheet: var(--sheet-w);
-  --spacing-sheet-md: var(--sheet-w-md);
-  --spacing-sheet-inset: var(--nav-sheet-inset);
-  --spacing-sidebar: var(--sidebar-w);
-  --spacing-popover: var(--popover-min-w);
   --spacing-icon-lg: var(--icon-lg);
   --spacing-icon-md: var(--icon-md);
   --spacing-icon-sm: var(--icon-sm);
   --spacing-icon-xs: var(--icon-xs);
   --spacing-dot: var(--size-dot);
-  --spacing-mark: var(--size-mark);
   --spacing-handle-w: var(--size-handle-w);
   --spacing-handle-h: var(--size-handle-h);
-  --spacing-skeleton-line: var(--skeleton-line-h);
-  --spacing-skeleton-title: var(--skeleton-title-h);
-  --spacing-skeleton-short: var(--skeleton-line-w-short);
+  --spacing-popover: var(--popover-min-w);
+  --spacing-input-number: var(--input-number-w);
+  --spacing-sidebar: var(--sidebar-w);
+  --spacing-sheet: var(--sheet-w);
+  --spacing-sheet-md: var(--sheet-w-md);
+  --spacing-sheet-inset: var(--nav-sheet-inset);
 
-  /* Container — `max-w-*` が読む名前空間。`--container-max` を `max-w-max`
-     として出すと Tailwind 組み込みの `max-width: max-content` と衝突するので、
-     投影名は `page` にする */
+  /* Container — `max-w-*`. `--container-max` is projected as `page`:
+     `max-w-max` is Tailwind's built-in `max-width: max-content` */
   --container-page: var(--container-max);
   --container-content: var(--content-max);
   --container-narrow: var(--narrow-max);
-  --container-skeleton-short: var(--skeleton-line-w-short);
 
   /* Radius */
   --radius-sm: var(--radius-sm);
@@ -128,8 +142,25 @@
   --shadow-md: var(--shadow-md);
   --shadow-lg: var(--shadow-lg);
 
-  /* Transition — plain `transition*` utilities inherit the fast pair;
-     the slower one is opted into with `duration-(--duration-default)`. */
+  /* Blur — `backdrop-blur-glass` */
+  --blur-glass: var(--blur-glass);
+
+  /* Transition — plain `transition*` utilities take the fast pair; the
+     slower one is `duration-default`. The easing is the default of every
+     transition, so no `ease-*` utility is projected for it */
   --default-transition-duration: var(--duration-fast);
-  --default-transition-timing-function: ease;
+  --default-transition-timing-function: var(--ease-default);
+  --transition-duration-fast: var(--duration-fast);
+  --transition-duration-default: var(--duration-default);
+
+  /* Animation — the spinner is the only one (spec/design/index.md: motion
+     beyond the two transitions is out of scope). `index.css` turns it off
+     under `prefers-reduced-motion`. */
+  --animate-spin: spin 0.8s linear infinite;
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 }

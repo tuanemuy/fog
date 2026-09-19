@@ -1,55 +1,56 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { Brand } from "@/components/layout/Brand";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
+import { Button } from "@/components/ui/Button";
+import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
+import { TextField } from "@/components/ui/TextField";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { executePasswordResetFn } from "../actions";
 import { isSessionStartedResult } from "../schema";
 
-export type PasswordResetFormState = Readonly<{
-  fieldError: string | null;
-  formError: string | null;
-  /** The link is spent or expired: offer a new request instead of a retry. */
-  invalidToken: boolean;
-}>;
+/**
+ * Where a failed reset is drawn: under the password field, at the head of
+ * the form, or — for a link that is spent or expired — at the head of the
+ * form with the way to a new request instead of a retry.
+ */
+export type PasswordResetFailure =
+  | Readonly<{ kind: "field"; message: string }>
+  | Readonly<{ kind: "form"; message: string }>
+  | Readonly<{ kind: "invalid-token" }>;
 
-const INITIAL: PasswordResetFormState = {
-  fieldError: null,
-  formError: null,
-  invalidToken: false,
-};
-
-export function classifyResetError(failure: unknown): PasswordResetFormState {
+export function classifyResetError(failure: unknown): PasswordResetFailure {
   const serialized = toDisplayError(failure);
   if (
     serialized.kind === "business" &&
     serialized.code === "PASSWORD_TOO_WEAK"
   ) {
-    return { ...INITIAL, fieldError: displayError(failure) };
+    return { kind: "field", message: displayError(failure) };
   }
   if (
     serialized.kind === "validation" &&
     serialized.code === "RESET_TOKEN_INVALID"
   ) {
-    return { ...INITIAL, formError: displayError(failure), invalidToken: true };
+    return { kind: "invalid-token" };
   }
-  return { ...INITIAL, formError: displayError(failure) };
+  return { kind: "form", message: displayError(failure) };
 }
 
 /**
- * P-03, the completion half. The token never leaves the URL except in the
- * request body; on success the new session exists and a full navigation
- * rebuilds every route context from it.
+ * P-03, the completion half (`spec/design/pages/password-reset.html`,
+ * 新パスワード再設定). The token never leaves the URL except in the request
+ * body; on success the new session exists and a full navigation rebuilds
+ * every route context from it.
  */
 export function PasswordResetForm({ token }: { token: string }) {
   const execute = useServerFn(executePasswordResetFn);
   const id = useId();
   const [newPassword, setNewPassword] = useState("");
-  const [state, action, pending] = useActionState<
-    PasswordResetFormState,
+  const [failure, action, pending] = useActionState<
+    PasswordResetFailure | null,
     FormData
   >(async () => {
     try {
@@ -58,66 +59,49 @@ export function PasswordResetForm({ token }: { token: string }) {
         isSessionStartedResult,
         "executePasswordResetFn",
       );
-    } catch (failure) {
-      return classifyResetError(failure);
+    } catch (thrown) {
+      return classifyResetError(thrown);
     }
     window.location.assign("/password-reset/done");
-    return INITIAL;
-  }, INITIAL);
+    return null;
+  }, null);
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <Brand />
-        </div>
-        <h1 id={`${id}-title`}>新しいパスワードを設定</h1>
-        <form
-          className="fog-auth-form"
-          action={action}
-          aria-busy={pending}
-          aria-label="新しいパスワードの設定"
-        >
-          <label htmlFor={`${id}-password`}>新しいパスワード</label>
-          <input
-            id={`${id}-password`}
-            name="newPassword"
-            type="password"
-            autoComplete="new-password"
-            maxLength={128}
-            required
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-            disabled={pending}
-            aria-invalid={state.fieldError ? true : undefined}
-            aria-describedby={
-              state.fieldError ? `${id}-password-error` : `${id}-password-hint`
-            }
-          />
-          {state.fieldError ? (
-            <p id={`${id}-password-error`} className="fog-error" role="alert">
-              {state.fieldError}
-            </p>
-          ) : (
-            <p id={`${id}-password-hint`} className="fog-hint">
-              8文字以上128文字以下で設定してください。
-            </p>
-          )}
-          {state.formError && (
-            <p className="fog-error" role="alert">
-              {state.formError}
-              {state.invalidToken && (
-                <>
-                  {" "}
-                  <Link to="/password-reset">もう一度依頼する</Link>
-                </>
-              )}
-            </p>
-          )}
-          <button className="fog-primary" type="submit" disabled={pending}>
-            {pending ? "設定中…" : "パスワードを設定"}
-          </button>
-        </form>
-      </section>
-    </main>
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>パスワードリセット</AuthSheetTitle>
+      <form
+        className="mt-section flex flex-col gap-lg"
+        action={action}
+        aria-busy={pending}
+        aria-label="新しいパスワードの設定"
+      >
+        {failure?.kind === "invalid-token" ? (
+          // A spent link and an expired one read the same (S-AC-07).
+          <FormError>
+            リセットリンクが無効か、有効期限が切れています。もう一度
+            <FormLink to="/password-reset">パスワードリセット</FormLink>
+            をお試しください
+          </FormError>
+        ) : failure?.kind === "form" ? (
+          <FormError>{failure.message}</FormError>
+        ) : null}
+        <TextField
+          label="新パスワード"
+          helper="8文字以上"
+          name="newPassword"
+          type="password"
+          autoComplete="new-password"
+          placeholder="新しいパスワード"
+          maxLength={128}
+          required
+          value={newPassword}
+          onChange={(event) => setNewPassword(event.target.value)}
+          disabled={pending}
+          error={failure?.kind === "field" ? failure.message : undefined}
+        />
+        <Button variant="fill" type="submit" disabled={pending}>
+          {pending ? "更新中…" : "パスワードを更新"}
+        </Button>
+      </form>
+    </section>
   );
 }

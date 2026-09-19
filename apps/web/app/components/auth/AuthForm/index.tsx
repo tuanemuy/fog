@@ -1,9 +1,12 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
-import { Brand } from "@/components/layout/Brand";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
+import { Button } from "@/components/ui/Button";
+import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
+import { TextField } from "@/components/ui/TextField";
 import { displayError, renderErrorMessage } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -59,7 +62,7 @@ export function classifyAuthError(
     ) {
       return {
         ...INITIAL_STATE,
-        formError: "このメールアドレスは既に登録されています",
+        formError: "このメールアドレスは既に登録されています。",
         duplicate: true,
       };
     }
@@ -67,6 +70,11 @@ export function classifyAuthError(
   return { ...INITIAL_STATE, formError: renderErrorMessage(serialized) };
 }
 
+/**
+ * P-01 / P-02 on the auth sheet (`spec/design/pages/login.html` /
+ * `signup.html`): the title, the form with its failure at the head, the SSO
+ * providers under 「または」, and the entries to the other screens.
+ */
 export function AuthForm({
   mode,
   redirectTo,
@@ -107,146 +115,106 @@ export function AuthForm({
     },
     INITIAL_STATE,
   );
-  const emailError = state.fieldErrors.email;
-  const passwordError = state.fieldErrors.password;
+  const redirectSearch = redirectTo ? { redirect: redirectTo } : {};
+  const loginEntry = (
+    <>
+      {" "}
+      <FormLink to="/login" search={redirectSearch}>
+        ログイン
+      </FormLink>
+    </>
+  );
+  // One box at the head of the form: this attempt's failure, or else the
+  // failed SSO round trip that brought the page here.
+  const failure =
+    state.formError !== null ? (
+      <>
+        {state.formError}
+        {state.duplicate && loginEntry}
+      </>
+    ) : ssoError !== undefined ? (
+      <>
+        {renderSsoError(ssoError, mode)}
+        {ssoError === "email_registered" && signup && loginEntry}
+      </>
+    ) : null;
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <Brand />
-        </div>
-        <h1 id={`${id}-title`}>{signup ? "アカウント登録" : "ログイン"}</h1>
-        <p className="fog-auth-description">
-          {signup
-            ? "思いついたことを、気軽に残そう。"
-            : "あなたのメモが待っています。"}
-        </p>
-        {ssoError !== undefined && (
-          <p className="fog-error" role="alert">
-            {renderSsoError(ssoError, mode)}
-            {ssoError === "email_registered" && signup && (
-              <>
-                {" "}
-                <Link
-                  to="/login"
-                  search={redirectTo ? { redirect: redirectTo } : {}}
-                >
-                  ログインする
-                </Link>
-              </>
-            )}
-          </p>
-        )}
-        <form className="fog-auth-form" action={action} aria-busy={pending}>
-          <label htmlFor={`${id}-email`}>メールアドレス</label>
-          <input
-            id={`${id}-email`}
-            name="email"
-            type="email"
-            autoComplete="email"
-            maxLength={320}
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            disabled={pending}
-            aria-invalid={emailError ? true : undefined}
-            aria-describedby={emailError ? `${id}-email-error` : undefined}
-          />
-          {emailError && (
-            <p id={`${id}-email-error`} className="fog-error" role="alert">
-              {emailError}
-            </p>
-          )}
-          <label htmlFor={`${id}-password`}>パスワード</label>
-          <input
-            id={`${id}-password`}
-            name="password"
-            type="password"
-            autoComplete={signup ? "new-password" : "current-password"}
-            maxLength={128}
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            disabled={pending}
-            aria-invalid={passwordError ? true : undefined}
-            aria-describedby={
-              passwordError
-                ? `${id}-password-error`
-                : signup
-                  ? `${id}-password-hint`
-                  : undefined
-            }
-          />
-          {signup && !passwordError && (
-            <p id={`${id}-password-hint`} className="fog-hint">
-              8文字以上128文字以下で設定してください。
-            </p>
-          )}
-          {passwordError && (
-            <p id={`${id}-password-error`} className="fog-error" role="alert">
-              {passwordError}
-            </p>
-          )}
-          {state.formError && (
-            <p className="fog-error" role="alert">
-              {state.formError}
-              {state.duplicate && (
-                <>
-                  {" "}
-                  <Link
-                    to="/login"
-                    search={redirectTo ? { redirect: redirectTo } : {}}
-                  >
-                    ログインする
-                  </Link>
-                </>
-              )}
-            </p>
-          )}
-          <button className="fog-primary" type="submit" disabled={pending}>
-            {pending
-              ? signup
-                ? "登録中…"
-                : "ログイン中…"
-              : signup
-                ? "アカウント登録"
-                : "ログイン"}
-          </button>
-          {!signup && (
-            <p className="fog-auth-footer">
-              <Link to="/password-reset">パスワードをお忘れの方</Link>
-            </p>
-          )}
-        </form>
-        {ssoProviders.length > 0 && (
-          <p className="fog-auth-divider" aria-hidden="true">
-            または
-          </p>
-        )}
-        <SsoButtons
-          mode={mode}
-          redirectTo={redirectTo}
-          providers={ssoProviders}
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>
+        {signup ? "アカウント登録" : "ログイン"}
+      </AuthSheetTitle>
+      <form
+        className="mt-section flex flex-col gap-lg"
+        action={action}
+        aria-busy={pending}
+      >
+        {failure === null ? null : <FormError>{failure}</FormError>}
+        <TextField
+          label="メールアドレス"
+          name="email"
+          type="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          maxLength={320}
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          disabled={pending}
+          error={state.fieldErrors.email}
         />
-        <p className="fog-auth-footer">
-          {signup ? "アカウントをお持ちの方は" : "はじめての方は"}{" "}
-          {signup ? (
-            <Link
-              to="/login"
-              search={redirectTo ? { redirect: redirectTo } : {}}
-            >
-              ログイン
-            </Link>
-          ) : (
-            <Link
-              to="/signup"
-              search={redirectTo ? { redirect: redirectTo } : {}}
-            >
-              アカウント登録
-            </Link>
-          )}
+        <TextField
+          label="パスワード"
+          helper={signup ? "8文字以上" : undefined}
+          name="password"
+          type="password"
+          autoComplete={signup ? "new-password" : "current-password"}
+          placeholder="パスワード"
+          maxLength={128}
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          disabled={pending}
+          error={state.fieldErrors.password}
+        />
+        <Button variant="fill" type="submit" disabled={pending}>
+          {pending
+            ? signup
+              ? "登録中…"
+              : "ログイン中…"
+            : signup
+              ? "登録する"
+              : "ログイン"}
+        </Button>
+      </form>
+      {ssoProviders.length > 0 && (
+        <p
+          className="mt-lg flex items-center gap-md font-base text-sm leading-tight text-neutral-600"
+          aria-hidden="true"
+        >
+          <span className="flex-1 border-t border-neutral-100" />
+          または
+          <span className="flex-1 border-t border-neutral-100" />
         </p>
-      </section>
-    </main>
+      )}
+      <SsoButtons
+        mode={mode}
+        redirectTo={redirectTo}
+        providers={ssoProviders}
+      />
+      <div className="mt-section flex flex-col items-center gap-sm font-base text-sm leading-tight">
+        {signup ? (
+          <FormLink to="/login" search={redirectSearch}>
+            ログイン
+          </FormLink>
+        ) : (
+          <>
+            <FormLink to="/signup" search={redirectSearch}>
+              アカウント登録
+            </FormLink>
+            <FormLink to="/password-reset">パスワードを忘れた</FormLink>
+          </>
+        )}
+      </div>
+    </section>
   );
 }

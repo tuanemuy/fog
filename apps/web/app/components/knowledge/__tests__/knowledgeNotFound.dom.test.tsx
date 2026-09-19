@@ -4,17 +4,19 @@ import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { KnowledgeNotFound } from "@/components/knowledge/KnowledgeNotFound";
 
 describe("KnowledgeNotFound", () => {
-  it("names the subject and links back to the topic list", async () => {
-    const { expectInternalHrefsToResolve } = await renderWithRouter(
+  it("is one sentence naming the subject, and the way back to the topic list", async () => {
+    const { container, expectInternalHrefsToResolve } = await renderWithRouter(
       <KnowledgeNotFound subject="トピック" />,
       { path: "/topics/$topicId" },
     );
-    expect(screen.getByRole("status").textContent).toContain(
-      "トピックが見つかりません",
+    const sentence = screen.getByText("トピックが見つかりません");
+    expect(sentence.tagName).toBe("P");
+    expect(screen.queryByRole("heading")).toBeNull();
+    const back = screen.getByRole("link", { name: "トピック一覧へ" });
+    expect(back.getAttribute("href")).toBe("/topics");
+    expect(container.textContent).toBe(
+      "トピックが見つかりませんトピック一覧へ",
     );
-    expect(
-      screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
-    ).toBe("/topics");
     expectInternalHrefsToResolve();
   });
 
@@ -22,8 +24,9 @@ describe("KnowledgeNotFound", () => {
     await renderWithRouter(<KnowledgeNotFound subject="ドキュメント" />, {
       path: "/documents/$documentId",
     });
-    expect(screen.getByRole("status").textContent).toContain(
-      "ドキュメントが見つかりません",
-    );
+    expect(screen.getByText("ドキュメントが見つかりません").tagName).toBe("P");
+    expect(
+      screen.getByRole("link", { name: "トピック一覧へ" }).getAttribute("href"),
+    ).toBe("/topics");
   });
 });

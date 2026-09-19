@@ -1,11 +1,18 @@
 import type { SearchOutputView } from "@repo/core/application/search/view";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import {
   SearchPanel,
   type SearchPanelProps,
 } from "@/components/search/SearchPanel";
+import { SearchSkeleton } from "@/components/search/SearchSkeleton";
 import { AppServerError } from "@/presentation/errorResponse";
 
 const mocks = vi.hoisted(() => ({
@@ -69,23 +76,46 @@ async function draw(props: Partial<SearchPanelProps> = {}) {
   );
 }
 
+const keywordBox = () =>
+  screen.getByRole("searchbox", { name: "メモとドキュメントを検索" });
+
+const formOf = (input: HTMLElement) => {
+  const form = input.closest("form");
+  if (form === null) throw new Error("the keyword box is not in a form");
+  return form;
+};
+
+const chipsOf = () =>
+  within(screen.getByRole("list", { name: "トピックで絞り込む" })).getAllByRole(
+    "link",
+  );
+
+const resultRows = () =>
+  within(screen.getByRole("region", { name: "検索結果" })).getAllByRole("link");
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 describe("SearchPanel", () => {
   it("waits for a keyword and never navigates on a blank one", async () => {
     const { router } = await draw({ search: {}, initial: { kind: "idle" } });
     const navigate = vi.spyOn(router, "navigate");
-    expect(screen.getByRole("status").textContent).toContain(
-      "キーワードを入力すると",
+    expect(screen.getByRole("status").textContent).toBe(
+      "キーワードでメモとドキュメントを探せます",
     );
-    const form = screen.getByRole("form", { name: "メモとドキュメントを検索" });
+    const input = keywordBox();
+    expect(input.getAttribute("placeholder")).toBe("メモとドキュメントを検索…");
+    const form = formOf(input);
     fireEvent.submit(form);
-    fireEvent.change(within(form).getByRole("searchbox"), {
-      target: { value: "   " },
-    });
+    fireEvent.change(input, { target: { value: "   " } });
     fireEvent.submit(form);
     expect(navigate).not.toHaveBeenCalled();
-    fireEvent.change(within(form).getByRole("searchbox"), {
-      target: { value: "  fog " },
-    });
+    fireEvent.change(input, { target: { value: "  fog " } });
     fireEvent.submit(form);
     expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({ to: "/search", search: { q: "fog" } }),
@@ -95,11 +125,10 @@ describe("SearchPanel", () => {
   it("keeps the scope when a new keyword is submitted", async () => {
     const { router } = await draw({ search: { q: "old", topic: "t1" } });
     const navigate = vi.spyOn(router, "navigate");
-    const form = screen.getByRole("form", { name: "メモとドキュメントを検索" });
-    fireEvent.change(within(form).getByRole("searchbox"), {
-      target: { value: "new" },
-    });
-    fireEvent.submit(form);
+    const input = keywordBox();
+    expect((input as HTMLInputElement).value).toBe("old");
+    fireEvent.change(input, { target: { value: "new" } });
+    fireEvent.submit(formOf(input));
     expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({ search: { q: "new", topic: "t1" } }),
     );
@@ -114,9 +143,7 @@ describe("SearchPanel", () => {
       />,
       { path: "/search?q=fogsearch&topic=t2" },
     );
-    const chips = within(
-      screen.getByRole("list", { name: "トピックで絞り込む" }),
-    ).getAllByRole("link");
+    const chips = chipsOf();
     expect(chips.map((c) => c.textContent)).toEqual([
       "すべて",
       "読書メモ",
@@ -129,12 +156,16 @@ describe("SearchPanel", () => {
     ]);
     expect(chips[0]?.getAttribute("href")).toBe("/search?q=fogsearch");
     expect(chips[1]?.getAttribute("href")).toBe("/search?q=fogsearch&topic=t1");
-    expect(within(chips[2] as HTMLElement).getByText("完了").className).toBe(
-      "fog-badge",
-    );
+    const current = chips[2] as HTMLElement;
+    expect(current.classList.contains("bg-primary-lighter")).toBe(true);
+    expect(chips[1]?.classList.contains("bg-primary-lighter")).toBe(false);
+    expect(chips[1]?.classList.contains("bg-neutral-50")).toBe(true);
+    const badge = within(current).getByText("完了");
+    expect(badge).not.toBe(current);
+    expect(badge.classList.contains("text-primary-darker")).toBe(true);
   });
 
-  it("marks 「すべて」 alone when no topic is chosen", async () => {
+  it("marks 「すべて」 alone when no topic is chosen, and an archived chip's badge as idle", async () => {
     await renderWithRouter(
       <SearchPanel
         topics={TOPICS}
@@ -143,40 +174,42 @@ describe("SearchPanel", () => {
       />,
       { path: "/search?q=fogsearch" },
     );
-    const chips = within(
-      screen.getByRole("list", { name: "トピックで絞り込む" }),
-    ).getAllByRole("link");
+    const chips = chipsOf();
     expect(chips.map((c) => c.getAttribute("aria-current"))).toEqual([
       "page",
       null,
       null,
     ]);
+    expect(chips[0]?.classList.contains("bg-primary-lighter")).toBe(true);
+    const badge = within(chips[2] as HTMLElement).getByText("完了");
+    expect(badge.classList.contains("text-neutral-600")).toBe(true);
+    expect(badge.classList.contains("text-primary-darker")).toBe(false);
   });
 
-  it("lists the results with kind, highlighted snippet, time, topic and destination", async () => {
-    await draw();
+  it("lists the results as jump rows with kind, highlighted snippet, time, topic and destination", async () => {
+    const { expectInternalHrefsToResolve } = await draw();
     expect(screen.getByText("2件")).toBeTruthy();
-    const rows = within(
+    const list = within(
       screen.getByRole("region", { name: "検索結果" }),
-    ).getAllByRole("link");
+    ).getByRole("list");
+    expect(list.tagName).toBe("OL");
+    const rows = resultRows();
     expect(rows).toHaveLength(2);
     const memo = rows[0] as HTMLElement;
     expect(memo.getAttribute("href")).toBe("/?memo=m1");
-    expect(within(memo).getByText("メモ").className).toBe("fog-result-type");
+    expect(within(memo).getByText("メモ")).toBeTruthy();
     expect(within(memo).getByText("fogsearch").tagName).toBe("MARK");
     expect(memo.querySelector("time")?.getAttribute("dateTime")).toBe(
       AT.toISOString(),
     );
-    expect(memo.querySelector(".fog-result-topic")).toBeNull();
+    expect(memo.querySelector("svg")?.getAttribute("data-icon")).toBe("jump");
     const doc = rows[1] as HTMLElement;
     expect(doc.getAttribute("href")).toBe("/documents/d1");
-    expect(within(doc).getByText("ドキュメント").className).toBe(
-      "fog-result-type",
-    );
-    expect(within(doc).getByText("読書メモ").className).toBe(
-      "fog-result-topic",
-    );
+    expect(within(doc).getByText("ドキュメント")).toBeTruthy();
+    expect(within(doc).getByText("読書メモ")).toBeTruthy();
+    expect(within(memo).queryByText("読書メモ")).toBeNull();
     expect(screen.queryByRole("button", { name: "もっと読む" })).toBeNull();
+    expect(expectInternalHrefsToResolve()).toContain("/documents/d1");
   });
 
   it("marks a full-width original found by a half-width keyword, on the original text", async () => {
@@ -188,21 +221,39 @@ describe("SearchPanel", () => {
         ]),
       },
     });
-    const memo = within(
-      screen.getByRole("region", { name: "検索結果" }),
-    ).getAllByRole("link")[0] as HTMLElement;
+    const memo = resultRows()[0] as HTMLElement;
     const mark = memo.querySelector("mark");
     expect(mark?.textContent).toBe("ｆｏｇｓｅａｒｃｈ");
-    expect(memo.querySelector(".fog-result-snippet")?.textContent).toBe(
+    expect(mark?.parentElement?.textContent).toBe(
       "全角の ｆｏｇｓｅａｒｃｈ を含むメモ",
     );
   });
 
-  it("says nothing was found for zero results", async () => {
+  it("says nothing was found for zero results, and offers to widen only a scoped search", async () => {
+    const { unmount } = await draw({
+      search: { q: "fogsearch", topic: "t1" },
+      initial: { kind: "results", page: page([]) },
+    });
+    const scoped = screen.getByRole("status");
+    expect(scoped.textContent).toContain(
+      "「fogsearch」に一致するメモ・ドキュメントは見つかりませんでした",
+    );
+    expect(
+      within(scoped)
+        .getByRole("link", { name: "絞り込みを解除" })
+        .getAttribute("href"),
+    ).toBe("/search?q=fogsearch");
+    expect(screen.queryByRole("region", { name: "検索結果" })).toBeNull();
+    unmount();
+
     await draw({ initial: { kind: "results", page: page([]) } });
-    const status = screen.getByRole("status");
-    expect(status.textContent).toContain("見つかりませんでした");
-    expect(status.textContent).toContain("「fogsearch」");
+    const plain = screen.getByRole("status");
+    expect(plain.textContent).toBe(
+      "「fogsearch」に一致するメモ・ドキュメントは見つかりませんでした",
+    );
+    expect(
+      within(plain).queryByRole("link", { name: "絞り込みを解除" }),
+    ).toBeNull();
   });
 
   it("explains a missing scope topic and offers to clear it", async () => {
@@ -211,20 +262,17 @@ describe("SearchPanel", () => {
       initial: { kind: "topicMissing" },
     });
     const status = screen.getByRole("status");
-    expect(status.textContent).toContain(
-      "絞り込み対象のトピックが見つかりません",
-    );
+    expect(status.textContent).toContain("絞り込みのトピックが見つかりません");
     expect(
       within(status)
-        .getByRole("link", { name: "絞り込みを解除して検索する" })
+        .getByRole("link", { name: "絞り込みを解除して検索" })
         .getAttribute("href"),
     ).toBe("/search?q=fogsearch");
   });
 
-  it("appends the next page on もっと読む, hides the button when the set is read out, and posts the scope", async () => {
-    mocks.searchMoreFn.mockResolvedValueOnce(
-      page([{ ...MEMO, id: "m2", snippet: "second" }], { count: 3 }),
-    );
+  it("appends the next page on もっと読む with a spinner in its place, hides it when the set is read out, and posts the scope", async () => {
+    const next = deferred<SearchOutputView>();
+    mocks.searchMoreFn.mockReturnValueOnce(next.promise);
     await draw({
       search: { q: "fogsearch", topic: "t1" },
       initial: {
@@ -233,27 +281,28 @@ describe("SearchPanel", () => {
       },
     });
     expect(screen.getByText("3件")).toBeTruthy();
-    const more = screen.getByRole("button", { name: "もっと読む" });
-    fireEvent.click(more);
-    await waitFor(() => expect(more.getAttribute("aria-busy")).toBe("true"));
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("region", { name: "検索結果" })).getAllByRole(
-          "link",
-        ),
-      ).toHaveLength(3),
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "もっと読む" }));
+    const loading = await screen.findByRole("status");
+    expect(loading.textContent).toBe("読み込み中");
+    expect(screen.queryByRole("button", { name: "もっと読む" })).toBeNull();
+    next.resolve(
+      page([{ ...MEMO, id: "m2", snippet: "second" }], { count: 3 }),
     );
+    await waitFor(() => expect(resultRows()).toHaveLength(3));
     expect(mocks.searchMoreFn).toHaveBeenCalledWith({
       data: { q: "fogsearch", topic: "t1", cursor: "c1" },
     });
-    const snippets = [...document.querySelectorAll(".fog-result-snippet")].map(
-      (p) => p.textContent,
-    );
-    expect(snippets).toEqual([MEMO.snippet, DOC.snippet, "second"]);
+    expect(resultRows().map((row) => row.textContent)).toEqual([
+      expect.stringContaining(MEMO.snippet),
+      expect.stringContaining(DOC.snippet),
+      expect.stringContaining("second"),
+    ]);
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(screen.queryByRole("button", { name: "もっと読む" })).toBeNull();
   });
 
-  it("offers a retry when the next page fails, and a fresh search when the snapshot expired", async () => {
+  it("offers a retry in place of もっと読む when the next page fails, and a fresh search when the snapshot expired", async () => {
     mocks.searchMoreFn
       .mockRejectedValueOnce(
         new AppServerError({
@@ -285,18 +334,47 @@ describe("SearchPanel", () => {
     const invalidate = vi.spyOn(router, "invalidate");
     fireEvent.click(screen.getByRole("button", { name: "もっと読む" }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("システムエラー");
+    expect(alert.textContent).toContain("読み込めませんでした");
+    expect(screen.queryByRole("button", { name: "もっと読む" })).toBeNull();
+    expect(
+      within(alert).queryByRole("button", { name: "もう一度検索" }),
+    ).toBeNull();
     fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
     await waitFor(() => expect(screen.getByText("later")).toBeTruthy());
     expect(screen.queryByRole("alert")).toBeNull();
     // The transition may still be pending when the row lands; wait for the label.
     fireEvent.click(await screen.findByRole("button", { name: "もっと読む" }));
     const expired = await screen.findByRole("alert");
-    expect(expired.textContent).toContain("もう一度検索してください");
+    expect(expired.textContent).toContain("検索結果の続きを読めなくなりました");
+    expect(
+      within(expired).queryByRole("button", { name: "再試行" }),
+    ).toBeNull();
     fireEvent.click(
       within(expired).getByRole("button", { name: "もう一度検索" }),
     );
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
     expect(mocks.searchMoreFn).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("SearchSkeleton", () => {
+  it("draws the keyword box inert with the URL's keyword, and 検索中 where the results will be", () => {
+    const { container } = render(<SearchSkeleton q="fogsearch" />);
+    const input = keywordBox() as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.value).toBe("fogsearch");
+    expect(screen.getByRole("status").textContent).toBe("検索中");
+    expect(container.firstElementChild?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("list")).toBeNull();
+    const standIn = screen.getByText("読書メモ");
+    expect(standIn.getAttribute("aria-hidden")).toBe("true");
+    expect(standIn.classList.contains("text-transparent")).toBe(true);
+  });
+
+  it("says 読み込み中 instead when there is no keyword, only the chips to load", () => {
+    render(<SearchSkeleton q={undefined} />);
+    expect((keywordBox() as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("status").textContent).toBe("読み込み中");
   });
 });

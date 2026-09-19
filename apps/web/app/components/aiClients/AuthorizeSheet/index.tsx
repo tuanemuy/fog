@@ -1,9 +1,15 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId } from "react";
-import { Brand } from "@/components/layout/Brand";
+import { useFormStatus } from "react-dom";
+import { AuthSheetTitle } from "@/components/layout/AuthSheet";
+import { Button } from "@/components/ui/Button";
+import { FormError } from "@/components/ui/FormError";
+import { Icon } from "@/components/ui/Icon";
+import { RowList } from "@/components/ui/RowList";
+import { SectionLabel } from "@/components/ui/SectionLabel";
+import { SHEET_SECTION_CLASS } from "@/components/ui/SheetSection";
 import { displayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import {
@@ -31,10 +37,52 @@ export const DENIED_OPERATIONS = [
 export const INVALID_REQUEST_MESSAGE =
   "認可リクエストが正しくありません。クライアントアプリからやり直してください";
 
+// A block of the sheet after the client: a section's space above it and the
+// hairline that separates it from what came before.
+const BLOCK_CLASS = SHEET_SECTION_CLASS;
+
+// The glyph sits in a one-line box so it lines up with the first line of a
+// wrapped item.
+const GLYPH_CLASS = "flex h-[1lh] shrink-0 items-center text-neutral-500";
+
 /**
- * P-14. The two decisions run as actions; either ends in a full navigation
- * to the client's own redirect URI, so no route context survives. An
- * invalid or expired request draws the error and no 「許可する」 at all.
+ * The two decisions. The label of the one in flight says so (「許可中…」);
+ * both stay disabled while the request is in flight — the navigation to the
+ * client is asked for as the action ends, so they are pressable again for the
+ * moment the browser takes to leave.
+ */
+function DecisionButtons() {
+  const { pending, data } = useFormStatus();
+  const approving = pending && data?.get("decision") === "approve";
+  return (
+    <>
+      <Button
+        variant="fill"
+        type="submit"
+        name="decision"
+        value="approve"
+        disabled={pending}
+      >
+        {approving ? "許可中…" : "許可する"}
+      </Button>
+      <Button
+        variant="outline"
+        type="submit"
+        name="decision"
+        value="deny"
+        disabled={pending}
+      >
+        拒否する
+      </Button>
+    </>
+  );
+}
+
+/**
+ * P-14 (`spec/design/pages/ai-client-authorize.html`). The two decisions run
+ * as actions; either ends in a full navigation to the client's own redirect
+ * URI, so no route context survives. An invalid or expired request draws the
+ * error in place of the lists and the buttons, and no 「許可する」 at all.
  */
 export function AuthorizeSheet({
   request,
@@ -70,82 +118,63 @@ export function AuthorizeSheet({
   );
 
   return (
-    <main className="fog-auth">
-      <section className="fog-auth-sheet" aria-labelledby={`${id}-title`}>
-        <div className="fog-auth-brand">
-          <Brand />
+    <section aria-labelledby={`${id}-title`}>
+      <AuthSheetTitle id={`${id}-title`}>アクセス許可</AuthSheetTitle>
+      {view.ok ? (
+        <>
+          <div className="mt-section font-base text-sm leading-tight wrap-anywhere">
+            <p className="font-semibold text-neutral-900">{view.clientName}</p>
+            <p className="mt-xs text-xs text-neutral-600">
+              {view.email} として接続
+            </p>
+          </div>
+          <section aria-labelledby={`${id}-allowed`} className={BLOCK_CLASS}>
+            <SectionLabel id={`${id}-allowed`}>許可される操作</SectionLabel>
+            <RowList>
+              {ALLOWED_OPERATIONS.map((item) => (
+                <li
+                  key={item}
+                  className="flex items-start gap-md py-row font-base text-sm leading-tight text-neutral-900"
+                >
+                  <span className={GLYPH_CLASS}>
+                    <Icon name="check" size="md" />
+                  </span>
+                  <span className="min-w-[0] flex-1">{item}</span>
+                </li>
+              ))}
+            </RowList>
+          </section>
+          <section aria-labelledby={`${id}-denied`} className={BLOCK_CLASS}>
+            <SectionLabel id={`${id}-denied`}>できないこと</SectionLabel>
+            <ul className="flex flex-col gap-md">
+              {DENIED_OPERATIONS.map((item) => (
+                <li
+                  key={item}
+                  className="flex items-start gap-md font-base text-sm leading-tight text-neutral-700"
+                >
+                  <span className={GLYPH_CLASS}>
+                    <Icon name="minus" size="sm" />
+                  </span>
+                  <span className="min-w-[0] flex-1">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <form
+            className="mt-section flex flex-col gap-md"
+            action={act}
+            aria-busy={pending}
+            aria-label="アクセス許可の決定"
+          >
+            {error === null ? null : <FormError>{error}</FormError>}
+            <DecisionButtons />
+          </form>
+        </>
+      ) : (
+        <div className="mt-section">
+          <FormError>{INVALID_REQUEST_MESSAGE}</FormError>
         </div>
-        <h1 id={`${id}-title`}>アクセス許可</h1>
-        {view.ok ? (
-          <>
-            <p className="fog-auth-description">
-              <strong>{view.clientName}</strong> が、
-              <strong>{view.email}</strong> として接続することを求めています。
-            </p>
-            <section
-              aria-labelledby={`${id}-allowed`}
-              className="fog-authorize-list"
-            >
-              <h2 id={`${id}-allowed`}>許可される操作</h2>
-              <ul>
-                {ALLOWED_OPERATIONS.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-            <section
-              aria-labelledby={`${id}-denied`}
-              className="fog-authorize-list"
-            >
-              <h2 id={`${id}-denied`}>できないこと</h2>
-              <ul>
-                {DENIED_OPERATIONS.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-            <form
-              className="fog-auth-form fog-authorize-actions"
-              action={act}
-              aria-busy={pending}
-              aria-label="アクセス許可の決定"
-            >
-              {error && (
-                <p className="fog-error" role="alert">
-                  {error}
-                </p>
-              )}
-              <button
-                type="submit"
-                name="decision"
-                value="approve"
-                className="fog-primary"
-                disabled={pending}
-              >
-                {pending ? "処理中…" : "許可する"}
-              </button>
-              <button
-                type="submit"
-                name="decision"
-                value="deny"
-                className="fog-secondary"
-                disabled={pending}
-              >
-                拒否する
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <p className="fog-error" role="alert">
-              {INVALID_REQUEST_MESSAGE}
-            </p>
-            <p className="fog-auth-footer">
-              <Link to="/">タイムラインへ</Link>
-            </p>
-          </>
-        )}
-      </section>
-    </main>
+      )}
+    </section>
   );
 }

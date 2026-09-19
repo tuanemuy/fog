@@ -1,28 +1,21 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { AppShell } from "@/components/layout/AppShell";
-import { readAuthStateFn } from "@/presentation/authState";
-import { toSafeRedirect } from "@/presentation/redirectSearch";
+import { AuthSheetRouteError } from "@/components/layout/AuthSheet";
+import { requireSessionBeforeLoad } from "@/presentation/authGuard";
 
 /**
- * The protected layout. `beforeLoad` is the navigation aid that bounces an
- * unauthenticated visitor to `/login` with the current URL to return to; the
- * guard proper is `requireUserId()` in every server execution point below.
- * Because every protected document passes through `readAuthStateFn`, its
- * `noStoreMiddleware` stamps `Cache-Control: no-store` on all of them.
+ * The signed-in screens with the app shell's navigation. Its `beforeLoad`
+ * is the shared session check, which also marks every document under it
+ * `Cache-Control: no-store` (`requireSessionBeforeLoad`).
+ *
+ * A screen's failure is drawn in the sheet by the router's default; a
+ * failure of this layout itself — the session check, the shell — is drawn
+ * on the auth sheet.
  */
 export const Route = createFileRoute("/_app")({
-  beforeLoad: async ({ location }) => {
-    const { authenticated } = await readAuthStateFn();
-    if (!authenticated) {
-      const target = toSafeRedirect(location.href);
-      throw redirect({
-        to: "/login",
-        search:
-          target === undefined || target === "/" ? {} : { redirect: target },
-      });
-    }
-  },
+  beforeLoad: requireSessionBeforeLoad,
   component: AppLayout,
+  errorComponent: AuthSheetRouteError,
 });
 
 function AppLayout() {

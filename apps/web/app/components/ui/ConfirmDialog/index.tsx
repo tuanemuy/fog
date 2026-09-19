@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { Button } from "@/components/ui/Button";
+import {
+  Dialog,
+  DialogActions,
+  DialogCancelButton,
+  DialogDangerButton,
+} from "@/components/ui/Dialog";
 
 export type ConfirmDialogProps = Readonly<{
   open: boolean;
   title: string;
   description: string;
   confirmLabel: string;
+  /**
+   * What the confirmation reads while it runs. The default is
+   * `${confirmLabel}中…`, which only reads as Japanese when the label is a
+   * noun-like verb (「削除」「接続を解除」); a label that is a plain verb
+   * (「戻す」「空にする」) passes its own.
+   */
+  pendingLabel?: string;
   cancelLabel?: string;
   /** A destructive confirmation gets the red button and focus ring. */
   danger?: boolean;
@@ -16,71 +29,47 @@ export type ConfirmDialogProps = Readonly<{
 }>;
 
 /**
- * A native modal `<dialog>` in the shape of `.dialog-box`
- * (`spec/design/pages/timeline.html`). Mounted only while open so that
- * `showModal()` runs once per opening; Escape and backdrop clicks reach
- * `onCancel` through the element's `close` event.
+ * The `Dialog` with the one question it was drawn for: title, one sentence,
+ * then the confirm and cancel buttons stacked full width. Mounted only while
+ * open so that the dialog opens once per opening.
  */
-export function ConfirmDialog(props: ConfirmDialogProps) {
-  if (!props.open) return null;
-  return <OpenDialog {...props} />;
-}
-
-function OpenDialog({
+export function ConfirmDialog({
+  open,
   title,
   description,
   confirmLabel,
+  pendingLabel,
   cancelLabel = "キャンセル",
   danger = false,
   pending = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    // jsdom has no `showModal`; the attribute keeps the element visible there.
-    if (typeof dialog.showModal === "function") dialog.showModal();
-    else dialog.setAttribute("open", "");
-  }, []);
-
+  if (!open) return null;
+  const confirmText = pending
+    ? (pendingLabel ?? `${confirmLabel}中…`)
+    : confirmLabel;
   return (
-    <dialog
-      ref={ref}
-      className="fog-dialog"
-      aria-labelledby={titleId}
+    <Dialog
+      title={title}
+      description={description}
+      locked={pending}
       onClose={onCancel}
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !pending) onCancel();
-      }}
     >
-      <div className="fog-dialog-box">
-        <h2 id={titleId} className="fog-dialog-title">
-          {title}
-        </h2>
-        <p className="fog-dialog-text">{description}</p>
-        <div className="fog-dialog-actions">
-          <button
-            type="button"
-            className={danger ? "fog-danger" : "fog-primary"}
-            onClick={onConfirm}
-            disabled={pending}
-          >
-            {pending ? `${confirmLabel}中…` : confirmLabel}
-          </button>
-          <button
-            type="button"
-            className="fog-secondary"
-            onClick={onCancel}
-            disabled={pending}
-          >
-            {cancelLabel}
-          </button>
-        </div>
-      </div>
-    </dialog>
+      <DialogActions>
+        {danger ? (
+          <DialogDangerButton onClick={onConfirm} disabled={pending}>
+            {confirmText}
+          </DialogDangerButton>
+        ) : (
+          <Button variant="fill-sm" onClick={onConfirm} disabled={pending}>
+            {confirmText}
+          </Button>
+        )}
+        <DialogCancelButton onClick={onCancel} disabled={pending}>
+          {cancelLabel}
+        </DialogCancelButton>
+      </DialogActions>
+    </Dialog>
   );
 }

@@ -6,30 +6,44 @@ import type {
   MemoView,
   TimelineItemView,
 } from "@repo/core/application/memo/view";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   useActionState,
   useEffect,
-  useId,
   useOptimistic,
   useRef,
   useState,
 } from "react";
+import { Button } from "@/components/ui/Button";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { Markdown } from "@/components/ui/Markdown";
+import {
+  PopoverMenu,
+  PopoverMenuItem,
+  PopoverMenuLink,
+} from "@/components/ui/PopoverMenu";
+import { TextAreaField } from "@/components/ui/TextAreaField";
 import {
   displayError,
   isOptimisticLockFailure,
 } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
-import { formatDateTime, formatTime } from "@/presentation/time";
+import { formatTime } from "@/presentation/time";
 import { editMemoFn } from "../actions";
-import { Markdown } from "../Markdown";
 import { SourceDocumentLinks } from "../SourceDocumentLinks";
 import { isEditMemoResult } from "../schema";
+import {
+  ENTRY_BODY_CLASS,
+  ENTRY_CLASS,
+  ENTRY_HEAD_CLASS,
+  HIGHLIGHTED_ENTRY_CLASS,
+  TIME_LABEL_CLASS,
+} from "../styles";
 
 export type DisplayMemo = TimelineItemView & { pending?: boolean };
 
-/** Decision J-H: the user reads as 「あなた」; an AI client by its name. */
+/** The user reads as 「あなた」; an AI client by its name. */
 export function actorLabel(actor: ActorView): string {
   return actor.kind === "user" ? "あなた" : actor.clientName;
 }
@@ -47,10 +61,12 @@ export type MemoEntryProps = Readonly<{
 }>;
 
 /**
- * One memo on the timeline: the entry, its menu (edit / history / delete)
- * and the inline editor. Editing is an in-item change, so the leaf owns the
- * server function and an item-local `useOptimistic`; deleting changes the
- * list's membership, so it is handed up to the owner (CLAUDE.md, Frontend).
+ * One memo on the timeline (`spec/design/pages/timeline.html`, `.entry`):
+ * the time and the `…` menu (edit / history / delete) over the body, or the
+ * inline editor in its place. Editing is an in-item change, so the leaf owns
+ * the server function and an item-local `useOptimistic`; deleting changes
+ * the list's membership, so it is handed up to the owner (CLAUDE.md,
+ * Frontend).
  */
 export function MemoEntry({
   memo,
@@ -60,9 +76,6 @@ export function MemoEntry({
 }: MemoEntryProps) {
   const router = useRouter();
   const edit = useServerFn(editMemoFn);
-  const editorId = useId();
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(memo.body);
   // The OCC token the editor started from. Held apart from `memo.version`
@@ -73,25 +86,15 @@ export function MemoEntry({
     memo.body,
     (_current: string, next: string) => next,
   );
+  const editor = useRef<HTMLTextAreaElement>(null);
 
+  // The menu hands focus back to its trigger, which hides while the editor
+  // is open; the editor takes it instead.
   useEffect(() => {
-    if (!menuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuOpen]);
+    if (editing) editor.current?.focus();
+  }, [editing]);
 
   const startEditing = () => {
-    setMenuOpen(false);
     setDraft(memo.body);
     setStartedVersion(memo.version);
     setConflict(null);
@@ -134,147 +137,105 @@ export function MemoEntry({
     { error: null },
   );
 
-  const className = [
-    "fog-memo",
-    memo.pending ? "fog-memo-pending" : "",
-    highlighted ? "fog-memo-highlight" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   return (
     <article
       id={`memo-${memo.id}`}
-      className={className}
+      className={highlighted ? HIGHLIGHTED_ENTRY_CLASS : ENTRY_CLASS}
+      aria-current={highlighted ? "true" : undefined}
       aria-busy={memo.pending || pending ? true : undefined}
     >
-      <div className="fog-memo-meta">
-        <time dateTime={memo.postedAt.toISOString()}>
+      <div className={ENTRY_HEAD_CLASS}>
+        <time
+          className={TIME_LABEL_CLASS}
+          dateTime={memo.postedAt.toISOString()}
+        >
           {formatTime(memo.postedAt)}
         </time>
         {memo.pending ? (
-          <span role="status">保存中…</span>
+          <span role="status" className={TIME_LABEL_CLASS}>
+            保存中…
+          </span>
         ) : (
-          <div className="fog-entry-menu-wrap" ref={menuRef}>
-            <button
-              type="button"
-              className="fog-entry-menu"
-              aria-label="メモの操作"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
+          // Hidden rather than removed while editing, so the head keeps its
+          // height (`.entry.editing .entry-menu`).
+          <span className={editing ? "invisible flex" : "flex"}>
+            <PopoverMenu label="メモの操作">
+              <PopoverMenuItem icon="edit" onSelect={startEditing}>
+                編集
+              </PopoverMenuItem>
+              <PopoverMenuLink
+                icon="history"
+                to="/memos/$memoId/history"
+                params={{ memoId: memo.id }}
               >
-                <circle cx="3" cy="8" r="1.4" fill="currentColor" />
-                <circle cx="8" cy="8" r="1.4" fill="currentColor" />
-                <circle cx="13" cy="8" r="1.4" fill="currentColor" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div className="fog-entry-pop" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="fog-pop-item"
-                  onClick={startEditing}
-                >
-                  編集
-                </button>
-                <Link
-                  role="menuitem"
-                  className="fog-pop-item"
-                  to="/memos/$memoId/history"
-                  params={{ memoId: memo.id }}
-                >
-                  履歴
-                </Link>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="fog-pop-item fog-pop-danger"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onDelete?.(memo);
-                  }}
-                >
-                  削除
-                </button>
-              </div>
-            )}
-          </div>
+                履歴
+              </PopoverMenuLink>
+              <PopoverMenuItem
+                icon="delete"
+                tone="danger"
+                onSelect={() => onDelete?.(memo)}
+              >
+                削除
+              </PopoverMenuItem>
+            </PopoverMenu>
+          </span>
         )}
       </div>
-      {editing ? (
-        <form
-          className="fog-inline-edit"
-          action={action}
-          aria-label="メモを編集"
-        >
-          <label className="fog-sr-only" htmlFor={editorId}>
-            本文
-          </label>
-          <textarea
-            id={editorId}
-            name="body"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={pending}
-            rows={4}
-            maxLength={10_000}
-          />
-          {conflict && (
-            <div className="fog-conflict" role="alert">
-              <p>
-                編集を始めた後に
-                <strong>{actorLabel(conflict.latestRevision.actor)}</strong>
-                がこのメモを編集しました（
-                {formatDateTime(conflict.latestRevision.createdAt)}）。
-              </p>
-              <p className="fog-conflict-label">現在の本文</p>
-              <pre className="fog-conflict-body">{conflict.currentBody}</pre>
-              <p>
-                そのまま保存すると、あなたの本文が最新の内容として新しいリビジョンに積まれます。
-              </p>
-            </div>
-          )}
-          {state.error && (
-            <p className="fog-error" role="alert">
-              {state.error}
-            </p>
-          )}
-          <div className="fog-actions">
-            <button
-              type="submit"
-              className="fog-primary"
-              disabled={pending || draft.trim().length === 0}
-            >
-              {pending ? "保存中…" : conflict ? "そのまま保存" : "保存"}
-            </button>
-            <button
-              type="button"
-              className="fog-secondary"
-              onClick={() => {
-                setEditing(false);
-                setConflict(null);
-              }}
+      <div className={ENTRY_BODY_CLASS}>
+        {editing ? (
+          <form action={action} className="flex flex-col gap-sm">
+            <TextAreaField
+              ref={editor}
+              label="メモを編集"
+              hideLabel
+              name="body"
+              placeholder="メモを入力…"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
               disabled={pending}
-            >
-              取り消し
-            </button>
-          </div>
-        </form>
-      ) : (
-        <>
-          <Markdown body={shownBody} />
-          <SourceDocumentLinks documents={memo.sourceDocuments} />
-        </>
-      )}
+              rows={2}
+              maxLength={10_000}
+            />
+            {conflict && (
+              <InlineAlert tone="warning">
+                <p>
+                  編集中に {actorLabel(conflict.latestRevision.actor)}{" "}
+                  がこのメモを更新しました。そのまま保存すると、自分の内容が新しいリビジョンになります。
+                </p>
+                <p className="mt-sm font-medium">現在の本文</p>
+                <p className="whitespace-pre-wrap">{conflict.currentBody}</p>
+              </InlineAlert>
+            )}
+            {state.error && (
+              <InlineAlert tone="error">{state.error}</InlineAlert>
+            )}
+            <div className="flex items-center justify-end gap-sm">
+              <Button
+                variant="text"
+                onClick={() => {
+                  setEditing(false);
+                  setConflict(null);
+                }}
+                disabled={pending}
+              >
+                キャンセル
+              </Button>
+              <Button
+                variant="fill-sm"
+                type="submit"
+                disabled={pending || draft.trim().length === 0}
+              >
+                {pending ? "保存中…" : conflict ? "そのまま保存" : "保存"}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <Markdown body={shownBody} variant="memo" />
+            <SourceDocumentLinks documents={memo.sourceDocuments} />
+          </>
+        )}
+      </div>
     </article>
   );
 }

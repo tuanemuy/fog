@@ -1,5 +1,4 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
-import { displayError } from "@/presentation/errorDisplay";
 import { guardStreamedRender } from "@/presentation/errorResponseMiddleware";
 import { serverData } from "@/presentation/serverAction";
 import { CurrentUserPanel } from "../CurrentUserPanel";
@@ -51,6 +50,6 @@ export async function SettingsFeed() {
     );
   } catch (error) {
     if (isRedirect(error) || isNotFound(error)) throw error;
-    return <SettingsUnavailable message={displayError(error)} />;
+    return <SettingsUnavailable />;
   }
 }

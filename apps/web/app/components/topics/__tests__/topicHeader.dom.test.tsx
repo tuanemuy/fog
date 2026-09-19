@@ -1,6 +1,10 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import {
+  cacheDrops,
+  renderWithReloadingRoutes,
+  renderWithRouter,
+} from "@/components/__tests__/renderWithRouter";
 import { TopicHeader } from "@/components/topics/TopicHeader";
 import { AppServerError } from "@/presentation/errorResponse";
 import { deferred, topicView } from "./fixtures";
@@ -31,23 +35,37 @@ function openMenu() {
   return screen.getByRole("menu");
 }
 
+function openEditor() {
+  fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "編集" }));
+  const form = screen.getByRole("form", { name: "トピックを編集" });
+  return {
+    form,
+    name: within(form).getByLabelText("トピック名") as HTMLInputElement,
+    description: within(form).getByLabelText("説明") as HTMLTextAreaElement,
+    save: within(form).getByRole("button", {
+      name: /^保存(中…)?$/,
+    }) as HTMLButtonElement,
+  };
+}
+
+const glyphOf = (button: HTMLElement) =>
+  button.querySelector("svg")?.getAttribute("data-icon");
+
 describe("TopicHeader", () => {
-  it("shows the name, the badge when archived and the description; 完了 is a header button and never a menu item", async () => {
+  it("shows the name and the description; 完了にする is a button under them and never a menu item", async () => {
     await renderWithRouter(
       <TopicHeader
-        topic={topicView("t1", "読書メモ", {
-          description: "本の要約",
-          status: "archived",
-        })}
+        topic={topicView("t1", "読書メモ", { description: "本の要約" })}
       />,
       { path: "/topics/$topicId" },
     );
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "読書メモ",
     );
-    expect(screen.getByText("完了")).toBeTruthy();
     expect(screen.getByText("本の要約")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "完了を解除" })).toBeTruthy();
+    expect(screen.queryByText("完了済み")).toBeNull();
+    const complete = screen.getByRole("button", { name: "完了にする" });
+    expect(glyphOf(complete)).toBe("check");
     const menu = openMenu();
     expect(
       within(menu)
@@ -57,7 +75,29 @@ describe("TopicHeader", () => {
     expect(within(menu).queryByText(/完了/)).toBeNull();
   });
 
-  it("edits inline: prefilled, a blank name is refused with its message, saves with an optimistic name and invalidates", async () => {
+  it("marks an archived topic 完了済み and offers 完了を解除 in the same place", async () => {
+    await renderWithRouter(
+      <TopicHeader
+        topic={topicView("t1", "確定申告", { status: "archived" })}
+      />,
+      { path: "/topics/$topicId" },
+    );
+    const undo = screen.getByRole("button", { name: "完了を解除" });
+    expect(glyphOf(undo)).toBe("restore");
+    const mark = screen.getByText("完了済み");
+    expect(mark.parentElement).toBe(undo.parentElement);
+    expect(screen.queryByRole("button", { name: "完了にする" })).toBeNull();
+  });
+
+  it("draws no description line without one", async () => {
+    const { container } = await renderWithRouter(
+      <TopicHeader topic={topicView("t1", "説明なし")} />,
+      { path: "/topics/$topicId" },
+    );
+    expect(container.querySelectorAll("p")).toHaveLength(0);
+  });
+
+  it("edits in place: prefilled and focused, a blank name is refused with its message, saves with an optimistic name and invalidates", async () => {
     const update = deferred<unknown>();
     mocks.updateTopicFn.mockReturnValue(update.promise);
     const { router } = await renderWithRouter(
@@ -65,12 +105,9 @@ describe("TopicHeader", () => {
       { path: "/topics/$topicId" },
     );
     const invalidate = vi.spyOn(router, "invalidate");
-    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "編集" }));
-    const form = screen.getByRole("form", { name: "トピックを編集" });
-    const name = within(form).getByLabelText("名前") as HTMLInputElement;
-    const description = within(form).getByLabelText(
-      "説明",
-    ) as HTMLTextAreaElement;
+    const { form, name, description, save } = openEditor();
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(document.activeElement).toBe(name);
     expect(name.value).toBe("前");
     expect(description.value).toBe("説明");
     fireEvent.change(name, { target: { value: "   " } });
@@ -79,10 +116,12 @@ describe("TopicHeader", () => {
     expect(alert.textContent).toBe("トピック名を入力してください");
     expect(name.getAttribute("aria-invalid")).toBe("true");
     expect(name.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(save.disabled).toBe(true);
     expect(mocks.updateTopicFn).not.toHaveBeenCalled();
     expect(screen.getByRole("form", { name: "トピックを編集" })).toBe(form);
     fireEvent.change(name, { target: { value: "後" } });
     expect(within(form).queryByRole("alert")).toBeNull();
+    expect(save.disabled).toBe(false);
     fireEvent.change(description, { target: { value: "" } });
     fireEvent.submit(form);
     await waitFor(() =>
@@ -96,36 +135,54 @@ describe("TopicHeader", () => {
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
     // The prop is what the refetched loader hands down; the harness never
     // refetches, so the header settles back on 「前」.
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(
-      "前",
-    );
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("前");
   });
 
-  it("restores the fields on 取り消し", async () => {
+  it("keeps the form open with the rejection at its head when the save fails", async () => {
+    mocks.updateTopicFn.mockRejectedValue(
+      new AppServerError({
+        kind: "conflict",
+        code: "OPTIMISTIC_LOCK_FAILURE",
+        message: "x",
+      }),
+    );
     await renderWithRouter(<TopicHeader topic={topicView("t1", "前")} />, {
       path: "/topics/$topicId",
     });
-    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "編集" }));
-    const form = screen.getByRole("form", { name: "トピックを編集" });
-    fireEvent.change(within(form).getByLabelText("名前"), {
-      target: { value: "破棄" },
-    });
-    fireEvent.click(within(form).getByRole("button", { name: "取り消し" }));
-    expect(screen.queryByRole("form")).toBeNull();
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(
-      "前",
+    const { form, name } = openEditor();
+    fireEvent.change(name, { target: { value: "後" } });
+    fireEvent.submit(form);
+    const alert = await within(form).findByRole("alert");
+    expect(alert.textContent).toBe(
+      "他の操作と競合しました。もう一度お試しください",
     );
+    expect(form.firstElementChild).toBe(alert);
+    expect(
+      (within(form).getByLabelText("トピック名") as HTMLInputElement).value,
+    ).toBe("後");
+  });
+
+  it("restores the fields on キャンセル", async () => {
+    await renderWithRouter(<TopicHeader topic={topicView("t1", "前")} />, {
+      path: "/topics/$topicId",
+    });
+    const { form, name } = openEditor();
+    fireEvent.change(name, { target: { value: "破棄" } });
+    fireEvent.click(within(form).getByRole("button", { name: "キャンセル" }));
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("前");
+    expect(openEditor().name.value).toBe("前");
     expect(mocks.updateTopicFn).not.toHaveBeenCalled();
   });
 
-  it("archives and unarchives with an optimistic badge", async () => {
+  it("archives and unarchives with an optimistic 完了済み", async () => {
     const update = deferred<unknown>();
     mocks.updateTopicFn.mockReturnValue(update.promise);
     await renderWithRouter(<TopicHeader topic={topicView("t1", "x")} />, {
       path: "/topics/$topicId",
     });
     fireEvent.click(screen.getByRole("button", { name: "完了にする" }));
-    await screen.findByText("完了");
+    await screen.findByText("完了済み");
     expect(screen.getByRole("button", { name: "完了を解除" })).toBeTruthy();
     expect(mocks.updateTopicFn).toHaveBeenCalledWith({
       data: { topicId: "t1", archived: true },
@@ -136,9 +193,7 @@ describe("TopicHeader", () => {
     mocks.updateTopicFn.mockResolvedValue(topicView("t1", "x"));
     await renderWithRouter(
       <TopicHeader topic={topicView("t2", "y", { status: "archived" })} />,
-      {
-        path: "/topics/$topicId",
-      },
+      { path: "/topics/$topicId" },
     );
     const buttons = screen.getAllByRole("button", { name: "完了を解除" });
     fireEvent.click(buttons[buttons.length - 1] as HTMLElement);
@@ -149,7 +204,7 @@ describe("TopicHeader", () => {
     );
   });
 
-  it("shows the rejection as an alert", async () => {
+  it("tells a rejected archive under the head", async () => {
     mocks.updateTopicFn.mockRejectedValue(
       new AppServerError({
         kind: "conflict",
@@ -165,6 +220,7 @@ describe("TopicHeader", () => {
     expect(alert.textContent).toBe(
       "他の操作と競合しました。もう一度お試しください",
     );
+    expect(screen.queryByRole("form")).toBeNull();
   });
 
   it("deletes behind a confirmation and leaves for the list; cancel calls nothing", async () => {
@@ -174,11 +230,11 @@ describe("TopicHeader", () => {
     });
     const { router } = await renderWithRouter(
       <TopicHeader topic={topicView("t1", "x")} />,
-      {
-        path: "/topics/$topicId",
-      },
+      { path: "/topics/$topicId" },
     );
     const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
+    const clearCache = vi.spyOn(router, "clearCache");
     fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
     let dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("heading").textContent).toBe(
@@ -199,5 +255,115 @@ describe("TopicHeader", () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ to: "/topics" }),
     );
+    // The topic list is cached with this topic still on it, so the whole cache
+    // goes before the navigation reads it, and again after it, because the
+    // screen being left lands in that same cache holding the topic that is no
+    // longer there.
+    await waitFor(() => expect(cacheDrops(clearCache)).toHaveLength(2));
+    const [before, after] = cacheDrops(clearCache);
+    const moved = navigate.mock.invocationCallOrder[0] ?? 0;
+    expect(before).toBeLessThan(moved);
+    expect(after).toBeGreaterThan(moved);
+    // `invalidate` is the reconciliation this must not use: it ends in
+    // `load()`, which re-reads this very screen. `keeps the screen it is
+    // deleting out of the re-read` is the same statement drawn.
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the screen it is deleting out of the re-read", async () => {
+    let trashed = false;
+    mocks.trashTopicFn.mockImplementation(async () => {
+      trashed = true;
+      return { topicId: "t1", trashedDocumentIds: [] };
+    });
+    const { runs, missing } = await renderWithReloadingRoutes(
+      [
+        {
+          path: "/topics/$topicId",
+          missing: "トピックが見つかりません",
+          gone: () => trashed,
+          element: <TopicHeader topic={topicView("t1", "x")} />,
+        },
+        {
+          path: "/topics",
+          missing: "トピック一覧が見つかりません",
+          element: <p>トピック一覧</p>,
+        },
+      ],
+      "/topics/t1",
+    );
+    const readsBefore = runs.get("/topics/$topicId") ?? 0;
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
+    );
+    await screen.findByText("トピック一覧");
+    // The topic is in the trash, so this screen's loader answers `notFound()`
+    // from here on. Running it at all — which `router.invalidate()` does at
+    // `staleTime: 0`, the setting this screen carries under `pnpm dev` —
+    // draws 「トピックが見つかりません」 over the head on the way out.
+    expect(runs.get("/topics/$topicId")).toBe(readsBefore);
+    expect([...missing]).toEqual([]);
+    // The list ahead is read on the way in, not drawn from what the router
+    // held before the delete.
+    expect(runs.get("/topics") ?? 0).toBeGreaterThan(0);
+  });
+
+  it("keeps a confirmed delete from being told as failed, and unrepeatable, when the move fails", async () => {
+    const trash = deferred<unknown>();
+    mocks.trashTopicFn.mockReturnValue(trash.promise);
+    const { router } = await renderWithRouter(
+      <TopicHeader topic={topicView("t1", "x")} />,
+      { path: "/topics/$topicId" },
+    );
+    const navigate = vi.spyOn(router, "navigate").mockRejectedValue(
+      new AppServerError({
+        kind: "system",
+        code: "X",
+        message: "x",
+        retryable: true,
+      }),
+    );
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
+    );
+    await screen.findByRole("button", { name: "削除中…" });
+    trash.resolve({ topicId: "t1", trashedDocumentIds: [] });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "削除中…" })).toBeNull(),
+    );
+    // The topic is in the trash; a failure told here would describe the move,
+    // not the delete.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    // ...and a second 削除 in the dialog would send an id already trashed,
+    // which is why the dialog is not left standing with its button live.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(mocks.trashTopicFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a rejected delete under the head and stays", async () => {
+    mocks.trashTopicFn.mockRejectedValue(
+      new AppServerError({
+        kind: "system",
+        code: "X",
+        message: "x",
+        retryable: true,
+      }),
+    );
+    const { router } = await renderWithRouter(
+      <TopicHeader topic={topicView("t1", "x")} />,
+      { path: "/topics/$topicId" },
+    );
+    const navigate = vi.spyOn(router, "navigate");
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "削除" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "削除" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("システムエラーが発生しました");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

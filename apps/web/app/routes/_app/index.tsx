@@ -5,7 +5,6 @@ import { Suspense } from "react";
 import { timelineSearchSchema } from "@/components/timeline/search";
 import { TimelineSkeleton } from "@/components/timeline/TimelineSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { streamingRouteOptions } from "@/presentation/streamingRoute";
@@ -22,6 +21,7 @@ const renderTimeline = createServerFn({ method: "GET" })
   });
 
 export const Route = createFileRoute("/_app/")({
+  staticData: { header: { kind: "top", title: "タイムライン" } },
   // Mandatory for the streaming variant: a re-run loader hands out a fresh
   // promise and would re-suspend the boundary on every revisit.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
@@ -36,19 +36,15 @@ export const Route = createFileRoute("/_app/")({
   head: ({ match }) =>
     routeHead(match, { title: "タイムライン — fog", path: "/" }),
   component: TimelinePage,
-  errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function TimelinePage() {
   const { Timeline } = Route.useLoaderData();
   return (
-    <Suspense fallback={<TimelineSkeleton />}>
-      <Deferred promise={Timeline} />
-    </Suspense>
+    <div className="pb-sheet-end-composer">
+      <Suspense fallback={<TimelineSkeleton />}>
+        <Deferred promise={Timeline} />
+      </Suspense>
+    </div>
   );
 }

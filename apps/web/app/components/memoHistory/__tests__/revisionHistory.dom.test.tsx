@@ -5,6 +5,7 @@ import type {
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { toastRegion, withToasts } from "@/components/__tests__/toastFrame";
 import { RevisionHistory } from "@/components/memoHistory/RevisionHistory";
 import { AppServerError } from "@/presentation/errorResponse";
 import { formatDateTime } from "@/presentation/time";
@@ -47,6 +48,7 @@ const AT = [
   new Date("2026-07-20T02:00:00Z"),
   new Date("2026-07-20T03:00:00Z"),
 ] as const;
+const TIME = AT.map(formatDateTime);
 
 const THREE: RevisionSummaryView[] = [
   { revisionNumber: 1, actor: { kind: "user" }, createdAt: AT[0] },
@@ -68,50 +70,61 @@ function revisionView(revisionNumber: number, body: string) {
 }
 
 function rows() {
-  return within(
-    screen.getByRole("list", { name: "リビジョン一覧" }),
-  ).getAllByRole("listitem");
+  return within(screen.getByRole("list", { name: "履歴" })).getAllByRole(
+    "listitem",
+  );
 }
 
 function row(n: number) {
   return within(rows()[n - 1] as HTMLElement).getByRole("button");
 }
 
-function diffLines(kind: "added" | "removed" | "context") {
-  return [
-    ...document.querySelectorAll(`.fog-diff-line.${kind} .fog-diff-text`),
-  ].map((el) => el.textContent);
+function diffRegion() {
+  return screen.getByRole("region", { name: /の差分$/ });
+}
+
+function linesOf(role: "deletion" | "insertion") {
+  return within(diffRegion())
+    .queryAllByRole(role)
+    .map((el) => el.textContent);
 }
 
 function render(revisions: RevisionSummaryView[]) {
   return renderWithRouter(
-    <RevisionHistory memoId="m1" revisions={revisions} />,
+    withToasts(<RevisionHistory memoId="m1" revisions={revisions} />),
     { path: "/memos/$memoId/history" },
   );
 }
+
+const toasts = () => within(toastRegion());
 
 describe("RevisionHistory with one revision", () => {
   it("shows the row without selection or rollback", async () => {
     await render([THREE[0] as RevisionSummaryView]);
     const items = rows();
     expect(items).toHaveLength(1);
+    expect(items[0]?.textContent).toContain(TIME[0]);
     expect(within(items[0] as HTMLElement).queryByRole("button")).toBeNull();
     expect(document.querySelector("[aria-pressed]")).toBeNull();
     expect(screen.queryByRole("button", { name: "この内容に戻す" })).toBeNull();
-    expect(screen.queryByText("比較元のリビジョンを選んでください")).toBeNull();
   });
 });
 
 describe("RevisionHistory two-point selection", () => {
-  it("lists ascending with who and when", async () => {
+  it("lists ascending under 履歴 with when and who, each row a toggle", async () => {
     await render(THREE);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "履歴" }),
+    ).toBeTruthy();
     const items = rows();
     expect(items).toHaveLength(3);
-    expect(items[0]?.textContent).toContain(formatDateTime(AT[0]));
-    expect(items[0]?.textContent).toContain("あなた · リビジョン 1");
-    expect(items[1]?.textContent).toContain("Claude · リビジョン 2");
-    expect(items[2]?.textContent).toContain("あなた · リビジョン 3");
-    expect(screen.getByText("比較元のリビジョンを選んでください")).toBeTruthy();
+    expect(items.map((item) => item.textContent)).toEqual([
+      `${TIME[0]}あなた`,
+      `${TIME[1]}Claude`,
+      `${TIME[2]}あなた`,
+    ]);
+    expect(row(1).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("button", { name: "この内容に戻す" })).toBeNull();
   });
 
   it("takes the first click as base, the second as target, and draws the diff", async () => {
@@ -125,23 +138,30 @@ describe("RevisionHistory two-point selection", () => {
     expect(row(1).getAttribute("aria-pressed")).toBe("true");
     expect(within(row(1)).getByText("比較元")).toBeTruthy();
     expect(screen.getByRole("button", { name: "この内容に戻す" })).toBeTruthy();
+    expect(screen.getByText(`比較元 · ${TIME[0]}`)).toBeTruthy();
     expect(mocks.diffMemoRevisionsFn).not.toHaveBeenCalled();
-    expect(screen.getByText("比較先のリビジョンを選んでください")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /の差分$/ })).toBeNull();
 
     fireEvent.click(row(3));
     expect(within(row(3)).getByText("比較先")).toBeTruthy();
+    expect(within(row(2)).queryByText("比較先")).toBeNull();
     expect(mocks.diffMemoRevisionsFn).toHaveBeenCalledWith({
       data: { memoId: "m1", baseRevisionNumber: 1, targetRevisionNumber: 3 },
     });
-    await waitFor(() => expect(diffLines("removed")).toEqual(["old"]));
-    expect(diffLines("added")).toEqual(["new"]);
-    expect(diffLines("context")).toEqual(["a"]);
-    expect(screen.getByText("リビジョン 1 → リビジョン 3 の差分")).toBeTruthy();
+    await waitFor(() => expect(linesOf("deletion")).toEqual(["old"]));
+    expect(linesOf("insertion")).toEqual(["new"]);
+    const context = within(diffRegion()).getByText("a");
+    expect(context.closest("del, ins")).toBeNull();
+    expect(
+      screen.getByRole("region", {
+        name: `${TIME[0]} → ${TIME[2]} の差分`,
+      }),
+    ).toBeTruthy();
 
     // Clicking the target again clears it and the diff.
     fireEvent.click(row(3));
     expect(row(3).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("region", { name: "差分" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /の差分$/ })).toBeNull();
     expect(screen.getByRole("button", { name: "この内容に戻す" })).toBeTruthy();
 
     // Clicking the base clears both.
@@ -159,14 +179,51 @@ describe("RevisionHistory two-point selection", () => {
     expect(within(row(3)).getByText("比較先")).toBeTruthy();
   });
 
-  it("treats a diff of the wrong shape as a system error", async () => {
-    mocks.diffMemoRevisionsFn.mockResolvedValue({ status: 500 });
+  it("lays Sk lines over the diff box while the two versions load", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    mocks.diffMemoRevisionsFn.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
     await render(THREE);
     fireEvent.click(row(1));
     fireEvent.click(row(2));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("システムエラーが発生しました");
-    expect(document.querySelector(".fog-diff-view")).toBeNull();
+    const busy = await within(diffRegion()).findByRole("status");
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(busy.textContent).toContain("差分を読み込み中");
+    expect(within(diffRegion()).queryByRole("deletion")).toBeNull();
+
+    resolve({
+      base: revisionView(1, "old"),
+      target: revisionView(2, "new"),
+    } satisfies RevisionDiffView);
+    await waitFor(() => expect(linesOf("deletion")).toEqual(["old"]));
+    expect(within(diffRegion()).queryByRole("status")).toBeNull();
+  });
+
+  it("treats a diff of the wrong shape as a system error, and 再試行 fetches again", async () => {
+    mocks.diffMemoRevisionsFn.mockResolvedValueOnce({ status: 500 });
+    await render(THREE);
+    fireEvent.click(row(1));
+    fireEvent.click(row(2));
+    const alert = await within(diffRegion()).findByRole("alert");
+    expect(
+      within(alert).getByText("システムエラーが発生しました"),
+    ).toBeTruthy();
+    expect(within(diffRegion()).queryByRole("deletion")).toBeNull();
+
+    mocks.diffMemoRevisionsFn.mockResolvedValueOnce({
+      base: revisionView(1, "old"),
+      target: revisionView(2, "new"),
+    } satisfies RevisionDiffView);
+    fireEvent.click(within(alert).getByRole("button", { name: "再試行" }));
+    expect(mocks.diffMemoRevisionsFn).toHaveBeenCalledTimes(2);
+    expect(mocks.diffMemoRevisionsFn).toHaveBeenLastCalledWith({
+      data: { memoId: "m1", baseRevisionNumber: 1, targetRevisionNumber: 2 },
+    });
+    await waitFor(() => expect(linesOf("deletion")).toEqual(["old"]));
+    expect(within(diffRegion()).queryByRole("alert")).toBeNull();
   });
 });
 
@@ -177,22 +234,41 @@ describe("RevisionHistory rollback", () => {
     return screen.findByRole("dialog", { name: "この内容に戻しますか？" });
   }
 
-  it("rolls back to the base and returns to the memo's position", async () => {
+  it("names the base by its time in the confirmation", async () => {
+    await render(THREE);
+    const dialog = await openConfirm();
+    expect(dialog.textContent).toContain(
+      `${TIME[0]} の内容で新しいリビジョンを作ります。これまでの履歴は残ります。`,
+    );
+  });
+
+  it("rolls back to the base, returns to the memo's position and says so in a toast", async () => {
     mocks.rollbackMemoFn.mockResolvedValue({
       result: "rolledBack",
       memo: { id: "m1" },
     });
     const { router } = await render(THREE);
+    const navigate = vi.spyOn(router, "navigate");
+    const invalidate = vi.spyOn(router, "invalidate");
     const dialog = await openConfirm();
+    expect(toasts().queryByText(`${TIME[0]} の内容に戻しました`)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "戻す" }));
     expect(mocks.rollbackMemoFn).toHaveBeenCalledWith({
       data: { memoId: "m1", targetRevisionNumber: 1 },
     });
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(router.state.location.search).toMatchObject({ memo: "m1" });
+    expect(
+      await toasts().findByText(`${TIME[0]} の内容に戻しました`),
+    ).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // The window at `?memo=m1` is cached with the body from before.
+    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      navigate.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
-  it("says so when the content is already the same and stays", async () => {
+  it("says in a toast when the content is already the same, and stays", async () => {
     mocks.rollbackMemoFn.mockResolvedValue({
       result: "unchanged",
       memo: { id: "m1" },
@@ -201,14 +277,16 @@ describe("RevisionHistory rollback", () => {
     const before = router.state.location.pathname;
     const dialog = await openConfirm();
     fireEvent.click(within(dialog).getByRole("button", { name: "戻す" }));
-    const status = await screen.findByRole("status");
-    expect(status.textContent).toBe("現在の内容は既にこのリビジョンと同じです");
+    expect(
+      await toasts().findByText("現在の内容は既にこのリビジョンと同じです"),
+    ).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(router.state.location.pathname).toBe(before);
     expect(router.state.location.search).not.toHaveProperty("memo");
+    expect(toasts().queryByText(`${TIME[0]} の内容に戻しました`)).toBeNull();
   });
 
-  it("reports a rejection", async () => {
+  it("reports a rejection under the button, not in a toast", async () => {
     mocks.rollbackMemoFn.mockRejectedValue(
       new AppServerError({
         kind: "notFound",
@@ -221,6 +299,9 @@ describe("RevisionHistory rollback", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "戻す" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("対象が見つかりません");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(toasts().queryByText("対象が見つかりません")).toBeNull();
+    expect(screen.getByRole("button", { name: "この内容に戻す" })).toBeTruthy();
   });
 
   it("does nothing when the confirmation is cancelled", async () => {

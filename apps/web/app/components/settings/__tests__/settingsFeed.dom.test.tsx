@@ -1,7 +1,8 @@
 import { SystemError, SystemErrorCode } from "@repo/core/application/errors";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
+import { withToasts } from "@/components/__tests__/toastFrame";
 import { SettingsFeed } from "@/components/settings/SettingsFeed";
 import { SettingsUnavailable } from "@/components/settings/SettingsUnavailable";
 
@@ -52,15 +53,15 @@ vi.mock("@/presentation/serverAction", () => ({
 const USER_ID = "01950000-0000-7000-8000-000000000001";
 
 describe("SettingsUnavailable", () => {
-  it("draws the failure and keeps the logout control", async () => {
-    await renderWithRouter(
-      <SettingsUnavailable message="システムエラーが発生しました" />,
-      { path: "/settings" },
-    );
-    expect(screen.getByRole("alert").textContent).toContain(
-      "システムエラーが発生しました",
-    );
-    expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
+  it("draws the load failure's one sentence with logout as its one control", async () => {
+    await renderWithRouter(<SettingsUnavailable />, { path: "/settings" });
+    const alert = screen.getByRole("alert");
+    // The sentence and the control's label, and nothing of the failure.
+    expect(alert.textContent).toBe("読み込めませんでしたログアウト");
+    expect(
+      within(alert).getByRole("button", { name: "ログアウト" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 });
 
@@ -76,13 +77,17 @@ describe("SettingsFeed", () => {
     );
     loadAiConnections?.mockResolvedValue([]);
 
-    await renderWithRouter(await SettingsFeed(), { path: "/settings" });
+    await renderWithRouter(withToasts(await SettingsFeed()), {
+      path: "/settings",
+    });
 
-    expect(screen.getByRole("alert").textContent).toContain(
-      "読み込めませんでした",
+    expect(screen.getByRole("alert").textContent).toBe(
+      "読み込めませんでしたログアウト",
     );
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
-    expect(screen.queryByText("メールアドレス")).toBeNull();
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "ログイン手段" }),
+    ).toBeNull();
     expect(document.body.textContent).not.toContain("email address");
   });
 
@@ -108,9 +113,14 @@ describe("SettingsFeed", () => {
     });
     loadAiConnections?.mockResolvedValue([]);
 
-    await renderWithRouter(await SettingsFeed(), { path: "/settings" });
+    await renderWithRouter(withToasts(await SettingsFeed()), {
+      path: "/settings",
+    });
 
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "ログイン手段" }),
+    ).toBeTruthy();
     expect(screen.getByText("user@example.com")).toBeTruthy();
     expect(screen.getByRole("button", { name: "ログアウト" })).toBeTruthy();
   });

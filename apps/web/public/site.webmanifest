@@ -1,6 +1,7 @@
 {
   "name": "fog",
   "short_name": "fog",
+  "start_url": "/",
   "icons": [
     {
       "src": "/icon-192.png",

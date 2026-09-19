@@ -43,6 +43,8 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.5",
     "@cloudflare/vitest-pool-workers": "^0.16.4",
+    "@tailwindcss/node": "^4.3.0",
+    "@tailwindcss/oxide": "^4.3.0",
     "@types/node": "^25.7.0",
     "@typescript/native-preview": "7.0.0-dev.20260513.1",
     "jsdom": "^30.0.1",

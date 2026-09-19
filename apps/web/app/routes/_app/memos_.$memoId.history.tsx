@@ -2,10 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { Suspense } from "react";
-import { MemoHistorySkeleton } from "@/components/memoHistory/MemoHistorySkeleton";
+import { RevisionHistorySkeleton } from "@/components/memoHistory/RevisionHistorySkeleton";
 import { memoHistoryParamsSchema } from "@/components/memoHistory/schema";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/presentation/errorDisplay";
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { routeHead } from "@/presentation/head";
 import { streamingRouteOptions } from "@/presentation/streamingRoute";
@@ -25,6 +24,9 @@ const renderMemoHistory = createServerFn({ method: "GET" })
 
 /** P-05. `memos_` keeps it out of any `/memos` layout the tree may grow. */
 export const Route = createFileRoute("/_app/memos_/$memoId/history")({
+  staticData: {
+    header: { kind: "back", entity: "memo", back: "/", h1: "header" },
+  },
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   ...streamingRouteOptions,
   loader: async ({ params }) => {
@@ -39,19 +41,13 @@ export const Route = createFileRoute("/_app/memos_/$memoId/history")({
       path: `/memos/${params.memoId}/history`,
     }),
   component: MemoHistoryPage,
-  errorComponent: ({ error }) => (
-    <div className="fog-content" role="alert">
-      <h2>読み込めませんでした</h2>
-      <p>{sanitizeRouteError(error)}</p>
-    </div>
-  ),
 });
 
 function MemoHistoryPage() {
   const { History } = Route.useLoaderData();
   return (
-    <div className="fog-content">
-      <Suspense fallback={<MemoHistorySkeleton />}>
+    <div className="pb-sheet-end">
+      <Suspense fallback={<RevisionHistorySkeleton subject="memo" />}>
         <Deferred promise={History} />
       </Suspense>
     </div>

@@ -19,23 +19,43 @@ const timeFormatter = new Intl.DateTimeFormat("ja-JP", {
   timeZone: DISPLAY_TIME_ZONE,
 });
 
+// The mocks write every date in the Japanese form — 「2025年12月15日」,
+// 「2026年9月10日 14:30」 (`spec/design/pages/settings.html`) — so that is
+// the shape of both of these. The weekday belongs to the timeline's day
+// headings alone, and the year is kept everywhere: a screen that drops it
+// (the mocks' 「7月20日 12:30」) would have to read the clock to know which
+// year it is showing, which SSR and hydration cannot agree on.
+const dateFormatter = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  timeZone: DISPLAY_TIME_ZONE,
+});
+
 const dateTimeFormatter = new Intl.DateTimeFormat("ja-JP", {
   year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
+  month: "long",
+  day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
   timeZone: DISPLAY_TIME_ZONE,
 });
 
+/** 「2026年7月22日(水)」 — the timeline's day headings. */
 export function formatDay(date: Date): string {
   return dayFormatter.format(date);
+}
+
+/** 「2026年7月22日」 — a day with no weekday on it. */
+export function formatDate(date: Date): string {
+  return dateFormatter.format(date);
 }
 
 export function formatTime(date: Date): string {
   return timeFormatter.format(date);
 }
 
+/** 「2026年7月22日 12:42」. */
 export function formatDateTime(date: Date): string {
   return dateTimeFormatter.format(date);
 }

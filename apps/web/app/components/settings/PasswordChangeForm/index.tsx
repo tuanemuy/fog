@@ -1,7 +1,12 @@
 "use client";
 
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState, useId, useState } from "react";
+import { useActionState, useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { FormError } from "@/components/ui/FormError";
+import { FormLink } from "@/components/ui/FormLink";
+import { TextField } from "@/components/ui/TextField";
+import { useToast } from "@/components/ui/Toast";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
 import { changePasswordFn } from "../actions";
@@ -11,15 +16,15 @@ export type PasswordChangeState = Readonly<{
   currentError: string | null;
   newError: string | null;
   formError: string | null;
-  changed: boolean;
 }>;
 
 const INITIAL: PasswordChangeState = {
   currentError: null,
   newError: null,
   formError: null,
-  changed: false,
 };
+
+export const PASSWORD_CHANGED_MESSAGE = "パスワードを変更しました";
 
 export function classifyPasswordChangeError(
   failure: unknown,
@@ -43,12 +48,15 @@ export function classifyPasswordChangeError(
 
 /**
  * P-13's password change (S-AC-07, logged in). Shown only for an account
- * whose email credential is usable for login. The session is re-issued by
- * the server function, so the user continues without logging in again.
+ * whose email credential is usable for login, together with the way to a
+ * reset. A failure goes where it belongs — a field's under the field, the
+ * rest (the attempt limit, shown here rather than hidden as on the login)
+ * first in the form — and the success is a toast. The session is re-issued
+ * by the server function, so the user continues without logging in again.
  */
 export function PasswordChangeForm() {
   const change = useServerFn(changePasswordFn);
-  const id = useId();
+  const toast = useToast();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [state, action, pending] = useActionState<
@@ -66,18 +74,19 @@ export function PasswordChangeForm() {
     }
     setCurrentPassword("");
     setNewPassword("");
-    return { ...INITIAL, changed: true };
+    toast(PASSWORD_CHANGED_MESSAGE);
+    return INITIAL;
   }, INITIAL);
   return (
     <form
       action={action}
-      className="fog-password-change"
-      aria-label="パスワードの変更"
+      className="flex flex-col gap-lg"
+      aria-label="パスワード変更"
       aria-busy={pending}
     >
-      <label htmlFor={`${id}-current`}>現在のパスワード</label>
-      <input
-        id={`${id}-current`}
+      {state.formError !== null && <FormError>{state.formError}</FormError>}
+      <TextField
+        label="現在のパスワード"
         name="currentPassword"
         type="password"
         autoComplete="current-password"
@@ -85,17 +94,12 @@ export function PasswordChangeForm() {
         required
         value={currentPassword}
         onChange={(event) => setCurrentPassword(event.target.value)}
-        disabled={pending}
-        aria-invalid={state.currentError ? true : undefined}
+        readOnly={pending}
+        error={state.currentError}
       />
-      {state.currentError && (
-        <p className="fog-error" role="alert">
-          {state.currentError}
-        </p>
-      )}
-      <label htmlFor={`${id}-new`}>新しいパスワード</label>
-      <input
-        id={`${id}-new`}
+      <TextField
+        label="新しいパスワード"
+        helper="8文字以上"
         name="newPassword"
         type="password"
         autoComplete="new-password"
@@ -103,29 +107,17 @@ export function PasswordChangeForm() {
         required
         value={newPassword}
         onChange={(event) => setNewPassword(event.target.value)}
-        disabled={pending}
-        aria-invalid={state.newError ? true : undefined}
+        readOnly={pending}
+        error={state.newError}
       />
-      {state.newError ? (
-        <p className="fog-error" role="alert">
-          {state.newError}
-        </p>
-      ) : (
-        <p className="fog-hint">8文字以上128文字以下で設定してください。</p>
-      )}
-      {state.formError && (
-        <p className="fog-error" role="alert">
-          {state.formError}
-        </p>
-      )}
-      {state.changed && !pending && (
-        <p className="fog-notice" role="status">
-          変更しました
-        </p>
-      )}
-      <button type="submit" className="fog-primary" disabled={pending}>
-        {pending ? "変更中…" : "パスワードを変更"}
-      </button>
+      {/* The row sets the size of the sentence: `FormLink` takes it from
+          here, and the button carries its own step's. */}
+      <div className="flex flex-wrap items-center gap-x-lg gap-y-sm font-base text-sm leading-tight">
+        <Button variant="fill-sm" type="submit" disabled={pending}>
+          {pending ? "変更中…" : "パスワードを変更"}
+        </Button>
+        <FormLink to="/password-reset">パスワードを忘れた</FormLink>
+      </div>
     </form>
   );
 }

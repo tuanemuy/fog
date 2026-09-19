@@ -11,6 +11,8 @@
 
 ## 構成ファイル
 
+### デザインソース
+
 | ファイル | 内容 |
 |---|---|
 | `logo.svg` | アイコン単体（24 グリッド、線 `#191a1d` × 点 `#e8590c`） |
@@ -19,7 +21,22 @@
 
 デザインモック（`../pages/*.html`）にも同じ SVG を埋め込む。表示サイズは 64.7×26px（アイコン 26px、Wordmark 19px 相当）とする。華奢さの対策は Wordmark の拡大ではなく、アイコンの拡大と Medium ウェイトで行う。
 
+### アセット配布
+
+`apps/web/public/` に以下を配置する：
+
+| ファイル | 用途 | 仕様 |
+|---|---|---|
+| `favicon.svg` | ブラウザタブ・ブックマーク。有彩色版 | アイコン単体、スケーラブル（24 グリッドの `viewBox` だけを持ち、表示寸法は読み手が決める）、色付き |
+| `favicon.ico` | 古いブラウザ・その他環境のフォールバック | アイコン単体、単色 |
+| `icon-192.png` | Web App Manifest（ホーム画面アイコン）。中サイズ | 192×192px、色付き |
+| `icon-512.png` | Web App Manifest。大サイズ | 512×512px、色付き |
+| `apple-touch-icon.png` | iOS ホーム画面（古いバージョン）。角丸無し | 180×180px、色付き |
+| `og-image.png` | OG Image（SNS共有時のプレビュー） | 1200×630px、lockup 中央配置の推奨 |
+| `site.webmanifest` | PWA Manifest | `name` / `short_name` / `start_url`（`/`）/ `icons` / `theme_color` / `background_color` / `display` 定義 |
+
 ## 幾何
 
 - アイコンは 24 グリッド、線 `M4.5 12 H19.5 M7 16 H15`（stroke 1.7 / round cap）、点 `cx16.5 cy7 r1.8`
+- `favicon.svg` だけは小サイズ（16〜32px）向けの変種で、同じ座標のまま stroke 2.2 / 点 r2.2 に太らせる。この寸法では 1.7 の線が消えるため。線の色は `prefers-color-scheme` で反転する（タブの地色が暗いブラウザでも見えるように）
 - lockup はアイコン 26px ＋ gap 10px ＋ Wordmark（font-size 19px 相当）。ベースライン y=19.02 は 19.95px のテキスト行ボックスを 26px のアイコンボックスに flexbox センタリングした値

@@ -4,13 +4,20 @@ import type {
   TrashItemView,
   TrashListView,
 } from "@repo/core/application/trash/view";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
+import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { InlineAlert } from "@/components/ui/InlineAlert";
+import { LoadingRow } from "@/components/ui/LoadingRow";
+import { Row, type RowLevel } from "@/components/ui/Row";
+import { RowError } from "@/components/ui/RowError";
+import { RowList } from "@/components/ui/RowList";
+import { useToast } from "@/components/ui/Toast";
 import { displayError, toDisplayError } from "@/presentation/errorDisplay";
 import { readServerFnResult } from "@/presentation/serverFnResult";
-import { formatDateTime } from "@/presentation/time";
 import {
   emptyTrashFn,
   hardDeleteTrashItemFn,
@@ -33,6 +40,14 @@ import {
   isTrashList,
   TRASH_PAGE_LIMIT,
 } from "../schema";
+import {
+  KindPill,
+  RemainingDays,
+  RowStatus,
+  TrashHeader,
+  TrashRowActions,
+  TrashTags,
+} from "../TrashParts";
 
 const DAY_MS = 86_400_000;
 
@@ -59,33 +74,21 @@ function titleOf(item: TrashItemView): string {
   }
 }
 
-/** The tag line of a top-level row: the set size for a topic, the set relation for a document whose topic is on another page. */
-function metaOf(item: TrashItemView, children: number, now: Date): string {
-  const remaining = remainingLabel(item.expiresAt, now);
-  if (item.kind === "topic" && children > 0) {
-    return `ドキュメント${item.setDocumentIds.length}件・${remaining}`;
-  }
-  if (item.kind === "document" && item.deletedWithTopic) {
-    return `トピックとセットで削除・${remaining}`;
-  }
-  return remaining;
-}
-
-type Row = Readonly<{
+type Group = Readonly<{
   item: TrashItemView;
   children: readonly TrashItemView[];
 }>;
 
 /**
  * Groups the flat page: a document trashed with a topic that is on the same
- * page sits under it; one whose topic is not loaded stays a row of its own
- * with the set relation in its meta (decision △-2).
+ * page sits under it, and the indent is the set relation. One whose topic is
+ * not loaded stays a row of its own (decision △-2).
  */
-export function groupRows(items: readonly TrashItemView[]): Row[] {
+export function groupRows(items: readonly TrashItemView[]): Group[] {
   const topics = new Set(
     items.filter((i) => i.kind === "topic").map((i) => i.id),
   );
-  const rows: Row[] = [];
+  const rows: Group[] = [];
   const childrenOf = new Map<string, TrashItemView[]>();
   for (const item of items) {
     if (
@@ -113,19 +116,29 @@ export function groupRows(items: readonly TrashItemView[]): Row[] {
   return rows;
 }
 
-type Notice = Readonly<{ text: string; memoId?: string }>;
 type RowFailure = Readonly<{
   key: string;
   message: string;
   retry: () => void;
-  retryLabel?: string;
+  retryLabel: string;
 }>;
+
+/** What a row action left behind: the rows it took away, and the toast to raise. */
+type Outcome = Readonly<{ gone: readonly string[]; toast: string | null }>;
+
+const NOTHING_DONE: Outcome = { gone: [], toast: null };
 
 // Failures that belong to the list rather than to one row: 空にする, and a
 // row that vanished under this tab (its row is already gone).
 const LIST_FAILURE = "list";
 type Pending =
-  | Readonly<{ kind: "confirmSet"; item: TrashItemView; topicName: string }>
+  | Readonly<{
+      kind: "confirmSet";
+      item: TrashItemView;
+      topicName: string;
+      /** The set's size, when the topic is on the loaded page. */
+      documentCount: number | null;
+    }>
   | Readonly<{
       kind: "destination";
       item: TrashItemView;
@@ -136,14 +149,18 @@ type Pending =
 
 const keyOf = (item: TrashItemView) => `${item.kind}:${item.id}`;
 
+const HARD_DELETE_TEXT = "履歴ごと消え、元に戻せません。";
+
 /**
  * P-12, the owner of the list: restore, hard delete and empty all change
  * membership, so the rows are removed here optimistically and put back on a
- * failure with the message and a retry. A row being acted on is busy and
- * its buttons disabled (P-12 状態「操作中」).
+ * failure with the message and a retry under the row. A row being acted on
+ * is busy, says what is in flight in place of its days left, and has its
+ * buttons disabled (P-12 状態「操作中」). A success is a toast.
  */
 export function TrashBoard({ initial }: { initial: TrashListView }) {
   const router = useRouter();
+  const toast = useToast();
   const restoreMemo = useServerFn(restoreMemoFn);
   const restoreDocument = useServerFn(restoreDocumentFn);
   const restoreTopic = useServerFn(restoreTopicFn);
@@ -167,14 +184,14 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
   const base = [...initial.items, ...extra].filter(
     (i) => !removed.has(keyOf(i)),
   );
-  const [busy, markBusy] = useOptimistic<ReadonlySet<string>, string>(
-    new Set(),
-    (current, key) => new Set([...current, key]),
-  );
+  // Row key → what is in flight on it (「復元中…」).
+  const [busy, markBusy] = useOptimistic<
+    ReadonlyMap<string, string>,
+    readonly [string, string]
+  >(new Map(), (current, [key, label]) => new Map([...current, [key, label]]));
   const [, startAction] = useTransition();
   const [pendingDialog, setPendingDialog] = useState<Pending | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice | null>(null);
   const [failure, setFailure] = useState<RowFailure | null>(null);
   const [loadingMore, startMore] = useTransition();
   const [moreError, setMoreError] = useState<string | null>(null);
@@ -195,18 +212,18 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
   /** Runs one row action optimistically; on a rejection the row returns with its message. */
   const act = (
     item: TrashItemView,
-    label: string,
-    run: () => Promise<readonly string[]>,
+    label: "復元" | "削除",
+    run: () => Promise<Outcome>,
   ) => {
     const key = keyOf(item);
     setFailure(null);
-    setNotice(null);
     startAction(async () => {
-      markBusy(key);
+      markBusy([key, `${label}中…`]);
       try {
-        const gone = await run();
-        dropRows(gone);
-        setTotalCount((n) => Math.max(0, n - gone.length));
+        const outcome = await run();
+        dropRows(outcome.gone);
+        setTotalCount((n) => Math.max(0, n - outcome.gone.length));
+        if (outcome.toast !== null) toast(outcome.toast);
         await settle();
       } catch (error) {
         const serialized = toDisplayError(error);
@@ -228,6 +245,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           key,
           message: `${label}できませんでした: ${displayError(error)}`,
           retry: () => act(item, label, run),
+          retryLabel: "リトライ",
         });
       }
     });
@@ -253,6 +271,11 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
     return [...new Set(keys)];
   };
 
+  const setSizeOf = (topicId: string): number | null => {
+    const topic = base.find((i) => i.kind === "topic" && i.id === topicId);
+    return topic?.kind === "topic" ? topic.setDocumentIds.length : null;
+  };
+
   const restore = (item: TrashItemView) => {
     if (item.kind === "memo") {
       act(item, "復元", async () => {
@@ -261,8 +284,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           isRestoreMemoResult,
           "restoreMemoFn",
         );
-        setNotice({ text: "メモを復元しました", memoId: item.id });
-        return [keyOf(item)];
+        return { gone: [keyOf(item)], toast: "メモを復元しました" };
       });
       return;
     }
@@ -273,8 +295,7 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           isRestoreTopicResult,
           "restoreTopicFn",
         );
-        setNotice({ text: `トピック「${item.name}」を配下ごと復元しました` });
-        return setKeys(item, null);
+        return { gone: setKeys(item, null), toast: "トピックを復元しました" };
       });
       return;
     }
@@ -305,18 +326,24 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       switch (result.result) {
         case "restored":
           setPendingDialog(null);
-          setNotice({ text: `「${item.title}」を復元しました` });
-          return setKeys(item, result.restoredTopicId);
+          return {
+            gone: setKeys(item, result.restoredTopicId),
+            toast:
+              options.confirmSetRestore === true
+                ? "トピックごと復元しました"
+                : "ドキュメントを復元しました",
+          };
         case "setRestoreConfirmationRequired":
           setPendingDialog({
             kind: "confirmSet",
             item,
             topicName: result.topicName,
+            documentCount: setSizeOf(result.topicId),
           });
-          return [];
+          return NOTHING_DONE;
         case "destinationSelectionRequired":
           setPendingDialog({ kind: "destination", item, error: null });
-          return [];
+          return NOTHING_DONE;
       }
     });
   };
@@ -342,13 +369,14 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           setPendingDialog(null);
           dropRows(setKeys(item, result.restoredTopicId));
           setTotalCount((n) => Math.max(0, n - 1));
-          setNotice({ text: `「${item.title}」を復元しました` });
+          toast("ドキュメントを復元しました");
           await settle();
         } else if (result.result === "setRestoreConfirmationRequired") {
           setPendingDialog({
             kind: "confirmSet",
             item,
             topicName: result.topicName,
+            documentCount: setSizeOf(result.topicId),
           });
         } else {
           setPendingDialog({ kind: "destination", item, error: null });
@@ -381,15 +409,15 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         isHardDeleteResult,
         "hardDeleteTrashItemFn",
       );
-      setNotice({ text: `「${titleOf(item)}」を完全に削除しました` });
-      return setKeys(item, null);
+      return { gone: setKeys(item, null), toast: "完全に削除しました" };
     });
   };
 
+  // The confirmation stays up while the trash empties — it is the one place
+  // the wait is shown, and closing it first would leave the screen unchanged
+  // with nothing running on it.
   const confirmEmpty = () => {
-    setPendingDialog(null);
     setFailure(null);
-    setNotice(null);
     setDialogBusy(true);
     startAction(async () => {
       try {
@@ -399,25 +427,32 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
           "emptyTrashFn",
         );
         setDialogBusy(false);
+        setPendingDialog(null);
+        // Mixed outcomes split: what was erased is a
+        // toast, what was not stays on the list with its retry.
         if (result.failedCount > 0) {
+          if (result.deletedCount > 0) {
+            toast(`${result.deletedCount}件を完全に削除しました`);
+          }
           setFailure({
             key: LIST_FAILURE,
-            message: `${result.failedCount}件は削除できませんでした。もう一度お試しください`,
+            message: `${result.failedCount}件は削除できませんでした`,
             retry: confirmEmpty,
+            retryLabel: "再試行",
           });
         } else {
-          setNotice({
-            text: `ゴミ箱を空にしました（${result.deletedCount}件）`,
-          });
+          toast("ゴミ箱を空にしました");
         }
         setTotalCount((n) => Math.max(0, n - result.deletedCount));
         await settle();
       } catch (error) {
         setDialogBusy(false);
+        setPendingDialog(null);
         setFailure({
           key: LIST_FAILURE,
           message: `空にできませんでした: ${displayError(error)}`,
           retry: confirmEmpty,
+          retryLabel: "再試行",
         });
       }
     });
@@ -436,137 +471,123 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
         setPage(next.page);
         setTotalCount(next.totalCount);
       } catch (error) {
-        setMoreError(displayError(error));
+        setMoreError(`続きを読み込めませんでした: ${displayError(error)}`);
       }
     });
   };
 
   const rows = groupRows(base);
   const loaded = initial.items.length + extra.length;
+  const listFailure =
+    failure !== null && failure.key === LIST_FAILURE ? failure : null;
+  const rowFailure = (item: TrashItemView) =>
+    failure !== null && failure.key === keyOf(item) ? failure : null;
+  const askHardDelete = (item: TrashItemView) =>
+    setPendingDialog({
+      kind: "hardDelete",
+      item,
+      children: item.kind === "topic" ? item.setDocumentIds.length : 0,
+    });
 
   return (
-    <div className="fog-content fog-trash">
-      <div className="fog-trash-header">
-        <p className="fog-trash-note">
-          ここにある項目は保持期限を過ぎると完全に削除されます。
-        </p>
-        <button
-          type="button"
-          className="fog-secondary fog-danger"
-          disabled={totalCount === 0 || dialogBusy}
-          onClick={() => setPendingDialog({ kind: "empty" })}
-        >
-          空にする（{totalCount}）
-        </button>
-      </div>
-      {notice !== null && (
-        <p className="fog-notice" role="status">
-          {notice.text}
-          {notice.memoId !== undefined && (
-            <Link
-              to="/"
-              search={{ memo: notice.memoId }}
-              className="fog-text-button"
-            >
-              タイムラインで見る
-            </Link>
-          )}
-        </p>
-      )}
-      {failure !== null && failure.key === LIST_FAILURE && (
-        <p className="fog-error" role="alert">
-          {failure.message}
-          <button
-            type="button"
-            className="fog-text-button"
-            onClick={failure.retry}
+    <div>
+      <TrashHeader
+        action={
+          <Button
+            variant="danger-text"
+            disabled={totalCount === 0 || dialogBusy}
+            onClick={() => setPendingDialog({ kind: "empty" })}
           >
-            {failure.retryLabel ?? "再試行"}
-          </button>
-        </p>
-      )}
-      {base.length === 0 ? (
-        <div className="fog-empty" role="status">
-          <h2>ゴミ箱は空です</h2>
-          <p>削除したメモ・ドキュメント・トピックはここに入ります。</p>
-        </div>
-      ) : (
-        <ul className="fog-trash-groups" aria-label="ゴミ箱の項目">
-          {rows.map(({ item, children }) => (
-            <li key={keyOf(item)} className="fog-trash-group">
-              <TrashRow
-                item={item}
-                meta={metaOf(item, children.length, now)}
-                busy={busy.has(keyOf(item))}
-                failure={failure?.key === keyOf(item) ? failure : null}
-                onRestore={() => restore(item)}
-                onDelete={() =>
-                  setPendingDialog({
-                    kind: "hardDelete",
-                    item,
-                    children:
-                      item.kind === "topic" ? item.setDocumentIds.length : 0,
-                  })
-                }
-              />
-              {children.length > 0 && (
-                <ul
-                  className="fog-trash-children"
-                  aria-label="セットで削除されたドキュメント"
-                >
-                  {children.map((child) => (
-                    <li key={keyOf(child)}>
-                      <TrashRow
-                        item={child}
-                        meta="トピックとセットで削除"
-                        child
-                        busy={busy.has(keyOf(child)) || busy.has(keyOf(item))}
-                        failure={failure?.key === keyOf(child) ? failure : null}
-                        onRestore={() => restore(child)}
-                        onDelete={() =>
-                          setPendingDialog({
-                            kind: "hardDelete",
-                            item: child,
-                            children: 0,
-                          })
-                        }
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
+            {totalCount === 0 ? "空にする" : `空にする（${totalCount}）`}
+          </Button>
+        }
+      />
+      <div>
+        {listFailure === null ? null : (
+          <InlineAlert
+            tone="error"
+            retry={{
+              label: listFailure.retryLabel,
+              onRetry: listFailure.retry,
+            }}
+          >
+            {listFailure.message}
+          </InlineAlert>
+        )}
+        {base.length === 0 ? (
+          <EmptyState message="ゴミ箱は空です" />
+        ) : (
+          <RowList aria-label="ゴミ箱の項目">
+            {rows.map(({ item, children }) => {
+              const groupBusy = busy.get(keyOf(item)) ?? null;
+              return (
+                <li key={keyOf(item)}>
+                  <TrashRow
+                    item={item}
+                    level="item"
+                    now={now}
+                    busyLabel={groupBusy}
+                    disabled={groupBusy !== null}
+                    failure={rowFailure(item)}
+                    onRestore={() => restore(item)}
+                    onDelete={() => askHardDelete(item)}
+                  />
+                  {children.length > 0 && (
+                    <ul aria-label="セットで削除されたドキュメント">
+                      {children.map((child) => {
+                        const childBusy = busy.get(keyOf(child)) ?? null;
+                        return (
+                          <li key={keyOf(child)}>
+                            <TrashRow
+                              item={child}
+                              level="nested"
+                              now={now}
+                              busyLabel={childBusy}
+                              disabled={
+                                childBusy !== null || groupBusy !== null
+                              }
+                              failure={rowFailure(child)}
+                              onRestore={() => restore(child)}
+                              onDelete={() => askHardDelete(child)}
+                            />
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </RowList>
+        )}
+        {totalCount > loaded &&
+          (moreError !== null ? (
+            <div className="pt-lg">
+              <InlineAlert
+                tone="error"
+                retry={{ label: "再試行", onRetry: loadMore }}
+              >
+                {moreError}
+              </InlineAlert>
+            </div>
+          ) : loadingMore ? (
+            <LoadingRow label="読み込み中" />
+          ) : (
+            <div className="flex justify-center pt-lg">
+              <Button variant="outline" onClick={loadMore}>
+                もっと読む
+              </Button>
+            </div>
           ))}
-        </ul>
-      )}
-      {totalCount > loaded && (
-        <div className="fog-search-more">
-          {moreError !== null && (
-            <p className="fog-error" role="alert">
-              {moreError}
-            </p>
-          )}
-          <button
-            type="button"
-            className="fog-secondary"
-            onClick={loadMore}
-            disabled={loadingMore}
-            aria-busy={loadingMore}
-          >
-            {loadingMore ? "読み込み中…" : "もっと読む"}
-          </button>
-        </div>
-      )}
+      </div>
 
       <ConfirmDialog
         open={pendingDialog?.kind === "hardDelete"}
         title="完全に削除しますか？"
         description={
           pendingDialog?.kind === "hardDelete" && pendingDialog.children > 0
-            ? `「${titleOf(pendingDialog.item)}」と、セットで削除されたドキュメント${pendingDialog.children}件が対象です。履歴ごと消え、元に戻せません。`
-            : pendingDialog?.kind === "hardDelete"
-              ? `「${titleOf(pendingDialog.item)}」は履歴ごと消え、元に戻せません。`
-              : ""
+            ? `${HARD_DELETE_TEXT}このトピックのドキュメント（${pendingDialog.children}件）も一緒に削除されます。`
+            : HARD_DELETE_TEXT
         }
         confirmLabel="完全に削除"
         danger
@@ -575,9 +596,10 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       />
       <ConfirmDialog
         open={pendingDialog?.kind === "empty"}
-        title={`ゴミ箱の${totalCount}件をすべて完全に削除しますか？`}
-        description="すべての項目が履歴ごと消え、元に戻せません。"
-        confirmLabel="すべて削除"
+        title="ゴミ箱を空にしますか？"
+        description={`全件（${totalCount}件）が完全に削除され、元に戻せません。`}
+        confirmLabel="空にする"
+        pendingLabel="空にしています…"
         danger
         pending={dialogBusy}
         onConfirm={confirmEmpty}
@@ -585,13 +607,17 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       />
       <ConfirmDialog
         open={pendingDialog?.kind === "confirmSet"}
-        title={
+        title="トピックごと復元しますか？"
+        description={
           pendingDialog?.kind === "confirmSet"
-            ? `トピック「${pendingDialog.topicName}」とセットで復元しますか？`
+            ? `トピック「${pendingDialog.topicName}」もゴミ箱にあります。${
+                pendingDialog.documentCount === null
+                  ? "トピックとそのドキュメントも一緒に復元されます。"
+                  : `トピックとそのドキュメント（${pendingDialog.documentCount}件）も一緒に復元されます。`
+              }`
             : ""
         }
-        description="所属トピックもゴミ箱にあります。このトピックと、一緒に削除されたドキュメントがすべて復元されます。"
-        confirmLabel="セットで復元"
+        confirmLabel="トピックごと復元"
         onConfirm={() => {
           if (
             pendingDialog?.kind !== "confirmSet" ||
@@ -606,7 +632,6 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
       />
       {pendingDialog?.kind === "destination" && (
         <RestoreDestinationDialog
-          documentTitle={titleOf(pendingDialog.item)}
           pending={dialogBusy}
           error={pendingDialog.error}
           onChoose={chooseDestination}
@@ -621,72 +646,62 @@ export function TrashBoard({ initial }: { initial: TrashListView }) {
 
 function TrashRow({
   item,
-  meta,
-  child = false,
-  busy,
+  level,
+  now,
+  busyLabel,
+  disabled,
   failure,
   onRestore,
   onDelete,
 }: Readonly<{
   item: TrashItemView;
-  meta: string;
-  child?: boolean;
-  busy: boolean;
+  level: RowLevel;
+  now: Date;
+  /** What is in flight on this row itself; `null` when nothing is. */
+  busyLabel: string | null;
+  /** Also true while the topic a nested row belongs to is being acted on. */
+  disabled: boolean;
   failure: RowFailure | null;
   onRestore: () => void;
   onDelete: () => void;
 }>) {
+  const title = titleOf(item);
   return (
-    <div
-      className={`fog-trash-row${child ? " fog-trash-child" : ""}${busy ? " pending" : ""}`}
-      aria-busy={busy}
+    <Row
+      level={level}
+      busy={busyLabel !== null}
+      actions={
+        <TrashRowActions
+          title={title}
+          disabled={disabled}
+          onRestore={onRestore}
+          onDelete={onDelete}
+        />
+      }
+      error={
+        failure === null ? null : (
+          <RowError
+            message={failure.message}
+            retry={{ label: failure.retryLabel, onRetry: failure.retry }}
+          />
+        )
+      }
     >
-      <div className="fog-trash-main">
-        <p className={child ? "fog-trash-child-title" : "fog-trash-title"}>
-          {titleOf(item)}
-        </p>
-        <p className="fog-trash-tags">
-          {!child && (
-            <span className="fog-trash-pill">{KIND_LABELS[item.kind]}</span>
+      <p className="wrap-anywhere">{title}</p>
+      {level === "item" ? (
+        <TrashTags>
+          <KindPill>{KIND_LABELS[item.kind]}</KindPill>
+          {busyLabel === null ? (
+            <RemainingDays>{remainingLabel(item.expiresAt, now)}</RemainingDays>
+          ) : (
+            <RowStatus label={busyLabel} />
           )}
-          <span className="fog-remaining">{meta}</span>
-          <time dateTime={item.trashedAt.toISOString()} className="fog-meta">
-            {formatDateTime(item.trashedAt)} に削除
-          </time>
+        </TrashTags>
+      ) : busyLabel === null ? null : (
+        <p className="mt-xs">
+          <RowStatus label={busyLabel} />
         </p>
-        {failure !== null && (
-          <p className="fog-error" role="alert">
-            {failure.message}
-            <button
-              type="button"
-              className="fog-text-button"
-              onClick={failure.retry}
-            >
-              再試行
-            </button>
-          </p>
-        )}
-      </div>
-      <div className="fog-row-actions">
-        <button
-          type="button"
-          className="fog-secondary"
-          onClick={onRestore}
-          disabled={busy}
-          aria-label={`${titleOf(item)} を復元`}
-        >
-          復元
-        </button>
-        <button
-          type="button"
-          className="fog-secondary fog-danger"
-          onClick={onDelete}
-          disabled={busy}
-          aria-label={`${titleOf(item)} を完全に削除`}
-        >
-          完全に削除
-        </button>
-      </div>
-    </div>
+      )}
+    </Row>
   );
 }
