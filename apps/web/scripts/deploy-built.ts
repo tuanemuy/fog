@@ -12,19 +12,17 @@
  * uploaded under this stage's command.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BUILD_OUTPUT_CONFIG, stageMismatch } from "./lib/buildOutput";
-import { DEPLOY_STAGES, isDeployStage } from "./lib/deployStage";
+import {
+  BUILD_OUTPUT_CONFIG,
+  buildOutputProblem,
+  parseDeployBuiltArgs,
+} from "./lib/buildOutput";
+import { DEPLOY_STAGES } from "./lib/deployStage";
 
-const [stageArg, ...flags] = process.argv.slice(2);
-const dryRun = flags.length === 1 && flags[0] === "--dry-run";
-if (
-  stageArg === undefined ||
-  !isDeployStage(stageArg) ||
-  (flags.length > 0 && !dryRun)
-) {
+const args = parseDeployBuiltArgs(process.argv.slice(2));
+if (args === null) {
   console.error(
     `usage: tsx scripts/deploy-built.ts <${DEPLOY_STAGES.join("|")}> [--dry-run]`,
   );
@@ -32,21 +30,13 @@ if (
 }
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputConfigPath = resolve(webRoot, BUILD_OUTPUT_CONFIG);
 
-let outputConfig: unknown;
-try {
-  outputConfig = JSON.parse(readFileSync(outputConfigPath, "utf8"));
-} catch {
-  console.error(
-    `${BUILD_OUTPUT_CONFIG} is missing or unreadable. Run \`pnpm build:${stageArg}\` first.`,
-  );
-  process.exit(1);
-}
-
-const mismatch = stageMismatch(stageArg, outputConfig);
-if (mismatch !== null) {
-  console.error(mismatch);
+const problem = buildOutputProblem(
+  args.stage,
+  resolve(webRoot, BUILD_OUTPUT_CONFIG),
+);
+if (problem !== null) {
+  console.error(problem);
   process.exit(1);
 }
 
@@ -57,7 +47,7 @@ try {
       "deploy",
       "--config",
       BUILD_OUTPUT_CONFIG,
-      ...(dryRun ? ["--dry-run", "--outdir=dist/worker"] : []),
+      ...(args.dryRun ? ["--dry-run", "--outdir=dist/worker"] : []),
     ],
     { cwd: webRoot, stdio: "inherit" },
   );
