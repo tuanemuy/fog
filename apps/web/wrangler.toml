@@ -1,5 +1,5 @@
-# LOCAL DEV ONLY — `pnpm dev` / `pnpm build` auto-discover this file via
-# `@cloudflare/vite-plugin`. Do NOT run `wrangler deploy` against it:
+# LOCAL DEV ONLY — `vite.config.cloudflare.ts` points `@cloudflare/vite-plugin`
+# at this file for `pnpm dev` / `pnpm build`. Do NOT run `wrangler deploy` against it:
 # the resource names below lack the stage suffix that keeps environments
 # from colliding. Deploy via `wrangler.staging.toml` / `wrangler.production.toml`.
 #

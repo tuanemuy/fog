@@ -87,3 +87,30 @@ jobs:
       # The bare alias (not `:cf` directly) so CI catches a rewired alias.
       - name: Build
         run: pnpm build
+
+  deploy-dry-run:
+    name: Deploy dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The suite checks that no `.dev.vars` value reaches the dry run's
+      # output, and skips that check when there is no `.dev.vars` to read.
+      - name: Write a throwaway .dev.vars
+        run: printf 'SESSION_SECRET="%s"\n' "$(openssl rand -base64 48)" > apps/web/.dev.vars
+
+      - name: Build and dry-run every stage's deploy
+        run: pnpm test:deploy

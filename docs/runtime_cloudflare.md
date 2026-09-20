@@ -15,7 +15,7 @@ Every section that describes a procedure carries a **Reality** marker, and the m
 Two rules follow from that question, and both are easy to get wrong:
 
 - **The marker is not decided by whether code exists.** A maintenance RPC is **Available** because `POST /__operator/<entry>` (8.2) reaches it, not because its method is defined on the Durable Object; a capability that only `sqlite3` against `.wrangler/state` provides is **Local only** however complete the code behind it is.
-- **The marker is not lowered because a later step is blocked.** `wrangler secret put`, `wrangler queues update` and `pulumi up` are commands you can run today, so they are **Available** even though the deploy they prepare for stops at the request Worker's bundling (4.2, tracked in [#3](https://github.com/tuanemuy/fog/issues/3)). Where that boundary falls is shown by section headings — "before the deploy" versus "after the deploy" — not by the marker.
+- **The marker is not lowered because a later step is blocked.** `wrangler secret put`, `wrangler queues update` and `pulumi up` are commands you can run today, so they are **Available** even where a step after them is not — the hostname binding, for one, means nothing until the Worker it points at has been uploaded (4.2). Where that boundary falls is shown by section headings — "before the deploy" versus "after the deploy" — not by the marker.
 
 **A section whose reality is `None` still carries its full procedure, and says so at the top.** The alternative — leaving it out — reads as "there is a way and we did not write it down".
 
@@ -88,12 +88,16 @@ Tenant isolation is structural: there is no `user_id` predicate that could be fo
 
 Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrangler.ts`. It reads `pulumi -C infra/cloudflare/pulumi/resources -s <stage> stack output --json --show-secrets` — **`--show-secrets` is part of the command**, and reproducing it by hand without the flag yields masked outputs — and substitutes six placeholders — `APP_URL`, `D1_DATABASE_ID`, `D1_DATABASE_NAME`, `EVENTS_QUEUE_NAME`, `DLQ_QUEUE_NAME`, `RESOURCE_PREFIX`. An unknown placeholder aborts the render rather than rendering an empty string. **One invocation renders both Workers' configs**, which is what keeps the state Worker's `name` and the request Worker's `script_name` from drifting apart.
 
-**All four templates point `main` at a source entry.** There is no build-output path and no per-stage routing of `main`:
+**All four templates point `main` at a source entry**, and who reads that entry differs by Worker:
 
-- request side: `main = "app/server.cloudflare.ts"`
-- state side: `main = "app/worker/cloudflare/state.ts"`
+- request side: `main = "app/server.cloudflare.ts"` — read by the Vite build, never by `wrangler`
+- state side: `main = "app/worker/cloudflare/state.ts"` — bundled by `wrangler` itself
 
-**That the request side points at the TanStack Start source entry is why the request Worker cannot be deployed** (tracked in [#3](https://github.com/tuanemuy/fog/issues/3)), not an incidental detail: `wrangler deploy` cannot resolve `#tanstack-start-entry`, `#tanstack-router-entry` or `tanstack-start-manifest:v`, which only the Vite plugin supplies. The templates' own headers say so.
+**The request Worker's source entry can only be built by Vite.** It imports TanStack Start virtual modules (`#tanstack-start-entry`, `#tanstack-router-entry`, `tanstack-start-manifest:v`, …) that only the Vite plugin supplies, so `wrangler deploy --config wrangler.<stage>.toml` and `wrangler dev -c wrangler.toml` both stop at `Could not resolve`. What `wrangler` is handed instead is the build's output config, `dist/server/wrangler.json`: the plugin writes it next to the bundled entry with `main = "index.js"` and `no_bundle = true`, carrying the `[vars]`, bindings and queue consumers of whichever request config the build read. **The rule covers the commands that bundle — `wrangler deploy` and `wrangler dev`.** A command that only reads a config's name and bindings (`wrangler secret put --config wrangler.<stage>.toml`, `wrangler types`) takes the request config directly, and chapter 3 depends on that.
+
+**Which request config a build reads is decided by the Vite config file, and by nothing ambient.** `vite.config.cloudflare.ts` reads the local pair (`wrangler.toml` / `wrangler.state.toml`); `vite.config.cloudflare.<stage>.ts` reads the rendered pair of its stage, and `pnpm --filter @repo/web build:<stage>` is the script that uses it. Both go through `wranglerConfigFiles()` in `apps/web/scripts/lib/deployStage.ts`, which is also where the render script takes its output paths from — so what a render writes is what the stage build picks up. A stage build stops when either rendered file is missing; the plugin names the missing path, and the fix is `pnpm cf:render:<stage>`.
+
+**Two suites hold this, at two different points.** `wranglerConfig.test.ts` reads the templates — the build's *input*. `pnpm test:deploy` (`deployBundle.deploy.test.ts`, its own CI job) renders each stage's templates from fixed values, runs the stage's real `deploy:<stage>:all:dry`, and reads the *output* config back: the Worker name, the state Worker both DO bindings name, the exact `[vars]` set (so a local-only variable reaching a stage is one key too many), the queue consumers, and that no `.dev.vars` value appears in what the dry run would upload. It refuses to run over rendered configs that already exist, and it leaves `apps/web/dist` holding a stage build.
 
 ### Durable Object migrations in the config
 
@@ -162,7 +166,7 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> state unprotect \
 
 ## 3. Secrets: ownership and procedure
 
-**Reality: Available** (installing a secret is a command you can run today; the deploy it prepares for is blocked at the request Worker's bundling, 4.2 and [#3](https://github.com/tuanemuy/fog/issues/3)).
+**Reality: Available.**
 
 `apps/web/.dev.vars.example` is the authority for ownership; its header table is the roster and `wranglerConfig.test.ts` pins every secret row of it. Fifteen secrets and three `[vars]` entries:
 
@@ -245,7 +249,7 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 
 ### The split does not hold locally
 
-`wrangler dev -c wrangler.toml -c wrangler.state.toml` resolves `.dev.vars` relative to the config directory, and both configs sit in `apps/web/`. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where `wrangler secret put --config` puts each secret on one Worker. The same holds for the rotation pair: locally the commitment and the keyring sit side by side, so the non-overlap the design relies on cannot be observed under `pnpm dev`.
+`wrangler dev` resolves `.dev.vars` relative to each config's directory. Under `pnpm start` the state Worker's config sits in `apps/web/` beside `.dev.vars`, and the request Worker's is `dist/server/wrangler.json`, beside the copy of `.dev.vars` the Vite build writes there; `pnpm dev` and `pnpm preview` hand one `.dev.vars` to both Workers the same way. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where `wrangler secret put --config` puts each secret on one Worker. The same holds for the rotation pair: locally the commitment and the keyring sit side by side, so the non-overlap the design relies on cannot be observed under `pnpm dev`.
 
 **A misattributed secret is invisible locally for exactly this reason.** Do not use `pnpm dev` to confirm ownership.
 
@@ -280,14 +284,15 @@ Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omit
 
 ### 4.2 Steps that only mean something after the deploy
 
-**Reality: None ([#3](https://github.com/tuanemuy/fog/issues/3)) for the request Worker half.**
+**Reality: Available.** **The upload itself has never been observed from this repository** — no stage has a stack or credentials (4.1). What is observed, by `pnpm test:deploy` in CI, is every step short of it: the stage build, and `wrangler deploy --dry-run` for both Workers, which resolves the config, bundles, and reads the assets.
 
 ```bash
-# from the repo root (both are root scripts that delegate to @repo/web)
+# from the repo root (all three are root scripts that delegate to @repo/web)
 # 5. state Worker FIRST, then the request Worker
-pnpm deploy:<stage>:state     # works
-pnpm deploy:<stage>           # fails while bundling the request Worker (#3)
-pnpm deploy:<stage>:all       # runs the two in that order; only the first half lands
+pnpm deploy:<stage>:all       # stage build, then the state Worker, then the request Worker
+# or, one Worker at a time
+pnpm deploy:<stage>:state     # wrangler bundles the state Worker's source
+pnpm deploy:<stage>           # stage build, then wrangler uploads dist/server/wrangler.json
 
 # 6. bind the hostname
 pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
@@ -295,7 +300,9 @@ pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
 
 **The order is not a preference.** The request Worker's DO bindings name the state Worker's script, and a binding cannot be created against a script that does not exist. The routes stack comes last for the same reason one level up: Cloudflare rejects a custom-domain binding for a service that has not been uploaded.
 
-`pnpm deploy:<stage>` fails today because `main` is the TanStack Start source entry and `wrangler` cannot resolve its virtual modules — the same unresolved point that keeps `pnpm start` from booting. Until [#3](https://github.com/tuanemuy/fog/issues/3) closes, **the request Worker cannot be deployed at all**, and everything downstream of it in this document is unreachable in production regardless of what else is true.
+**`deploy:<stage>:all` builds before it deploys anything.** A build that stops — a rendered config missing, a compile error — therefore stops with neither Worker touched rather than with the state Worker landed alone, and the two uploads run back to back, which keeps the skew window (4.4) to the uploads themselves. Every `deploy:<stage>*` script has a `:dry` twin that stops short of the upload. `deployScripts.test.ts` pins the order, each script's stage, and that no script hands `wrangler deploy` / `wrangler dev` a request Worker source config (chapter 2).
+
+**A stage build overwrites `apps/web/dist` and `.wrangler/deploy/config.json`.** `pnpm preview` serves whatever was built last, so run `pnpm build` again before previewing after a deploy or a dry run; `pnpm start` rebuilds on its own (4.5).
 
 ### 4.3 Rollback
 
@@ -332,9 +339,9 @@ Section 8.6 refers back to this paragraph rather than restating it.
 
 `pnpm preview` serves the build output through `vite preview`, so `pnpm build` (= `build:cf`) must have run first; it reads `.wrangler/deploy/config.json` to find that output. **`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, and `vite preview` picks its own port — so `og:url` and the canonical link will disagree with the address in the browser bar. That is expected in preview and is not a signal of a misconfiguration.
 
-`pnpm start` (`wrangler dev` over both configs) — see `README.md` for its current status; it fails for the same cause as the deploy ([#3](https://github.com/tuanemuy/fog/issues/3)).
+`pnpm start` runs the same build output under `wrangler dev` instead — the closest local counterpart of what a deploy uploads. It runs the local build itself and then `wrangler dev -c dist/server/wrangler.json -c wrangler.state.toml`: the request Worker from the build output, the state Worker bundled from source. **The build is part of the script on purpose.** A `dist/` left behind by a stage build names that stage's state Worker in its DO bindings, the local state Worker does not answer to that name, and the mismatch is silent (chapter 2, `script_name`). It listens on `wrangler dev`'s port (8787 unless `--port` says otherwise), so the `APP_URL` disagreement above applies to it too.
 
-**`pnpm dev` and `pnpm preview` share `apps/web/.wrangler/state`.** Run one at a time: two processes over the same Durable Object files compete for the same Alarms, and a job may run in whichever process fires first. Preview's `[dev-mail]` lines carry `APP_URL`'s host (`:3000`), so a reset link printed by preview has to be opened against preview's own port by hand.
+**`pnpm dev`, `pnpm preview` and `pnpm start` share `apps/web/.wrangler/state`.** Run one at a time: two processes over the same Durable Object files compete for the same Alarms, and a job may run in whichever process fires first. Preview's `[dev-mail]` lines carry `APP_URL`'s host (`:3000`), so a reset link printed by preview has to be opened against preview's own port by hand.
 
 ## 5. Out-of-band settings nothing here can observe
 
@@ -358,7 +365,7 @@ Three settings govern production behaviour and **none of them can be read back f
 
 Each DO carries `_meta.schema_version`. On the first RPC of a wake-up the migration gate compares it to the target the code understands and applies the missing steps **inside one `transactionSync`, together with the version update** — "applied but the version did not move" is not representable. Steps are re-runnable (`CREATE TABLE IF NOT EXISTS`), but re-runnable is not bounded: a `CREATE INDEX` on a large table is idempotent and still may not finish in one input.
 
-**Until the first production deployment there is no v2.** Every slice extends v1 in place and `schema_version` stays at 1. Without that rule, one slice would add a v2 while another extended v1 and the fail-closed gate's expected maximum would diverge between them. **The only shape a schema change may take today is therefore: edit v1's DDL, add no migration step, and leave `schema_version` where it is.** **The premise is that no DO instance exists remotely** — there is no route that reaches one, so none has been created. That premise cannot be checked today (no credentials, no deployed stack), so it is recorded as an assumption rather than a verified fact. **If a v1 DO does turn out to exist, an edit to v1's DDL never reaches it: the gate skips every step whose `version` is at or below the stored `schema_version`, so the statement is not executed at all.** (`CREATE INDEX IF NOT EXISTS` is there to make the first application re-runnable, not to carry a changed definition to an object that already ran it.) The fix at that point is a v2 step and an advanced `targetVersion`, not an edit.
+**Until the first production deployment there is no v2.** Every slice extends v1 in place and `schema_version` stays at 1. Without that rule, one slice would add a v2 while another extended v1 and the fail-closed gate's expected maximum would diverge between them. **The only shape a schema change may take today is therefore: edit v1's DDL, add no migration step, and leave `schema_version` where it is.** **The premise is that no DO instance exists remotely** — no stack has been `up`ed and no stage deployed (4.1), so none has been created. That premise cannot be checked today (no credentials, no deployed stack), so it is recorded as an assumption rather than a verified fact. **If a v1 DO does turn out to exist, an edit to v1's DDL never reaches it: the gate skips every step whose `version` is at or below the stored `schema_version`, so the statement is not executed at all.** (`CREATE INDEX IF NOT EXISTS` is there to make the first application re-runnable, not to carry a changed definition to an object that already ran it.) The fix at that point is a v2 step and an advanced `targetVersion`, not an edit.
 
 ### Fail-closed
 
@@ -1007,7 +1014,6 @@ Each row is described in full in the section it names, and tracked on its issue.
 
 | Limit | Described in | Tracked in |
 | ----- | ------------ | ---------- |
-| The request Worker cannot be deployed, and `pnpm start` does not boot, for the same cause | 4.2, `README.md` | [#3](https://github.com/tuanemuy/fog/issues/3) |
 | The Pulumi `resources` stack still provisions a D1 database, and the render script still substitutes its two placeholders, with no runtime reader | chapter 1, chapter 2 (Pulumi) | [#4](https://github.com/tuanemuy/fog/issues/4) |
 | **The DLQ's one log line is not retained in production** — no wrangler config declares `[observability]`, so Workers Logs is off and only a live `wrangler tail` sees it | 8.6, 8.7 | [#5](https://github.com/tuanemuy/fog/issues/5) |
 | PITR's four mandatory steps have no maintenance entry; in production they cannot be executed | 11.3 | [#6](https://github.com/tuanemuy/fog/issues/6) |

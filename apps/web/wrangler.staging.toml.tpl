@@ -32,14 +32,15 @@
 #      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
 #   5. **Deploy the state Worker first**, then the request Worker: the
 #      `script_name` below must already exist for the DO bindings to bind.
-#      `pnpm deploy:staging:all` runs the two in that order, but only its
-#      first half lands today. `pnpm deploy:staging:state` deploys the state
-#      Worker; the request half (`pnpm deploy:staging`) fails while bundling,
-#      because `main` below is the TanStack Start source entry and
-#      `wrangler deploy` cannot resolve its virtual modules
+#      `pnpm deploy:staging:all` builds the stage, then runs the two in that
+#      order. **`wrangler deploy` is never pointed at the rendered file**: `main`
+#      below is the TanStack Start source entry, whose virtual modules
 #      (`#tanstack-start-entry`, `#tanstack-router-entry`,
-#      `tanstack-start-manifest:v`) — the same unresolved point that keeps
-#      `pnpm start` from booting.
+#      `tanstack-start-manifest:v`) only the Vite plugin supplies. The
+#      stage build (`vite.config.cloudflare.staging.ts`) reads this file
+#      and writes `dist/server/wrangler.json`, and that output is what
+#      `pnpm deploy:staging` hands to `wrangler deploy`. `wrangler secret put
+#      --config` above only reads the Worker's name, so it takes this file.
 #   6. `pulumi -C infra/cloudflare/pulumi/routes -s staging up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"

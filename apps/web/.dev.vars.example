@@ -43,12 +43,12 @@
 # anything lives. Handing either key to both Workers collapses that
 # split, and nothing in the code would notice.
 #
-# **Locally the split does not hold.** Both wrangler configs sit in this
-# same directory and `.dev.vars` is resolved against the config's
-# directory, so every entry of this file is handed to both Workers —
-# measured with `wrangler dev -c wrangler.toml -c wrangler.state.toml`,
-# where the state Worker receives `SESSION_SECRET` and
-# `DIRECTORY_ROUTING_SECRET` as well. The ownership above is what holds
+# **Locally the split does not hold.** `.dev.vars` is resolved against
+# each config's directory: the state Worker's config sits in this
+# directory, and the Vite build copies this file next to the request
+# Worker's output config. So every entry of this file is handed to both
+# Workers — measured with `pnpm start`, where the state Worker receives
+# `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET` as well. The ownership above is what holds
 # from staging onward, where each secret is installed with
 # `wrangler secret put --config` against one Worker's config only.
 #

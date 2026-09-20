@@ -1,7 +1,8 @@
 # LOCAL DEV ONLY — the **state Worker**: the Worker that owns the Durable
 # Object classes. `pnpm dev` / `pnpm build` load it through
 # `auxiliaryWorkers` in `vite.config.cloudflare.ts`, and `pnpm start`
-# passes it as the second `-c` to `wrangler dev`.
+# passes it as the second `-c` to `wrangler dev`, after the request
+# Worker's build output.
 #
 # `name` must equal the `script_name` of both `durable_objects.bindings`
 # entries in `wrangler.toml`. The Vite plugin matches them by name and
