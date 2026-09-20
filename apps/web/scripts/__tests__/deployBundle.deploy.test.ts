@@ -97,16 +97,19 @@ function run(script: string): void {
   execFileSync("pnpm", [script], { cwd: webRoot, stdio: "pipe" });
 }
 
-/** stdout + stderr of a script that is expected to exit non-zero. */
-function failureOutputOf(script: string): string {
+/** stdout + stderr of a pnpm invocation that is expected to exit non-zero. */
+function failureOutputOf(...args: string[]): string {
   try {
-    run(script);
+    execFileSync("pnpm", args, { cwd: webRoot, stdio: "pipe" });
   } catch (error) {
     const { stdout, stderr } = error as { stdout: Buffer; stderr: Buffer };
     return `${stdout.toString()}${stderr.toString()}`;
   }
-  throw new Error(`${script} exited 0`);
+  throw new Error(`pnpm ${args.join(" ")} exited 0`);
 }
+
+const deployBuiltDry = (stage: DeployStage) =>
+  ["exec", "tsx", "scripts/deploy-built.ts", stage, "--dry-run"] as const;
 
 function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -238,6 +241,14 @@ describe.each(DEPLOY_STAGES)("the %s deploy", (stage) => {
     ]);
   });
 
+  it("refuses to deploy this build under another stage's command", () => {
+    for (const other of DEPLOY_STAGES.filter((s) => s !== stage)) {
+      expect(failureOutputOf(...deployBuiltDry(other))).toContain(
+        `was built from ${wranglerConfigFiles(stage).request},`,
+      );
+    }
+  });
+
   // The Vite plugin copies `.dev.vars` next to the output config for
   // `wrangler dev`. A deploy must not pick it up from there.
   it.skipIf(!existsSync(inWeb(".dev.vars")))(
@@ -264,13 +275,14 @@ describe.each(DEPLOY_STAGES)("the %s deploy", (stage) => {
 describe.skipIf(!existsSync(inWeb(".dev.vars")))(
   "pnpm start after a stage build",
   () => {
-    let server: ChildProcess;
+    let server: ChildProcess | undefined;
+    let persistTo: string | undefined;
     let origin: string;
-    const persistTo = mkdtempSync(join(tmpdir(), "fog-start-"));
 
     beforeAll(async () => {
       const port = await freePort();
       origin = `http://localhost:${port}`;
+      persistTo = mkdtempSync(join(tmpdir(), "fog-start-"));
       server = spawn(
         "pnpm",
         ["start:cf", "--port", String(port), "--persist-to", persistTo],
@@ -279,9 +291,16 @@ describe.skipIf(!existsSync(inWeb(".dev.vars")))(
       await untilListening(origin);
     });
 
-    afterAll(() => {
-      if (server.pid !== undefined) process.kill(-server.pid, "SIGTERM");
-      rmSync(persistTo, { recursive: true, force: true });
+    afterAll(async () => {
+      const running = server;
+      if (running?.pid !== undefined && running.exitCode === null) {
+        const exited = new Promise((done) => running.once("exit", done));
+        process.kill(-running.pid, "SIGTERM");
+        await exited;
+      }
+      if (persistTo !== undefined) {
+        rmSync(persistTo, { recursive: true, force: true });
+      }
     });
 
     it("serves the top page", async () => {
@@ -297,5 +316,14 @@ describe.skipIf(!existsSync(inWeb(".dev.vars")))(
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ schemaVersion: null });
     });
+
+    it.each(DEPLOY_STAGES)(
+      "refuses to deploy the local build it made as %s",
+      (stage) => {
+        expect(failureOutputOf(...deployBuiltDry(stage))).toContain(
+          `was built from ${wranglerConfigFiles(null).request},`,
+        );
+      },
+    );
   },
 );

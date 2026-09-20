@@ -25,57 +25,54 @@ function commands(name: string): string[] {
 const configsOf = (command: string) =>
   [...command.matchAll(/(?:--config|-c)[ =](\S+)/g)].map((m) => m[1] ?? "");
 const isViteBuild = (command: string) => command.startsWith("vite build ");
-const isWranglerDeploy = (command: string) =>
-  command.startsWith("wrangler deploy ");
-const isDryRun = (command: string) => command.includes("--dry-run");
 
-// The request Worker's source entry imports TanStack Start virtual modules
-// that only the Vite plugin supplies, so wrangler is handed the build's
-// output config and never a config whose `main` is that entry.
+type Deploy = Readonly<{ target: string; dryRun: boolean }>;
+
+/**
+ * What a deploy step deploys: the state Worker's config, or — for the
+ * request Worker, which goes through `scripts/deploy-built.ts` because
+ * wrangler cannot bundle its source — the stage whose build output it is.
+ */
+function deployOf(command: string): Deploy | null {
+  const built = /^tsx scripts\/deploy-built\.ts (\S+)( --dry-run)?$/.exec(
+    command,
+  );
+  if (built !== null) {
+    return { target: `built:${built[1]}`, dryRun: built[2] !== undefined };
+  }
+  if (!command.startsWith("wrangler deploy ")) return null;
+  return {
+    target: configsOf(command).join(","),
+    dryRun: command.includes("--dry-run"),
+  };
+}
+
 const BUILD_OUTPUT_CONFIG = "dist/server/wrangler.json";
 
 describe.each(DEPLOY_STAGES)("the %s deploy scripts", (stage) => {
   const viteConfig = `vite.config.cloudflare.${stage}.ts`;
   const stateConfig = wranglerConfigFiles(stage).state;
 
-  it.each([`deploy:${stage}`, `deploy:${stage}:dry`])(
-    "%s builds its own stage, then deploys the build output",
-    (name) => {
-      const [build, ...deploys] = commands(name);
-      expect(build !== undefined && isViteBuild(build)).toBe(true);
-      expect(configsOf(build ?? "")).toEqual([viteConfig]);
-      expect(deploys.map(configsOf)).toEqual([[BUILD_OUTPUT_CONFIG]]);
-      expect(deploys.every(isWranglerDeploy)).toBe(true);
-    },
-  );
-
   // The build comes first so that a build failure cannot leave the state
   // Worker deployed alone, and so that the two deploys sit back to back.
   // The state Worker goes before the request Worker because the request
   // Worker's DO bindings name a script that has to exist already.
-  it.each([`deploy:${stage}:all`, `deploy:${stage}:all:dry`])(
-    "%s builds, then deploys the state Worker, then the request Worker",
-    (name) => {
-      const [build, ...deploys] = commands(name);
+  it.each([
+    [`deploy:${stage}`, false, [`built:${stage}`]],
+    [`deploy:${stage}:dry`, true, [`built:${stage}`]],
+    [`deploy:${stage}:all`, false, [stateConfig, `built:${stage}`]],
+    [`deploy:${stage}:all:dry`, true, [stateConfig, `built:${stage}`]],
+  ] as const)(
+    "%s builds its own stage, then deploys (dry run: %s) %j",
+    (name, dryRun, targets) => {
+      const [build, ...rest] = commands(name);
       expect(build !== undefined && isViteBuild(build)).toBe(true);
       expect(configsOf(build ?? "")).toEqual([viteConfig]);
-      expect(deploys.map(configsOf)).toEqual([
-        [stateConfig],
-        [BUILD_OUTPUT_CONFIG],
-      ]);
-      expect(deploys.every(isWranglerDeploy)).toBe(true);
+      expect(rest.map(deployOf)).toEqual(
+        targets.map((target) => ({ target, dryRun })),
+      );
     },
   );
-
-  it("uploads from the plain scripts and from none of their :dry twins", () => {
-    for (const name of [`deploy:${stage}`, `deploy:${stage}:all`]) {
-      const plain = commands(name).filter(isWranglerDeploy);
-      const dry = commands(`${name}:dry`).filter(isWranglerDeploy);
-      expect(dry).toHaveLength(plain.length);
-      expect(plain.filter(isDryRun)).toEqual([]);
-      expect(dry.filter((command) => !isDryRun(command))).toEqual([]);
-    }
-  });
 });
 
 describe("pnpm start", () => {
@@ -109,14 +106,15 @@ describe("no script lets wrangler bundle the request Worker's source", () => {
     const names = new Set(bundling.map(([name]) => name));
     expect(names.has("start")).toBe(true);
     for (const stage of DEPLOY_STAGES) {
-      expect(names.has(`deploy:${stage}`)).toBe(true);
+      expect(names.has(`deploy:${stage}:all`)).toBe(true);
       expect(names.has(`deploy:${stage}:state`)).toBe(true);
     }
   });
 
   it.each(bundling)("%s: %s", (_name, command) => {
     const configs = configsOf(command);
-    // With no `--config`, wrangler discovers `wrangler.toml` on its own.
+    // With no `--config`, wrangler picks a config on its own — the last
+    // build's output if there is one, `wrangler.toml` otherwise.
     expect(configs.length).toBeGreaterThan(0);
     for (const config of configs) {
       expect(requestSourceConfigs).not.toContain(config);

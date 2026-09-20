@@ -13,7 +13,7 @@ request Worker を wrangler に渡す経路を、ソースのエントリ（`app
 - ステージは Vite の config ファイルで選ぶ。`vite.config.cloudflare.ts` が `createConfig(stage: DeployStage | null)` を export し、既定の export は `createConfig(null)`（ローカル）。`vite.config.cloudflare.staging.ts` / `vite.config.cloudflare.production.ts` は `createConfig("<stage>")` を返すだけ。環境変数は使わないので、`pnpm dev` / `pnpm build` / `pnpm preview` / `pnpm start` がシェルの状態でステージに切り替わることはない
 - `createConfig` は `@cloudflare/vite-plugin` の `configPath` と `auxiliaryWorkers[].configPath` を、ステージの描画済み設定（`wrangler.<stage>.toml` / `wrangler.state.<stage>.toml`）かローカルの `wrangler.toml` / `wrangler.state.toml` に向ける
 - ステージの一覧と「ステージ → 設定ファイルのパス」は 1 つのモジュールに置き、`createConfig` と `scripts/render-wrangler.ts`（描画の出力先）の両方がそこから取る
-- `build:<stage>` がステージの config でビルドする。成果物のアップロードは `deploy:built`（`wrangler deploy --config dist/server/wrangler.json`）と `:dry` の 1 組で、`deploy:<stage>` は `build:<stage>` の後にそれを呼ぶ
+- `build:<stage>` がステージの config でビルドする。成果物のアップロードは `scripts/deploy-built.ts <stage> [--dry-run]` の 1 か所で、成果物の `userConfigPath` がそのステージの描画済み設定であることを確かめてから `wrangler deploy --config dist/server/wrangler.json` を実行する。`dist/` は最後のビルドを持つだけなので、ローカルビルドや別ステージのビルドはここで止まる。`deploy:<stage>` は `build:<stage>` の後にそれを呼ぶ
 - `deploy:<stage>:all` は **ビルド → state Worker のデプロイ → request Worker のデプロイ** の順。ビルドを先頭に置くのは、ビルドの中断で state だけが着地した half-run を作らないためと、2 つのデプロイの間隔（skew window、`docs/runtime_cloudflare.md` §4.4）をビルド時間の分だけ広げないため
 - state Worker のデプロイは現行どおりソースから（`wrangler deploy --config wrangler.state.<stage>.toml`）。仮想モジュールを持たず、現に通っている
 - `start:cf` はローカル設定でビルドしてから `wrangler dev -c dist/server/wrangler.json -c wrangler.state.toml` を起動する。ビルドを含めるのは、`dist/` が直前のステージビルドのままだと request 側の `script_name` がローカルの state Worker 名と食い違い、DO バインディングが黙って繋がらないため
@@ -34,6 +34,7 @@ request Worker を wrangler に渡す経路を、ソースのエントリ（`app
 | AC-8 | ローカルの `.dev.vars`（Vite プラグインが `dist/server/` に複写する）の中身が、`wrangler deploy --dry-run` の添付モジュール一覧と `--outdir` の出力に入らない | `pnpm test:deploy`（`--outdir` の全ファイルを `.dev.vars` の 16 文字以上の値で検索して 0 件） |
 | AC-9 | 文書が変更後の経路を述べる。対象: `README.md`（起動・デプロイの段落、コマンド一覧の注記）、`docs/runtime_cloudflare.md`（How to read の marker の例示、§2、§3 の Reality 注記と「The split does not hold locally」、§4.2、§4.5、§6 の「到達する経路が無い」、§14）、`.dev.vars.example` の `wrangler dev` 前提の記述、テンプレート 2 本とローカル設定 2 本のヘッダー、`docs/test.md`（deploy 層）。「デプロイできない／起動しない」と #3 への参照が残らない。§2 は「ソース設定の直 deploy は通らないが、`secret put --config` などの設定参照は有効」を区別して書く | コマンド出力（grep）＋差分の読み |
 | AC-10 | 文書は観測の限界を自身の文で述べる: 実アップロードはこのリポジトリで未観測で、確かめているのは dry-run まで（bundle・設定の解決・アセットの読み取り）。§4.2 の Reality marker はその事実に合わせる。`wranglerConfig.test.ts` が見るのはテンプレート（Vite プラグインの入力）で、成果物は `pnpm test:deploy` が見る、という分担も書く | 差分の読み |
+| AC-11 | 成果物は自分のステージのデプロイコマンドでしか上げられない。ローカルビルドと別ステージのビルドは、どのステージの `deploy-built` でも `wrangler` を呼ぶ前に非 0 で止まり、出どころの設定名を示す | 自動テスト（判定）＋ `pnpm test:deploy`（実際のビルドに対する拒否） |
 
 ## 観測の限界
 

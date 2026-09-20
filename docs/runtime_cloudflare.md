@@ -292,7 +292,7 @@ Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omit
 pnpm deploy:<stage>:all       # stage build, then the state Worker, then the request Worker
 # or, one Worker at a time
 pnpm deploy:<stage>:state     # wrangler bundles the state Worker's source
-pnpm deploy:<stage>           # stage build, then wrangler uploads dist/server/wrangler.json
+pnpm deploy:<stage>           # stage build, then scripts/deploy-built.ts uploads dist/server/wrangler.json
 
 # 6. bind the hostname
 pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
@@ -300,7 +300,7 @@ pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
 
 **The order is not a preference.** The request Worker's DO bindings name the state Worker's script, and a binding cannot be created against a script that does not exist. The routes stack comes last for the same reason one level up: Cloudflare rejects a custom-domain binding for a service that has not been uploaded.
 
-**`deploy:<stage>:all` builds before it deploys anything.** A build that stops — a rendered config missing, a compile error — therefore stops with neither Worker touched rather than with the state Worker landed alone, and the two uploads run back to back, which keeps the skew window (4.4) to the uploads themselves. Every `deploy:<stage>*` script has a `:dry` twin that stops short of the upload. The request half of each is `deploy:built` (`wrangler deploy --config dist/server/wrangler.json`), which uploads **whatever was built last** — it is a step of those scripts, not an entry point. `deployScripts.test.ts` expands every script to the commands it runs and pins the order, each script's stage, and that no script hands `wrangler deploy` / `wrangler dev` a request Worker source config (chapter 2).
+**`deploy:<stage>:all` builds before it deploys anything.** A build that stops — a rendered config missing, a compile error — therefore stops with neither Worker touched rather than with the state Worker landed alone, and the two uploads run back to back, which keeps the skew window (4.4) to the uploads themselves. Every `deploy:<stage>*` script has a `:dry` twin that stops short of the upload. The request half of each is `scripts/deploy-built.ts <stage>`, which runs `wrangler deploy --config dist/server/wrangler.json` **only after checking that the output was built for that stage**: `dist/` holds whatever was built last, the output config records the request config it came from as `userConfigPath`, and anything but `wrangler.<stage>.toml` — a local build, another stage's — stops the deploy before `wrangler` runs. `deployScripts.test.ts` expands every script to the commands it runs and pins the order, each script's stage, and that no script hands `wrangler deploy` / `wrangler dev` a request Worker source config (chapter 2).
 
 **A stage build overwrites `apps/web/dist` and `.wrangler/deploy/config.json`.** `pnpm preview` serves whatever was built last, so run `pnpm build` again before previewing after a deploy or a dry run; `pnpm start` rebuilds on its own (4.5). **Do not run a stage build while `pnpm start` is up**: `wrangler dev` watches `dist/` and reloads onto the stage's output, whose DO bindings the local state Worker does not answer.
 

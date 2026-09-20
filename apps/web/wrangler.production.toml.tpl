@@ -39,8 +39,10 @@
 #      `tanstack-start-manifest:v`) only the Vite plugin supplies. The
 #      stage build (`vite.config.cloudflare.production.ts`) reads this file
 #      and writes `dist/server/wrangler.json`, and that output is what
-#      `pnpm deploy:production` hands to `wrangler deploy`. `wrangler secret put
-#      --config` above only reads the Worker's name, so it takes this file.
+#      `pnpm deploy:production` hands to `wrangler deploy`, once
+#      `scripts/deploy-built.ts` has checked it was built from this stage.
+#      `wrangler secret put --config` above only reads the Worker's name,
+#      so it takes this file.
 #   6. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"

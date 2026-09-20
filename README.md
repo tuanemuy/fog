@@ -109,7 +109,7 @@ pnpm --filter @repo/web operator <entry> --locator <dir:gN:bM | userId> [--json 
 pnpm --filter @repo/web ai-client -- register|authorize|refresh|whoami|mcp <method> ['<json>']|call <tool> ['<json>']
 ```
 
-**`wrangler` never bundles the request Worker's source.** `app/server.cloudflare.ts` imports TanStack Start virtual modules that only the Vite plugin supplies, so `wrangler dev -c wrangler.toml` and `wrangler deploy --config wrangler.<stage>.toml` stop at `Could not resolve "#tanstack-start-entry"`. `pnpm start` and `pnpm deploy:<stage>` hand `wrangler` the build output instead; the state Worker has no such imports and is bundled by `wrangler` from source.
+**`wrangler` never bundles the request Worker's source.** `app/server.cloudflare.ts` imports TanStack Start virtual modules that only the Vite plugin supplies, so `wrangler dev -c wrangler.toml` and `wrangler deploy --config wrangler.<stage>.toml` stop at `Could not resolve "#tanstack-start-entry"`. `pnpm start` and `pnpm deploy:<stage>` hand `wrangler` the build output instead — the deploy only after checking that the output was built for that stage; the state Worker has no such imports and is bundled by `wrangler` from source.
 
 ### The operator surface
 
