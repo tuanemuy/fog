@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -35,7 +35,6 @@ describe("wranglerConfigFiles", () => {
     (stage) => {
       const { request, state } = wranglerConfigFiles(stage);
       for (const file of [request, state]) {
-        expect(templateFileOf(file)).toBe(`${file}.tpl`);
         expect(existsSync(resolve(webRoot, templateFileOf(file)))).toBe(true);
       }
     },
@@ -53,24 +52,4 @@ describe("isDeployStage", () => {
       expect(isDeployStage(value)).toBe(false);
     },
   );
-});
-
-// A stage build is selected by its Vite config file and by nothing else, so
-// each file has to hand `createConfig` its own stage and the default config
-// has to hand it none.
-describe("the Vite configs select their own stage", () => {
-  const createConfigCall = (file: string) =>
-    /^export default createConfig\((.*)\);$/m.exec(
-      readFileSync(resolve(webRoot, file), "utf8"),
-    )?.[1];
-
-  it("vite.config.cloudflare.ts builds against the local pair", () => {
-    expect(createConfigCall("vite.config.cloudflare.ts")).toBe("null");
-  });
-
-  it.each(DEPLOY_STAGES)("vite.config.cloudflare.%s.ts", (stage) => {
-    expect(createConfigCall(`vite.config.cloudflare.${stage}.ts`)).toBe(
-      `"${stage}"`,
-    );
-  });
 });

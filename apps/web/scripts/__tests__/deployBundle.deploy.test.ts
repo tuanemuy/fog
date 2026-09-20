@@ -1,15 +1,18 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DELIVERY_TUNING_DEFAULTS } from "@repo/core/application/delivery/tuning";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   DEPLOY_STAGES,
   type DeployStage,
@@ -22,7 +25,7 @@ import { renderWranglerTemplate } from "../lib/wranglerTemplate";
 // `wranglerConfig.test.ts` reads. This suite renders each stage's templates
 // from fixed values, runs the stage's real dry-run deploy, and reads that
 // output back. It writes the rendered configs, so it refuses to run over
-// ones that already exist, and it leaves `dist/` holding a stage build.
+// ones that already exist, and it rewrites `dist/`.
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const inWeb = (file: string) => resolve(webRoot, file);
@@ -70,7 +73,68 @@ function localSecrets(): string[] {
 
 // Only what this run wrote is removed afterwards: a refused run must leave
 // the rendered configs it found exactly where they were.
-const written: string[] = [];
+const written = new Set<string>();
+
+function render(stage: DeployStage, file: string): void {
+  const template = templateFileOf(file);
+  writeFileSync(
+    inWeb(file),
+    renderWranglerTemplate(
+      readFileSync(inWeb(template), "utf8"),
+      fixtureOf(stage),
+      template,
+    ),
+  );
+  written.add(file);
+}
+
+function removeWritten(): void {
+  for (const file of written) rmSync(inWeb(file), { force: true });
+  written.clear();
+}
+
+function run(script: string): void {
+  execFileSync("pnpm", [script], { cwd: webRoot, stdio: "pipe" });
+}
+
+/** stdout + stderr of a script that is expected to exit non-zero. */
+function failureOutputOf(script: string): string {
+  try {
+    run(script);
+  } catch (error) {
+    const { stdout, stderr } = error as { stdout: Buffer; stderr: Buffer };
+    return `${stdout.toString()}${stderr.toString()}`;
+  }
+  throw new Error(`${script} exited 0`);
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, () => {
+      const address = probe.address();
+      probe.close(() =>
+        typeof address === "object" && address !== null
+          ? resolvePort(address.port)
+          : reject(new Error("no port")),
+      );
+    });
+  });
+}
+
+async function untilListening(origin: string): Promise<void> {
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(origin, { redirect: "manual" });
+      return;
+    } catch {
+      await new Promise((tick) => setTimeout(tick, 500));
+    }
+  }
+  throw new Error(`${origin} never started listening`);
+}
 
 beforeAll(() => {
   const existing = renderedFiles.filter(({ file }) => existsSync(inWeb(file)));
@@ -79,33 +143,50 @@ beforeAll(() => {
       `refusing to overwrite rendered configs: ${existing.map(({ file }) => file).join(", ")}`,
     );
   }
-  for (const { stage, file } of renderedFiles) {
-    const template = templateFileOf(file);
-    writeFileSync(
-      inWeb(file),
-      renderWranglerTemplate(
-        readFileSync(inWeb(template), "utf8"),
-        fixtureOf(stage),
-        template,
-      ),
-    );
-    written.push(file);
-  }
 });
 
-afterAll(() => {
-  for (const file of written) rmSync(inWeb(file), { force: true });
-});
+afterAll(removeWritten);
+
+// Falling back to the local pair here would deploy local names and local
+// vars to a stage, so a stage build has nothing to fall back to.
+describe.each(DEPLOY_STAGES)(
+  "a %s build missing a rendered config",
+  (stage) => {
+    const { request, state } = wranglerConfigFiles(stage);
+
+    afterEach(removeWritten);
+
+    it("stops when neither is rendered", () => {
+      expect(failureOutputOf(`build:${stage}`)).toContain(
+        "doesn't point to an existing file",
+      );
+    });
+
+    it("stops on the state config when only the request one is rendered", () => {
+      render(stage, request);
+      const output = failureOutputOf(`build:${stage}`);
+      expect(output).toContain(inWeb(state));
+      expect(output).toContain("doesn't point to an existing file");
+    });
+
+    it("stops on the request config when only the state one is rendered", () => {
+      render(stage, state);
+      const output = failureOutputOf(`build:${stage}`);
+      expect(output).toContain(inWeb(request));
+      expect(output).toContain("doesn't point to an existing file");
+    });
+  },
+);
 
 describe.each(DEPLOY_STAGES)("the %s deploy", (stage) => {
   const fixture = fixtureOf(stage);
   let output: OutputConfig;
 
   beforeAll(() => {
-    execFileSync("pnpm", [`deploy:${stage}:all:dry`], {
-      cwd: webRoot,
-      stdio: "pipe",
-    });
+    const { request, state } = wranglerConfigFiles(stage);
+    render(stage, request);
+    render(stage, state);
+    run(`deploy:${stage}:all:dry`);
     output = JSON.parse(
       readFileSync(inWeb("dist/server/wrangler.json"), "utf8"),
     ) as OutputConfig;
@@ -175,3 +256,46 @@ describe.each(DEPLOY_STAGES)("the %s deploy", (stage) => {
     },
   );
 });
+
+// Runs last on purpose: `dist/` now holds a stage build, whose DO bindings
+// name a state Worker the local one does not answer to. `pnpm start` has to
+// come up on a local build regardless, and the round trip into a Durable
+// Object is what shows the binding is wired.
+describe.skipIf(!existsSync(inWeb(".dev.vars")))(
+  "pnpm start after a stage build",
+  () => {
+    let server: ChildProcess;
+    let origin: string;
+    const persistTo = mkdtempSync(join(tmpdir(), "fog-start-"));
+
+    beforeAll(async () => {
+      const port = await freePort();
+      origin = `http://localhost:${port}`;
+      server = spawn(
+        "pnpm",
+        ["start:cf", "--port", String(port), "--persist-to", persistTo],
+        { cwd: webRoot, stdio: "ignore", detached: true },
+      );
+      await untilListening(origin);
+    });
+
+    afterAll(() => {
+      if (server.pid !== undefined) process.kill(-server.pid, "SIGTERM");
+      rmSync(persistTo, { recursive: true, force: true });
+    });
+
+    it("serves the top page", async () => {
+      const response = await fetch(origin, { redirect: "manual" });
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe("/login");
+    });
+
+    it("reaches a Durable Object through the request Worker", async () => {
+      const response = await fetch(
+        `${origin}/__diagnostics/schema-version?locator=dir:g1:b0`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ schemaVersion: null });
+    });
+  },
+);

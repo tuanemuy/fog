@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// `pnpm test:deploy` builds every deploy stage and dry-runs its deploy
-// (`*.deploy.test.ts`). It is its own entry point because it rewrites
+// `pnpm test:deploy` builds every deploy stage, dry-runs its deploy and
+// boots `pnpm start` (`*.deploy.test.ts`). It is its own entry point because it rewrites
 // `apps/web/dist` and takes minutes, neither of which belongs in
 // `pnpm test:unit`.
 export default defineConfig({

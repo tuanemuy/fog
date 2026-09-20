@@ -103,7 +103,7 @@ pnpm format:check
 pnpm test                        # unit + DOM + integration
 pnpm test:unit                   # Vitest (unit + DOM projects)
 pnpm test:integration            # Durable Object suites in a Workers isolate
-pnpm test:deploy                 # builds each stage and dry-runs its deploy; rewrites apps/web/dist
+pnpm test:deploy                 # builds each stage, dry-runs its deploy, boots pnpm start; rewrites apps/web/dist
 
 pnpm --filter @repo/web operator <entry> --locator <dir:gN:bM | userId> [--json '{…}'] [--inject-keyring] [--limit N] [--after id] [--base http://localhost:3000]
 pnpm --filter @repo/web ai-client -- register|authorize|refresh|whoami|mcp <method> ['<json>']|call <tool> ['<json>']
