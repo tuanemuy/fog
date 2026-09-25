@@ -49,7 +49,7 @@ export function stageSubstitutions(
 /** Every placeholder name in a template, comment lines included. */
 export function placeholdersIn(template: string): Set<string> {
   return new Set(
-    [...template.matchAll(PLACEHOLDER)].flatMap((match) => match.slice(1)),
+    [...template.matchAll(PLACEHOLDER)].flatMap((match) => match.slice(1, 2)),
   );
 }
 

@@ -25,17 +25,17 @@
 
 | # | 基準 | 観測方法 |
 |---|---|---|
-| AC-1 | `resources` stack のプログラムが宣言するリソースは Zone（`zone`）・Queue（`events`）・Queue（`dlq`）の 3 つちょうどで、D1 を宣言しない | 自動テスト（ソースから名前空間の有無を問わず `new <型>("<名前>"` を集めて集合一致）＋ `pnpm typecheck`（infra）。変異: D1 を戻すと赤 |
+| AC-1 | `resources` stack のプログラムが宣言するリソースは Zone（`zone`）・Queue（`events`）・Queue（`dlq`）の 3 つちょうどで、D1 を宣言しない | 自動テスト（import が `@pulumi/cloudflare` を `cloudflare` として、`@pulumi/pulumi` を `pulumi` として読むだけであることを固定し、ソースから `new cloudflare.<型>(<第 1 引数>` を集めて集合一致。第 1 引数は字面のまま比べるので、変数やテンプレートリテラルの名前も一致しない側に出る）＋ `pnpm typecheck`（infra）。変異: D1 を戻すと赤 |
 | AC-2 | `resources` stack が export する出力の集合は、描画（`WRANGLER_PLACEHOLDER_SOURCES` の `stackOutput`）と `routes` stack（`requireOutput` / `getOutput` の引数）が読む出力名の和集合とちょうど一致する。読むのに export されていない出力も、export されているのに誰も読まない出力も無い | 自動テスト。変異: `databaseId` の export を戻すと赤／描画側の出力名を export の無い名前に変えると赤／routes が読む出力の export を消すと赤。既存の出力どうしの入れ替えは集合が変わらないのでこのテストでは出ず、AC-4 の正常系と deploy スイートが捕まえる |
 | AC-3 | 描画の placeholder の集合は、4 本のテンプレートの生テキスト全体に現れる placeholder の集合とちょうど一致する（`APP_URL`・`MAIL_FROM_ADDRESS`・`EVENTS_QUEUE_NAME`・`DLQ_QUEUE_NAME`・`RESOURCE_PREFIX`）。`D1_DATABASE_ID` / `D1_DATABASE_NAME` は無い | 自動テスト＋型。変異: 定数に D1 を戻すと赤／テンプレートに未知の placeholder を足すと赤 |
-| AC-4 | `stageSubstitutions` は各 placeholder に、対応する stack 出力または環境変数の値を入れる。出力が無い・文字列でない、または環境変数が未設定のとき、その placeholder は `undefined` になり、`renderWranglerTemplate` と組み合わせた描画はその placeholder 名を挙げて中断する | 自動テスト（正常系、出力欠落、非文字列の出力、`MAIL_FROM_ADDRESS` 未設定の 4 通り）。変異: 文字列判定の削除・反転で赤 |
+| AC-4 | `stageSubstitutions` は各 placeholder に、対応する stack 出力または環境変数の値を入れる。出力が無い・文字列でない、または環境変数が未設定のとき、その placeholder は `undefined` になり、`renderWranglerTemplate` と組み合わせた描画はその placeholder 名を挙げて中断する。`renderWranglerTemplate` は置換表にキーが無い placeholder と値が `undefined` の placeholder を同じに扱い、どちらも同じメッセージ（placeholder 名・テンプレート名・値を持つ placeholder の一覧。`undefined` のキーは一覧に入らない）で中断する | 自動テスト（正常系、出力欠落、非文字列の出力、`MAIL_FROM_ADDRESS` 未設定の 4 通り＋キーの欠落と `undefined` の 2 通りをメッセージの完全一致で）。変異: 文字列判定の削除・反転、一覧のフィルタ削除で赤 |
 | AC-5 | 既存テスト（unit・dom・integration・do）と `pnpm test:deploy` が通る。deploy スイートは `stageSubstitutions` を経由して 4 本を描画する | コマンド出力 |
 | AC-6 | 文書が変更後の姿を述べる。`docs/runtime_cloudflare.md` の第 1 章（D1 の段落。直後の staleness check の段落が前提を失わないこと）・第 2 章（描画の説明は placeholder の出どころを定数への参照で述べ、数と一覧を重複して持たない。Pulumi の表・`protect` 段落・unprotect 手順）・第 3 章の `[vars]` 行（`APP_URL` の出どころを stack 出力に直す）・前提条件の API トークンのスコープ（D1 を外す）・§14 の #4 行、`render-wrangler.ts` の JSDoc、`Pulumi.yaml` の説明文。#4 への参照が残らず、`docs/`・`infra/`・`apps/web/scripts/` に残る D1 の言及は第 1 章の「D1 はランタイムにもインフラにも無い」旨の段落と staleness check の段落だけになる | コマンド出力（grep）＋差分の読み |
 | AC-7 | ゲート（`pnpm typecheck`・`pnpm lint`・`pnpm format:check`・`pnpm test`・`pnpm test:deploy`）が通る | コマンド出力 |
 
 ## 観測の限界
 
-- Cloudflare アカウントと Pulumi の stack がこの環境に無いので、`pulumi preview` / `pulumi up` と実際の `pulumi stack output` は実行しない。stack プログラムはソースを読むテストと型検査で固定する。ソースを読むテストが拾うのは `new <型>("<名前>"`（名前空間の有無を問わない）・`export const <名前>`・`requireOutput("<名前>")` / `getOutput("<名前>")` の字面だけで、変数経由の名前や別ファイルからの宣言は拾わない。この限界はテストの冒頭と `docs/runtime_cloudflare.md` 第 2 章（Pulumi）に書く
+- Cloudflare アカウントと Pulumi の stack がこの環境に無いので、`pulumi preview` / `pulumi up` と実際の `pulumi stack output` は実行しない。stack プログラムはソースを読むテストと型検査で固定する。ソースを読むテストが見るのは `resources/index.ts` の `new cloudflare.<型>(<第 1 引数>`（import を 2 つの Pulumi パッケージに固定したうえで）・`export const <名前>`・`routes/index.ts` の `requireOutput(...)` / `getOutput(...)` の引数の字面だけで、それ以外の書き方（別の形の export、`require` や動的 `import()` 経由のリソース）は見ない。この限界はテストの冒頭と `docs/runtime_cloudflare.md` 第 2 章（Pulumi）に書く
 - `render-wrangler.ts` の本体（`pulumi` の呼び出し → `stageSubstitutions` → ファイルの書き出し）はどのテストも実行しない。純関数と、それを経由した描画（deploy スイート）までを観測とする
 
 ## スコープ

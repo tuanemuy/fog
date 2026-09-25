@@ -1,8 +1,7 @@
 /**
  * Render the deploy configs of both Workers for one stage from their
  * `.tpl` templates, substituting placeholders with outputs from the
- * Cloudflare resources Pulumi stack and with `MAIL_FROM_ADDRESS` from the
- * environment.
+ * Cloudflare resources Pulumi stack or with environment variables.
  *
  * Two files come out per stage — `wrangler.<stage>.toml` (request Worker)
  * and `wrangler.state.<stage>.toml` (state Worker). **Rendering both from
