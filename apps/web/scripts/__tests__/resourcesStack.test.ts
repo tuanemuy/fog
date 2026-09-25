@@ -6,9 +6,10 @@ import { WRANGLER_PLACEHOLDER_SOURCES } from "../lib/wranglerTemplate";
 
 // These read the Pulumi programs as text, because running them needs a
 // Pulumi backend and a Cloudflare account. What they see is the literal
-// spelling — `new cloudflare.<Type>("<name>"`, `export const <name>`,
-// `requireOutput("<name>")` / `getOutput("<name>")` — so a name passed
-// through a variable, or a declaration in another file, escapes them.
+// spelling — `new <Type>("<name>"` with or without a namespace,
+// `export const <name>`, `requireOutput("<name>")` / `getOutput("<name>")`
+// — so a name passed through a variable, or a declaration in another
+// file, escapes them.
 
 const pulumiRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -22,7 +23,7 @@ const resources = program("resources");
 describe("the resources stack", () => {
   it("provisions the zone, the events queue and the DLQ, and nothing else", () => {
     const declared = [
-      ...resources.matchAll(/new cloudflare\.(\w+)\(\s*"([^"]+)"/g),
+      ...resources.matchAll(/new (?:\w+\.)?(\w+)\(\s*"([^"]+)"/g),
     ].map(([, type, name]) => `${type}:${name}`);
     expect(declared.sort()).toEqual(["Queue:dlq", "Queue:events", "Zone:zone"]);
   });
@@ -33,9 +34,9 @@ describe("the resources stack", () => {
     const exported = new Set(
       [...resources.matchAll(/^export const (\w+)/gm)].map(([, name]) => name),
     );
-    const readByRender = Object.values(WRANGLER_PLACEHOLDER_SOURCES).flatMap(
-      (source) => ("stackOutput" in source ? [source.stackOutput] : []),
-    );
+    const readByRender = Object.values(WRANGLER_PLACEHOLDER_SOURCES)
+      .filter((source) => source.from === "stackOutput")
+      .map((source) => source.name);
     const readByRoutes = [
       ...program("routes").matchAll(/\.(?:require|get)Output\("(\w+)"\)/g),
     ].map(([, name]) => name);

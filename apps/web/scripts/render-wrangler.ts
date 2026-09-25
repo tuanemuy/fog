@@ -1,7 +1,8 @@
 /**
  * Render the deploy configs of both Workers for one stage from their
  * `.tpl` templates, substituting placeholders with outputs from the
- * Cloudflare resources Pulumi stack.
+ * Cloudflare resources Pulumi stack and with `MAIL_FROM_ADDRESS` from the
+ * environment.
  *
  * Two files come out per stage — `wrangler.<stage>.toml` (request Worker)
  * and `wrangler.state.<stage>.toml` (state Worker). **Rendering both from
@@ -17,9 +18,11 @@
  * comes from is `WRANGLER_PLACEHOLDER_SOURCES`. A name with no value aborts
  * the run, so we never ship a half-rendered config.
  *
- * Pulumi outputs are read via `pulumi -C <dir> -s <stage> stack output --json`
- * — the CLI must already be authenticated and the resources stack already
- * `pulumi up`-ed for the target stage.
+ * Pulumi outputs are read via
+ * `pulumi -C <dir> -s <stage> stack output --json --show-secrets` (without
+ * `--show-secrets` a secret output comes back masked) — the CLI must already
+ * be authenticated and the resources stack already `pulumi up`-ed for the
+ * target stage.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

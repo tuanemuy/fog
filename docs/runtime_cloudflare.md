@@ -60,7 +60,7 @@ Two Workers, one Queue plus its dead-letter queue, and Durable Objects that hold
 - **The consumers run in the request Worker's `queue()` handler** — the mail consumer and the DLQ handler both. That is `apps/web/app/worker/cloudflare/queueHandlers.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`. Hosting them there is what puts the mail provider's secret on the request Worker.
 - **Pruning is not a job kind.** The job runner deletes retention-expired `done` and `published` rows at the tail of each wake-up.
 
-**D1 is not in the runtime, nor in the infrastructure.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. The Pulumi `resources` stack provisions no database, which `resourcesStack.test.ts` pins (chapter 2, Pulumi).
+**D1 is not in the runtime, nor in the infrastructure.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. The Pulumi `resources` stack provisions no database; `resourcesStack.test.ts` pins its exact set of resources, within the limit chapter 2 (Pulumi) states.
 
 The staleness check for this chapter is therefore not the word D1 but four English literals — the shared table of processed events, and standalone Workers for relaying, pruning and dead-lettering:
 
@@ -86,7 +86,7 @@ Tenant isolation is structural: there is no `user_id` predicate that could be fo
 | `apps/web/wrangler.state.staging.toml.tpl` | state | → `wrangler.state.staging.toml` (git-ignored) |
 | `apps/web/wrangler.state.production.toml.tpl` | state | → `wrangler.state.production.toml` (git-ignored) |
 
-Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrangler.ts`. It reads `pulumi -C infra/cloudflare/pulumi/resources -s <stage> stack output --json --show-secrets` — **`--show-secrets` is part of the command**, and reproducing it by hand without the flag yields masked outputs — and substitutes the placeholders `WRANGLER_PLACEHOLDER_SOURCES` (`apps/web/scripts/lib/wranglerTemplate.ts`) declares: each from one of those outputs, except `MAIL_FROM_ADDRESS`, which comes from the environment variable of that name. A placeholder that is unknown, or whose output or variable is missing, aborts the render rather than rendering an empty string. `wranglerTemplate.test.ts` pins that the templates use exactly the declared placeholders, and `resourcesStack.test.ts` that the stack exports exactly the outputs the render and the `routes` stack read. **One invocation renders both Workers' configs**, which is what keeps the state Worker's `name` and the request Worker's `script_name` from drifting apart.
+Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrangler.ts`. It reads `pulumi -C infra/cloudflare/pulumi/resources -s <stage> stack output --json --show-secrets` — **`--show-secrets` is part of the command**, and reproducing it by hand without the flag yields masked outputs — and substitutes the placeholders `WRANGLER_PLACEHOLDER_SOURCES` (`apps/web/scripts/lib/wranglerTemplate.ts`) declares: each from one of those outputs, except `MAIL_FROM_ADDRESS`, which comes from the environment variable of that name. A placeholder that is unknown, or whose output is missing or not a string, or whose variable is unset, aborts the render rather than rendering an empty string. `wranglerTemplate.test.ts` pins that the templates use exactly the declared placeholders, and `resourcesStack.test.ts` that the stack exports exactly the outputs the render and the `routes` stack read (within the limit stated under Pulumi below). **One invocation renders both Workers' configs**, which is what keeps the state Worker's `name` and the request Worker's `script_name` from drifting apart.
 
 **All four templates point `main` at a source entry**, and who reads that entry differs by Worker:
 
@@ -150,6 +150,8 @@ Two stacks under `infra/cloudflare/pulumi/`:
 | `routes` | one `WorkersDomain` binding the app hostname to the request Worker | Run **after** `wrangler deploy` — Cloudflare rejects a custom-domain binding for a service that does not exist |
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
+
+`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only the literal spelling — `new <Type>("<name>"` with or without a namespace, `export const <name>`, `requireOutput("<name>")` / `getOutput("<name>")`. A name passed through a variable, or a declaration moved to another file, escapes it.
 
 ## 3. Secrets: ownership and procedure
 

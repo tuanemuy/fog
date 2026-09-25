@@ -40,29 +40,25 @@ describe("renderWranglerTemplate", () => {
     );
   });
 
-  it("aborts on a placeholder it knows but has no value for, naming it and the template", () => {
-    expect(() =>
-      renderWranglerTemplate(
-        `a = "${placeholder("KNOWN")}"\nb = "${placeholder("MISSING")}"`,
-        { KNOWN: "x", MISSING: undefined },
-        "wrangler.staging.toml.tpl",
-      ),
-    ).toThrow(
-      `Placeholder ${placeholder("MISSING")} in wrangler.staging.toml.tpl has no value.`,
-    );
-  });
-
-  it("aborts on a placeholder it does not know, listing the known ones", () => {
-    expect(() =>
-      renderWranglerTemplate(
-        `a = "${placeholder("KNOWN")}"\nb = "${placeholder("OTHER")}"`,
-        { KNOWN: "x" },
-        "wrangler.staging.toml.tpl",
-      ),
-    ).toThrow(
-      `Unknown placeholder ${placeholder("OTHER")} in wrangler.staging.toml.tpl. Known: KNOWN`,
-    );
-  });
+  it.each([
+    ["undefined", { KNOWN: "x", MISSING: undefined }],
+    ["absent", { KNOWN: "x" }],
+  ])(
+    "aborts on a placeholder whose value is %s, naming it, the template and the placeholders that have a value",
+    (_, substitutions) => {
+      expect(() =>
+        renderWranglerTemplate(
+          `a = "${placeholder("KNOWN")}"\nb = "${placeholder("MISSING")}"`,
+          substitutions,
+          "wrangler.staging.toml.tpl",
+        ),
+      ).toThrow(
+        new Error(
+          `No value for placeholder ${placeholder("MISSING")} in wrangler.staging.toml.tpl. Placeholders with a value: KNOWN`,
+        ),
+      );
+    },
+  );
 
   it("substitutes an empty string rather than treating it as missing", () => {
     expect(
@@ -114,19 +110,19 @@ describe("stageSubstitutions", () => {
   it("stops the render on a stack output the stack did not produce", () => {
     const { exportedAppUrl: _, ...withoutAppUrl } = STACK_OUTPUTS;
     expect(() => render(withoutAppUrl, ENV)).toThrow(
-      `Placeholder ${placeholder("APP_URL")} in t.tpl has no value.`,
+      `No value for placeholder ${placeholder("APP_URL")} in t.tpl.`,
     );
   });
 
   it("stops the render on a stack output that is not a string", () => {
     expect(() =>
       render({ ...STACK_OUTPUTS, exportedAppUrl: { url: "x" } }, ENV),
-    ).toThrow(`Placeholder ${placeholder("APP_URL")} in t.tpl has no value.`);
+    ).toThrow(`No value for placeholder ${placeholder("APP_URL")} in t.tpl.`);
   });
 
   it("stops the render when MAIL_FROM_ADDRESS is not set", () => {
     expect(() => render(STACK_OUTPUTS, {})).toThrow(
-      `Placeholder ${placeholder("MAIL_FROM_ADDRESS")} in t.tpl has no value.`,
+      `No value for placeholder ${placeholder("MAIL_FROM_ADDRESS")} in t.tpl.`,
     );
   });
 });

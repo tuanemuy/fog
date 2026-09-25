@@ -35,14 +35,28 @@ const inWeb = (file: string) => resolve(webRoot, file);
 
 const fixtureOf = (stage: DeployStage) => {
   const prefix = `fog-verify-${stage}`;
+  return {
+    RESOURCE_PREFIX: prefix,
+    APP_URL: `https://${stage}.verify.example`,
+    MAIL_FROM_ADDRESS: `fog <verify@${stage}.verify.example>`,
+    EVENTS_QUEUE_NAME: `${prefix}-events`,
+    DLQ_QUEUE_NAME: `${prefix}-events-dlq`,
+  };
+};
+
+// The render goes through the same stack-output mapping as
+// `render-wrangler.ts`, while the assertions compare against the fixture
+// itself, so a mapping that swaps two outputs turns this suite red.
+const substitutionsOf = (stage: DeployStage) => {
+  const fixture = fixtureOf(stage);
   return stageSubstitutions(
     {
-      exportedPrefix: prefix,
-      exportedAppUrl: `https://${stage}.verify.example`,
-      eventsQueueName: `${prefix}-events`,
-      dlqQueueName: `${prefix}-events-dlq`,
+      exportedPrefix: fixture.RESOURCE_PREFIX,
+      exportedAppUrl: fixture.APP_URL,
+      eventsQueueName: fixture.EVENTS_QUEUE_NAME,
+      dlqQueueName: fixture.DLQ_QUEUE_NAME,
     },
-    { MAIL_FROM_ADDRESS: `fog <verify@${stage}.verify.example>` },
+    { MAIL_FROM_ADDRESS: fixture.MAIL_FROM_ADDRESS },
   );
 };
 
@@ -86,7 +100,7 @@ function render(stage: DeployStage, file: string): void {
     inWeb(file),
     renderWranglerTemplate(
       readFileSync(inWeb(template), "utf8"),
-      fixtureOf(stage),
+      substitutionsOf(stage),
       template,
     ),
   );

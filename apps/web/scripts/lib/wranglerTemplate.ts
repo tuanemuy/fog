@@ -1,8 +1,9 @@
 export type Substitutions = Readonly<Record<string, string | undefined>>;
 
-type PlaceholderSource =
-  | Readonly<{ stackOutput: string }>
-  | Readonly<{ env: string }>;
+type PlaceholderSource = Readonly<{
+  from: "stackOutput" | "env";
+  name: string;
+}>;
 
 /**
  * Every placeholder the deploy templates may use, and where its value comes
@@ -10,16 +11,16 @@ type PlaceholderSource =
  * environment variable read at render time.
  */
 export const WRANGLER_PLACEHOLDER_SOURCES = {
-  APP_URL: { stackOutput: "exportedAppUrl" },
-  EVENTS_QUEUE_NAME: { stackOutput: "eventsQueueName" },
-  DLQ_QUEUE_NAME: { stackOutput: "dlqQueueName" },
-  RESOURCE_PREFIX: { stackOutput: "exportedPrefix" },
+  APP_URL: { from: "stackOutput", name: "exportedAppUrl" },
+  EVENTS_QUEUE_NAME: { from: "stackOutput", name: "eventsQueueName" },
+  DLQ_QUEUE_NAME: { from: "stackOutput", name: "dlqQueueName" },
+  RESOURCE_PREFIX: { from: "stackOutput", name: "exportedPrefix" },
   // Not a Pulumi resource: the sender is a property of the mail provider's
   // verified domain.
-  MAIL_FROM_ADDRESS: { env: "MAIL_FROM_ADDRESS" },
+  MAIL_FROM_ADDRESS: { from: "env", name: "MAIL_FROM_ADDRESS" },
 } as const satisfies Record<string, PlaceholderSource>;
 
-export type WranglerPlaceholder = keyof typeof WRANGLER_PLACEHOLDER_SOURCES;
+type WranglerPlaceholder = keyof typeof WRANGLER_PLACEHOLDER_SOURCES;
 
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 
@@ -33,8 +34,8 @@ export function stageSubstitutions(
   env: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<WranglerPlaceholder, string | undefined>> {
   const valueFrom = (source: PlaceholderSource): string | undefined => {
-    if ("env" in source) return env[source.env];
-    const value = stackOutputs[source.stackOutput];
+    if (source.from === "env") return env[source.name];
+    const value = stackOutputs[source.name];
     return typeof value === "string" ? value : undefined;
   };
   return Object.fromEntries(
@@ -48,7 +49,7 @@ export function stageSubstitutions(
 /** Every placeholder name in a template, comment lines included. */
 export function placeholdersIn(template: string): Set<string> {
   return new Set(
-    [...template.matchAll(PLACEHOLDER)].map((match) => match[1] ?? ""),
+    [...template.matchAll(PLACEHOLDER)].flatMap((match) => match.slice(1)),
   );
 }
 
@@ -65,11 +66,12 @@ export function renderWranglerTemplate(
   return template.replace(PLACEHOLDER, (_match, name: string) => {
     const value = substitutions[name];
     if (value !== undefined) return value;
+    const withValue = Object.keys(substitutions).filter(
+      (key) => substitutions[key] !== undefined,
+    );
     throw new Error(
-      name in substitutions
-        ? `Placeholder \${${name}} in ${templateLabel} has no value.`
-        : `Unknown placeholder \${${name}} in ${templateLabel}. ` +
-            `Known: ${Object.keys(substitutions).join(", ")}`,
+      `No value for placeholder \${${name}} in ${templateLabel}. ` +
+        `Placeholders with a value: ${withValue.join(", ")}`,
     );
   });
 }
