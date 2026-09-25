@@ -151,7 +151,7 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
 
-`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only these spellings: `new cloudflare.<Type>(<first argument>` in `resources/index.ts`, whose imports it pins to the two Pulumi packages; `export const <name>`; and the argument of `requireOutput(...)` / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in another form, a resource reached through `require` or a dynamic `import()` — escapes it.
+`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only these spellings: `new cloudflare.<Type>(<first argument>` in `resources/index.ts`, whose imports it pins to the two Pulumi packages; `export const <name>`; and the argument of `requireOutput(...)` / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in another form, a resource constructed through a same-file alias (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or a dynamic `import()` — escapes it, and these spellings inside a comment count as code.
 
 ## 3. Secrets: ownership and procedure
 

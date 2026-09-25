@@ -10,8 +10,10 @@ import { WRANGLER_PLACEHOLDER_SOURCES } from "../lib/wranglerTemplate";
 // imports they pin to the two Pulumi packages; `export const <name>`; and
 // the argument of `requireOutput(...)` / `getOutput(...)` in
 // `routes/index.ts`. Anything spelled otherwise — an output exported in
-// another form, a resource reached through `require` or a dynamic
-// `import()` — escapes them.
+// another form, a resource constructed through a same-file alias
+// (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or
+// a dynamic `import()` — escapes them, and these spellings inside a
+// comment count as code.
 
 const pulumiRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),

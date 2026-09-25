@@ -35,7 +35,7 @@
 
 ## 観測の限界
 
-- Cloudflare アカウントと Pulumi の stack がこの環境に無いので、`pulumi preview` / `pulumi up` と実際の `pulumi stack output` は実行しない。stack プログラムはソースを読むテストと型検査で固定する。ソースを読むテストが見るのは `resources/index.ts` の `new cloudflare.<型>(<第 1 引数>`（import を 2 つの Pulumi パッケージに固定したうえで）・`export const <名前>`・`routes/index.ts` の `requireOutput(...)` / `getOutput(...)` の引数の字面だけで、それ以外の書き方（別の形の export、`require` や動的 `import()` 経由のリソース）は見ない。この限界はテストの冒頭と `docs/runtime_cloudflare.md` 第 2 章（Pulumi）に書く
+- Cloudflare アカウントと Pulumi の stack がこの環境に無いので、`pulumi preview` / `pulumi up` と実際の `pulumi stack output` は実行しない。stack プログラムはソースを読むテストと型検査で固定する。ソースを読むテストが見るのは `resources/index.ts` の `new cloudflare.<型>(<第 1 引数>`（import を 2 つの Pulumi パッケージに固定したうえで）・`export const <名前>`・`routes/index.ts` の `requireOutput(...)` / `getOutput(...)` の引数の字面だけで、それ以外の書き方（別の形の export、同じファイル内の別名や分割代入・`require`・動的 `import()` 経由のリソース）は見ず、コメントの中の同じ字面はコードとして数える。この限界はテストの冒頭と `docs/runtime_cloudflare.md` 第 2 章（Pulumi）に書く
 - `render-wrangler.ts` の本体（`pulumi` の呼び出し → `stageSubstitutions` → ファイルの書き出し）はどのテストも実行しない。純関数と、それを経由した描画（deploy スイート）までを観測とする
 
 ## スコープ
