@@ -1,7 +1,7 @@
 /**
  * Render the deploy configs of both Workers for one stage from their
  * `.tpl` templates, substituting placeholders with outputs from the
- * Cloudflare resources Pulumi stack.
+ * Cloudflare resources Pulumi stack or with environment variables.
  *
  * Two files come out per stage — `wrangler.<stage>.toml` (request Worker)
  * and `wrangler.state.<stage>.toml` (state Worker). **Rendering both from
@@ -13,20 +13,15 @@
  * Usage:
  *   pnpm cf:render:<stage>
  *
- * Placeholders recognised in the template (any `${NAME}` occurrence is
- * substituted; unknown names abort the run so we never ship a half-rendered
- * config):
- *   ${APP_URL}            — public URL of the deployment
- *   ${MAIL_FROM_ADDRESS}  — the mail sender, from the MAIL_FROM_ADDRESS environment variable
- *   ${D1_DATABASE_ID}     — D1 database id
- *   ${D1_DATABASE_NAME}   — D1 database name
- *   ${EVENTS_QUEUE_NAME}  — primary events queue name
- *   ${DLQ_QUEUE_NAME}     — dead-letter queue name
- *   ${RESOURCE_PREFIX}    — worker / resource name prefix (e.g. `…-staging`)
+ * Every `${NAME}` in a template is substituted, and where each name's value
+ * comes from is `WRANGLER_PLACEHOLDER_SOURCES`. A name with no value aborts
+ * the run, so we never ship a half-rendered config.
  *
- * Pulumi outputs are read via `pulumi -C <dir> -s <stage> stack output --json`
- * — the CLI must already be authenticated and the resources stack already
- * `pulumi up`-ed for the target stage.
+ * Pulumi outputs are read via
+ * `pulumi -C <dir> -s <stage> stack output --json --show-secrets` (without
+ * `--show-secrets` a secret output comes back masked) — the CLI must already
+ * be authenticated and the resources stack already `pulumi up`-ed for the
+ * target stage.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -41,7 +36,7 @@ import {
 } from "./lib/deployStage";
 import {
   renderWranglerTemplate,
-  type Substitutions,
+  stageSubstitutions,
 } from "./lib/wranglerTemplate";
 
 const stageArg = process.argv[2];
@@ -74,19 +69,10 @@ const raw = execFileSync(
   ],
   { encoding: "utf8" },
 );
-const outputs = JSON.parse(raw) as Record<string, string>;
-
-const substitutions: Substitutions = {
-  APP_URL: outputs.exportedAppUrl,
-  D1_DATABASE_ID: outputs.databaseId,
-  D1_DATABASE_NAME: outputs.databaseName,
-  EVENTS_QUEUE_NAME: outputs.eventsQueueName,
-  DLQ_QUEUE_NAME: outputs.dlqQueueName,
-  RESOURCE_PREFIX: outputs.exportedPrefix,
-  // Not a Pulumi resource: the sender is a property of the mail provider's
-  // verified domain, so it is read from the environment at render time.
-  MAIL_FROM_ADDRESS: process.env.MAIL_FROM_ADDRESS,
-};
+const substitutions = stageSubstitutions(
+  JSON.parse(raw) as Record<string, unknown>,
+  process.env,
+);
 
 for (const { templatePath, outPath } of targets) {
   writeFileSync(
