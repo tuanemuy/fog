@@ -19,7 +19,10 @@ import {
   templateFileOf,
   wranglerConfigFiles,
 } from "../lib/deployStage";
-import { renderWranglerTemplate } from "../lib/wranglerTemplate";
+import {
+  renderWranglerTemplate,
+  stageSubstitutions,
+} from "../lib/wranglerTemplate";
 
 // What a deploy uploads is the Vite build's output config, not the template
 // `wranglerConfig.test.ts` reads. This suite renders each stage's templates
@@ -32,13 +35,15 @@ const inWeb = (file: string) => resolve(webRoot, file);
 
 const fixtureOf = (stage: DeployStage) => {
   const prefix = `fog-verify-${stage}`;
-  return {
-    RESOURCE_PREFIX: prefix,
-    APP_URL: `https://${stage}.verify.example`,
-    MAIL_FROM_ADDRESS: `fog <verify@${stage}.verify.example>`,
-    EVENTS_QUEUE_NAME: `${prefix}-events`,
-    DLQ_QUEUE_NAME: `${prefix}-events-dlq`,
-  };
+  return stageSubstitutions(
+    {
+      exportedPrefix: prefix,
+      exportedAppUrl: `https://${stage}.verify.example`,
+      eventsQueueName: `${prefix}-events`,
+      dlqQueueName: `${prefix}-events-dlq`,
+    },
+    { MAIL_FROM_ADDRESS: `fog <verify@${stage}.verify.example>` },
+  );
 };
 
 const renderedFiles = DEPLOY_STAGES.flatMap((stage) => {
