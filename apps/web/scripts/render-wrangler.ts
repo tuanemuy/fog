@@ -32,34 +32,33 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const SUPPORTED_STAGES = ["staging", "production"] as const;
-type Stage = (typeof SUPPORTED_STAGES)[number];
-
-function isStage(value: string): value is Stage {
-  return (SUPPORTED_STAGES as readonly string[]).includes(value);
-}
+import {
+  DEPLOY_STAGES,
+  type DeployStage,
+  isDeployStage,
+  templateFileOf,
+  wranglerConfigFiles,
+} from "./lib/deployStage";
+import {
+  renderWranglerTemplate,
+  type Substitutions,
+} from "./lib/wranglerTemplate";
 
 const stageArg = process.argv[2];
-if (stageArg === undefined || !isStage(stageArg)) {
-  console.error(`usage: pnpm cf:render:<${SUPPORTED_STAGES.join("|")}>`);
+if (stageArg === undefined || !isDeployStage(stageArg)) {
+  console.error(`usage: pnpm cf:render:<${DEPLOY_STAGES.join("|")}>`);
   process.exit(1);
 }
-const stage: Stage = stageArg;
+const stage: DeployStage = stageArg;
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(webRoot, "../..");
 const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
-const targets = [
-  {
-    templatePath: resolve(webRoot, `wrangler.${stage}.toml.tpl`),
-    outPath: resolve(webRoot, `wrangler.${stage}.toml`),
-  },
-  {
-    templatePath: resolve(webRoot, `wrangler.state.${stage}.toml.tpl`),
-    outPath: resolve(webRoot, `wrangler.state.${stage}.toml`),
-  },
-];
+const rendered = wranglerConfigFiles(stage);
+const targets = [rendered.request, rendered.state].map((file) => ({
+  templatePath: resolve(webRoot, templateFileOf(file)),
+  outPath: resolve(webRoot, file),
+}));
 
 const raw = execFileSync(
   "pulumi",
@@ -77,7 +76,7 @@ const raw = execFileSync(
 );
 const outputs = JSON.parse(raw) as Record<string, string>;
 
-const substitutions: Record<string, string | undefined> = {
+const substitutions: Substitutions = {
   APP_URL: outputs.exportedAppUrl,
   D1_DATABASE_ID: outputs.databaseId,
   D1_DATABASE_NAME: outputs.databaseName,
@@ -90,18 +89,13 @@ const substitutions: Record<string, string | undefined> = {
 };
 
 for (const { templatePath, outPath } of targets) {
-  const template = readFileSync(templatePath, "utf8");
-  const rendered = template.replace(/\$\{([A-Z0-9_]+)\}/g, (_match, name) => {
-    const value = substitutions[name];
-    if (value === undefined) {
-      throw new Error(
-        `Unknown placeholder \${${name}} in ${templatePath}. ` +
-          `Known: ${Object.keys(substitutions).join(", ")}`,
-      );
-    }
-    return value;
-  });
-
-  writeFileSync(outPath, rendered);
+  writeFileSync(
+    outPath,
+    renderWranglerTemplate(
+      readFileSync(templatePath, "utf8"),
+      substitutions,
+      templatePath,
+    ),
+  );
   console.log(`wrote ${outPath}`);
 }

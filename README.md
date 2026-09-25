@@ -73,13 +73,13 @@ For a production build:
 pnpm build
 ```
 
-`pnpm preview` runs that output locally on workerd: the top page responds, and `/__diagnostics/schema-version` makes one round trip from the request Worker into a Durable Object, which is what proves the cross-Worker binding is actually wired. `pnpm start` (`wrangler dev`) is the one local path that does not boot — see [Development commands](#development-commands) for the cause.
+`pnpm preview` runs that output locally on workerd: the top page responds, and `/__diagnostics/schema-version` makes one round trip from the request Worker into a Durable Object, which is what proves the cross-Worker binding is actually wired. `pnpm start` rebuilds and runs the same output under `wrangler dev` (port 8787), which is the closest local counterpart of what a deploy uploads.
 
-**`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, while `vite preview` picks its own port. Under `pnpm preview` the address in the browser bar therefore disagrees with `og:url`, the canonical link and the links inside `[dev-mail]` output. That is expected, not a misconfiguration. `pnpm dev` and `pnpm preview` share `apps/web/.wrangler/state`, so run one at a time: two workerd instances over the same Durable Object files take each other's Alarms.
+**`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, while `vite preview` and `wrangler dev` pick their own ports. Under `pnpm preview` and `pnpm start` the address in the browser bar therefore disagrees with `og:url`, the canonical link and the links inside `[dev-mail]` output. That is expected, not a misconfiguration. `pnpm dev`, `pnpm preview` and `pnpm start` share `apps/web/.wrangler/state`, so run one at a time: two workerd instances over the same Durable Object files take each other's Alarms.
 
 To deploy: render the configs, install each secret against the config of the Worker that owns it, set the DLQ retention out of band, then deploy the **state Worker first** and the request Worker second. The full procedure is in [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md); the same checklist is summarised in the header of `apps/web/wrangler.<stage>.toml.tpl`, and which secret belongs to which Worker is declared in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example).
 
-**The request Worker cannot be deployed today** — the same unresolved TanStack Start virtual modules that keep `pnpm start` from booting also break `wrangler deploy`. Tracked in [#3](https://github.com/tuanemuy/fog/issues/3).
+`pnpm deploy:<stage>:all` does the last two in that order, after building the stage: the request Worker is deployed from the Vite build output (`dist/server/wrangler.json`), because only Vite can resolve the TanStack Start virtual modules its source entry imports. The upload itself has never been run from this repository; CI runs everything short of it (`pnpm test:deploy`).
 
 ## Development commands
 
@@ -91,7 +91,7 @@ pnpm build                       # alias of pnpm build:cf
 pnpm build:cf
 
 pnpm start                       # alias of pnpm start:cf
-pnpm start:cf                    # wrangler dev (both Workers) — fails to boot, see below
+pnpm start:cf                    # local build, then wrangler dev over its output (both Workers)
 pnpm preview                     # vite preview (serves the build output)
 
 pnpm typecheck                   # tsgo (@typescript/native-preview)
@@ -103,12 +103,13 @@ pnpm format:check
 pnpm test                        # unit + DOM + integration
 pnpm test:unit                   # Vitest (unit + DOM projects)
 pnpm test:integration            # Durable Object suites in a Workers isolate
+pnpm test:deploy                 # builds each stage, dry-runs its deploy, boots pnpm start; rewrites apps/web/dist
 
 pnpm --filter @repo/web operator <entry> --locator <dir:gN:bM | userId> [--json '{…}'] [--inject-keyring] [--limit N] [--after id] [--base http://localhost:3000]
 pnpm --filter @repo/web ai-client -- register|authorize|refresh|whoami|mcp <method> ['<json>']|call <tool> ['<json>']
 ```
 
-**`pnpm start` does not boot, and the request Worker cannot be deployed — one cause, tracked in [#3](https://github.com/tuanemuy/fog/issues/3).** Re-checked at HEAD `f14fcd8` (2026-09-11): `pnpm start:cf` loads both configs, lists both Workers' bindings, then fails while bundling the request Worker with `Build failed with 5 errors: Could not resolve "#tanstack-router-entry" / "#tanstack-start-entry" / "#tanstack-start-plugin-adapters" / "tanstack-start-manifest:v" / "tanstack-start-injected-head-scripts:v"` — virtual modules only the Vite plugin supplies. The state Worker alone (`wrangler dev -c wrangler.state.toml`) starts fine; `pnpm deploy:<stage>` fails at the same point because all deploy templates point `main` at that source entry, so `pnpm deploy:<stage>:all` lands only its state half. `pnpm dev`, `pnpm preview` and `pnpm build` go through Vite and are unaffected.
+**`wrangler` never bundles the request Worker's source.** `app/server.cloudflare.ts` imports TanStack Start virtual modules that only the Vite plugin supplies, so `wrangler dev -c wrangler.toml` and `wrangler deploy --config wrangler.<stage>.toml` stop at `Could not resolve "#tanstack-start-entry"`. `pnpm start` and `pnpm deploy:<stage>` hand `wrangler` the build output instead — the deploy only after checking that the output was built for that stage; the state Worker has no such imports and is bundled by `wrangler` from source.
 
 ### The operator surface
 

@@ -24,6 +24,7 @@
     "test:unit": "vitest run",
     "test:integration": "pnpm test:integration:cf",
     "test:integration:cf": "vitest run --config vitest.config.integration.ts",
+    "test:deploy": "vitest run --config vitest.config.deploy.ts",
     "cf:types": "pnpm --filter @repo/web cf:types",
     "cf:render:staging": "pnpm --filter @repo/infra-cloudflare render staging",
     "cf:render:production": "pnpm --filter @repo/infra-cloudflare render production",
