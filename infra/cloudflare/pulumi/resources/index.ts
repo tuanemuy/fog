@@ -13,16 +13,6 @@ const zone = new cloudflare.Zone("zone", {
   zone: zoneName,
 });
 
-const db = new cloudflare.D1Database(
-  "db",
-  {
-    accountId,
-    name: `${prefix}-d1`,
-  },
-  // D1 is the system of record — refuse accidental destroy.
-  { protect: true },
-);
-
 // The Queue carries event delivery and nothing else: it is the transport
 // between the Outbox relay (inside each Durable Object's `alarm()`) and
 // the consumers hosted in the request Worker. It is never a store and
@@ -45,8 +35,6 @@ const dlqQueue = new cloudflare.Queue("dlq", {
 });
 
 export const zoneId = zone.id;
-export const databaseId = db.id;
-export const databaseName = db.name;
 export const eventsQueueName = eventsQueue.name;
 export const dlqQueueName = dlqQueue.name;
 export const exportedAppUrl = appUrl;

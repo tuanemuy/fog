@@ -60,7 +60,7 @@ Two Workers, one Queue plus its dead-letter queue, and Durable Objects that hold
 - **The consumers run in the request Worker's `queue()` handler** — the mail consumer and the DLQ handler both. That is `apps/web/app/worker/cloudflare/queueHandlers.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`. Hosting them there is what puts the mail provider's secret on the request Worker.
 - **Pruning is not a job kind.** The job runner deletes retention-expired `done` and `published` rows at the tail of each wake-up.
 
-**D1 is not in the runtime.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. What remains is outside the runtime: the Pulumi `resources` stack still provisions a protected D1 database, and `apps/web/scripts/render-wrangler.ts` still substitutes `D1_DATABASE_ID` / `D1_DATABASE_NAME`, which no template uses. Retiring those two is tracked in [#4](https://github.com/tuanemuy/fog/issues/4); it changes nothing the runtime reads.
+**D1 is not in the runtime, nor in the infrastructure.** No wrangler config declares a `d1_databases` binding, there is no `packages/core/src/adapters/d1/`, no Drizzle, and no Vitest project for it — every piece of user data lives in that user's Durable Object. The Pulumi `resources` stack provisions no database; `resourcesStack.test.ts` pins its exact set of resources, within the limit chapter 2 (Pulumi) states.
 
 The staleness check for this chapter is therefore not the word D1 but four English literals — the shared table of processed events, and standalone Workers for relaying, pruning and dead-lettering:
 
@@ -86,7 +86,7 @@ Tenant isolation is structural: there is no `user_id` predicate that could be fo
 | `apps/web/wrangler.state.staging.toml.tpl` | state | → `wrangler.state.staging.toml` (git-ignored) |
 | `apps/web/wrangler.state.production.toml.tpl` | state | → `wrangler.state.production.toml` (git-ignored) |
 
-Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrangler.ts`. It reads `pulumi -C infra/cloudflare/pulumi/resources -s <stage> stack output --json --show-secrets` — **`--show-secrets` is part of the command**, and reproducing it by hand without the flag yields masked outputs — and substitutes seven placeholders — six from those outputs (`APP_URL`, `D1_DATABASE_ID`, `D1_DATABASE_NAME`, `EVENTS_QUEUE_NAME`, `DLQ_QUEUE_NAME`, `RESOURCE_PREFIX`) and `MAIL_FROM_ADDRESS` from the environment variable of that name. An unknown placeholder aborts the render rather than rendering an empty string. **One invocation renders both Workers' configs**, which is what keeps the state Worker's `name` and the request Worker's `script_name` from drifting apart.
+Rendering is `pnpm cf:render:<stage>`, which runs `apps/web/scripts/render-wrangler.ts`. It reads `pulumi -C infra/cloudflare/pulumi/resources -s <stage> stack output --json --show-secrets` — **`--show-secrets` is part of the command**, and reproducing it by hand without the flag yields masked outputs — and substitutes the placeholders `WRANGLER_PLACEHOLDER_SOURCES` (`apps/web/scripts/lib/wranglerTemplate.ts`) declares, each from the output or the environment variable it names there. A placeholder that is unknown, or whose output is missing or not a string, or whose variable is unset, aborts the render rather than rendering an empty string. `wranglerTemplate.test.ts` pins that the templates use exactly the declared placeholders, and `resourcesStack.test.ts` that the stack exports exactly the outputs the render and the `routes` stack read (within the limit stated under Pulumi below). **One invocation renders both Workers' configs**, which is what keeps the state Worker's `name` and the request Worker's `script_name` from drifting apart.
 
 **All four templates point `main` at a source entry**, and who reads that entry differs by Worker:
 
@@ -146,23 +146,12 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 | Stack | Provisions | Notes |
 | ----- | ---------- | ----- |
-| `resources` | Zone, D1 database, events queue, DLQ | Run **before** `wrangler deploy`; its outputs feed `cf:render` |
+| `resources` | Zone, events queue, DLQ | Run **before** `wrangler deploy`; its outputs feed `cf:render` |
 | `routes` | one `WorkersDomain` binding the app hostname to the request Worker | Run **after** `wrangler deploy` — Cloudflare rejects a custom-domain binding for a service that does not exist |
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
 
-`{ protect: true }` is set on the **D1 database and nothing else**. It stops `pulumi destroy` and stops a resource-replacing edit from deleting the database. The database holds nothing the runtime reads (chapter 1); the protection stays until the resource is removed from the stack ([#4](https://github.com/tuanemuy/fog/issues/4)), so that the removal is an explicit step and not a side effect.
-
-**Reality: Available.** To remove the protection when D1 is retired from the stack ([#4](https://github.com/tuanemuy/fog/issues/4)):
-
-```bash
-# from the repo root
-pulumi -C infra/cloudflare/pulumi/resources -s <stage> state unprotect \
-  'urn:pulumi:<stage>::tanstack-start-template-cf-resources::cloudflare:index/d1Database:D1Database::db'
-# then remove the resource from index.ts and run `pulumi up`
-```
-
-`pulumi state unprotect --all` clears every protected resource in the stack at once and should not be used here — there is exactly one, and naming it is the point.
+`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only these spellings: `new cloudflare.<Type>(<first argument>` in `resources/index.ts`, whose imports it pins to the two Pulumi packages; `export const <name>`; and the argument of `requireOutput(...)` / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in another form, a resource constructed through a same-file alias (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or a dynamic `import()` — escapes it, and these spellings inside a comment count as code.
 
 ## 3. Secrets: ownership and procedure
 
@@ -185,7 +174,7 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> state unprotect \
 | `PROVIDER_IDEMPOTENCY_KEY` | **state** | HMAC key each DO derives `providerIdempotencyKey` from. Never leaves the DO |
 | `IDENTITY_RESET_TOKEN_KEY` | **state** | The reset-token derivation key. Never leaves the DO |
 | `MAIL_DEV_SINK`, `SSO_DEV_STUB` | request, **local only** | The development mail sink (`"console"`, chapter 13) and the development identity provider (`"true"`). Not secrets; `wranglerConfig.test.ts` fails if a deployed config declares them |
-| `APP_URL`, `MAIL_FROM_ADDRESS`, `DIAGNOSTICS_ENABLED` | `[vars]` of the request config | Not secrets. The templates take the first two from the environment at render time; the third is declared in `wrangler.toml` only (chapter 6) |
+| `APP_URL`, `MAIL_FROM_ADDRESS`, `DIAGNOSTICS_ENABLED` | `[vars]` of the request config | Not secrets. The render fills the first two (chapter 2); the third is declared in `wrangler.toml` only (chapter 6) |
 
 **`DIRECTORY_ROUTING_SECRET` and `IDENTITY_MAIL_ENCRYPTION_KEY` are deliberately given to opposite Workers.** The request Worker can compute *where* a credential lives but cannot read the address back; the state Worker can read the address back but cannot compute where it lives. Handing either key to both Workers collapses that split, and no code notices. The commitment keeps the split during a rotation: the state Worker verifies an injected key by its digest and never holds the key.
 
@@ -262,7 +251,7 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 **Step 0 — prerequisites.** Every stack in this repository ships unconfigured, and step 1 stops without them. **The failure is not self-explaining**: `config.require` only catches a key that is *absent*, and the shipped placeholders are present values, so `pulumi up` accepts them and fails later against the Cloudflare API instead.
 
 - **Fill in the Pulumi stack config.** `infra/cloudflare/pulumi/resources/Pulumi.<stage>.yaml` requires five values — `accountId` (shipped as the literal `REPLACE_WITH_CF_ACCOUNT_ID`), `zoneName` (`example.com`), `appHostname`, `appUrl`, `resourcePrefix` — and `infra/cloudflare/pulumi/routes/Pulumi.<stage>.yaml` requires two, `accountId` (the same placeholder) and `resourcesStackRef` (whose `organization/` segment is the Pulumi organisation or user that owns the resources stack). **No stack has been `up`ed in any stage** — that is the same fact chapter 5 reads as "there is no queue to ask".
-- **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to edit the zone, D1 and Queues.
+- **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to edit the zone and Queues.
 - **Be authenticated for `wrangler` too.** `wrangler login`, or the same `CLOUDFLARE_API_TOKEN`. **`wrangler` is a devDependency of `@repo/web` and of nothing else**, so every `wrangler` command in this document runs from `apps/web/` — or from anywhere as `pnpm --filter @repo/web exec wrangler …`.
 
 ```bash
@@ -1014,7 +1003,6 @@ Each row is described in full in the section it names, and tracked on its issue.
 
 | Limit | Described in | Tracked in |
 | ----- | ------------ | ---------- |
-| The Pulumi `resources` stack still provisions a D1 database, and the render script still substitutes its two placeholders, with no runtime reader | chapter 1, chapter 2 (Pulumi) | [#4](https://github.com/tuanemuy/fog/issues/4) |
 | **The DLQ's one log line is not retained in production** — no wrangler config declares `[observability]`, so Workers Logs is off and only a live `wrangler tail` sees it | 8.6, 8.7 | [#5](https://github.com/tuanemuy/fog/issues/5) |
 | PITR's four mandatory steps have no maintenance entry; in production they cannot be executed | 11.3 | [#6](https://github.com/tuanemuy/fog/issues/6) |
 | Stuck delivery is not actively notified | 7.3, 8.3 | [#7](https://github.com/tuanemuy/fog/issues/7) |

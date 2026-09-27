@@ -19,7 +19,10 @@ import {
   templateFileOf,
   wranglerConfigFiles,
 } from "../lib/deployStage";
-import { renderWranglerTemplate } from "../lib/wranglerTemplate";
+import {
+  renderWranglerTemplate,
+  stageSubstitutions,
+} from "../lib/wranglerTemplate";
 
 // What a deploy uploads is the Vite build's output config, not the template
 // `wranglerConfig.test.ts` reads. This suite renders each stage's templates
@@ -39,6 +42,22 @@ const fixtureOf = (stage: DeployStage) => {
     EVENTS_QUEUE_NAME: `${prefix}-events`,
     DLQ_QUEUE_NAME: `${prefix}-events-dlq`,
   };
+};
+
+// The render goes through the same stack-output mapping as
+// `render-wrangler.ts`, while the assertions compare against the fixture
+// itself, so a mapping that swaps two outputs turns this suite red.
+const substitutionsOf = (stage: DeployStage) => {
+  const fixture = fixtureOf(stage);
+  return stageSubstitutions(
+    {
+      exportedPrefix: fixture.RESOURCE_PREFIX,
+      exportedAppUrl: fixture.APP_URL,
+      eventsQueueName: fixture.EVENTS_QUEUE_NAME,
+      dlqQueueName: fixture.DLQ_QUEUE_NAME,
+    },
+    { MAIL_FROM_ADDRESS: fixture.MAIL_FROM_ADDRESS },
+  );
 };
 
 const renderedFiles = DEPLOY_STAGES.flatMap((stage) => {
@@ -81,7 +100,7 @@ function render(stage: DeployStage, file: string): void {
     inWeb(file),
     renderWranglerTemplate(
       readFileSync(inWeb(template), "utf8"),
-      fixtureOf(stage),
+      substitutionsOf(stage),
       template,
     ),
   );
