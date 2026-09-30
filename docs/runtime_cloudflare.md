@@ -157,7 +157,7 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 **Reality: Available.**
 
-`apps/web/.dev.vars.example` is the authority for ownership; its header table is the roster and `wranglerConfig.test.ts` pins every secret row of it. Fifteen secrets and three `[vars]` entries:
+`apps/web/.dev.vars.example` is the authority for ownership; its header table is the roster, and the deploy's secret check reads it (below). `secretRoster.test.ts` holds the table against the assignments beneath it and against the code that reads each secret — a secret spelled `env.NAME` in a file the test assigns to the other Worker turns it red; a read through destructuring or a computed key escapes it — and `wranglerConfig.test.ts` holds it against the wrangler configs. Fifteen secrets and three `[vars]` entries:
 
 | Secret | Owner | What it is |
 | ------ | ----- | ---------- |
@@ -166,7 +166,7 @@ Two stacks under `infra/cloudflare/pulumi/`:
 | `DIRECTORY_ROUTING_SECRET` | **request** | HMAC key mapping a canonical address to its Identity Directory bucket (generation 1, 16 buckets). Bucket selection happens in the stub-selection adapter, *before* any DO is entered. Not read while `DIRECTORY_ROUTING_KEYRING` is set |
 | `DIRECTORY_ROUTING_KEYRING` | **request** | The two-generation form of the routing key — a JSON array of `{ role, generation, key, bucketCount }`, one `active` and at most one `previous` — deployed for the duration of a mapping-key rotation (below) |
 | `AI_CLIENT_TOKEN_SECRET` | **request** | Key material of the AI API's tokens, authorization codes and client ids |
-| `OPERATOR_TOKEN` | **request** | Bearer of the maintenance surface `/__operator/*` (8.2); at least 32 characters, and the surface does not exist while it is unset |
+| `OPERATOR_TOKEN` | **request** | Bearer of the maintenance surface `/__operator/*` (8.2); at least 32 characters. The surface does not exist while it is unset, which only a local `.dev.vars` can be: a deployed stage's secret check requires it |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **request** | The SSO callback runs there |
 | `IDENTITY_MAIL_ENCRYPTION_KEY` | **state** | AES-256-GCM key protecting `credential_mappings.encrypted_canonical` (generation 1). Never leaves the DO. Not read while `IDENTITY_MAIL_ENCRYPTION_KEYRING` is set |
 | `IDENTITY_MAIL_ENCRYPTION_KEYRING` | **state** | The two-generation form of the encryption key — `{ role, generation, key }` × (active + at most one previous) — deployed for the duration of an encryption-key rotation |
@@ -180,15 +180,61 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 **So do not write "the derivation keys never leave the DO" without qualification.** The three derivation keys do stay inside the DO (`IDENTITY_MAIL_ENCRYPTION_KEY` and its keyring, `PROVIDER_IDEMPOTENCY_KEY`, `IDENTITY_RESET_TOKEN_KEY`). `DIRECTORY_ROUTING_SECRET` is a *mapping* key and lives on the request Worker by design — it is not one of them. Stating the rule too broadly is how it ends up copied into the state Worker "for consistency".
 
-### Generating and installing
+### Where a stage's secrets live
+
+Each stage's secrets are committed to the repository, SOPS-encrypted, **one file per Worker**:
+
+| File | Uploaded against |
+| ---- | ---------------- |
+| `apps/web/secrets/<stage>.request.enc.json` | `wrangler.<stage>.toml` (request Worker) |
+| `apps/web/secrets/<stage>.state.enc.json` | `wrangler.state.<stage>.toml` (state Worker) |
+
+**One file for both Workers is the mistake this layout exists to prevent**: uploading it everywhere hands `DIRECTORY_ROUTING_SECRET` to the state Worker and `IDENTITY_MAIL_ENCRYPTION_KEY` to the request Worker, and nothing in the code notices (above).
+
+The root `.sops.yaml` gives each stage its own age recipient, so the staging key cannot decrypt production and the reverse, and encrypts every value (`encrypted_regex: "^(.+)$"`); only the key names stay readable. `deployWorkflow.test.ts` pins both, and that each stage's two files fall under that stage's rule alone. The recipients ship as placeholders, and sops refuses to encrypt until they are replaced (4.7). `apps/web/secrets/request.json.example` and `state.json.example` are the plaintext templates: every key a Worker requires, each with an empty value, so a template encrypted without being filled in fails the check. A key starting with `_` is a note — ignored by the check and never uploaded. A plaintext `apps/web/secrets/*.json` is ignored by version control; only `*.enc.json` is committed.
+
+```bash
+# from the repo root, with that stage's age key (SOPS_AGE_KEY, or a key file sops finds)
+sops apps/web/secrets/staging.request.enc.json     # opens the decrypted file in $EDITOR, re-encrypts on save
+```
+
+### Checking
+
+```bash
+pnpm secrets:check <stage>
+```
+
+decrypts both of the stage's files and checks them against the roster. It fails, naming the key and the file but never a value, when:
+
+- a secret its Worker requires is **missing** — every row owned by that Worker is required except the three **rotation only** ones, which may be present or absent;
+- a key **belongs to the other Worker**, in either direction;
+- a key is **local only** (`MAIL_DEV_SINK`, `SSO_DEV_STUB`), a **`[vars]` entry**, or **not in the roster**;
+- a value is **not a string**, or is, trimmed, **the value `.dev.vars.example` assigns** to that name.
+
+**Limits.** The last check compares against the development values, and today every secret's development value is empty, so in practice it rejects an empty value and nothing more. The check reads names and ownership, never the content of the rotation variables: whether a keyring parses, and whether `DIRECTORY_ROUTING_KEYRING` and `DIRECTORY_KEY_COMMITMENT` agree, is what the Identity Directory buckets refuse at runtime (`spec/rotation/index.md`); a keyring reduced to its active entry is legitimate without a commitment, so not even their presence is paired. The decrypted text stays in the process and reaches `wrangler` over stdin, never a file — that holds by the shape of `apps/web/scripts/stage-secrets.ts`, and no test watches the disk.
+
+### Installing
+
+**Reality: Available.**
+
+```bash
+pnpm secrets:push <stage>      # needs the rendered configs (4.1) and wrangler's credentials
+```
+
+runs the same check, and only when both files pass does it upload each file with `wrangler secret bulk --config <that Worker's config>`, the plaintext on stdin. It then lists what each Worker holds (`wrangler secret list`) and **fails when that differs from the file**. `wrangler secret bulk` adds and overwrites but never deletes, so a secret removed from a file — a rotation variable after retirement, a key moved to the other Worker's file — or one put on the wrong Worker by hand stays live until it is deleted, and this comparison is where it shows. The failure names the command:
+
+```bash
+# from apps/web
+wrangler secret delete DIRECTORY_ROUTING_KEYRING --config wrangler.staging.toml
+```
+
+The Deploy workflow runs `pnpm secrets:push` after both Workers are uploaded (4.6).
+
+**By hand** — before the encrypted files exist, or when they cannot be used — install each secret **against the config of the Worker that owns it**; the `--config` flag is then the whole of the ownership enforcement:
 
 ```bash
 openssl rand -base64 48        # any of the single-value secrets
-```
 
-Install each secret **against the config of the Worker that owns it** — the `--config` flag is the whole of the ownership enforcement:
-
-```bash
 # from apps/web — `wrangler` is a devDependency of @repo/web, and the
 # --config paths are relative to that directory. From elsewhere, run it as
 # `pnpm --filter @repo/web exec wrangler secret put …`.
@@ -207,7 +253,9 @@ wrangler secret put GOOGLE_CLIENT_ID             --config wrangler.staging.toml
 wrangler secret put GOOGLE_CLIENT_SECRET         --config wrangler.staging.toml
 ```
 
-The three rotation variables are installed only for the duration of a rotation and removed again after retirement (below).
+A secret put by hand that the stage's file does not carry fails the next `pnpm secrets:push` until it is added to the file or deleted.
+
+The three rotation variables are added to their owner's file only for the duration of a rotation; after retirement they are removed from the file **and** deleted from the Worker (below).
 
 Getting one wrong **works locally and breaks first in staging** — see below.
 
@@ -228,6 +276,8 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 
 **Reality: Available** as a procedure (`spec/rotation/index.md` is the authority on the rules; this is the operator's sequence). Both rotations run through the maintenance surface (8.2) and never at the same time — `remap-chunk` refuses while the encryption keyring holds a `previous` entry, and `start-rotate-encryption` refuses while the commitment holds a `previous` mapping generation.
 
+**Deploying a rotation variable** below means setting it in its owner's secret file and running `pnpm secrets:push <stage>` (the Deploy workflow's next run does the same). A variable that is dropped altogether is removed from the file **and** deleted with `wrangler secret delete <NAME> --config <its owner's config>`; until then every push fails naming it (Installing, above).
+
 **Mapping key.** (1) Deploy, as a pair, `DIRECTORY_ROUTING_KEYRING` (request: `active` = the new generation g+1, `previous` = the current generation g) and `DIRECTORY_KEY_COMMITMENT` (state: the same set with digests). From that moment new reservations land in g+1 and lookups probe active → previous → active once more. (2) For every bucket `0 .. bucketCount-1` of generation g, call `remap-chunk` with the two keyring entries in the body until it answers `lastCredentialId: null` — the CLI does this as `node apps/web/scripts/operator.ts remap-chunk --locator dir:g<g>:b<n> --inject-keyring --limit 100 [--after <id>]`, reading the entries from `.dev.vars` so that no key is typed on a command line. (3) Read `read-rotation-checkpoint` with `{ "rotationKind": "remap", "generation": <g> }` on every one of those buckets; retirement holds only when every bucket answers `previousCount: 0` (a bucket answering `null` has not been scanned). (4) Deploy the pair again without the `previous` entries; generation g's buckets are no longer addressable. The JSON shapes are in `.dev.vars.example`. Measured locally on PH-09B: one chunk over 0–4 rows takes 121–146 ms including its two RPCs per row — an observation, not a figure to plan by.
 
 **Encryption key.** (1) Deploy `IDENTITY_MAIL_ENCRYPTION_KEYRING` (state) with `active` = the new generation and `previous` = the current key. (2) Call `start-rotate-encryption` on every bucket of the **active mapping generation**; it enqueues the `rotate-encryption` job and the Alarm rewrites the rows. (3) `read-rotation-checkpoint` with `{ "rotationKind": "encryption", "generation": <retiring> }` on every one of those buckets; all `previousCount: 0` is the retirement condition. (4) Remove the `previous` entry.
@@ -238,11 +288,13 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 
 ### The split does not hold locally
 
-`wrangler dev` resolves `.dev.vars` relative to each config's directory. Under `pnpm start` the state Worker's config sits in `apps/web/` beside `.dev.vars`, and the request Worker's is `dist/server/wrangler.json`, beside the copy of `.dev.vars` the Vite build writes there; `pnpm dev` and `pnpm preview` hand one `.dev.vars` to both Workers the same way. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where `wrangler secret put --config` puts each secret on one Worker. The same holds for the rotation pair: locally the commitment and the keyring sit side by side, so the non-overlap the design relies on cannot be observed under `pnpm dev`.
+`wrangler dev` resolves `.dev.vars` relative to each config's directory. Under `pnpm start` the state Worker's config sits in `apps/web/` beside `.dev.vars`, and the request Worker's is `dist/server/wrangler.json`, beside the copy of `.dev.vars` the Vite build writes there; `pnpm dev` and `pnpm preview` hand one `.dev.vars` to both Workers the same way. **Every entry in `.dev.vars` is therefore visible to both Workers locally** — measured: the state Worker also receives `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET`. The ownership above only becomes real from staging onward, where each Worker's secrets are uploaded against its own config only. The same holds for the rotation pair: locally the commitment and the keyring sit side by side, so the non-overlap the design relies on cannot be observed under `pnpm dev`.
 
 **A misattributed secret is invisible locally for exactly this reason.** Do not use `pnpm dev` to confirm ownership.
 
 ## 4. Deploying
+
+**A stage deploys from GitHub Actions** — staging on every push to `main`, production on every version tag — through the steps of 4.1 and 4.2 in one run (4.6). Running those steps by hand is for the first bootstrap of a stage (4.7) and for when the workflow cannot run.
 
 ### 4.1 Steps you can run today (before the deploy)
 
@@ -253,6 +305,7 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 - **Fill in the Pulumi stack config.** `infra/cloudflare/pulumi/resources/Pulumi.<stage>.yaml` requires five values — `accountId` (shipped as the literal `REPLACE_WITH_CF_ACCOUNT_ID`), `zoneName` (`example.com`), `appHostname`, `appUrl`, `resourcePrefix` — and `infra/cloudflare/pulumi/routes/Pulumi.<stage>.yaml` requires two, `accountId` (the same placeholder) and `resourcesStackRef` (whose `organization/` segment is the Pulumi organisation or user that owns the resources stack). **No stack has been `up`ed in any stage** — that is the same fact chapter 5 reads as "there is no queue to ask".
 - **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to edit the zone and Queues.
 - **Be authenticated for `wrangler` too.** `wrangler login`, or the same `CLOUDFLARE_API_TOKEN`. **`wrangler` is a devDependency of `@repo/web` and of nothing else**, so every `wrangler` command in this document runs from `apps/web/` — or from anywhere as `pnpm --filter @repo/web exec wrangler …`.
+- **Have `sops` and the stage's age key** for steps 3 and 6 — `SOPS_AGE_KEY`, or a key file sops finds (chapter 3).
 
 ```bash
 # from the repo root
@@ -263,7 +316,8 @@ pulumi -C infra/cloudflare/pulumi/resources -s <stage> up
 pnpm cf:render:<stage>
 
 # from apps/web
-# 3. install the secrets against their owning config (see chapter 3)
+# 3. check the stage's secret files against the roster (chapter 3)
+pnpm secrets:check <stage>
 
 # 4. set the DLQ retention out of band — it is not a wrangler key
 wrangler queues update <prefix>-events-dlq --message-retention-period-secs 600
@@ -273,7 +327,7 @@ Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omit
 
 ### 4.2 Steps that only mean something after the deploy
 
-**Reality: Available.** **The upload itself has never been observed from this repository** — no stage has a stack or credentials (4.1). What is observed, by `pnpm test:deploy` in CI, is every step short of it: the stage build, and `wrangler deploy --dry-run` for both Workers, which resolves the config, bundles, and reads the assets.
+**Reality: Available.** **The upload itself has never been observed from this repository** — no stage has a stack or credentials (4.1), and the Deploy workflow has never completed a run (4.6). What is observed, by `pnpm test:deploy` in CI, is every step short of it: the stage build, and `wrangler deploy --dry-run` for both Workers, which resolves the config, bundles, and reads the assets.
 
 ```bash
 # from the repo root (all three are root scripts that delegate to @repo/web)
@@ -283,9 +337,15 @@ pnpm deploy:<stage>:all       # stage build, then the state Worker, then the req
 pnpm deploy:<stage>:state     # wrangler bundles the state Worker's source
 pnpm deploy:<stage>           # stage build, then scripts/deploy-built.ts uploads dist/server/wrangler.json
 
-# 6. bind the hostname
+# 6. upload each Worker's secrets against its own config, then compare
+#    what each Worker holds with its file (chapter 3)
+pnpm secrets:push <stage>
+
+# 7. bind the hostname
 pulumi -C infra/cloudflare/pulumi/routes -s <stage> up
 ```
+
+**The secrets go up after the code**, so `wrangler secret bulk` finds both Workers in place. Between steps 5 and 6 the new code runs on the secrets the Workers already held — for a new Worker, none, and the request Worker refuses every request until `SESSION_SECRET` arrives. A release whose code needs a secret its predecessor did not is the case where that window matters; put that one secret by hand before step 5 (chapter 3), and it is already in place when the code lands.
 
 **The order is not a preference.** The request Worker's DO bindings name the state Worker's script, and a binding cannot be created against a script that does not exist. The routes stack comes last for the same reason one level up: Cloudflare rejects a custom-domain binding for a service that has not been uploaded.
 
@@ -331,6 +391,68 @@ Section 8.6 refers back to this paragraph rather than restating it.
 `pnpm start` runs the same build output under `wrangler dev` instead — the closest local counterpart of what a deploy uploads. It runs the local build itself and then `wrangler dev -c dist/server/wrangler.json -c wrangler.state.toml`: the request Worker from the build output, the state Worker bundled from source. **The build is part of the script on purpose.** A `dist/` left behind by a stage build names that stage's state Worker in its DO bindings, the local state Worker does not answer to that name, and the mismatch is silent (chapter 2, `script_name`). It listens on `wrangler dev`'s port (8787 unless `--port` says otherwise), so the `APP_URL` disagreement above applies to it too.
 
 **`pnpm dev`, `pnpm preview` and `pnpm start` share `apps/web/.wrangler/state`.** Run one at a time: two processes over the same Durable Object files compete for the same Alarms, and a job may run in whichever process fires first. Preview's `[dev-mail]` lines carry `APP_URL`'s host (`:3000`), so a reset link printed by preview has to be opened against preview's own port by hand.
+
+### 4.6 The Deploy workflow
+
+**Reality: Available.** **No run has completed**: until a stage is bootstrapped (4.7), every run stops at its first step — there is no secret file to decrypt — with nothing touched.
+
+| Workflow | Runs on | GitHub environment |
+| -------- | ------- | ------------------ |
+| `.github/workflows/deploy-staging.yml` | every push to `main`; `workflow_dispatch` | `staging` |
+| `.github/workflows/deploy-production.yml` | every tag `v*.*.*`; `workflow_dispatch` | `production` — its required reviewers hold the run until one approves |
+
+Both call `.github/workflows/deploy.yml` with their stage name, which is the only thing the two differ in besides the trigger. Each runs in `concurrency` group `deploy-<stage>` with `cancel-in-progress: false`: a run never cancels the one in progress, since a deploy stopped between the two Workers is the skew of 4.4. GitHub keeps one pending run per group, so a newer push or tag replaces a run still waiting there — the deploy that follows carries the newer commit. A staging deploy does not wait for CI: it runs beside the CI run of the same commit.
+
+One job, in this order:
+
+1. `pnpm secrets:check <stage>` — **before anything reaches Cloudflare or Pulumi**, so a bad secret file fails the run with both Workers and both stacks untouched
+2. `pulumi up` of the `resources` stack
+3. `pnpm cf:render:<stage>`, with `MAIL_FROM_ADDRESS` from the environment's variables
+4. `pnpm deploy:<stage>:all` — stage build, state Worker, request Worker (4.2)
+5. `pnpm secrets:push <stage>` — upload, then compare what each Worker holds (chapter 3)
+6. `wrangler queues update <dlq> --message-retention-period-secs 600` (4.1, step 4)
+7. `pulumi up` of the `routes` stack
+
+Every step is safe to repeat, so a run that failed partway is re-run from the start. `deployWorkflow.test.ts` pins the triggers, the concurrency, the environment, this order, that no step before the check is handed a Cloudflare or Pulumi credential, that Worker code goes up only through `deploy:<stage>:all`, and that the age key reaches the two secret steps alone; `wranglerConfig.test.ts` pins the retention seconds against `dlqRetentionMs`. `wrangler` is the one the lockfile pins, run through the same scripts as by hand; `sops` is a pinned release checked against its SHA-256; the Pulumi CLI is pinned in `pulumi/actions`.
+
+### 4.7 Bootstrapping a stage
+
+**Reality: Available.** Once per stage, before its first run:
+
+1. **Pulumi.** Fill in both stacks' `Pulumi.<stage>.yaml` (4.1, step 0). The workflow logs in to Pulumi Cloud with `PULUMI_ACCESS_TOKEN` and selects the stack by the stage's name.
+2. **An age key per stage**, never shared between stages:
+
+   ```bash
+   age-keygen -o staging.agekey          # keep it outside the repository
+   age-keygen -y staging.agekey          # the public half
+   ```
+
+   Put the public half in place of that stage's placeholder in `.sops.yaml`.
+3. **The secret files**, from the templates:
+
+   ```bash
+   # from the repo root
+   cp apps/web/secrets/request.json.example apps/web/secrets/staging.request.enc.json
+   cp apps/web/secrets/state.json.example apps/web/secrets/staging.state.enc.json
+   # fill in every value, then
+   sops --encrypt --in-place apps/web/secrets/staging.request.enc.json
+   sops --encrypt --in-place apps/web/secrets/staging.state.enc.json
+   SOPS_AGE_KEY_FILE=staging.agekey pnpm secrets:check staging
+   ```
+
+   Commit the two `*.enc.json` files and `.sops.yaml`.
+4. **The GitHub environment** named after the stage, holding these **secrets** — each with that stage's own value:
+
+   | Secret | Read by |
+   | ------ | ------- |
+   | `CLOUDFLARE_API_TOKEN` | Pulumi's Cloudflare provider and `wrangler`: edit rights on Workers scripts, Queues and the zone |
+   | `CLOUDFLARE_ACCOUNT_ID` | `wrangler` |
+   | `PULUMI_ACCESS_TOKEN` | the Pulumi CLI |
+   | `PULUMI_CONFIG_PASSPHRASE` | the Pulumi CLI, when the stacks use the passphrase secrets provider |
+   | `SOPS_AGE_KEY` | `sops`: the `AGE-SECRET-KEY-…` line of the stage's key file |
+
+   and the **variable** `MAIL_FROM_ADDRESS`. On `production`, add required reviewers — they are what holds a production run for approval — and restrict its deployment branches and tags to `v*.*.*`, after which a `workflow_dispatch` of production has to name a tag.
+5. **The first run**: `workflow_dispatch` on the stage's workflow, or the trigger itself.
 
 ## 5. Out-of-band settings nothing here can observe
 

@@ -54,6 +54,7 @@ Operational guidance — deployment, secrets, schema migration, the Alarm, the o
 - Node.js 22.12+ (the `flake.nix` / `.envrc` direnv environment is recommended; the scripts under `apps/web/scripts/` run on Node's type stripping without a build step)
 - pnpm
 - A Cloudflare account and the `wrangler` CLI (bundled as a dev dependency) for deployment
+- `sops` and `age` to read and write a stage's deploy secrets (both are in the `flake.nix` shell; the Deploy workflow installs its own `sops`)
 
 ## Quick Start
 
@@ -77,9 +78,9 @@ pnpm build
 
 **`APP_URL` is pinned to `http://localhost:3000` in `wrangler.toml`**, while `vite preview` and `wrangler dev` pick their own ports. Under `pnpm preview` and `pnpm start` the address in the browser bar therefore disagrees with `og:url`, the canonical link and the links inside `[dev-mail]` output. That is expected, not a misconfiguration. `pnpm dev`, `pnpm preview` and `pnpm start` share `apps/web/.wrangler/state`, so run one at a time: two workerd instances over the same Durable Object files take each other's Alarms.
 
-To deploy: render the configs, install each secret against the config of the Worker that owns it, set the DLQ retention out of band, then deploy the **state Worker first** and the request Worker second. The full procedure is in [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md); the same checklist is summarised in the header of `apps/web/wrangler.<stage>.toml.tpl`, and which secret belongs to which Worker is declared in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example).
+To deploy: push to `main` for staging, or tag `vX.Y.Z` for production (approved in the `production` environment). The Deploy workflow checks the stage's secret files, provisions the Pulumi resources, renders the configs, deploys the **state Worker first** and the request Worker second, uploads each Worker's secrets against its own config, sets the DLQ retention and binds the hostname. Each stage's secrets are committed SOPS-encrypted, one file per Worker, under `apps/web/secrets/`, and `pnpm secrets:check <stage>` checks them against the ownership table in [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example). A stage has to be bootstrapped once — Pulumi config, an age key, the secret files, the GitHub environment — and until then the workflow fails at its first step. The full procedure, and the same steps by hand, are in [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) (chapters 3 and 4); the checklist is summarised in the header of `apps/web/wrangler.<stage>.toml.tpl`.
 
-`pnpm deploy:<stage>:all` does the last two in that order, after building the stage: the request Worker is deployed from the Vite build output (`dist/server/wrangler.json`), because only Vite can resolve the TanStack Start virtual modules its source entry imports. The upload itself has never been run from this repository; CI runs everything short of it (`pnpm test:deploy`).
+`pnpm deploy:<stage>:all` does the two Worker uploads in that order, after building the stage: the request Worker is deployed from the Vite build output (`dist/server/wrangler.json`), because only Vite can resolve the TanStack Start virtual modules its source entry imports. The upload itself has never been run from this repository; CI runs everything short of it (`pnpm test:deploy`).
 
 ## Development commands
 
@@ -104,6 +105,9 @@ pnpm test                        # unit + DOM + integration
 pnpm test:unit                   # Vitest (unit + DOM projects)
 pnpm test:integration            # Durable Object suites in a Workers isolate
 pnpm test:deploy                 # builds each stage, dry-runs its deploy, boots pnpm start; rewrites apps/web/dist
+
+pnpm secrets:check <stage>       # decrypts apps/web/secrets/<stage>.*.enc.json and checks them against the roster
+pnpm secrets:push <stage>        # the same check, then uploads each Worker's secrets and compares what it holds
 
 pnpm --filter @repo/web operator <entry> --locator <dir:gN:bM | userId> [--json '{…}'] [--inject-keyring] [--limit N] [--after id] [--base http://localhost:3000]
 pnpm --filter @repo/web ai-client -- register|authorize|refresh|whoami|mcp <method> ['<json>']|call <tool> ['<json>']
