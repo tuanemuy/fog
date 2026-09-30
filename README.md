@@ -54,7 +54,7 @@ Operational guidance — deployment, secrets, schema migration, the Alarm, the o
 - Node.js 22.12+ (the `flake.nix` / `.envrc` direnv environment is recommended; the scripts under `apps/web/scripts/` run on Node's type stripping without a build step)
 - pnpm
 - A Cloudflare account and the `wrangler` CLI (bundled as a dev dependency) for deployment
-- `sops` and `age` to read and write a stage's deploy secrets (both are in the `flake.nix` shell; the Deploy workflow installs its own `sops`)
+- `sops` and `age` to read and write a stage's deploy secrets, and the `pulumi` CLI for the Cloudflare stacks (all three are in the `flake.nix` shell; the Deploy workflow installs its own `sops` and `pulumi`)
 
 ## Quick Start
 

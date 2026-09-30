@@ -22,6 +22,7 @@
             biome
             nodejs_24
             pnpm
+            pulumi-bin
             sops
             tailwindcss-language-server
             vtsls
