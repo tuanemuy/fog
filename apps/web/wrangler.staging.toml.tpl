@@ -9,8 +9,8 @@
 #
 # === Deploying ===========================================================
 # `.github/workflows/deploy-staging.yml` runs these steps on every push to `main`
-# (docs/runtime_cloudflare.md, chapter 4). By hand — the first bootstrap,
-# or when the workflow cannot run — they are:
+# (docs/runtime_cloudflare.md 4.1 and 4.2, numbered the same). By hand —
+# the first bootstrap, or when the workflow cannot run — they are:
 #   1. `pnpm secrets:check staging` decrypts
 #      `secrets/staging.request.enc.json` / `secrets/staging.state.enc.json`
 #      and checks them against the roster in `.dev.vars.example`.
@@ -18,7 +18,10 @@
 #   3. `pnpm cf:render:staging` (renders BOTH request and state configs)
 #      `${MAIL_FROM_ADDRESS}` is read from the MAIL_FROM_ADDRESS environment
 #      variable at render time (it is not a Pulumi output): export it first.
-#   4. **Deploy the state Worker first**, then the request Worker: the
+#   4. Set the DLQ's retention out of band — it is a Queue-resource
+#      setting, not a wrangler key:
+#      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
+#   5. **Deploy the state Worker first**, then the request Worker: the
 #      `script_name` below must already exist for the DO bindings to bind.
 #      `pnpm deploy:staging:all` builds the stage, then runs the two in that
 #      order. **`wrangler deploy` is never pointed at the rendered file**: `main`
@@ -29,9 +32,9 @@
 #      and writes `dist/server/wrangler.json`, and that output is what
 #      `pnpm deploy:staging` hands to `wrangler deploy`, once
 #      `scripts/deploy-built.ts` has checked it was built from this stage.
-#   5. `pnpm secrets:push staging` uploads each file against its own
-#      Worker's config, then compares the secrets each Worker holds with
-#      its file. Without the encrypted files, one secret at a time:
+#   6. `pnpm secrets:push staging` uploads each file against its own
+#      Worker's config, confirms each upload, then compares the secrets each
+#      Worker holds with its file. Without the encrypted files, one secret at a time:
 #      `wrangler secret put SESSION_SECRET --config wrangler.staging.toml`
 #      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.staging.toml`
 #      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.staging.toml`
@@ -51,9 +54,6 @@
 #      `wrangler secret put DIRECTORY_KEY_COMMITMENT --config wrangler.state.staging.toml`
 #      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.staging.toml`
 #      These commands only read the Worker's name, so they take this file.
-#   6. Set the DLQ's retention out of band — it is a Queue-resource
-#      setting, not a wrangler key:
-#      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
 #   7. `pulumi -C infra/cloudflare/pulumi/routes -s staging up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"

@@ -221,7 +221,7 @@ decrypts both of the stage's files and checks them against the roster. It fails,
 pnpm secrets:push <stage>      # needs the rendered configs (4.1) and wrangler's credentials
 ```
 
-runs the same check, and only when both files pass does it upload each file with `wrangler secret bulk --config <that Worker's config>`, the plaintext on stdin. It then lists what each Worker holds (`wrangler secret list`) and **fails when that differs from the file**. `wrangler secret bulk` adds and overwrites but never deletes, so a secret removed from a file — a rotation variable after retirement, a key moved to the other Worker's file — or one put on the wrong Worker by hand stays live until it is deleted, and this comparison is where it shows. The failure names the command:
+runs the same check, and only when both files pass does it upload each file with `wrangler secret bulk --config <that Worker's config>`, the plaintext on stdin. It fails unless wrangler's output confirms the whole upload (`✨ <N> secrets successfully uploaded` with N the number of secrets sent) — wrangler exits 0 without uploading anything when its input is empty or unreadable. It then lists what each Worker holds (`wrangler secret list`) and **fails when the names differ from the file**. Cloudflare never hands a secret's value back, so what the comparison sees is names: a value that did not change on the Worker is visible only through wrangler's count. `wrangler secret bulk` adds and overwrites but never deletes, so a secret removed from a file — a rotation variable after retirement, a key moved to the other Worker's file — or one put on the wrong Worker by hand stays live until it is deleted, and this comparison is where it shows. The failure names the command:
 
 ```bash
 # from apps/web
@@ -300,30 +300,32 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 
 **Reality: Available.**
 
-**Step 0 — prerequisites.** Every stack in this repository ships unconfigured, and step 1 stops without them. **The failure is not self-explaining**: `config.require` only catches a key that is *absent*, and the shipped placeholders are present values, so `pulumi up` accepts them and fails later against the Cloudflare API instead.
+**Step 0 — prerequisites.** Every stack in this repository ships unconfigured, and step 2 stops without them. **The failure is not self-explaining**: `config.require` only catches a key that is *absent*, and the shipped placeholders are present values, so `pulumi up` accepts them and fails later against the Cloudflare API instead.
 
 - **Fill in the Pulumi stack config.** `infra/cloudflare/pulumi/resources/Pulumi.<stage>.yaml` requires five values — `accountId` (shipped as the literal `REPLACE_WITH_CF_ACCOUNT_ID`), `zoneName` (`example.com`), `appHostname`, `appUrl`, `resourcePrefix` — and `infra/cloudflare/pulumi/routes/Pulumi.<stage>.yaml` requires two, `accountId` (the same placeholder) and `resourcesStackRef` (whose `organization/` segment is the Pulumi organisation or user that owns the resources stack). **No stack has been `up`ed in any stage** — that is the same fact chapter 5 reads as "there is no queue to ask".
 - **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to edit the zone and Queues.
 - **Be authenticated for `wrangler` too.** `wrangler login`, or the same `CLOUDFLARE_API_TOKEN`. **`wrangler` is a devDependency of `@repo/web` and of nothing else**, so every `wrangler` command in this document runs from `apps/web/` — or from anywhere as `pnpm --filter @repo/web exec wrangler …`.
-- **Have `sops` and the stage's age key** for steps 3 and 6 — `SOPS_AGE_KEY`, or a key file sops finds (chapter 3).
+- **Have `sops` and the stage's age key** for steps 1 and 6 — `SOPS_AGE_KEY`, or `SOPS_AGE_KEY_FILE` as an absolute path (chapter 3).
 
 ```bash
 # from the repo root
-# 1. persistent resources
+# 1. check the stage's secret files against the roster (chapter 3)
+pnpm secrets:check <stage>
+
+# 2. persistent resources
 pulumi -C infra/cloudflare/pulumi/resources -s <stage> up
 
-# 2. render both Workers' configs from those outputs
+# 3. render both Workers' configs from those outputs
 pnpm cf:render:<stage>
 
 # from apps/web
-# 3. check the stage's secret files against the roster (chapter 3)
-pnpm secrets:check <stage>
-
 # 4. set the DLQ retention out of band — it is not a wrangler key
 wrangler queues update <prefix>-events-dlq --message-retention-period-secs 600
 ```
 
-Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omits `settings.message_retention_period` from the request when the flag is absent, so an unconfigured queue keeps Cloudflare's documented default of 4 days — at which both delivery constraints (chapter 12) are broken at once. `wranglerConfig.test.ts` pins the seconds in the template headers against the declared `dlqRetentionMs`, so moving one without the other turns the suite red. **What is pinned is the instruction, not the queue**: whether anyone ran it is observable nowhere in this repository.
+The check comes first because it needs nothing but the files and the key: a bad file stops the procedure before Pulumi or either Worker is touched.
+
+Step 4 is **mandatory, not an adjustment**. `wrangler queues create/update` omits `settings.message_retention_period` from the request when the flag is absent, so an unconfigured queue keeps Cloudflare's documented default of 4 days — at which both delivery constraints (chapter 12) are broken at once. `wranglerConfig.test.ts` pins the seconds in the template headers and in the Deploy workflow against the declared `dlqRetentionMs`, so moving one without the other turns the suite red. **What is pinned is the instruction, not the queue**: whether anyone ran it is observable nowhere in this repository.
 
 ### 4.2 Steps that only mean something after the deploy
 
@@ -408,39 +410,50 @@ One job, in this order:
 1. `pnpm secrets:check <stage>` — **before anything reaches Cloudflare or Pulumi**, so a bad secret file fails the run with both Workers and both stacks untouched
 2. `pulumi up` of the `resources` stack
 3. `pnpm cf:render:<stage>`, with `MAIL_FROM_ADDRESS` from the environment's variables
-4. `pnpm deploy:<stage>:all` — stage build, state Worker, request Worker (4.2)
-5. `pnpm secrets:push <stage>` — upload, then compare what each Worker holds (chapter 3)
-6. `wrangler queues update <dlq> --message-retention-period-secs 600` (4.1, step 4)
+4. `wrangler queues update <dlq> --message-retention-period-secs 600`
+5. `pnpm deploy:<stage>:all` — stage build, state Worker, request Worker
+6. `pnpm secrets:push <stage>` — upload, confirm, then compare what each Worker holds (chapter 3)
 7. `pulumi up` of the `routes` stack
 
-Every step is safe to repeat, so a run that failed partway is re-run from the start. `deployWorkflow.test.ts` pins the triggers, the concurrency, the environment, this order, that no step before the check is handed a Cloudflare or Pulumi credential, that Worker code goes up only through `deploy:<stage>:all`, and that the age key reaches the two secret steps alone; `wranglerConfig.test.ts` pins the retention seconds against `dlqRetentionMs`. `wrangler` is the one the lockfile pins, run through the same scripts as by hand; `sops` is a pinned release checked against its SHA-256; the Pulumi CLI is pinned in `pulumi/actions`.
+These are the steps of 4.1 and 4.2, numbered the same. A step that fails stops the run there: a push that finds a stale secret (chapter 3) leaves step 7 for the run after it is dealt with.
+
+Every step is safe to repeat, so a run that failed partway is re-run from the start. `deployWorkflow.test.ts` pins the triggers, the concurrency, the environment, this order, that each Pulumi and wrangler step names the run's own stage, that no step may fail without failing the run, that the job hands no step a credential beyond the stage name and no step before the check a Cloudflare or Pulumi one, that Worker code goes up only through `deploy:<stage>:all`, that the age key reaches the two secret steps alone, and that `sops` is a pinned release checked against its SHA-256 and the Pulumi CLI a pinned version; `wranglerConfig.test.ts` pins the retention seconds against `dlqRetentionMs`. `wrangler` is the one the lockfile pins, run through the same scripts as by hand. A job that hits `timeout-minutes` stops wherever it is, including between the two Worker uploads; re-running the workflow closes that skew (4.4).
 
 ### 4.7 Bootstrapping a stage
 
 **Reality: Available.** Once per stage, before its first run:
 
-1. **Pulumi.** Fill in both stacks' `Pulumi.<stage>.yaml` (4.1, step 0). The workflow logs in to Pulumi Cloud with `PULUMI_ACCESS_TOKEN` and selects the stack by the stage's name.
-2. **An age key per stage**, never shared between stages:
+1. **Pulumi.** Fill in both stacks' `Pulumi.<stage>.yaml` (4.1, step 0), and create both stacks in the backend the workflow logs in to — Pulumi Cloud, with `PULUMI_ACCESS_TOKEN`. The workflow only selects a stack by the stage's name and never creates one, so a misspelt organisation or stage name fails the run instead of provisioning a second, empty stack:
 
    ```bash
-   age-keygen -o staging.agekey          # keep it outside the repository
-   age-keygen -y staging.agekey          # the public half
+   pulumi -C infra/cloudflare/pulumi/resources stack init <stage>
+   pulumi -C infra/cloudflare/pulumi/routes stack init <stage>
+   ```
+2. **An age key per stage**, never shared between stages, kept outside the repository:
+
+   ```bash
+   mkdir -p ~/.config/sops/fog
+   age-keygen -o ~/.config/sops/fog/staging.agekey
+   age-keygen -y ~/.config/sops/fog/staging.agekey     # the public half
    ```
 
    Put the public half in place of that stage's placeholder in `.sops.yaml`.
-3. **The secret files**, from the templates:
+3. **The secret files**, from the templates. The plaintext is written under the name version control ignores (`<stage>.<worker>.json`), and only sops writes the committed name:
 
    ```bash
    # from the repo root
-   cp apps/web/secrets/request.json.example apps/web/secrets/staging.request.enc.json
-   cp apps/web/secrets/state.json.example apps/web/secrets/staging.state.enc.json
+   cp apps/web/secrets/request.json.example apps/web/secrets/staging.request.json
+   cp apps/web/secrets/state.json.example apps/web/secrets/staging.state.json
    # fill in every value, then
-   sops --encrypt --in-place apps/web/secrets/staging.request.enc.json
-   sops --encrypt --in-place apps/web/secrets/staging.state.enc.json
-   SOPS_AGE_KEY_FILE=staging.agekey pnpm secrets:check staging
+   for worker in request state; do
+     sops encrypt --filename-override apps/web/secrets/staging.$worker.enc.json \
+       --output apps/web/secrets/staging.$worker.enc.json apps/web/secrets/staging.$worker.json
+   done
+   rm apps/web/secrets/staging.request.json apps/web/secrets/staging.state.json
+   SOPS_AGE_KEY_FILE=$HOME/.config/sops/fog/staging.agekey pnpm secrets:check staging
    ```
 
-   Commit the two `*.enc.json` files and `.sops.yaml`.
+   `SOPS_AGE_KEY_FILE` has to be absolute: sops runs from `apps/web`. Commit the two `*.enc.json` files and `.sops.yaml`; `deployWorkflow.test.ts` fails on a committed `*.enc.json` that lacks sops metadata or holds a plaintext value.
 4. **The GitHub environment** named after the stage, holding these **secrets** — each with that stage's own value:
 
    | Secret | Read by |
@@ -468,7 +481,7 @@ Three settings govern production behaviour and **none of them can be read back f
 
 `queueMaxRetryPeriodMs` has no wrangler key of its own, so the declared value is **a budget, not a guarantee**. `createDeliveryTuning` only checks it covers `eventsMaxRetries * (eventsRetryDelayMs + eventsMaxBatchTimeoutMs)` — a floor of 90,000 ms against the declared 300,000, **recomputed from those three declarations and pinned to that number from both sides by `packages/core/src/application/delivery/__tests__/tuning.test.ts`**, so moving any of them turns the suite red rather than leaving the figure behind. Whether the platform actually stops retrying inside that window is unverifiable here.
 
-**Two of the three are settable at all** — the DLQ retention through `wrangler queues update`, and the WAF rule in the dashboard. **The queue's maximum retry period is not a setting at all** and moves only when the three consumer values it derives from do. **Whether the WAF rule is in place carries its marker in 9.4 and nowhere else**; this chapter is about readback, not about reach. `wrangler queues update` and `wrangler queues info <name>` — the one command that would show the DLQ retention back — **mean something only after step 1 of 4.1**: each needs a `CLOUDFLARE_API_TOKEN` and a provisioned queue, and no Pulumi stack has been `up`ed (`Pulumi.<stage>.yaml` still carries `REPLACE_WITH_CF_ACCOUNT_ID`), so **there is no queue to update or to ask**. Once a stack is up, `queues update` is the setting and `queues info` is the check. **After the deploy** none of the three is readable from this repository.
+**Two of the three are settable at all** — the DLQ retention through `wrangler queues update`, and the WAF rule in the dashboard. **The queue's maximum retry period is not a setting at all** and moves only when the three consumer values it derives from do. **Whether the WAF rule is in place carries its marker in 9.4 and nowhere else**; this chapter is about readback, not about reach. `wrangler queues update` and `wrangler queues info <name>` — the one command that would show the DLQ retention back — **mean something only after step 2 of 4.1**: each needs a `CLOUDFLARE_API_TOKEN` and a provisioned queue, and no Pulumi stack has been `up`ed (`Pulumi.<stage>.yaml` still carries `REPLACE_WITH_CF_ACCOUNT_ID`), so **there is no queue to update or to ask**. Once a stack is up, `queues update` is the setting and `queues info` is the check. **After the deploy** none of the three is readable from this repository.
 
 ## 6. Schema migration and local state
 

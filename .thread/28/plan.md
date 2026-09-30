@@ -10,7 +10,7 @@
 ## 方針
 
 - workflow は再利用可能な `deploy.yml`（`workflow_call`、入力は `stage` だけ）1 本に手順を持たせ、`deploy-staging.yml`（`push` to `main` + `workflow_dispatch`）と `deploy-production.yml`（tag `v*.*.*` + `workflow_dispatch`）はトリガー・stage 名・`concurrency`（`deploy-<stage>`、`cancel-in-progress: false`）だけを持つ。job は GitHub environment `<stage>` で走る
-- 手順の順序: install → sops（バージョン固定・checksum 照合）→ **secret の検証** → Pulumi `resources` up → `pnpm cf:render:<stage>`（`MAIL_FROM_ADDRESS` は environment の vars）→ `pnpm deploy:<stage>:all`（stage build → state → request。既存 script をそのまま使う）→ **secret の注入と、Worker に実在する secret 名の照合** → DLQ retention → Pulumi `routes` up。検証は何も触らない最初の段に置く（復号と roster しか要らない）
+- 手順の順序: install → sops（バージョン固定・checksum 照合）→ **secret の検証** → Pulumi `resources` up → `pnpm cf:render:<stage>`（`MAIL_FROM_ADDRESS` は environment の vars）→ DLQ retention → `pnpm deploy:<stage>:all`（stage build → state → request。既存 script をそのまま使う）→ **secret の注入と、その確認・Worker に実在する secret 名の照合** → Pulumi `routes` up。docs 4.1 / 4.2 と template header の手作業の番号も同じ順にそろえる。検証は何も触らない最初の段に置く（復号と roster しか要らない）
 - wrangler はリポジトリの devDependency（lockfile で固定されたもの）を pnpm script 経由で使う。`cloudflare/wrangler-action` は使わない: request Worker は `scripts/deploy-built.ts` の stage 検査を通す必要があり、version の一致は lockfile が保証する
 - secret ファイル: `apps/web/secrets/<stage>.<request|state>.enc.json`（SOPS、`encrypted_regex: "^(.+)$"`）。ルートの `.sops.yaml` が stage ごとに別の age 公開鍵を割り当てる（出荷時は placeholder。bootstrap で置き換える）。平文の雛形 `apps/web/secrets/<request|state>.json.example`。平文の `*.json` は git-ignore
 - 期待集合の authority は `apps/web/.dev.vars.example` の header table のまま。表を機械で読める形にそろえ（1 行 1 名、rotation 用 3 つに `**rotation only**` の印）、parser を `scripts/lib/` に置く。表に無い行形式は parse を中断させる
@@ -22,7 +22,8 @@
   - 余剰: roster に無い key がある
   - rotation 用 3 つは所有 Worker のファイルにだけ在ってよく、無くてもよい
   - 値が文字列でない
-  - 開発用の値: trim した値が `.dev.vars.example` の同名の値（trim 後）と一致する（空の値もこれに当たる）
+  - 空の値: trim 後に空
+  - 開発用の値: trim した値が `.dev.vars.example` の同名の値（trim 後）と一致する
   - `_` で始まる key は判定から外し、アップロードからも落とす
 - DLQ retention の秒数は `deploy.yml` にも現れるので、`wranglerConfig.test.ts` の既存の pin（template header ⇄ `dlqRetentionMs`）に `deploy.yml` を加える
 - release-please は入れない（Issue が任意とした範囲。production は手で tag を打つ）
@@ -34,7 +35,7 @@
 | AC-1 | `main` への push で staging に、tag `v*.*.*` で production（environment の承認付き）に、人手の操作無しでデプロイされる。`workflow_dispatch` でも同じ経路が走る。同じ stage の実行は並走せず、走っている実行は打ち切られない | actionlint ＋ workflow の構造を読む自動テスト（トリガー・environment・concurrency・手順順）。実デプロイは下の「観測の限界」 |
 | AC-2 | 通る: 両 Worker のファイルが自分の必須 key をすべて持ち、rotation 用 3 つは所有 Worker のファイルに在っても無くてもよく、`_` で始まる key はあってよい。落ちる: 不足・余剰（roster に無い名前、`[vars]` の名前）・所有者違い（request ⇄ state の両方向）・local only 混入・文字列でない値・開発用の値（trim 後に `.dev.vars.example` の値と一致。空を含む）。どちらのファイルの問題でも、両 stage とも、Worker のコード（と Pulumi）に触れる前に workflow が落ちる | 判定の unit test（各分岐、両 Worker、変異）＋ workflow の手順順のテスト＋手元で実 sops による `check` の実行（正常・異常） |
 | AC-3 | request 用の secret が state Worker に、state 用が request Worker に入らない。アップロードは Worker ごとに 1 回、`wrangler.<stage>.toml` / `wrangler.state.<stage>.toml` に対して行い、各アップロードは自分のファイルの key（`_` を除く）をすべて、かつそれだけ持つ。判定に 1 件でも問題があれば、どちらの Worker にも 1 回もアップロードしない | アップロード計画と `push` の実行（wrangler 呼び出しを差し替え）の unit test、変異 |
-| AC-4 | アップロードの後、各 Worker に実在する secret 名の集合が自分のファイルの key 集合と一致しなければ workflow が落ち、食い違う名前と `wrangler secret delete` の要否を示す（手作業の fallback で相手 Worker に入った key、退役後に残った rotation 用 key、ファイル間で移した key の取り残しを検出する） | 照合の unit test（`wrangler secret list` の出力を差し替え）、変異 |
+| AC-4 | 各アップロードは wrangler の出力（`N secrets successfully uploaded`）で件数を確かめ、食い違えば落ちる。アップロードの後、各 Worker に実在する secret 名の集合が自分のファイルの key 集合と一致しなければ workflow が落ち、食い違う名前と `wrangler secret delete` の要否を示す（手作業の fallback で相手 Worker に入った key、退役後に残った rotation 用 key、ファイル間で移した key の取り残しを検出する） | 照合の unit test（`wrangler secret list` の出力を差し替え）、変異 |
 | AC-5 | `ci.yml` が request / state 両 Worker の deploy dry-run を回す | 既存の `deploy-dry-run` job（`pnpm test:deploy` → `deploy:<stage>:all:dry`）。`pnpm test:deploy` の手元実行 |
 | AC-6 | 期待集合は `.dev.vars.example` の所有表だけから導かれる。表の名前集合と本文の代入の名前集合が食い違う、表に読めない行がある、のいずれでも test が落ちる。表の所有者は、各 secret を読むコード（request: `serverCloudflare.ts` と `app/` の handler、state: Durable Object）と一致することを test が固定する | roster parser の unit test ＋所有者とコードの照合 test（限界は test とこの計画に明記） |
 | AC-7 | 復号した平文は CLI のメモリと wrangler の stdin にしかなく、`_` で始まる key はアップロードされない。問題の文言は key 名とファイル名だけを含み、値を含まない | unit test（計画から `_` が落ちる、アップロードは文字列で渡る、問題文に値が現れない）。「ディスクに書かない」は CLI がファイル書き込みを持たないことで成り立ち、test は無い（限界として文書に書く） |

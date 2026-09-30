@@ -73,3 +73,31 @@ deployed stage では `OPERATOR_TOKEN` と `GOOGLE_*` も必須にする。未�
 ### Consequences
 
 production の回復手段（第 8 章の operator 面）が secret の入れ忘れで消えることは無い。Google SSO を使わない stage を作るなら、roster に optional の印を足す変更になる。
+
+## ADR-006: 注入は deploy の後の `wrangler secret bulk`（`deploy --secrets-file` にしない）
+
+### Context
+
+wrangler 4.90.1 には `wrangler deploy --secrets-file` があり、コードと secret を 1 つの version で上げられる。deploy の後に `secret bulk` する形では、新しいコードが新しい secret を要るとき、2 つの step の間だけ新コードが旧 secret で動く。
+
+### Decision
+
+ユーザーの判断で、Issue どおり deploy の後に `secret bulk` する。`--secrets-file` は平文を一時ファイルに置く必要があり、request 側は `deploy-built.ts` と pnpm script に引数を通す改修が要る。
+
+### Consequences
+
+その窓は docs 4.2 に書き、新しい secret を要する release では、その 1 つを deploy の前に手で入れる手順を示した。
+
+## ADR-007: `secret bulk` の成否は wrangler の出力の件数で確かめる
+
+### Context
+
+差分の読みで、`wrangler secret bulk` は stdin が空か読めないとき何も上げずに exit 0 で終わる（`parseBulkInputToObject` が undefined を返し、`No content found` を出すだけ）と指摘された。名前の照合は、名前が既にあれば値が届かなくても通る。
+
+### Decision
+
+`secret bulk` の stdout を受け取り、`✨ <N> secrets successfully uploaded` の N が送った件数と一致しなければ失敗にする。
+
+### Consequences
+
+stdin の配線が壊れても、値だけ届かない状態は赤になる。wrangler がこの文言を変えると push が赤になる。黙って通るより赤のほうを選んだ。

@@ -8,10 +8,10 @@
 # directly; re-run the render script instead.
 #
 # === Deploying ===========================================================
-# `.github/workflows/deploy-production.yml` runs these steps on every `v*.*.*` tag, once the `production`
-# environment's reviewers approve
-# (docs/runtime_cloudflare.md, chapter 4). By hand — the first bootstrap,
-# or when the workflow cannot run — they are:
+# `.github/workflows/deploy-production.yml` runs these steps on every
+# `v*.*.*` tag, once the `production` environment's reviewers approve
+# (docs/runtime_cloudflare.md 4.1 and 4.2, numbered the same). By hand —
+# the first bootstrap, or when the workflow cannot run — they are:
 #   1. `pnpm secrets:check production` decrypts
 #      `secrets/production.request.enc.json` / `secrets/production.state.enc.json`
 #      and checks them against the roster in `.dev.vars.example`.
@@ -19,7 +19,10 @@
 #   3. `pnpm cf:render:production` (renders BOTH request and state configs)
 #      `${MAIL_FROM_ADDRESS}` is read from the MAIL_FROM_ADDRESS environment
 #      variable at render time (it is not a Pulumi output): export it first.
-#   4. **Deploy the state Worker first**, then the request Worker: the
+#   4. Set the DLQ's retention out of band — it is a Queue-resource
+#      setting, not a wrangler key:
+#      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
+#   5. **Deploy the state Worker first**, then the request Worker: the
 #      `script_name` below must already exist for the DO bindings to bind.
 #      `pnpm deploy:production:all` builds the stage, then runs the two in that
 #      order. **`wrangler deploy` is never pointed at the rendered file**: `main`
@@ -30,9 +33,9 @@
 #      and writes `dist/server/wrangler.json`, and that output is what
 #      `pnpm deploy:production` hands to `wrangler deploy`, once
 #      `scripts/deploy-built.ts` has checked it was built from this stage.
-#   5. `pnpm secrets:push production` uploads each file against its own
-#      Worker's config, then compares the secrets each Worker holds with
-#      its file. Without the encrypted files, one secret at a time:
+#   6. `pnpm secrets:push production` uploads each file against its own
+#      Worker's config, confirms each upload, then compares the secrets each
+#      Worker holds with its file. Without the encrypted files, one secret at a time:
 #      `wrangler secret put SESSION_SECRET --config wrangler.production.toml`
 #      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.production.toml`
 #      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.production.toml`
@@ -52,9 +55,6 @@
 #      `wrangler secret put DIRECTORY_KEY_COMMITMENT --config wrangler.state.production.toml`
 #      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.production.toml`
 #      These commands only read the Worker's name, so they take this file.
-#   6. Set the DLQ's retention out of band — it is a Queue-resource
-#      setting, not a wrangler key:
-#      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
 #   7. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"
