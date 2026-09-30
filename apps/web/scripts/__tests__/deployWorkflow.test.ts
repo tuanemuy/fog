@@ -19,7 +19,7 @@ const readYaml = (path: string): unknown =>
 
 /**
  * The keys of a would-be sops file whose values are not encrypted, and
- * `sops` if its metadata is missing. sops leaves an empty value as it is,
+ * `sops` if its metadata is missing or carries no MAC. sops leaves an empty value as it is,
  * and an empty value gives nothing away.
  */
 function unencryptedKeys(text: string): string[] {
@@ -36,7 +36,13 @@ function unencryptedKeys(text: string): string[] {
       ? []
       : [key],
   );
-  return "sops" in parsed ? plain : [...plain, "sops"];
+  const { sops } = parsed;
+  const sealed =
+    typeof sops === "object" &&
+    sops !== null &&
+    "mac" in sops &&
+    typeof sops.mac === "string";
+  return sealed ? plain : [...plain, "sops"];
 }
 
 type Step = Readonly<{
@@ -46,14 +52,22 @@ type Step = Readonly<{
   with?: Record<string, unknown>;
   env?: Record<string, string>;
   "continue-on-error"?: unknown;
+  if?: unknown;
 }>;
 
 type Job = Readonly<{
   environment?: string;
   env?: Record<string, string>;
   "continue-on-error"?: unknown;
+  if?: unknown;
   steps: Step[];
 }>;
+
+/** The repository secrets a piece of workflow YAML refers to, wherever in it. */
+const secretsReferencedBy = (node: unknown): string[] =>
+  [
+    ...JSON.stringify(node ?? null).matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g),
+  ].map((match) => match[1] ?? "");
 
 type CallerWorkflow = Readonly<{
   on: Record<string, unknown>;
@@ -159,10 +173,14 @@ describe("the shared deploy", () => {
 
   // A failing step has to stop the run: the check above all, since the
   // steps after it touch Cloudflare and Pulumi.
+  // A failing step has to stop the run, and nothing after it may run
+  // anyway — `continue-on-error`, or an `if:` such as `always()`.
   it("lets no step fail without failing the run", () => {
     expect(job?.["continue-on-error"]).toBeUndefined();
+    expect(job?.if).toBeUndefined();
     for (const step of steps) {
       expect(step["continue-on-error"], step.name).toBeUndefined();
+      expect(step.if, step.name).toBeUndefined();
     }
   });
 
@@ -171,6 +189,8 @@ describe("the shared deploy", () => {
   it("sets nothing but the stage name for the whole job", () => {
     expect(Object.keys(job?.env ?? {})).toEqual(["STAGE"]);
     expect(job?.env?.STAGE).toMatch(/^\$\{\{ inputs\.stage \}\}$/);
+    const { steps: _steps, ...jobLevel } = job ?? { steps: [] };
+    expect(secretsReferencedBy(jobLevel)).toEqual([]);
   });
 
   it("points every Pulumi and wrangler step at the run's own stage", () => {
@@ -208,13 +228,11 @@ describe("the shared deploy", () => {
 
   // The check runs before anything reaches Cloudflare or Pulumi, so a bad
   // secret file fails the run with nothing touched.
-  it("hands no Cloudflare or Pulumi credential to a step before the secret check", () => {
+  it("hands no secret at all to a step before the secret check", () => {
     const beforeCheck = steps.slice(0, order[0]);
     for (const step of beforeCheck) {
       expect(step.uses?.startsWith("pulumi/") ?? false).toBe(false);
-      expect(Object.keys(step.env ?? {})).not.toContainEqual(
-        expect.stringMatching(/^(CLOUDFLARE|PULUMI)_/),
-      );
+      expect(secretsReferencedBy(step), step.name).toEqual([]);
     }
   });
 
@@ -226,7 +244,9 @@ describe("the shared deploy", () => {
   });
 
   it("gives the age key only to the two secret steps", () => {
-    const holders = steps.filter((step) => step.env?.SOPS_AGE_KEY);
+    const holders = steps.filter((step) =>
+      secretsReferencedBy(step).includes("SOPS_AGE_KEY"),
+    );
     expect(holders.map((step) => step.run)).toEqual([
       'pnpm secrets:check "$STAGE"',
       'pnpm secrets:push "$STAGE"',
@@ -306,10 +326,16 @@ describe("unencryptedKeys", () => {
         JSON.stringify({
           A: "ENC[AES256_GCM,data:x,type:str]",
           B: "",
-          sops: {},
+          sops: { mac: "ENC[AES256_GCM,data:m,type:str]" },
         }),
       ),
     ).toEqual([]);
+  });
+
+  it("names a file whose metadata carries no MAC", () => {
+    expect(unencryptedKeys(JSON.stringify({ A: "", sops: {} }))).toEqual([
+      "sops",
+    ]);
   });
 
   it("names every plaintext value, and a file without metadata", () => {

@@ -11,7 +11,7 @@
  * text is held in this process and handed to wrangler over stdin — it is
  * never written to a file.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,10 @@ try {
           stdio: ["ignore", "pipe", "inherit"],
         }),
       upload: (config, json) => {
-        const output = execFileSync(
+        // Shown whether the upload succeeded or not: wrangler prints key
+        // names and counts, never a value. A failed upload prints no
+        // confirmation, and `runSecretCommand` fails on its absence.
+        const { stdout } = spawnSync(
           wrangler,
           ["secret", "bulk", "--config", config],
           {
@@ -58,9 +61,8 @@ try {
             stdio: ["pipe", "pipe", "inherit"],
           },
         );
-        // Key names and counts only; wrangler never prints a value.
-        process.stdout.write(output);
-        return output;
+        process.stdout.write(stdout ?? "");
+        return stdout ?? "";
       },
       list: (config) =>
         execFileSync(

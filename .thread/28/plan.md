@@ -33,7 +33,7 @@
 | # | 基準 | 観測方法 |
 |---|---|---|
 | AC-1 | `main` への push で staging に、tag `v*.*.*` で production（environment の承認付き）に、人手の操作無しでデプロイされる。`workflow_dispatch` でも同じ経路が走る。同じ stage の実行は並走せず、走っている実行は打ち切られない | actionlint ＋ workflow の構造を読む自動テスト（トリガー・environment・concurrency・手順順）。実デプロイは下の「観測の限界」 |
-| AC-2 | 通る: 両 Worker のファイルが自分の必須 key をすべて持ち、rotation 用 3 つは所有 Worker のファイルに在っても無くてもよく、`_` で始まる key はあってよい。落ちる: 不足・余剰（roster に無い名前、`[vars]` の名前）・所有者違い（request ⇄ state の両方向）・local only 混入・文字列でない値・開発用の値（trim 後に `.dev.vars.example` の値と一致。空を含む）。どちらのファイルの問題でも、両 stage とも、Worker のコード（と Pulumi）に触れる前に workflow が落ちる | 判定の unit test（各分岐、両 Worker、変異）＋ workflow の手順順のテスト＋手元で実 sops による `check` の実行（正常・異常） |
+| AC-2 | 通る: 両 Worker のファイルが自分の必須 key をすべて持ち、rotation 用 3 つは所有 Worker のファイルに在っても無くてもよく、`_` で始まる key はあってよい。落ちる: 不足・余剰（roster に無い名前、`[vars]` の名前）・所有者違い（request ⇄ state の両方向）・local only 混入・文字列でない値・空の値（trim 後）・開発用の値（trim 後に `.dev.vars.example` の値と一致）。どちらのファイルの問題でも、両 stage とも、Worker のコード（と Pulumi）に触れる前に workflow が落ちる | 判定の unit test（各分岐、両 Worker、変異）＋ workflow の手順順のテスト＋手元で実 sops による `check` の実行（正常・異常） |
 | AC-3 | request 用の secret が state Worker に、state 用が request Worker に入らない。アップロードは Worker ごとに 1 回、`wrangler.<stage>.toml` / `wrangler.state.<stage>.toml` に対して行い、各アップロードは自分のファイルの key（`_` を除く）をすべて、かつそれだけ持つ。判定に 1 件でも問題があれば、どちらの Worker にも 1 回もアップロードしない | アップロード計画と `push` の実行（wrangler 呼び出しを差し替え）の unit test、変異 |
 | AC-4 | 各アップロードは wrangler の出力（`N secrets successfully uploaded`）で件数を確かめ、食い違えば落ちる。アップロードの後、各 Worker に実在する secret 名の集合が自分のファイルの key 集合と一致しなければ workflow が落ち、食い違う名前と `wrangler secret delete` の要否を示す（手作業の fallback で相手 Worker に入った key、退役後に残った rotation 用 key、ファイル間で移した key の取り残しを検出する） | 照合の unit test（`wrangler secret list` の出力を差し替え）、変異 |
 | AC-5 | `ci.yml` が request / state 両 Worker の deploy dry-run を回す | 既存の `deploy-dry-run` job（`pnpm test:deploy` → `deploy:<stage>:all:dry`）。`pnpm test:deploy` の手元実行 |
@@ -48,7 +48,7 @@
 
 - 必須 key は roster のうち rotation 用でない secret すべて。`OPERATOR_TOKEN` と `GOOGLE_*` も含む（未設定で面を消す運用は local だけ。Issue の「roster の所有分（rotation 用は optional）」に従う）
 - rotation 用の値の中身（JSON の形・世代・keyring とコミットメントの対）は見ない。対の整合は bucket の世代ガードとコミットメント照合が実行時に守る（`spec/rotation/index.md`）。keyring を active だけにした単一世代はコミットメント無しで正当なので、存在の対も規則にしない
-- 開発用の値の検査は `.dev.vars.example` の値との一致。現状その値は空か local only のもの（`console` / `true`）なので、実質「空でない」に等しい
+- 空の値は常に拒否する。開発用の値の検査は `.dev.vars.example` の値との一致で、現状その値は空か local only のもの（`console` / `true`）なので、空の値の検査を超えて拒否するものは無い
 
 ## 観測の限界
 

@@ -209,9 +209,9 @@ decrypts both of the stage's files and checks them against the roster. It fails,
 - a secret its Worker requires is **missing** — every row owned by that Worker is required except the three **rotation only** ones, which may be present or absent;
 - a key **belongs to the other Worker**, in either direction;
 - a key is **local only** (`MAIL_DEV_SINK`, `SSO_DEV_STUB`), a **`[vars]` entry**, or **not in the roster**;
-- a value is **not a string**, or is, trimmed, **the value `.dev.vars.example` assigns** to that name.
+- a value is **not a string**, is **empty** once trimmed, or is, trimmed, **the value `.dev.vars.example` assigns** to that name.
 
-**Limits.** The last check compares against the development values, and today every secret's development value is empty, so in practice it rejects an empty value and nothing more. The check reads names and ownership, never the content of the rotation variables: whether a keyring parses, and whether `DIRECTORY_ROUTING_KEYRING` and `DIRECTORY_KEY_COMMITMENT` agree, is what the Identity Directory buckets refuse at runtime (`spec/rotation/index.md`); a keyring reduced to its active entry is legitimate without a commitment, so not even their presence is paired. The decrypted text stays in the process and reaches `wrangler` over stdin, never a file — that holds by the shape of `apps/web/scripts/stage-secrets.ts`, and no test watches the disk.
+**Limits.** The comparison with the development values catches a value copied out of `.dev.vars.example`, and today every secret's development value is empty, so it rejects nothing the empty-value rule does not. The check reads names and ownership, never the content of the rotation variables: whether a keyring parses, and whether `DIRECTORY_ROUTING_KEYRING` and `DIRECTORY_KEY_COMMITMENT` agree, is what the Identity Directory buckets refuse at runtime (`spec/rotation/index.md`); a keyring reduced to its active entry is legitimate without a commitment, so not even their presence is paired. The decrypted text stays in the process and reaches `wrangler` over stdin, never a file — that holds by the shape of `apps/web/scripts/stage-secrets.ts`, and no test watches the disk.
 
 ### Installing
 
@@ -453,7 +453,7 @@ Every step is safe to repeat, so a run that failed partway is re-run from the st
    SOPS_AGE_KEY_FILE=$HOME/.config/sops/fog/staging.agekey pnpm secrets:check staging
    ```
 
-   `SOPS_AGE_KEY_FILE` has to be absolute: sops runs from `apps/web`. Commit the two `*.enc.json` files and `.sops.yaml`; `deployWorkflow.test.ts` fails on a committed `*.enc.json` that lacks sops metadata or holds a plaintext value.
+   `SOPS_AGE_KEY_FILE` has to be absolute: sops runs from `apps/web`. Commit the two `*.enc.json` files and `.sops.yaml`. `deployWorkflow.test.ts` fails on a `*.enc.json` without sops metadata and its MAC, or with a plaintext value — in CI, which is after the push: it catches a plaintext file, it does not keep one out of the history.
 4. **The GitHub environment** named after the stage, holding these **secrets** — each with that stage's own value:
 
    | Secret | Read by |
