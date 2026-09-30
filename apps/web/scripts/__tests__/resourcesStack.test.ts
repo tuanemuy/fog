@@ -7,10 +7,9 @@ import { WRANGLER_PLACEHOLDER_SOURCES } from "../lib/wranglerTemplate";
 // These read the Pulumi programs as text, because running them needs a
 // Pulumi backend and a Cloudflare account. They see only these spellings:
 // `new cloudflare.<Type>(<first argument>` and `cloudflare.getZoneOutput(`
-// in `resources/index.ts`, whose
-// imports they pin to the two Pulumi packages; `export const <name>`; and
-// the argument of `requireOutput(...)` / `getOutput(...)` in
-// `routes/index.ts`. Anything spelled otherwise — an output exported in
+// in `resources/index.ts`, whose imports they pin to the two Pulumi
+// packages; `export const <name>`; and the argument of `requireOutput(...)`
+// / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in
 // another form, a resource constructed through a same-file alias
 // (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or
 // a dynamic `import()` — escapes them, and these spellings inside a
