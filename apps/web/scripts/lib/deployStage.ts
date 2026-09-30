@@ -5,8 +5,12 @@ export function isDeployStage(value: string): value is DeployStage {
   return (DEPLOY_STAGES as readonly string[]).includes(value);
 }
 
-/** The two Workers: the request Worker serves HTTP, the state Worker owns the Durable Objects. */
-export type WorkerRole = "request" | "state";
+/**
+ * The two Workers, in the order they deploy: the state Worker owns the
+ * Durable Objects the request Worker's bindings name, so it goes first.
+ */
+export const WORKER_ROLES = ["state", "request"] as const;
+export type WorkerRole = (typeof WORKER_ROLES)[number];
 
 export type WranglerConfigFiles = Readonly<Record<WorkerRole, string>>;
 

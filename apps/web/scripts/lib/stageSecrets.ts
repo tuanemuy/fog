@@ -1,13 +1,12 @@
 import {
   type DeployStage,
+  isDeployStage,
   secretFiles,
+  WORKER_ROLES,
   type WorkerRole,
   wranglerConfigFiles,
 } from "./deployStage";
 import type { SecretRoster } from "./secretRoster";
-
-/** The Workers in the order their secrets are uploaded. */
-const WORKERS: readonly WorkerRole[] = ["state", "request"];
 
 /** A decrypted secret file: a JSON object, its values not yet checked. */
 export type SecretFile = Readonly<Record<string, unknown>>;
@@ -43,14 +42,49 @@ export function parseSecretFile(text: string, label: string): SecretFile {
   return parsed as SecretFile;
 }
 
-function problemsOf(
+type KeyCheck =
+  | Readonly<{ ok: true; value: string }>
+  | Readonly<{ ok: false; problem: string }>;
+
+/** Whether `key` may be uploaded to `worker` with this value. */
+function checkKey(
+  worker: WorkerRole,
+  key: string,
+  value: unknown,
+  roster: SecretRoster,
+): KeyCheck {
+  const refuse = (problem: string): KeyCheck => ({ ok: false, problem });
+  const entry = roster.entries.find((candidate) => candidate.name === key);
+  if (entry === undefined) {
+    return refuse("is not in the roster of .dev.vars.example");
+  }
+  if (entry.kind === "localOnly") {
+    return refuse("is local only and must not be deployed");
+  }
+  if (entry.kind === "var") return refuse("is a [vars] entry, not a secret");
+  if (entry.owner !== worker) {
+    return refuse(`belongs to the ${entry.owner} Worker`);
+  }
+  if (typeof value !== "string") return refuse("is not a string");
+  if (value.trim() === "") return refuse("is empty");
+  if (value.trim() === roster.developmentValues[key]?.trim()) {
+    return refuse("still holds the development value from .dev.vars.example");
+  }
+  return { ok: true, value };
+}
+
+type CheckedFile = Readonly<{
+  problems: readonly string[];
+  secrets: Readonly<Record<string, string>>;
+}>;
+
+function checkFile(
   worker: WorkerRole,
   file: SecretFile,
   roster: SecretRoster,
   label: string,
-): string[] {
+): CheckedFile {
   const keys = Object.keys(file).filter((key) => !isNote(key));
-
   const missing = roster.entries.flatMap((entry) =>
     entry.kind === "secret" &&
     entry.owner === worker &&
@@ -59,36 +93,20 @@ function problemsOf(
       ? [`${label}: ${entry.name} is missing`]
       : [],
   );
-
-  const present = keys.flatMap((key) => {
-    const problem = keyProblem(worker, key, file[key], roster);
-    return problem === null ? [] : [`${label}: ${key} ${problem}`];
-  });
-
-  return [...missing, ...present];
-}
-
-/** Why `key` must not be uploaded to `worker` with this value, or `null`. */
-function keyProblem(
-  worker: WorkerRole,
-  key: string,
-  value: unknown,
-  roster: SecretRoster,
-): string | null {
-  const entry = roster.entries.find((candidate) => candidate.name === key);
-  if (entry === undefined) return "is not in the roster of .dev.vars.example";
-  if (entry.kind === "localOnly")
-    return "is local only and must not be deployed";
-  if (entry.kind === "var") return "is a [vars] entry, not a secret";
-  if (entry.owner !== worker) return `belongs to the ${entry.owner} Worker`;
-  if (typeof value !== "string") return "is not a string";
-  const development = roster.developmentValues[key];
-  if (development === undefined || value.trim() !== development.trim()) {
-    return null;
-  }
-  return value.trim() === ""
-    ? "is empty"
-    : "still holds the development value from .dev.vars.example";
+  const checks = keys.map(
+    (key) => [key, checkKey(worker, key, file[key], roster)] as const,
+  );
+  return {
+    problems: [
+      ...missing,
+      ...checks.flatMap(([key, check]) =>
+        check.ok ? [] : [`${label}: ${key} ${check.problem}`],
+      ),
+    ],
+    secrets: Object.fromEntries(
+      checks.flatMap(([key, check]) => (check.ok ? [[key, check.value]] : [])),
+    ),
+  };
 }
 
 /**
@@ -96,9 +114,9 @@ function keyProblem(
  * one upload per Worker against that Worker's own config.
  *
  * Every problem is collected before any is reported, and none of them
- * quotes a value. A plan exists only when there are none, so an upload
- * can never carry a key the check has not passed: each upload holds
- * exactly the keys of its own Worker's file, less the `_` notes.
+ * quotes a value. A plan exists only when there are none, and each upload
+ * holds exactly the keys of its own Worker's file that passed, less the
+ * `_` notes.
  */
 export function planSecretUploads(
   stage: DeployStage,
@@ -106,24 +124,39 @@ export function planSecretUploads(
   roster: SecretRoster,
 ): SecretPlan {
   const labels = secretFiles(stage);
-  const problems = WORKERS.flatMap((worker) =>
-    problemsOf(worker, files[worker], roster, labels[worker]),
-  );
-  if (problems.length > 0) return { ok: false, problems };
-
   const configs = wranglerConfigFiles(stage);
+  const checked = WORKER_ROLES.map((worker) => ({
+    worker,
+    ...checkFile(worker, files[worker], roster, labels[worker]),
+  }));
+  const problems = checked.flatMap((file) => file.problems);
+  if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,
-    uploads: WORKERS.map((worker) => ({
+    uploads: checked.map(({ worker, secrets }) => ({
       worker,
       config: configs[worker],
-      secrets: Object.fromEntries(
-        Object.entries(files[worker]).flatMap(([key, value]) =>
-          isNote(key) || typeof value !== "string" ? [] : [[key, value]],
-        ),
-      ),
+      secrets,
     })),
   };
+}
+
+const UPLOADED = /(\d+) secrets successfully uploaded/;
+
+/**
+ * Whether `wrangler secret bulk`'s output confirms the whole upload.
+ * wrangler exits 0 without uploading anything when its input is empty or
+ * unreadable, so its exit code alone does not say the secrets arrived.
+ */
+export function uploadConfirmationProblem(
+  upload: SecretUpload,
+  output: string,
+): string | null {
+  const expected = Object.keys(upload.secrets).length;
+  const confirmed = UPLOADED.exec(output)?.[1];
+  return confirmed === String(expected)
+    ? null
+    : `wrangler did not confirm uploading ${expected} secrets to the ${upload.worker} Worker`;
 }
 
 /**
@@ -154,8 +187,8 @@ export function parseSecretList(text: string, label: string): string[] {
 }
 
 /**
- * Where the secrets a Worker actually holds differ from what was just
- * uploaded to it. `wrangler secret bulk` adds and overwrites but never
+ * Where the secrets a Worker actually holds differ, by name, from what was
+ * just uploaded to it. `wrangler secret bulk` adds and overwrites but never
  * deletes, so a name left behind — put on the wrong Worker by hand, a
  * rotation variable after retirement, a key moved to the other file —
  * stays live until someone deletes it, and this is where it shows.
@@ -188,14 +221,35 @@ export function deployedSecretProblems(
   return [...stale, ...absent];
 }
 
-export type SecretCommand = "check" | "push";
+export const SECRET_COMMANDS = ["check", "push"] as const;
+export type SecretCommand = (typeof SECRET_COMMANDS)[number];
+
+export type SecretCommandArgs = Readonly<{
+  command: SecretCommand;
+  stage: DeployStage;
+}>;
+
+/** `<check|push> <stage>`, and nothing else. */
+export function parseSecretCommandArgs(
+  args: readonly string[],
+): SecretCommandArgs | null {
+  const [command, stage, ...rest] = args;
+  const isCommand = (value: string | undefined): value is SecretCommand =>
+    (SECRET_COMMANDS as readonly (string | undefined)[]).includes(value);
+  return isCommand(command) &&
+    stage !== undefined &&
+    isDeployStage(stage) &&
+    rest.length === 0
+    ? { command, stage }
+    : null;
+}
 
 /** The side effects `runSecretCommand` needs, so a test can stand in for sops and wrangler. */
 export type SecretCommandIo = Readonly<{
   /** `sops --decrypt` of a file relative to `apps/web`, as text held in memory. */
   decrypt: (file: string) => string;
-  /** `wrangler secret bulk --config <config>`, with the JSON handed over stdin. */
-  upload: (config: string, json: string) => void;
+  /** `wrangler secret bulk --config <config>` with the JSON on stdin; returns its output. */
+  upload: (config: string, json: string) => string;
   /** `wrangler secret list --config <config> --format json`. */
   list: (config: string) => string;
   report: (line: string) => void;
@@ -204,21 +258,23 @@ export type SecretCommandIo = Readonly<{
 /**
  * `check` decrypts a stage's two secret files and checks them; `push`
  * does the same, uploads each Worker's secrets against its own config
- * only when the check passes for both, then compares what each Worker
- * holds with what it was sent. Returns whether the command succeeded.
+ * only when the check passes for both, then confirms each upload and
+ * compares the names each Worker holds with its file. Returns whether the
+ * command succeeded.
  */
 export function runSecretCommand(
-  command: SecretCommand,
-  stage: DeployStage,
+  { command, stage }: SecretCommandArgs,
   roster: SecretRoster,
   io: SecretCommandIo,
 ): boolean {
   const files = secretFiles(stage);
-  const decrypted = {
-    request: parseSecretFile(io.decrypt(files.request), files.request),
-    state: parseSecretFile(io.decrypt(files.state), files.state),
-  };
-  const plan = planSecretUploads(stage, decrypted, roster);
+  const read = (worker: WorkerRole) =>
+    parseSecretFile(io.decrypt(files[worker]), files[worker]);
+  const plan = planSecretUploads(
+    stage,
+    { request: read("request"), state: read("state") },
+    roster,
+  );
   if (!plan.ok) {
     for (const problem of plan.problems) io.report(problem);
     return false;
@@ -226,16 +282,23 @@ export function runSecretCommand(
   io.report(`${files.request} and ${files.state} pass the check`);
   if (command === "check") return true;
 
-  for (const upload of plan.uploads) {
-    io.upload(upload.config, JSON.stringify(upload.secrets));
-  }
-  const problems = plan.uploads.flatMap((upload) =>
-    deployedSecretProblems(
+  const unconfirmed = plan.uploads.flatMap((upload) => {
+    const problem = uploadConfirmationProblem(
       upload,
-      parseSecretList(io.list(upload.config), upload.config),
-      roster,
+      io.upload(upload.config, JSON.stringify(upload.secrets)),
+    );
+    return problem === null ? [] : [problem];
+  });
+  const problems = [
+    ...unconfirmed,
+    ...plan.uploads.flatMap((upload) =>
+      deployedSecretProblems(
+        upload,
+        parseSecretList(io.list(upload.config), upload.config),
+        roster,
+      ),
     ),
-  );
+  ];
   for (const problem of problems) io.report(problem);
   return problems.length === 0;
 }

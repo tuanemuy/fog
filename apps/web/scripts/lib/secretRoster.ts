@@ -58,12 +58,12 @@ function unquote(raw: string): string {
  *
  * The table is the rows between the heading and the next bare `#`. A row
  * is `#   NAME — <owner>`, and an indented comment line continues the row
- * above it. Anything else in that span throws, so a row written in a new
- * shape stops the deploy's secret check instead of silently dropping out
- * of the roster.
+ * above it. Anything else in that span throws, and so does a name with
+ * two rows, so a row written in a new shape stops the deploy's secret
+ * check instead of silently dropping out of the roster.
  */
 export function parseSecretRoster(example: string): SecretRoster {
-  const lines = example.split("\n");
+  const lines = example.split(/\r?\n/);
   const heading = lines.findIndex((line) => line.startsWith(TABLE_HEADING));
   if (heading === -1) {
     throw new Error(".dev.vars.example: the ownership table is missing");
@@ -80,7 +80,11 @@ export function parseSecretRoster(example: string): SecretRoster {
     if (line === "#") break;
     const row = ROW.exec(line);
     if (row !== null) {
-      entries.push(entryOf(row[1] ?? "", row[2] ?? ""));
+      const name = row[1] ?? "";
+      if (entries.some((entry) => entry.name === name)) {
+        throw new Error(`.dev.vars.example: ${name} has two rows`);
+      }
+      entries.push(entryOf(name, row[2] ?? ""));
     } else if (!CONTINUATION.test(line)) {
       throw new Error(
         `.dev.vars.example: unreadable line in the ownership table: "${line}"`,

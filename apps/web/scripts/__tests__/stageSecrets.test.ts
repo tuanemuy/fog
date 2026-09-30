@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { SecretRoster } from "../lib/secretRoster";
 import {
   deployedSecretProblems,
+  parseSecretCommandArgs,
   parseSecretFile,
   parseSecretList,
   planSecretUploads,
   runSecretCommand,
   type SecretCommandIo,
   type SecretFile,
+  uploadConfirmationProblem,
 } from "../lib/stageSecrets";
 
 const roster: SecretRoster = {
@@ -16,6 +18,7 @@ const roster: SecretRoster = {
     { kind: "secret", name: "REQ_ROT", owner: "request", rotationOnly: true },
     { kind: "secret", name: "STATE_KEY", owner: "state", rotationOnly: false },
     { kind: "secret", name: "STATE_ROT", owner: "state", rotationOnly: true },
+    { kind: "secret", name: "REQ_OPT", owner: "request", rotationOnly: true },
     { kind: "localOnly", name: "DEV_SINK" },
     { kind: "var", name: "SOME_VAR" },
   ],
@@ -160,6 +163,11 @@ describe("planSecretUploads", () => {
       "secrets/staging.request.enc.json: REQ_ROT is empty",
     ],
     [
+      "a value is empty and the roster assigns it no development value",
+      { request: { ...good.request, REQ_OPT: "  " }, state: good.state },
+      "secrets/staging.request.enc.json: REQ_OPT is empty",
+    ],
+    [
       "a value is the development value, padded",
       { request: good.request, state: { STATE_KEY: "  dev-state-key\n" } },
       "secrets/staging.state.enc.json: STATE_KEY still holds the development value from .dev.vars.example",
@@ -297,6 +305,7 @@ describe("runSecretCommand", () => {
       "wrangler.staging.toml": ["REQ_KEY"],
       "wrangler.state.staging.toml": ["STATE_KEY"],
     },
+    confirmed = true,
   ) => {
     const byPath: Record<string, string> = encrypted(files);
     const calls: string[] = [];
@@ -310,6 +319,8 @@ describe("runSecretCommand", () => {
       },
       upload: (config, json) => {
         calls.push(`upload ${config} ${json}`);
+        const count = Object.keys(JSON.parse(json) as object).length;
+        return confirmed ? `✨ ${count} secrets successfully uploaded\n` : "";
       },
       list: (config) => {
         calls.push(`list ${config}`);
@@ -329,7 +340,9 @@ describe("runSecretCommand", () => {
 
   it("check decrypts both files and uploads nothing", () => {
     const { io, calls } = fakeIo(good);
-    expect(runSecretCommand("check", "staging", roster, io)).toBe(true);
+    expect(
+      runSecretCommand({ command: "check", stage: "staging" }, roster, io),
+    ).toBe(true);
     expect(calls).toEqual([
       "decrypt secrets/staging.request.enc.json",
       "decrypt secrets/staging.state.enc.json",
@@ -338,7 +351,9 @@ describe("runSecretCommand", () => {
 
   it("check fails on a problem and reports it", () => {
     const { io, reports } = fakeIo({ request: {}, state: good.state });
-    expect(runSecretCommand("check", "staging", roster, io)).toBe(false);
+    expect(
+      runSecretCommand({ command: "check", stage: "staging" }, roster, io),
+    ).toBe(false);
     expect(reports).toEqual([
       "secrets/staging.request.enc.json: REQ_KEY is missing",
     ]);
@@ -349,7 +364,9 @@ describe("runSecretCommand", () => {
       request: { _readme: "note", ...good.request },
       state: good.state,
     });
-    expect(runSecretCommand("push", "staging", roster, io)).toBe(true);
+    expect(
+      runSecretCommand({ command: "push", stage: "staging" }, roster, io),
+    ).toBe(true);
     expect(calls.slice(2)).toEqual([
       'upload wrangler.state.staging.toml {"STATE_KEY":"state-secret-value"}',
       'upload wrangler.staging.toml {"REQ_KEY":"request-secret-value"}',
@@ -363,7 +380,9 @@ describe("runSecretCommand", () => {
       request: good.request,
       state: { ...good.state, DEV_SINK: "console" },
     });
-    expect(runSecretCommand("push", "staging", roster, io)).toBe(false);
+    expect(
+      runSecretCommand({ command: "push", stage: "staging" }, roster, io),
+    ).toBe(false);
     expect(calls.filter((call) => !call.startsWith("decrypt"))).toEqual([]);
   });
 
@@ -372,7 +391,65 @@ describe("runSecretCommand", () => {
       "wrangler.staging.toml": ["REQ_KEY", "REQ_ROT"],
       "wrangler.state.staging.toml": ["STATE_KEY"],
     });
-    expect(runSecretCommand("push", "staging", roster, io)).toBe(false);
+    expect(
+      runSecretCommand({ command: "push", stage: "staging" }, roster, io),
+    ).toBe(false);
     expect(reports.at(-1)).toMatch(/^the request Worker holds REQ_ROT/);
+  });
+
+  it("push fails when wrangler does not confirm an upload", () => {
+    const { io, reports } = fakeIo(good, undefined, false);
+    expect(
+      runSecretCommand({ command: "push", stage: "staging" }, roster, io),
+    ).toBe(false);
+    expect(reports).toContain(
+      "wrangler did not confirm uploading 1 secrets to the request Worker",
+    );
+  });
+});
+
+describe("uploadConfirmationProblem", () => {
+  const upload = {
+    worker: "request",
+    config: "wrangler.staging.toml",
+    secrets: { A: "a-value", B: "b-value" },
+  } as const;
+
+  it("accepts wrangler's count of the whole upload", () => {
+    expect(
+      uploadConfirmationProblem(
+        upload,
+        "🌀 Creating the secrets\n✨ 2 secrets successfully uploaded\n",
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["no confirmation", "🚨 No content found in file, or piped input."],
+    ["a short count", "✨ 1 secrets successfully uploaded"],
+    ["a count that only ends like it", "✨ 12 secrets successfully uploaded"],
+  ])("refuses %s", (_label, output) => {
+    expect(uploadConfirmationProblem(upload, output)).toBe(
+      "wrangler did not confirm uploading 2 secrets to the request Worker",
+    );
+  });
+});
+
+describe("parseSecretCommandArgs", () => {
+  it.each([
+    [["check", "staging"], { command: "check", stage: "staging" }],
+    [["push", "production"], { command: "push", stage: "production" }],
+  ])("reads %j", (args, expected) => {
+    expect(parseSecretCommandArgs(args)).toEqual(expected);
+  });
+
+  it.each([
+    [[]],
+    [["check"]],
+    [["deploy", "staging"]],
+    [["check", "local"]],
+    [["push", "staging", "--dry-run"]],
+  ])("refuses %j", (args) => {
+    expect(parseSecretCommandArgs(args)).toBeNull();
   });
 });

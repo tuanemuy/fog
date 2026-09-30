@@ -75,6 +75,34 @@ describe("parseSecretRoster", () => {
     ).toThrowError(/unreadable line/);
   });
 
+  it("refuses a name with two rows", () => {
+    expect(() =>
+      parseSecretRoster(
+        table("#   A_KEY  — request Worker", "#   A_KEY  — state Worker"),
+      ),
+    ).toThrowError(/A_KEY has two rows/);
+  });
+
+  it("reads a file checked out with CRLF line endings", () => {
+    const roster = parseSecretRoster(
+      `${table("#   A_KEY  — request Worker")}A_KEY="x"\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
+    );
+    expect(roster).toEqual({
+      entries: [
+        {
+          kind: "secret",
+          name: "A_KEY",
+          owner: "request",
+          rotationOnly: false,
+        },
+      ],
+      developmentValues: { A_KEY: "x" },
+    });
+  });
+
   it("refuses a file with no table", () => {
     expect(() => parseSecretRoster("A_KEY=1\n")).toThrowError(
       /ownership table is missing/,

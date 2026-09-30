@@ -2,9 +2,9 @@ name: Deploy
 
 # The deploy of one stage, called by deploy-staging.yml and
 # deploy-production.yml, which differ only in their trigger and stage name.
-# The order is docs/runtime_cloudflare.md chapter 4's, with the secret check
-# moved to the front so that a bad secret file stops the run before Pulumi
-# or either Worker is touched.
+# The steps are docs/runtime_cloudflare.md 4.1 and 4.2, in that order. The
+# secret check comes first so that a bad secret file stops the run before
+# Pulumi or either Worker is touched.
 on:
   workflow_call:
     inputs:
@@ -71,6 +71,18 @@ jobs:
           MAIL_FROM_ADDRESS: ${{ vars.MAIL_FROM_ADDRESS }}
         run: pnpm "cf:render:$STAGE"
 
+      # Idempotent; the retention is not a wrangler config key, so nothing
+      # else sets it (docs/runtime_cloudflare.md 4.1, step 4).
+      - name: Set the DLQ retention
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          dlq=$(pulumi -C infra/cloudflare/pulumi/resources -s "$STAGE" stack output dlqQueueName)
+          pnpm --filter @repo/web exec wrangler queues update "$dlq" --message-retention-period-secs 600
+
       # Stage build, then the state Worker, then the request Worker: the
       # request Worker's Durable Object bindings name the state Worker's
       # script, which has to exist first.
@@ -86,18 +98,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm secrets:push "$STAGE"
-
-      # Idempotent; the retention is not a wrangler config key, so nothing
-      # else sets it (docs/runtime_cloudflare.md 4.1, step 4).
-      - name: Set the DLQ retention
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          dlq=$(pulumi -C infra/cloudflare/pulumi/resources -s "$STAGE" stack output dlqQueueName)
-          pnpm --filter @repo/web exec wrangler queues update "$dlq" --message-retention-period-secs 600
 
       # Last: Cloudflare rejects a custom-domain binding for a Worker that
       # has not been uploaded.

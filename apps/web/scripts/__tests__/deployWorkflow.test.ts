@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -17,12 +17,42 @@ const repoRoot = resolve(webRoot, "../..");
 const readYaml = (path: string): unknown =>
   parse(readFileSync(resolve(repoRoot, path), "utf8"));
 
+/**
+ * The keys of a would-be sops file whose values are not encrypted, and
+ * `sops` if its metadata is missing. sops leaves an empty value as it is,
+ * and an empty value gives nothing away.
+ */
+function unencryptedKeys(text: string): string[] {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return ["(not JSON)"];
+  }
+  const plain = Object.entries(parsed).flatMap(([key, value]) =>
+    key === "sops" ||
+    value === "" ||
+    (typeof value === "string" && value.startsWith("ENC["))
+      ? []
+      : [key],
+  );
+  return "sops" in parsed ? plain : [...plain, "sops"];
+}
+
 type Step = Readonly<{
   name?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
   env?: Record<string, string>;
+  "continue-on-error"?: unknown;
+}>;
+
+type Job = Readonly<{
+  environment?: string;
+  env?: Record<string, string>;
+  "continue-on-error"?: unknown;
+  steps: Step[];
 }>;
 
 type CallerWorkflow = Readonly<{
@@ -89,7 +119,7 @@ describe("the deploy workflow of each stage", () => {
 
 describe("the shared deploy", () => {
   const workflow = readYaml(".github/workflows/deploy.yml") as {
-    jobs: Record<string, { environment?: string; steps: Step[] }>;
+    jobs: Record<string, Job>;
   };
   const [job, ...others] = Object.values(workflow.jobs);
   const steps = job?.steps ?? [];
@@ -117,14 +147,63 @@ describe("the shared deploy", () => {
     indexOf("check", runs(/^pnpm secrets:check "\$STAGE"$/)),
     indexOf("resources", pulumiUp("resources")),
     indexOf("render", runs(/^pnpm "cf:render:\$STAGE"$/)),
+    indexOf("retention", runs(/wrangler queues update /)),
     indexOf("deploy", runs(/^pnpm "deploy:\$STAGE:all"$/)),
     indexOf("push", runs(/^pnpm secrets:push "\$STAGE"$/)),
-    indexOf("retention", runs(/wrangler queues update /)),
     indexOf("routes", pulumiUp("routes")),
   ];
 
-  it("checks the secrets, provisions, renders, deploys, uploads the secrets, sets the retention, then binds the hostname", () => {
+  it("checks the secrets, provisions, renders, sets the retention, deploys, uploads the secrets, then binds the hostname", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  // A failing step has to stop the run: the check above all, since the
+  // steps after it touch Cloudflare and Pulumi.
+  it("lets no step fail without failing the run", () => {
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    for (const step of steps) {
+      expect(step["continue-on-error"], step.name).toBeUndefined();
+    }
+  });
+
+  // A job-level `env` would reach every step, `pnpm install`'s lifecycle
+  // scripts included; the credentials are handed to steps one by one.
+  it("sets nothing but the stage name for the whole job", () => {
+    expect(Object.keys(job?.env ?? {})).toEqual(["STAGE"]);
+    expect(job?.env?.STAGE).toMatch(/^\$\{\{ inputs\.stage \}\}$/);
+  });
+
+  it("points every Pulumi and wrangler step at the run's own stage", () => {
+    for (const dir of ["resources", "routes"]) {
+      const step = steps.find(pulumiUp(dir));
+      expect(step?.with?.["stack-name"]).toMatch(/^\$\{\{ inputs\.stage \}\}$/);
+    }
+    expect(steps.find(runs(/wrangler queues update /))?.run).toMatch(
+      / -s "\$STAGE" /,
+    );
+  });
+
+  it("pins the Pulumi CLI and the sops release, and checks sops against its digest", () => {
+    for (const dir of ["resources", "routes"]) {
+      expect(steps.find(pulumiUp(dir))?.with?.["pulumi-version"]).toMatch(
+        /^\d+\.\d+\.\d+$/,
+      );
+    }
+    const sops = steps.filter((step) =>
+      step.run?.includes("/usr/local/bin/sops"),
+    );
+    expect(sops).toHaveLength(1);
+    expect(sops[0]?.env?.SOPS_VERSION).toMatch(/^v\d+\.\d+\.\d+$/);
+    expect(sops[0]?.env?.SOPS_SHA256).toMatch(/^[0-9a-f]{64}$/);
+    const lines = (sops[0]?.run ?? "").trim().split("\n");
+    expect(lines.map((line) => line.split(" ")[0])).toEqual([
+      "curl",
+      "echo",
+      "sudo",
+    ]);
+    expect(lines[1]).toBe(
+      'echo "$SOPS_SHA256  $RUNNER_TEMP/sops" | sha256sum --check --strict',
+    );
   });
 
   // The check runs before anything reaches Cloudflare or Pulumi, so a bad
@@ -193,6 +272,56 @@ describe(".sops.yaml", () => {
     for (const rule of rules) {
       expect(rule.encrypted_regex).toBe("^(.+)$");
     }
+  });
+});
+
+// A secret file is committable under its `.enc.json` name before it is
+// encrypted, so every one in the tree must carry sops metadata and hold
+// nothing but encrypted values.
+describe("the committed secret files", () => {
+  const files = readdirSync(resolve(webRoot, "secrets")).filter((name) =>
+    name.endsWith(".enc.json"),
+  );
+
+  it("are only the stages' own files", () => {
+    const expected = DEPLOY_STAGES.flatMap((stage) =>
+      Object.values(secretFiles(stage)).map((file) =>
+        file.slice("secrets/".length),
+      ),
+    );
+    for (const file of files) expect(expected).toContain(file);
+  });
+
+  it.each(files.map((file) => [file]))("%s is encrypted", (file) => {
+    expect(
+      unencryptedKeys(readFileSync(resolve(webRoot, "secrets", file), "utf8")),
+    ).toEqual([]);
+  });
+});
+
+describe("unencryptedKeys", () => {
+  it("accepts a sops file", () => {
+    expect(
+      unencryptedKeys(
+        JSON.stringify({
+          A: "ENC[AES256_GCM,data:x,type:str]",
+          B: "",
+          sops: {},
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("names every plaintext value, and a file without metadata", () => {
+    expect(
+      unencryptedKeys(
+        JSON.stringify({ A: "ENC[AES256_GCM,data:x]", B: "plain", C: 1 }),
+      ),
+    ).toEqual(["B", "C", "sops"]);
+  });
+
+  it("names a file that is not JSON", () => {
+    expect(unencryptedKeys("A=plain")).toEqual(["(not JSON)"]);
   });
 });
 

@@ -15,18 +15,18 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEPLOY_STAGES, isDeployStage } from "./lib/deployStage";
+import { DEPLOY_STAGES } from "./lib/deployStage";
 import { parseSecretRoster } from "./lib/secretRoster";
-import { runSecretCommand } from "./lib/stageSecrets";
+import {
+  parseSecretCommandArgs,
+  runSecretCommand,
+  SECRET_COMMANDS,
+} from "./lib/stageSecrets";
 
-const [command, stage] = process.argv.slice(2);
-if (
-  (command !== "check" && command !== "push") ||
-  stage === undefined ||
-  !isDeployStage(stage)
-) {
+const args = parseSecretCommandArgs(process.argv.slice(2));
+if (args === null) {
   console.error(
-    `usage: tsx scripts/stage-secrets.ts <check|push> <${DEPLOY_STAGES.join("|")}>`,
+    `usage: tsx scripts/stage-secrets.ts <${SECRET_COMMANDS.join("|")}> <${DEPLOY_STAGES.join("|")}>`,
   );
   process.exit(1);
 }
@@ -36,8 +36,7 @@ const wrangler = resolve(webRoot, "node_modules/.bin/wrangler");
 
 try {
   const ok = runSecretCommand(
-    command,
-    stage,
+    args,
     parseSecretRoster(
       readFileSync(resolve(webRoot, ".dev.vars.example"), "utf8"),
     ),
@@ -49,11 +48,19 @@ try {
           stdio: ["ignore", "pipe", "inherit"],
         }),
       upload: (config, json) => {
-        execFileSync(wrangler, ["secret", "bulk", "--config", config], {
-          cwd: webRoot,
-          input: json,
-          stdio: ["pipe", "inherit", "inherit"],
-        });
+        const output = execFileSync(
+          wrangler,
+          ["secret", "bulk", "--config", config],
+          {
+            cwd: webRoot,
+            encoding: "utf8",
+            input: json,
+            stdio: ["pipe", "pipe", "inherit"],
+          },
+        );
+        // Key names and counts only; wrangler never prints a value.
+        process.stdout.write(output);
+        return output;
       },
       list: (config) =>
         execFileSync(
