@@ -269,6 +269,12 @@ describe("the deploy headers set the DLQ retention the tuning declares", () => {
       DELIVERY_TUNING_DEFAULTS.dlqRetentionMs / 1000,
     );
   });
+
+  it("the deploy workflow's retention step", () => {
+    expect(retentionPeriodSecs(readRepo(".github/workflows/deploy.yml"))).toBe(
+      DELIVERY_TUNING_DEFAULTS.dlqRetentionMs / 1000,
+    );
+  });
 });
 
 // `handleQueueBatch` picks the DLQ handler by the queue name's suffix, so
