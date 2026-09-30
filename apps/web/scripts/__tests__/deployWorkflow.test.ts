@@ -70,21 +70,22 @@ const stringsIn = (node: unknown): string[] => {
   return Object.values(node).flatMap(stringsIn);
 };
 
-const NAMED_SECRET = /\bsecrets(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])/g;
+const NAMED_SECRET = /\bsecrets(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])/gi;
 
 /**
  * The repository secrets a piece of workflow YAML refers to, wherever in
  * it: every `secrets` inside a `${{ … }}` expression, by name where it is
  * `secrets.NAME` or `secrets['NAME']`, and as `*` where the expression
- * reaches the whole context (`toJSON(secrets)`).
+ * reaches the whole context (`toJSON(secrets)`). Expressions ignore case
+ * in context and secret names alike, so names come back upper-cased.
  */
 const secretsReferencedBy = (node: unknown): string[] =>
   stringsIn(node).flatMap((text) =>
     [...text.matchAll(/\$\{\{(.*?)\}\}/gs)].flatMap(([, expression = ""]) => {
-      const named = [...expression.matchAll(NAMED_SECRET)].map(
-        (match) => match[1] ?? match[2] ?? "",
+      const named = [...expression.matchAll(NAMED_SECRET)].map((match) =>
+        (match[1] ?? match[2] ?? "").toUpperCase(),
       );
-      const whole = /\bsecrets\b/.test(expression.replace(NAMED_SECRET, ""));
+      const whole = /\bsecrets\b/i.test(expression.replace(NAMED_SECRET, ""));
       return whole ? [...named, "*"] : named;
     }),
   );
@@ -348,6 +349,10 @@ describe("secretsReferencedBy", () => {
     [expression("secrets.A || ''"), ["A"]],
     [`x ${expression("secrets.A")} y ${expression("secrets.B")}`, ["A", "B"]],
     [expression("toJSON(secrets)"), ["*"]],
+    [expression("SECRETS.A"), ["A"]],
+    [expression("Secrets['a']"), ["A"]],
+    [expression("secrets.sops_age_key"), ["SOPS_AGE_KEY"]],
+    [expression("toJSON(SECRETS)"), ["*"]],
     [expression("inputs.stage"), []],
     ["secrets.A", []],
   ])("%s refers to %j", (text, expected) => {

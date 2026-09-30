@@ -358,7 +358,7 @@ describe("every [vars] entry in the roster", () => {
     (entry) => (entry.kind === "var" ? [entry] : []),
   );
   const declares = (file: string, name: string) =>
-    new RegExp(`^${name} = `, "m").test(read(file));
+    new RegExp(`^\\s*${name}\\s*=`, "m").test(read(file));
 
   it.each(vars.map(({ name, owner }) => [name, owner] as const))(
     "%s is declared by the %s Worker's config alone",
