@@ -5,7 +5,10 @@ export function isDeployStage(value: string): value is DeployStage {
   return (DEPLOY_STAGES as readonly string[]).includes(value);
 }
 
-export type WranglerConfigFiles = Readonly<{ request: string; state: string }>;
+/** The two Workers: the request Worker serves HTTP, the state Worker owns the Durable Objects. */
+export type WorkerRole = "request" | "state";
+
+export type WranglerConfigFiles = Readonly<Record<WorkerRole, string>>;
 
 /**
  * The pair of wrangler configs one build reads, relative to `apps/web`:
@@ -27,4 +30,17 @@ export function wranglerConfigFiles(
 /** The committed template a rendered stage config comes from. */
 export function templateFileOf(renderedFile: string): string {
   return `${renderedFile}.tpl`;
+}
+
+/**
+ * The SOPS-encrypted secret files of a stage, relative to `apps/web`: one
+ * per Worker, so that each is uploaded against that Worker's config only.
+ */
+export function secretFiles(
+  stage: DeployStage,
+): Readonly<Record<WorkerRole, string>> {
+  return {
+    request: `secrets/${stage}.request.enc.json`,
+    state: `secrets/${stage}.state.enc.json`,
+  };
 }

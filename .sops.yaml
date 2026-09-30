@@ -1,0 +1,14 @@
+# SOPS rules for the deploy secrets in apps/web/secrets/
+# (docs/runtime_cloudflare.md, chapter 3). One rule per stage, each with its
+# own age recipient, so the staging key cannot decrypt production and the
+# reverse. Every value is encrypted; only the key names stay readable.
+#
+# The recipients ship as placeholders: replace each with the public half of
+# that stage's age key (`age-keygen -y <key file>`) before encrypting.
+creation_rules:
+  - path_regex: apps/web/secrets/staging\.(request|state)\.enc\.json$
+    encrypted_regex: "^(.+)$"
+    age: REPLACE_WITH_STAGING_AGE_PUBLIC_KEY
+  - path_regex: apps/web/secrets/production\.(request|state)\.enc\.json$
+    encrypted_regex: "^(.+)$"
+    age: REPLACE_WITH_PRODUCTION_AGE_PUBLIC_KEY

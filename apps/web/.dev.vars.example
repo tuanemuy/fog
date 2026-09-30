@@ -23,14 +23,15 @@
 #   IDENTITY_RESET_TOKEN_KEY     — state Worker (never leaves the Durable Object)
 #   AI_CLIENT_TOKEN_SECRET       — request Worker (the AI API's tokens, codes and client ids)
 #   OPERATOR_TOKEN               — request Worker (bearer of the maintenance surface `/__operator/*`)
-#   DIRECTORY_ROUTING_KEYRING    — request Worker (the two-generation form of DIRECTORY_ROUTING_SECRET; JSON)
-#   DIRECTORY_KEY_COMMITMENT     — state Worker (SHA-256 digests of the routing keyring; never the keys)
-#   IDENTITY_MAIL_ENCRYPTION_KEYRING — state Worker (the two-generation form of IDENTITY_MAIL_ENCRYPTION_KEY; JSON)
-#   GOOGLE_CLIENT_ID / _SECRET   — request Worker (the SSO callback runs there)
+#   DIRECTORY_ROUTING_KEYRING    — request Worker, **rotation only** (the two-generation form of DIRECTORY_ROUTING_SECRET; JSON)
+#   DIRECTORY_KEY_COMMITMENT     — state Worker, **rotation only** (SHA-256 digests of the routing keyring; never the keys)
+#   IDENTITY_MAIL_ENCRYPTION_KEYRING — state Worker, **rotation only** (the two-generation form of IDENTITY_MAIL_ENCRYPTION_KEY; JSON)
+#   GOOGLE_CLIENT_ID             — request Worker (the SSO callback runs there)
+#   GOOGLE_CLIENT_SECRET         — request Worker (the SSO callback runs there)
 #   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
 #                                  from the MAIL_FROM_ADDRESS environment variable at render time
 #   APP_URL                      — not a secret: a [vars] entry of the request Worker (the public origin;
-#                                  the deploy templates take it from the APP_URL environment variable)
+#                                  the deploy templates take it from the resources stack's output)
 #   DIAGNOSTICS_ENABLED          — not a secret: a [vars] entry of the request Worker, **local only**
 #                                  (enables /__diagnostics/*; absent from the deploy templates)
 #   MAIL_DEV_SINK                — request Worker, **local only** (development mail sink)
@@ -49,19 +50,27 @@
 # Worker's output config. So every entry of this file is handed to both
 # Workers — measured with `pnpm start`, where the state Worker receives
 # `SESSION_SECRET` and `DIRECTORY_ROUTING_SECRET` as well. The ownership above is what holds
-# from staging onward, where each secret is installed with
-# `wrangler secret put --config` against one Worker's config only.
+# from staging onward, where each Worker's secrets are uploaded against
+# that Worker's config only.
 #
-# **This table is the roster of secrets declared so far**, not a promise
-# that it is complete: `SESSION_SECRET` is listed above even though it
-# predates this table, so that a later slice cannot take it for a
-# complete list and drop its own entry.
+# **This table is the roster the deploy reads.** `pnpm secrets:check
+# <stage>` derives each Worker's expected secrets from it: every row
+# owned by that Worker is required, a **rotation only** row may be
+# present or absent, and a **local only** row must be absent. A row in
+# any other shape stops the check. `secretRoster.test.ts` fails when the
+# table and the assignments below name different variables, and when
+# code reads a secret on the Worker its row does not name.
 #
 # The two `*_DEV_*` entries are not secrets and are not installed
 # anywhere: they are read from this file alone, and
 # `wranglerConfig.test.ts` fails if a deployed config ever declares them.
 #
-# Each secret is installed against the config of the Worker that owns it:
+# A deployed stage's secrets live in `secrets/<stage>.request.enc.json` and
+# `secrets/<stage>.state.enc.json`, SOPS-encrypted, one file per Worker
+# (templates: `secrets/*.json.example`); `pnpm secrets:push <stage>` uploads
+# each against its own Worker's config (docs/runtime_cloudflare.md,
+# chapter 3). By hand, each secret goes against the config of the Worker
+# that owns it:
 #
 #   wrangler secret put SESSION_SECRET               --config wrangler.staging.toml
 #   wrangler secret put MAIL_PROVIDER_API_KEY        --config wrangler.staging.toml
@@ -117,7 +126,8 @@ SSO_DEV_STUB="true"
 # Google OAuth client for the real `google` provider (unused while
 # `SSO_DEV_STUB` is `"true"`). Owner: **request Worker** — the callback
 # handler exchanges the code there. Register
-# `${APP_URL}/auth/sso/google/callback` as the redirect URI.
+# `${APP_URL}/auth/sso/google/callback` as the redirect URI. Required in
+# every deployed stage, where the stub is absent.
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
 
@@ -223,7 +233,8 @@ AI_CLIENT_TOKEN_SECRET=""
 # Bearer token of the operator maintenance surface (`POST /__operator/<entry>`:
 # quarantined / poisoned rows, the withdrawal's last resort, diagnostics).
 # Owner: **request Worker**. While it is unset the surface does not exist
-# (every `/__operator/*` request is 404). In production Cloudflare Access
+# (every `/__operator/*` request is 404) — a local state only, since a
+# deployed stage's secret check requires it. In production Cloudflare Access
 # stands in front of the hostname as well (docs/runtime_cloudflare.md
 # §8.2); this token is the local check and the last line behind it.
 #
