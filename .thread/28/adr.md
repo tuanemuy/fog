@@ -101,3 +101,19 @@ wrangler 4.90.1 には `wrangler deploy --secrets-file` があり、コードと
 ### Consequences
 
 stdin の配線が壊れても、値だけ届かない状態は赤になる。wrangler がこの文言を変えると push が赤になる。黙って通るより赤のほうを選んだ。
+
+## ADR-008: resources stack は zone を作らず、名前で引く
+
+### Context
+
+stage のドメインは `staging.fog.maku-ja.com` と `fog.maku-ja.com` で、zone はどちらも `maku-ja.com`。この zone は Cloudflare に登録済みで、fog 以外にも使われうる。以前の `resources` stack は `cloudflare.Zone` で zone を作成していた。そのため、2 つの stack が同じ zone を持とうとし、どちらかの `pulumi destroy` で zone ごと消える形だった。
+
+### Decision
+
+ユーザーの判断で、この PR の中で `cloudflare.getZoneOutput({ accountId, name: zoneName })` に置き換えた。zone は Pulumi の外で管理する。まだどの stack も `up` されていないので、state の移行は無い。
+
+### Consequences
+
+- 両 stage が 1 つの zone を共有でき、stack を消しても zone は残る
+- zone は、事前にアカウントで Active になっている必要がある
+- API Token に要る zone の権限は Edit ではなく Read になる

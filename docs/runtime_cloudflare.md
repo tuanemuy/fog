@@ -146,12 +146,14 @@ Two stacks under `infra/cloudflare/pulumi/`:
 
 | Stack | Provisions | Notes |
 | ----- | ---------- | ----- |
-| `resources` | Zone, events queue, DLQ | Run **before** `wrangler deploy`; its outputs feed `cf:render` |
+| `resources` | events queue, DLQ | Run **before** `wrangler deploy`; its outputs feed `cf:render`. The zone is looked up by `zoneName`, never created |
 | `routes` | one `WorkersDomain` binding the app hostname to the request Worker | Run **after** `wrangler deploy` — Cloudflare rejects a custom-domain binding for a service that does not exist |
+
+**Pulumi does not own the zone.** It must already exist, active, in the account; the `resources` stack reads its ID by name. Both stages' hostnames may therefore sit on one zone that serves other things too, and a `pulumi destroy` of either stack leaves it alone.
 
 **Pulumi does not provision Durable Object namespaces.** Those are created by `wrangler deploy` from the `[[migrations]]` block. Nothing in the Pulumi state knows they exist.
 
-`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only these spellings: `new cloudflare.<Type>(<first argument>` in `resources/index.ts`, whose imports it pins to the two Pulumi packages; `export const <name>`; and the argument of `requireOutput(...)` / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in another form, a resource constructed through a same-file alias (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or a dynamic `import()` — escapes it, and these spellings inside a comment count as code.
+`apps/web/scripts/__tests__/resourcesStack.test.ts` pins the `resources` column above, the zone lookup, and the stack's outputs (exactly the ones the render and the `routes` stack read). It reads both programs as text, since running them needs a Pulumi backend and a Cloudflare account, so it sees only these spellings: `new cloudflare.<Type>(<first argument>` and `cloudflare.getZoneOutput(` in `resources/index.ts`, whose imports it pins to the two Pulumi packages; `export const <name>`; and the argument of `requireOutput(...)` / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in another form, a resource constructed through a same-file alias (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or a dynamic `import()` — escapes it, and these spellings inside a comment count as code.
 
 ## 3. Secrets: ownership and procedure
 
@@ -303,7 +305,7 @@ Getting one wrong **works locally and breaks first in staging** — see below.
 **Step 0 — prerequisites.** Every stack in this repository ships unconfigured, and step 2 stops without them. **The failure is not self-explaining**: `config.require` only catches a key that is *absent*, and the shipped placeholders are present values, so `pulumi up` accepts them and fails later against the Cloudflare API instead.
 
 - **Fill in the Pulumi stack config.** `infra/cloudflare/pulumi/resources/Pulumi.<stage>.yaml` requires five values — `accountId` (shipped as the literal `REPLACE_WITH_CF_ACCOUNT_ID`), `zoneName` (`example.com`), `appHostname`, `appUrl`, `resourcePrefix` — and `infra/cloudflare/pulumi/routes/Pulumi.<stage>.yaml` requires two, `accountId` (the same placeholder) and `resourcesStackRef` (whose `organization/` segment is the Pulumi organisation or user that owns the resources stack). **No stack has been `up`ed in any stage** — that is the same fact chapter 5 reads as "there is no queue to ask".
-- **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to edit the zone and Queues.
+- **Be logged in to Pulumi, with a Cloudflare provider credential.** `pulumi login` against whichever backend holds the stacks, plus a Cloudflare API token in the environment the provider reads (`CLOUDFLARE_API_TOKEN`), scoped to read the zone, edit its DNS and Workers routes, and edit Queues and Workers scripts.
 - **Be authenticated for `wrangler` too.** `wrangler login`, or the same `CLOUDFLARE_API_TOKEN`. **`wrangler` is a devDependency of `@repo/web` and of nothing else**, so every `wrangler` command in this document runs from `apps/web/` — or from anywhere as `pnpm --filter @repo/web exec wrangler …`.
 - **Have `sops` and the stage's age key** for steps 1 and 6 — `SOPS_AGE_KEY`, or `SOPS_AGE_KEY_FILE` as an absolute path (chapter 3).
 
@@ -458,7 +460,7 @@ Every step is safe to repeat, so a run that failed partway is re-run from the st
 
    | Secret | Read by |
    | ------ | ------- |
-   | `CLOUDFLARE_API_TOKEN` | Pulumi's Cloudflare provider and `wrangler`: edit rights on Workers scripts, Queues and the zone |
+   | `CLOUDFLARE_API_TOKEN` | Pulumi's Cloudflare provider and `wrangler`: edit rights on Workers scripts and Queues, read on the zone, edit on its DNS and Workers routes |
    | `CLOUDFLARE_ACCOUNT_ID` | `wrangler` |
    | `PULUMI_ACCESS_TOKEN` | the Pulumi CLI |
    | `PULUMI_CONFIG_PASSPHRASE` | the Pulumi CLI, when the stacks use the passphrase secrets provider |

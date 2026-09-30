@@ -63,6 +63,7 @@ Cloudflare アカウント・Pulumi backend・age 鍵・GitHub environment の�
 - `apps/web/scripts/stage-secrets.ts` と `scripts/lib/` の roster parser・判定・計画・照合、それらの unit test、workflow 構造と `.sops.yaml` の test、pnpm script `secrets:check` / `secrets:push`
 - `apps/web/.dev.vars.example` の header table の形式（1 行 1 名、`**rotation only**`）と、表の `APP_URL` 行の誤り（render は stack output から取る）の訂正
 - `docs/runtime_cloudflare.md` 第 3・4 章、README の該当段落、template header の手順コメント、`docs/test.md` の該当箇所
+- `resources` stack が zone を作らず名前で引く変更（両 stage が `maku-ja.com` を共有するため。ADR-008）
 
 ### 含まれないもの
 
