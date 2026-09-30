@@ -28,8 +28,8 @@
 #   IDENTITY_MAIL_ENCRYPTION_KEYRING — state Worker, **rotation only** (the two-generation form of IDENTITY_MAIL_ENCRYPTION_KEY; JSON)
 #   GOOGLE_CLIENT_ID             — request Worker (the SSO callback runs there)
 #   GOOGLE_CLIENT_SECRET         — request Worker (the SSO callback runs there)
-#   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry; the deploy templates take it
-#                                  from the MAIL_FROM_ADDRESS environment variable at render time
+#   MAIL_FROM_ADDRESS            — not a secret: a [vars] entry of the request Worker (the deploy templates
+#                                  take it from the MAIL_FROM_ADDRESS environment variable at render time)
 #   APP_URL                      — not a secret: a [vars] entry of the request Worker (the public origin;
 #                                  the deploy templates take it from the resources stack's output)
 #   DIAGNOSTICS_ENABLED          — not a secret: a [vars] entry of the request Worker, **local only**

@@ -33,6 +33,7 @@ describe("parseSecretRoster", () => {
         "#   E_FLAG               — request Worker, **local only** (development sink)",
         "#   F_VAR                — not a secret: a [vars] entry of the request Worker",
         "#                          continued on an indented line",
+        "#   G_VAR                — not a secret: a [vars] entry of the state Worker",
       ),
     );
     expect(roster.entries).toEqual([
@@ -41,7 +42,8 @@ describe("parseSecretRoster", () => {
       { kind: "secret", name: "C_KEY", owner: "request", rotationOnly: true },
       { kind: "secret", name: "D_KEY", owner: "state", rotationOnly: true },
       { kind: "localOnly", name: "E_FLAG" },
-      { kind: "var", name: "F_VAR" },
+      { kind: "var", name: "F_VAR", owner: "request" },
+      { kind: "var", name: "G_VAR", owner: "state" },
     ]);
   });
 
@@ -56,6 +58,12 @@ describe("parseSecretRoster", () => {
     expect(() =>
       parseSecretRoster(table("#   A_KEY  — both Workers")),
     ).toThrowError(/A_KEY names no owner/);
+  });
+
+  it("refuses a [vars] row that names no Worker", () => {
+    expect(() =>
+      parseSecretRoster(table("#   F_VAR  — not a secret: a [vars] entry")),
+    ).toThrowError(/F_VAR names no owner/);
   });
 
   it("refuses a row that names two secrets", () => {
@@ -139,11 +147,16 @@ describe("the roster in .dev.vars.example", () => {
     );
   });
 
-  it("lists the [vars] entries without assigning them", () => {
-    expect(names("var").sort()).toEqual([
-      "APP_URL",
-      "DIAGNOSTICS_ENABLED",
-      "MAIL_FROM_ADDRESS",
+  it("lists the request Worker's [vars] entries without assigning them", () => {
+    expect(
+      roster.entries
+        .filter((entry) => entry.kind === "var")
+        .map((entry) => [entry.name, entry.owner])
+        .sort(),
+    ).toEqual([
+      ["APP_URL", "request"],
+      ["DIAGNOSTICS_ENABLED", "request"],
+      ["MAIL_FROM_ADDRESS", "request"],
     ]);
   });
 

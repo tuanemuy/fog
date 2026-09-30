@@ -63,11 +63,31 @@ type Job = Readonly<{
   steps: Step[];
 }>;
 
-/** The repository secrets a piece of workflow YAML refers to, wherever in it. */
+/** Every string in a piece of parsed YAML, keys aside. */
+const stringsIn = (node: unknown): string[] => {
+  if (typeof node === "string") return [node];
+  if (typeof node !== "object" || node === null) return [];
+  return Object.values(node).flatMap(stringsIn);
+};
+
+const NAMED_SECRET = /\bsecrets(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])/g;
+
+/**
+ * The repository secrets a piece of workflow YAML refers to, wherever in
+ * it: every `secrets` inside a `${{ … }}` expression, by name where it is
+ * `secrets.NAME` or `secrets['NAME']`, and as `*` where the expression
+ * reaches the whole context (`toJSON(secrets)`).
+ */
 const secretsReferencedBy = (node: unknown): string[] =>
-  [
-    ...JSON.stringify(node ?? null).matchAll(/\$\{\{\s*secrets\.(\w+)\s*\}\}/g),
-  ].map((match) => match[1] ?? "");
+  stringsIn(node).flatMap((text) =>
+    [...text.matchAll(/\$\{\{(.*?)\}\}/gs)].flatMap(([, expression = ""]) => {
+      const named = [...expression.matchAll(NAMED_SECRET)].map(
+        (match) => match[1] ?? match[2] ?? "",
+      );
+      const whole = /\bsecrets\b/.test(expression.replace(NAMED_SECRET, ""));
+      return whole ? [...named, "*"] : named;
+    }),
+  );
 
 type CallerWorkflow = Readonly<{
   on: Record<string, unknown>;
@@ -171,8 +191,6 @@ describe("the shared deploy", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  // A failing step has to stop the run: the check above all, since the
-  // steps after it touch Cloudflare and Pulumi.
   // A failing step has to stop the run, and nothing after it may run
   // anyway — `continue-on-error`, or an `if:` such as `always()`.
   it("lets no step fail without failing the run", () => {
@@ -316,6 +334,24 @@ describe("the committed secret files", () => {
     expect(
       unencryptedKeys(readFileSync(resolve(webRoot, "secrets", file), "utf8")),
     ).toEqual([]);
+  });
+});
+
+describe("secretsReferencedBy", () => {
+  // `${{ body }}`, spelled so that it is not read as a template placeholder.
+  const expression = (body: string) => `$\{{ ${body} }}`;
+
+  it.each([
+    [expression("secrets.A"), ["A"]],
+    [expression("secrets['A']"), ["A"]],
+    [expression('secrets["A"]'), ["A"]],
+    [expression("secrets.A || ''"), ["A"]],
+    [`x ${expression("secrets.A")} y ${expression("secrets.B")}`, ["A", "B"]],
+    [expression("toJSON(secrets)"), ["*"]],
+    [expression("inputs.stage"), []],
+    ["secrets.A", []],
+  ])("%s refers to %j", (text, expected) => {
+    expect(secretsReferencedBy({ env: { X: text } })).toEqual(expected);
   });
 });
 

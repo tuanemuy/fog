@@ -20,7 +20,7 @@ const roster: SecretRoster = {
     { kind: "secret", name: "STATE_ROT", owner: "state", rotationOnly: true },
     { kind: "secret", name: "REQ_OPT", owner: "request", rotationOnly: true },
     { kind: "localOnly", name: "DEV_SINK" },
-    { kind: "var", name: "SOME_VAR" },
+    { kind: "var", name: "SOME_VAR", owner: "request" },
   ],
   developmentValues: {
     REQ_KEY: "",

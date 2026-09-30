@@ -12,8 +12,9 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 // The CLI's own wiring — its arguments, how it calls sops, its exit code —
-// run as a process (hence the deploy layer, not the unit one), with a stand-in `sops` first on PATH that logs its
-// arguments and prints a fixture. `push` is not run: it needs wrangler's
+// run as a process, which is what puts it in the deploy layer rather than
+// the unit one. A stand-in `sops` first on PATH logs its arguments and
+// prints a fixture. `push` is not run: it needs wrangler's
 // credentials, and its wrangler calls are held by `runSecretCommand`'s
 // tests and by the upload confirmation.
 

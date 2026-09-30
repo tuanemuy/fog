@@ -351,6 +351,26 @@ describe("the development sink and the stub provider are local affordances only"
   });
 });
 
+// Each `[vars]` row of the roster names the Worker whose local config
+// declares that variable, and the other Worker's does not.
+describe("every [vars] entry in the roster", () => {
+  const vars = parseSecretRoster(read(".dev.vars.example")).entries.flatMap(
+    (entry) => (entry.kind === "var" ? [entry] : []),
+  );
+  const declares = (file: string, name: string) =>
+    new RegExp(`^${name} = `, "m").test(read(file));
+
+  it.each(vars.map(({ name, owner }) => [name, owner] as const))(
+    "%s is declared by the %s Worker's config alone",
+    (name, owner) => {
+      const configs = wranglerConfigFiles(null);
+      expect(declares(configs[owner], name)).toBe(true);
+      const other = owner === "request" ? "state" : "request";
+      expect(declares(configs[other], name)).toBe(false);
+    },
+  );
+});
+
 // A secret is never a `[vars]` entry, and each deployed request
 // template's by-hand checklist puts every secret of the roster in
 // `.dev.vars.example` against the config of the Worker the roster gives

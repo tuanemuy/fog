@@ -6,7 +6,7 @@ import type { WorkerRole } from "./deployStage";
  * - `secret`: installed on `owner` in every deployed stage; `rotationOnly`
  *   ones exist only for the duration of a key rotation.
  * - `localOnly`: read from `.dev.vars` alone and installed nowhere.
- * - `var`: a `[vars]` entry of a wrangler config, never a secret.
+ * - `var`: a `[vars]` entry of `owner`'s wrangler config, never a secret.
  */
 export type RosterEntry =
   | Readonly<{
@@ -16,7 +16,7 @@ export type RosterEntry =
       rotationOnly: boolean;
     }>
   | Readonly<{ kind: "localOnly"; name: string }>
-  | Readonly<{ kind: "var"; name: string }>;
+  | Readonly<{ kind: "var"; name: string; owner: WorkerRole }>;
 
 export type SecretRoster = Readonly<{
   entries: readonly RosterEntry[];
@@ -27,12 +27,17 @@ export type SecretRoster = Readonly<{
 const TABLE_HEADING = "# === Which Worker owns which secret ===";
 const ROW = /^# {3}([A-Z][A-Z0-9_]*)\s+— (.+)$/;
 const CONTINUATION = /^# {4,}\S/;
+const VAR_OWNER =
+  /^not a secret: a \[vars\] entry of the (request|state) Worker(?:[ ,;(]|$)/;
 const SECRET_OWNER =
   /^(request|state) Worker(, \*\*(local|rotation) only\*\*)?(?: \(|$)/;
 const ASSIGNMENT = /^([A-Z][A-Z0-9_]*)=(.*)$/;
 
 function entryOf(name: string, description: string): RosterEntry {
-  if (description.startsWith("not a secret:")) return { kind: "var", name };
+  const varOwner = VAR_OWNER.exec(description)?.[1];
+  if (varOwner !== undefined) {
+    return { kind: "var", name, owner: varOwner as WorkerRole };
+  }
   const match = SECRET_OWNER.exec(description);
   if (match === null) {
     throw new Error(
