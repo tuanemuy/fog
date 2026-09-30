@@ -262,9 +262,12 @@ describe("the shared deploy", () => {
     }
   });
 
+  // A reference to the whole `secrets` context carries the age key too.
   it("gives the age key only to the two secret steps", () => {
     const holders = steps.filter((step) =>
-      secretsReferencedBy(step).includes("SOPS_AGE_KEY"),
+      secretsReferencedBy(step).some(
+        (name) => name === "SOPS_AGE_KEY" || name === "*",
+      ),
     );
     expect(holders.map((step) => step.run)).toEqual([
       'pnpm secrets:check "$STAGE"',
