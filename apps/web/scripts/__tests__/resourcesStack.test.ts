@@ -6,10 +6,10 @@ import { WRANGLER_PLACEHOLDER_SOURCES } from "../lib/wranglerTemplate";
 
 // These read the Pulumi programs as text, because running them needs a
 // Pulumi backend and a Cloudflare account. They see only these spellings:
-// `new cloudflare.<Type>(<first argument>` in `resources/index.ts`, whose
-// imports they pin to the two Pulumi packages; `export const <name>`; and
-// the argument of `requireOutput(...)` / `getOutput(...)` in
-// `routes/index.ts`. Anything spelled otherwise — an output exported in
+// `new cloudflare.<Type>(<first argument>` and `cloudflare.getZoneOutput(`
+// in `resources/index.ts`, whose imports they pin to the two Pulumi
+// packages; `export const <name>`; and the argument of `requireOutput(...)`
+// / `getOutput(...)` in `routes/index.ts`. Anything spelled otherwise — an output exported in
 // another form, a resource constructed through a same-file alias
 // (`const cf = cloudflare`, `const { Queue } = cloudflare`), `require` or
 // a dynamic `import()` — escapes them, and these spellings inside a
@@ -33,17 +33,23 @@ describe("the resources stack", () => {
     ]);
   });
 
-  it("provisions the zone, the events queue and the DLQ, and nothing else", () => {
+  it("provisions the events queue and the DLQ, and nothing else", () => {
     const declared = [
       ...resources.matchAll(/new cloudflare\.(\w+)\(\s*([^,)]+)/g),
     ].map(
       ([, type, firstArgument]) => `${type}(${String(firstArgument).trim()})`,
     );
-    expect(declared.sort()).toEqual([
-      'Queue("dlq")',
-      'Queue("events")',
-      'Zone("zone")',
-    ]);
+    expect(declared.sort()).toEqual(['Queue("dlq")', 'Queue("events")']);
+  });
+
+  // The zone is shared by both stages and by whatever else the domain
+  // serves, so it is read by name and never becomes a resource a
+  // `pulumi destroy` would delete.
+  it("looks the zone up by its configured name instead of creating it", () => {
+    expect(resources).toMatch(
+      /cloudflare\.getZoneOutput\(\{\s*accountId,\s*name:\s*zoneName\s*\}\)/,
+    );
+    expect(resources).toMatch(/^export const zoneId = zone\.zoneId;$/m);
   });
 
   // An output nobody reads is a resource kept alive for nothing; an output

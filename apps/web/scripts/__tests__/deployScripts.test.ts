@@ -121,3 +121,20 @@ describe("no script lets wrangler bundle the request Worker's source", () => {
     }
   });
 });
+
+// The workflow and a person at a terminal type the same command, so the
+// root scripts forward the stage argument to the web package unchanged.
+describe("the secret scripts", () => {
+  const root = JSON.parse(
+    readFileSync(resolve(webRoot, "../../package.json"), "utf8"),
+  ) as { scripts: Record<string, string> };
+
+  it.each(["check", "push"])("secrets:%s", (command) => {
+    expect(scripts[`secrets:${command}`]).toBe(
+      `tsx scripts/stage-secrets.ts ${command}`,
+    );
+    expect(root.scripts[`secrets:${command}`]).toBe(
+      `pnpm --filter @repo/web secrets:${command}`,
+    );
+  });
+});

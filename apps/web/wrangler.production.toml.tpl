@@ -7,26 +7,18 @@
 # The rendered `wrangler.production.toml` is git-ignored — do not edit it
 # directly; re-run the render script instead.
 #
-# === Before first deploy =================================================
-#   1. `pulumi -C infra/cloudflare/pulumi/resources -s production up`
-#   2. `pnpm cf:render:production` (renders BOTH request and state configs)
+# === Deploying ===========================================================
+# `.github/workflows/deploy-production.yml` runs these steps on every
+# `v*.*.*` tag, once the `production` environment's reviewers approve
+# (docs/runtime_cloudflare.md 4.1 and 4.2, numbered the same). By hand —
+# the first bootstrap, or when the workflow cannot run — they are:
+#   1. `pnpm secrets:check production` decrypts
+#      `secrets/production.request.enc.json` / `secrets/production.state.enc.json`
+#      and checks them against the roster in `.dev.vars.example`.
+#   2. `pulumi -C infra/cloudflare/pulumi/resources -s production up`
+#   3. `pnpm cf:render:production` (renders BOTH request and state configs)
 #      `${MAIL_FROM_ADDRESS}` is read from the MAIL_FROM_ADDRESS environment
 #      variable at render time (it is not a Pulumi output): export it first.
-#   3. `wrangler secret put SESSION_SECRET --config wrangler.production.toml`
-#      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.production.toml`
-#      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.production.toml`
-#      `wrangler secret put AI_CLIENT_TOKEN_SECRET --config wrangler.production.toml`
-#      `wrangler secret put OPERATOR_TOKEN --config wrangler.production.toml`
-#      `wrangler secret put PROVIDER_IDEMPOTENCY_KEY --config wrangler.state.production.toml`
-#      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.production.toml`
-#      The last two belong to the **state** Worker. Without the encryption
-#      key the Identity Directory throws on the first reservation and no
-#      registration completes at all.
-#      Only while a key is being rotated (`spec/rotation/index.md`; deployed
-#      as a pair, request + state, and removed again after retirement):
-#      `wrangler secret put DIRECTORY_ROUTING_KEYRING --config wrangler.production.toml`
-#      `wrangler secret put DIRECTORY_KEY_COMMITMENT --config wrangler.state.production.toml`
-#      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.production.toml`
 #   4. Set the DLQ's retention out of band — it is a Queue-resource
 #      setting, not a wrangler key:
 #      `wrangler queues update ${DLQ_QUEUE_NAME} --message-retention-period-secs 600`
@@ -41,9 +33,29 @@
 #      and writes `dist/server/wrangler.json`, and that output is what
 #      `pnpm deploy:production` hands to `wrangler deploy`, once
 #      `scripts/deploy-built.ts` has checked it was built from this stage.
-#      `wrangler secret put --config` above only reads the Worker's name,
-#      so it takes this file.
-#   6. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
+#   6. `pnpm secrets:push production` uploads each file against its own
+#      Worker's config, confirms each upload, then compares the secrets each
+#      Worker holds with its file. Without the encrypted files, one secret at a time:
+#      `wrangler secret put SESSION_SECRET --config wrangler.production.toml`
+#      `wrangler secret put MAIL_PROVIDER_API_KEY --config wrangler.production.toml`
+#      `wrangler secret put DIRECTORY_ROUTING_SECRET --config wrangler.production.toml`
+#      `wrangler secret put AI_CLIENT_TOKEN_SECRET --config wrangler.production.toml`
+#      `wrangler secret put OPERATOR_TOKEN --config wrangler.production.toml`
+#      `wrangler secret put GOOGLE_CLIENT_ID --config wrangler.production.toml`
+#      `wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.production.toml`
+#      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEY --config wrangler.state.production.toml`
+#      `wrangler secret put PROVIDER_IDEMPOTENCY_KEY --config wrangler.state.production.toml`
+#      `wrangler secret put IDENTITY_RESET_TOKEN_KEY --config wrangler.state.production.toml`
+#      The last three belong to the **state** Worker. Without the encryption
+#      key the Identity Directory throws on the first reservation and no
+#      registration completes at all.
+#      Only while a key is being rotated (`spec/rotation/index.md`; deployed
+#      as a pair, request + state, and deleted again after retirement):
+#      `wrangler secret put DIRECTORY_ROUTING_KEYRING --config wrangler.production.toml`
+#      `wrangler secret put DIRECTORY_KEY_COMMITMENT --config wrangler.state.production.toml`
+#      `wrangler secret put IDENTITY_MAIL_ENCRYPTION_KEYRING --config wrangler.state.production.toml`
+#      These commands only read the Worker's name, so they take this file.
+#   7. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
 # =========================================================================
 name = "${RESOURCE_PREFIX}"
 main = "app/server.cloudflare.ts"

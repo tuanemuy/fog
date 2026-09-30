@@ -8,10 +8,10 @@ const appHostname = config.require("appHostname");
 const appUrl = config.require("appUrl");
 const prefix = config.require("resourcePrefix");
 
-const zone = new cloudflare.Zone("zone", {
-  accountId,
-  zone: zoneName,
-});
+// The zone is looked up, never created: both stages' hostnames can sit on
+// one zone that also serves other things, and neither stack's `destroy`
+// may take it down with them.
+const zone = cloudflare.getZoneOutput({ accountId, name: zoneName });
 
 // The Queue carries event delivery and nothing else: it is the transport
 // between the Outbox relay (inside each Durable Object's `alarm()`) and
@@ -34,7 +34,7 @@ const dlqQueue = new cloudflare.Queue("dlq", {
   name: `${prefix}-events-dlq`,
 });
 
-export const zoneId = zone.id;
+export const zoneId = zone.zoneId;
 export const eventsQueueName = eventsQueue.name;
 export const dlqQueueName = dlqQueue.name;
 export const exportedAppUrl = appUrl;
