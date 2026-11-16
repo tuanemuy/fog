@@ -1,6 +1,6 @@
 config:
-  tanstack-start-template-cf-resources:accountId: REPLACE_WITH_CF_ACCOUNT_ID
-  tanstack-start-template-cf-resources:zoneName: example.com
-  tanstack-start-template-cf-resources:appHostname: staging.example.com
-  tanstack-start-template-cf-resources:appUrl: https://staging.example.com
-  tanstack-start-template-cf-resources:resourcePrefix: tanstack-start-template-staging
+  tanstack-start-template-cf-resources:accountId: 5ca5e9b7a94fd68cb165f0c9151343b9
+  tanstack-start-template-cf-resources:zoneName: maku-ja.com
+  tanstack-start-template-cf-resources:appHostname: staging.fog.maku-ja.com
+  tanstack-start-template-cf-resources:appUrl: https://staging.fog.maku-ja.com
+  tanstack-start-template-cf-resources:resourcePrefix: fog-staging

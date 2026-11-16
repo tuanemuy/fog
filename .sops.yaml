@@ -3,12 +3,13 @@
 # own age recipient, so the staging key cannot decrypt production and the
 # reverse. Every value is encrypted; only the key names stay readable.
 #
-# The recipients ship as placeholders: replace each with the public half of
-# that stage's age key (`age-keygen -y <key file>`) before encrypting.
+# Each recipient is the public half of that stage's age key. Replacing a
+# key means changing the recipient here, then `sops updatekeys` on that
+# stage's two files.
 creation_rules:
   - path_regex: apps/web/secrets/staging\.(request|state)\.enc\.json$
     encrypted_regex: "^(.+)$"
-    age: REPLACE_WITH_STAGING_AGE_PUBLIC_KEY
+    age: age18un3s8xyald4ysasn9u4sea87wf8d7aatdgyy7hvr2k74dwhnsnqza4d2g
   - path_regex: apps/web/secrets/production\.(request|state)\.enc\.json$
     encrypted_regex: "^(.+)$"
-    age: REPLACE_WITH_PRODUCTION_AGE_PUBLIC_KEY
+    age: age1a80rhazwnwve08wwqvfaqzwdfpm7tqy5mux0vr9rr5wd48q4uyaqmeqwp6
