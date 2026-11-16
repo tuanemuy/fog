@@ -350,7 +350,7 @@ CHECK (trashed_with IS NULL OR trashed_with = topic_id)
 
 **限界**: この上限が行サイズについて保証するのは `documents` と `document_revisions` の行である。`search_entries.body` は NFKC 正規化後の値を持ち、1 コードポイントが最大 18 コードポイントへ展開する入力ではこの逆算が成り立たない。**この行を押さえる手当ては検索 projection 側の切り詰めであり、別途決定する。**
 
-**前提**: この値を**下げる**変更は保存済みの行に対して破壊的である（読み取りも削除も `DocumentBody.create` を通る）。400,000 への引き下げは「それを超える行を持つ Durable Object が存在しない」という前提の上に立つ。**その根拠は、上限を超える行を書けた配備の形跡がリポジトリの中に無いことである** — Pulumi のスタック設定はコミットされる運用でありながら 4 本とも `accountId` が `REPLACE_WITH_CF_ACCOUNT_ID` のまま（`zoneName` を持つものは `example.com` のまま）で、どのスタックも実アカウントに構成されていない。ローカル開発の DO データ（`.wrangler/state`）は破棄可能なので残らない。**この根拠は「リポジトリの中に形跡が無い」までしか言えないという限界を持つ** — 描画済みの wrangler config も Pulumi の state もリポジトリの外にあるので（前者はルートの `.gitignore` が無視し、配備済みでも同じく「無い」）、配備の不存在は証明できない。**前提が破れたことの signal と直し方は [domains/index.md](../domains/index.md)「再水和の再検証」が持つ**。
+**前提**: この値を**下げる**変更は保存済みの行に対して破壊的である（読み取りも削除も `DocumentBody.create` を通る）。400,000 への引き下げは「それを超える行を持つ Durable Object が存在しない」という前提の上に立つ。**その根拠は、上限を超える行を書けた配備が無いことである** — 配備に使う wrangler config は `resources` スタックの出力から描画する（`apps/web/scripts/render-wrangler.ts`）。その Pulumi スタックが初めて作られたのは 2026-11-16 で、この値を 400,000 に下げた後である。したがって、それ以後のどの配備も 400,000 の上限を持つコードを上げる。ローカル開発の DO データ（`.wrangler/state`）は破棄可能なので残らない。**この根拠には限界がある** — スタックの作成日は Pulumi Cloud の記録であってリポジトリの中には無い。また、描画を経ずに手書きの config で配備された可能性は、リポジトリからは否定できない。**前提が破れたことの signal と直し方は [domains/index.md](../domains/index.md)「再水和の再検証」が持つ**。
 
 ### document_revisions
 

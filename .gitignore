@@ -23,6 +23,10 @@ wrangler.production.toml
 # State Worker configs rendered from `wrangler.state.<stage>.toml.tpl`.
 wrangler.state.staging.toml
 wrangler.state.production.toml
+# Deploy secrets are committed only SOPS-encrypted (`*.enc.json`); a plaintext
+# copy made while editing one must never be.
+apps/web/secrets/*.json
+!apps/web/secrets/*.enc.json
 
 # Local env files
 .env

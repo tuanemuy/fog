@@ -18,9 +18,12 @@
       devShells = forEachSupportedSystem (pkgs: {
         default = pkgs.mkShell {
           buildInputs = with pkgs; [
+            age
             biome
             nodejs_24
             pnpm
+            pulumi-bin
+            sops
             tailwindcss-language-server
             vtsls
           ];

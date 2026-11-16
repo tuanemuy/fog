@@ -15,7 +15,8 @@
       "*.ts",
       "*.json",
       "!**/routeTree.gen.ts",
-      "!**/migrations"
+      "!**/migrations",
+      "!apps/web/secrets/*.enc.json"
     ]
   },
   "formatter": {

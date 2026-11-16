@@ -39,7 +39,9 @@
     "deploy:staging:state": "pnpm --filter @repo/web deploy:staging:state",
     "deploy:staging:state:dry": "pnpm --filter @repo/web deploy:staging:state:dry",
     "deploy:production:state": "pnpm --filter @repo/web deploy:production:state",
-    "deploy:production:state:dry": "pnpm --filter @repo/web deploy:production:state:dry"
+    "deploy:production:state:dry": "pnpm --filter @repo/web deploy:production:state:dry",
+    "secrets:check": "pnpm --filter @repo/web secrets:check",
+    "secrets:push": "pnpm --filter @repo/web secrets:push"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.5",

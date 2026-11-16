@@ -3,6 +3,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DELIVERY_TUNING_DEFAULTS } from "@repo/core/application/delivery/tuning";
 import { describe, expect, it } from "vitest";
+import {
+  DEPLOY_STAGES,
+  templateFileOf,
+  wranglerConfigFiles,
+} from "../../../../scripts/lib/deployStage";
+import { parseSecretRoster } from "../../../../scripts/lib/secretRoster";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const repoRoot = resolve(webRoot, "../..");
@@ -258,14 +264,21 @@ describe("queue consumer config matches the declared delivery tuning", () => {
 });
 
 // The DLQ's retention is a Queue-resource setting with no wrangler key,
-// so the only place the real value appears in the repository is the
-// `wrangler queues update` step in each deploy template's header. That
-// header is therefore the observable counterpart of the declared
-// `dlqRetentionMs`, and moving the declaration without it silently
-// breaks both constraints `createDeliveryTuning` checks the sum against.
+// so the only places the real value appears in the repository are the
+// `wrangler queues update` step in each deploy template's header and in
+// the Deploy workflow. Those are therefore the observable counterparts of
+// the declared `dlqRetentionMs`, and moving the declaration without them
+// silently breaks both constraints `createDeliveryTuning` checks the sum
+// against.
 describe("the deploy headers set the DLQ retention the tuning declares", () => {
   it.each(REQUEST_CONFIGS.slice(1))("%s", (file) => {
     expect(retentionPeriodSecs(read(file))).toBe(
+      DELIVERY_TUNING_DEFAULTS.dlqRetentionMs / 1000,
+    );
+  });
+
+  it("the deploy workflow's retention step", () => {
+    expect(retentionPeriodSecs(readRepo(".github/workflows/deploy.yml"))).toBe(
       DELIVERY_TUNING_DEFAULTS.dlqRetentionMs / 1000,
     );
   });
@@ -338,122 +351,60 @@ describe("the development sink and the stub provider are local affordances only"
   });
 });
 
-// The AI API's tokens, codes and client ids are all signed with one
-// secret the request Worker holds (PH-07 §1.1). `.dev.vars.example` is
-// where a secret's owner is declared, and a secret is never a `[vars]`
-// entry: the deploy checklist in every request template names it for
-// `wrangler secret put`, and no config declares it as a variable.
-describe("the AI client token secret belongs to the request Worker", () => {
-  it(".dev.vars.example declares it and attributes it to the request Worker", () => {
-    const example = read(".dev.vars.example");
-    expect(example).toMatch(/^AI_CLIENT_TOKEN_SECRET=/m);
-    expect(example).toMatch(/^#\s+AI_CLIENT_TOKEN_SECRET\s+— request Worker/m);
-  });
-
-  it.each(REQUEST_CONFIGS.slice(1))(
-    "%s lists it for wrangler secret put",
-    (file) => {
-      expect(read(file)).toContain(
-        "wrangler secret put AI_CLIENT_TOKEN_SECRET",
-      );
-    },
+// Each `[vars]` row of the roster names the Worker whose local config
+// declares that variable, and the other Worker's does not.
+describe("every [vars] entry in the roster", () => {
+  const vars = parseSecretRoster(read(".dev.vars.example")).entries.flatMap(
+    (entry) => (entry.kind === "var" ? [entry] : []),
   );
+  const declares = (file: string, name: string) =>
+    new RegExp(`^\\s*${name}\\s*=`, "m").test(read(file));
 
-  it.each([...REQUEST_CONFIGS, ...STATE_CONFIGS])(
-    "%s does not declare it as a variable",
-    (file) => {
-      expect(read(file)).not.toMatch(/^\s*AI_CLIENT_TOKEN_SECRET\s*=/m);
+  it.each(vars.map(({ name, owner }) => [name, owner] as const))(
+    "%s is declared by the %s Worker's config alone",
+    (name, owner) => {
+      const configs = wranglerConfigFiles(null);
+      expect(declares(configs[owner], name)).toBe(true);
+      const other = owner === "request" ? "state" : "request";
+      expect(declares(configs[other], name)).toBe(false);
     },
   );
 });
 
-// The operator surface's bearer is a request-Worker secret with the same
-// placement rules as the AI token secret; it is never a `[vars]` entry.
-describe("the operator token belongs to the request Worker", () => {
-  it(".dev.vars.example declares it and attributes it to the request Worker", () => {
-    const example = read(".dev.vars.example");
-    expect(example).toMatch(/^OPERATOR_TOKEN=/m);
-    expect(example).toMatch(/^#\s+OPERATOR_TOKEN\s+— request Worker/m);
-  });
-
-  it.each(REQUEST_CONFIGS.slice(1))(
-    "%s lists it for wrangler secret put",
-    (file) => {
-      expect(read(file)).toContain("wrangler secret put OPERATOR_TOKEN");
-    },
-  );
-
-  it.each([...REQUEST_CONFIGS, ...STATE_CONFIGS])(
-    "%s does not declare it as a variable",
-    (file) => {
-      expect(read(file)).not.toMatch(/^\s*OPERATOR_TOKEN\s*=/m);
-    },
-  );
-});
-
-// The three variables of a key rotation (`spec/rotation/index.md`, 鍵材料の
-// 配布形) are secrets with a fixed owner each: the keyring on the request
-// Worker, the commitment (digests, never keys) and the encryption keyring
-// on the state Worker. None is ever a `[vars]` entry.
-describe("the rotation variables have their declared owners", () => {
-  const owners: ReadonlyArray<readonly [string, "request" | "state"]> = [
-    ["DIRECTORY_ROUTING_KEYRING", "request"],
-    ["DIRECTORY_KEY_COMMITMENT", "state"],
-    ["IDENTITY_MAIL_ENCRYPTION_KEYRING", "state"],
-  ];
-
-  it.each(owners)(
-    ".dev.vars.example declares %s for the %s Worker",
-    (name, owner) => {
-      const example = read(".dev.vars.example");
-      expect(example).toMatch(new RegExp(`^${name}=`, "m"));
-      expect(example).toMatch(
-        new RegExp(`^#\\s+${name}\\s+— ${owner} Worker`, "m"),
-      );
-    },
-  );
-
-  it.each(owners)(
-    "the deploy templates list %s for wrangler secret put against the %s config",
-    (name, owner) => {
-      for (const file of REQUEST_CONFIGS.slice(1)) {
-        const stage = file.includes("staging") ? "staging" : "production";
-        const config =
-          owner === "request"
-            ? `wrangler.${stage}.toml`
-            : `wrangler.state.${stage}.toml`;
-        expect(read(file)).toContain(
-          `wrangler secret put ${name} --config ${config}`,
-        );
-      }
-    },
+// A secret is never a `[vars]` entry, and each deployed request
+// template's by-hand checklist puts every secret of the roster in
+// `.dev.vars.example` against the config of the Worker the roster gives
+// it to. Which Worker that is, is held against the code that reads the
+// secret by `secretRoster.test.ts`.
+describe("every secret in the roster", () => {
+  const secrets = parseSecretRoster(read(".dev.vars.example")).entries.flatMap(
+    (entry) => (entry.kind === "secret" ? [entry] : []),
   );
 
   it.each(
+    DEPLOY_STAGES.flatMap((stage) =>
+      secrets.map(
+        ({ name, owner }) =>
+          [
+            templateFileOf(wranglerConfigFiles(stage).request),
+            name,
+            wranglerConfigFiles(stage)[owner],
+          ] as const,
+      ),
+    ),
+  )("%s lists %s for wrangler secret put against %s", (file, name, config) => {
+    expect(read(file)).toContain(
+      `wrangler secret put ${name} --config ${config}`,
+    );
+  });
+
+  it.each(
     [...REQUEST_CONFIGS, ...STATE_CONFIGS].flatMap((file) =>
-      owners.map(([name]) => [file, name] as const),
+      secrets.map(({ name }) => [file, name] as const),
     ),
   )("%s does not declare %s as a variable", (file, name) => {
     expect(read(file)).not.toMatch(new RegExp(`^\\s*${name}\\s*=`, "m"));
   });
-});
-
-// The two request-Worker `[vars]` beside the sender address are in the
-// ownership table too, as non-secrets, so the table is the whole roster.
-describe("the non-secret request Worker vars are in the ownership table", () => {
-  it.each(["APP_URL", "DIAGNOSTICS_ENABLED"])(
-    ".dev.vars.example lists %s as a [vars] entry of the request Worker",
-    (name) => {
-      const example = read(".dev.vars.example");
-      expect(example).toMatch(
-        new RegExp(
-          `^#\\s+${name}\\s+— not a secret: a \\[vars\\] entry of the request Worker`,
-          "m",
-        ),
-      );
-      expect(example).not.toMatch(new RegExp(`^${name}=`, "m"));
-    },
-  );
 });
 
 // The sender address is what the mail provider is asked to send as, so
