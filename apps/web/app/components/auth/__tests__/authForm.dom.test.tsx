@@ -265,10 +265,7 @@ describe("AuthForm — SSO and the entries under the form", () => {
         { path: `/${mode}` },
       );
       const alert = screen.getByRole("alert");
-      expect(alert.textContent).toContain(
-        "この外部アカウントは既に使われています",
-      );
-      expect(alert.textContent).not.toContain("別のアカウント");
+      expect(alert.textContent).toBe("この外部アカウントは既に使われています");
       expectAtTheHeadOfTheForm(alert);
     },
   );

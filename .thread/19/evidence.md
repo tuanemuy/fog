@@ -11,7 +11,7 @@
 | AC-4 | `renderSsoError("already_used", mode)` → `SSO_IDENTITY_IN_USE_MESSAGE`。`AuthForm` がフォームの先頭の `FormError` に描く | `authForm.dom.test.tsx`「login / signup draws a subject already in use without naming who holds it」。PASS |
 | AC-5 | 同上 | ブラウザ（O-7〜O-10）。PASS |
 | AC-6 | — | `rg -n "別のアカウントに連携" apps packages` の出力なし（exit 1） |
-| AC-7 | 変更なし | `errorDisplay.test.ts`（`EMAIL_ALREADY_REGISTERED`）、`authForm.dom.test.tsx`（`email_registered` / `unverified` / `failed`）、`ssoNotice.dom.test.tsx`（`email_registered` / `unverified` / `failed`）が通る |
+| AC-7 | 変更なし | `git diff 619769c..HEAD` が 3 つの文言の表で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。字面で固定している既存テストが通る: `errorDisplay.test.ts`（全コード）、`authForm.dom.test.tsx`（P-02 `email_registered`・P-01 `unverified`・P-02 `failed`）、`ssoNotice.dom.test.tsx`（`email_registered` / `unverified` / `failed`）。P-01 `email_registered`・P-02 `unverified`・P-01 `failed` はテストが無く、差分が触れないことだけが根拠 |
 
 ## テストと変異
 
@@ -32,6 +32,7 @@
 | M3 `renderSsoError` の `already_used` を `unverified` の分岐に落とす | 分岐の付け替え | 2 件（authForm login / signup） |
 | M4 `ssoLinkErrorMessage` の `already_used` を失敗の分岐に落とす | 分岐の付け替え | 1 件（ssoNotice） |
 | M5 `renderSsoError` の `already_used` に「（別のアカウント）」を足す | 値の変更 | 2 件（authForm login / signup） |
+| M6 `renderSsoError` の `already_used` に「（あなたのアカウントに連携済みです）」を足す | 値の変更 | 2 件（authForm login / signup） |
 
 境界±1 は当てはまる数値の境界が無い。
 

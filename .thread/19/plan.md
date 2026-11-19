@@ -6,7 +6,7 @@ SSO 主体が既に使われていて連携・登録が成立しないとき、�
 
 ## 着手時の事実
 
-- P-13 の連携失敗は、bare handler（`apps/web/app/worker/cloudflare/ssoHandlers.ts`）が `ConflictError` を `?sso_error=already_used` に変えて `/settings` へ戻し、`SsoNotice` の `ssoLinkErrorMessage` が「この外部アカウントは既に使われています」を出す。Issue が起票された翌日のコミット e7b8d44 でこの文言になっており、P-13 の画面に出る文言は既に所有者を問わない。ブラウザでの実測で確かめる（AC-1・AC-2）
+- P-13 の連携失敗は、bare handler（`apps/web/app/worker/cloudflare/ssoHandlers.ts`）が `ConflictError` を `?sso_error=already_used` に変えて `/settings` へ戻し、`SsoNotice` の `ssoLinkErrorMessage` が「この外部アカウントは既に使われています」を出す。Issue の起票（2026-09-11T07:13Z）の約 15 時間後のコミット e7b8d44（2026-09-11T22:11Z）でこの文言になっており、P-13 の画面に出る文言は既に所有者を問わない。ブラウザでの実測で確かめる（AC-1・AC-2）
 - 「既に別のアカウントに連携されています」は、次の 2 箇所に残っている
   - `apps/web/app/presentation/errorDisplay.ts` の `renderConflictMessage`: `SSO_IDENTITY_ALREADY_REGISTERED` の文言。spec/usecases/identity.md はこのコードを「自分のアカウントで連携済みの場合も同じ」と定める。このコードを投げる usecase（`linkSsoCredential` / `registerOrLoginWithSso`）の呼び出し元は bare handler だけで、bare handler は衝突を `sso_error` に変えて redirect する。いまこの文言に届く画面は無く、単体テスト（AC-3）でだけ観測できる
   - `apps/web/app/components/auth/SsoButtons/index.tsx` の `renderSsoError`（P-01 / P-02）: `already_used` の文言。bare handler の `classifyFailure` は `EMAIL_ALREADY_REGISTERED` 以外の `ConflictError` をすべて `already_used` にする。P-01 / P-02 でそこに至るのは、spec/usecases/identity.md が挙げる同じ SSO 主体での同時初回サインインのレースの負け、SSO 主体を coordinator にした予約の確定（commit / activate）の失敗、ほかの衝突。どの場合も、主体を誰が持つかを画面側は知らない。spec が挙げるレースでは、主体を取ったのは同じ主体での別のリクエストが作ったアカウントで、「別のアカウント」とは言えない
@@ -34,7 +34,7 @@ SSO 主体が既に使われていて連携・登録が成立しないとき、�
 - AC-4（自動テスト・DOM テスト）: `AuthForm` に `mode` が `login` / `signup`、`ssoError="already_used"` を渡すと、フォームの先頭の `role="alert"` に「この外部アカウントは既に使われています」が出る
 - AC-5（`browser`）: `/login?sso_error=already_used` と `/signup?sso_error=already_used` を開くと、それぞれのフォームの先頭に `role="alert"` で「この外部アカウントは既に使われています」が出て、「別のアカウント」を含む文言は画面に出ない
 - AC-6（コマンド出力）: `rg "別のアカウントに連携" apps packages` が何も返さない
-- AC-7（自動テスト）: `EMAIL_ALREADY_REGISTERED`（`renderErrorMessage`）、`email_registered` / `unverified` / `failed`（P-01 / P-02 の `AuthForm`、P-13 の `ssoLinkErrorMessage`）の文言は変わらない。既存の `errorDisplay.test.ts`・`authForm.dom.test.tsx`・`ssoNotice.dom.test.tsx` が固定している
+- AC-7（コマンド出力・自動テスト）: 同じ表のほかのコードの文言は変わらない。`git diff 619769c..HEAD` が `renderConflictMessage`・`renderSsoError`・`ssoLinkErrorMessage` の中で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。既存テストが字面で固定している組（`errorDisplay.test.ts` の全コード、`authForm.dom.test.tsx` の P-02 `email_registered`・P-01 `unverified`・P-02 `failed`、`ssoNotice.dom.test.tsx` の `email_registered` / `unverified` / `failed`）が通る。P-01 `email_registered`・P-02 `unverified`・P-01 `failed` を描くテストは無く、この 3 組は差分が触れないことだけが根拠
 
 ### 観測の対象（AC 以外で、結果がユーザーに見えるもの）
 
@@ -68,4 +68,6 @@ P-13 のモック（spec/design/pages/settings.html の「SSO 連携の追加が
 
 ## ユーザーの答え
 
-- P-01 / P-02 の `already_used` も同じ文言に揃える（R4 に含める）。Issue は P-13 を挙げるが、P-01 / P-02 の文言も同じ原因（持ち主の言い当て）で、そこへ至るレースでは持ち主は同じ主体の利用者になる（ユーザー不在のため代行）
+なし（「ユーザーに聞く場面」にあたる判断は無かった）。
+
+P-01 / P-02 の `already_used` を R4b・R4c に含めたのは、Issue の範囲内の判断として扱った。Issue の「対応案」は文言を所有者を問わない形にすることで、P-01 / P-02 の文言は同じ原因（画面が知らない持ち主を言い当てる）の別の経路にあたる。不変条件「同じ原因が通る経路をすべて直す」に従い、範囲を広げる変更とはしない
