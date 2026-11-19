@@ -56,7 +56,7 @@ export type MemoEntryProps = Readonly<{
   highlighted?: boolean;
   /** Asks the list owner to run the delete; the leaf never runs it itself. */
   onDelete?: (memo: DisplayMemo) => void;
-  /** The saved memo, for the owner to re-base its list onto. */
+  /** The saved memo, for the owner to show on its row until the refetch arrives. */
   onSaved?: (memo: MemoView) => void;
 }>;
 

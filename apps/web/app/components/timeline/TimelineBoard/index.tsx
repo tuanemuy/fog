@@ -93,11 +93,9 @@ function byTimeline(a: TimelineItemView, b: TimelineItemView): number {
 }
 
 /**
- * Merges the loader's window with the pages scrolled in since and the
- * in-item saves reported by the leaves. For a memo present twice the
- * higher `version` wins — `version` only ever grows, so that is the
- * re-base rule for both a refetched loader page and an edit that landed
- * before the refetch — and the loader page wins a tie.
+ * Merges the loader's window with the pages scrolled in since. For a memo
+ * present in both the higher `version` wins — `version` only ever grows —
+ * and the loader page wins a tie.
  */
 export function mergeTimeline(
   initial: readonly TimelineItemView[],
@@ -112,6 +110,62 @@ export function mergeTimeline(
     }
   }
   return [...byId.values()].sort(byTimeline);
+}
+
+/**
+ * Whether `memo` lies inside the stretch of the timeline `window` was read
+ * over: between its first and last item, and past an end with no cursor
+ * beyond it.
+ */
+export function windowCovers(
+  window: TimelineWindowView,
+  memo: TimelineItemView,
+): boolean {
+  const first = window.items[0];
+  const last = window.items.at(-1);
+  if (first === undefined || last === undefined) {
+    return window.olderCursor === null && window.newerCursor === null;
+  }
+  return (
+    (window.newerCursor === null || byTimeline(first, memo) <= 0) &&
+    (window.olderCursor === null || byTimeline(memo, last) <= 0)
+  );
+}
+
+/**
+ * The rows the list holds: the loader's window, plus the pages scrolled in
+ * since where the window does not reach. Inside its stretch the window is
+ * the answer, so a scrolled-in row a refetched window no longer carries —
+ * one an edit made stop matching the keyword, say — is not kept.
+ */
+export function timelineRows(
+  window: TimelineWindowView,
+  loaded: readonly TimelineItemView[],
+): TimelineItemView[] {
+  const carried = new Set(window.items.map((memo) => memo.id));
+  return mergeTimeline(
+    window.items,
+    loaded.filter((row) => carried.has(row.id) || !windowCovers(window, row)),
+  );
+}
+
+/**
+ * Lays the in-item saves the leaves reported over the rows the list holds,
+ * so an edited row shows what was saved before the refetch arrives. A save
+ * never adds a row: under a keyword the refetched window may no longer
+ * carry the edited memo, and the list follows the pages it was given. For
+ * a memo on both sides the higher `version` wins and the row wins a tie.
+ */
+export function applySaved(
+  rows: readonly TimelineItemView[],
+  saved: ReadonlyMap<string, MemoView>,
+): TimelineItemView[] {
+  return rows.map((row) => {
+    const save = saved.get(row.id);
+    return save === undefined || save.version <= row.version
+      ? row
+      : { ...save, sourceDocuments: row.sourceDocuments };
+  });
 }
 
 /** The date headings are display-only grouping (`spec/pages/index.md`, P-04). */
@@ -156,6 +210,7 @@ export function TimelineBoard({
 
   const [draft, setDraft] = useState("");
   const [loaded, setLoaded] = useState<TimelineItemView[]>([]);
+  const [saved, setSaved] = useState<ReadonlyMap<string, MemoView>>(new Map());
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [cursors, setCursors] = useState<{
     older: string | null | undefined;
@@ -192,7 +247,7 @@ export function TimelineBoard({
   const newerCursor =
     cursors.newer === undefined ? initial.newerCursor : cursors.newer;
 
-  const base = mergeTimeline(initial.items, loaded).filter(
+  const base = applySaved(timelineRows(initial, loaded), saved).filter(
     (memo) => !removed.has(memo.id),
   );
   const [optimistic, dispatch] = useOptimistic<DisplayMemo[], ListAction>(
@@ -405,14 +460,7 @@ export function TimelineBoard({
   };
 
   const onSaved = (memo: MemoView) =>
-    setLoaded((current) => {
-      const known =
-        current.find((item) => item.id === memo.id) ??
-        initial.items.find((item) => item.id === memo.id);
-      return mergeTimeline(current, [
-        { ...memo, sourceDocuments: known?.sourceDocuments ?? [] },
-      ]);
-    });
+    setSaved((current) => new Map(current).set(memo.id, memo));
 
   const filterBarOpen = filterBar !== "closed";
   const clearFilter = () => void goto({ date: search.date });
