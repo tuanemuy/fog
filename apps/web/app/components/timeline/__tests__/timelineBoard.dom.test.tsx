@@ -18,11 +18,10 @@ import { AppShell } from "@/components/layout/AppShell";
 import type { TimelineSearch } from "@/components/timeline/search";
 import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
-  applySaved,
   groupByDay,
   mergeTimeline,
+  pruneToWindow,
   TimelineBoard,
-  timelineRows,
   windowCovers,
 } from "@/components/timeline/TimelineBoard";
 import { AppServerError } from "@/presentation/errorResponse";
@@ -630,33 +629,6 @@ describe("mergeTimeline re-base", () => {
   });
 });
 
-describe("applySaved", () => {
-  const row = { ...memo("a", "row", JAN_1_LATE), version: 2 };
-  const saved = (body: string, version: number) =>
-    new Map([["a", { ...memo("a", body, JAN_1_LATE), version }]]);
-
-  it("lays a newer save over the row and keeps the row's source documents", () => {
-    const documents = [{ documentId: "d1", title: "D", isTrashed: false }];
-    const [only] = applySaved(
-      [{ ...row, sourceDocuments: documents }],
-      saved("save", 3),
-    );
-    expect(only?.body).toBe("save");
-    expect(only?.version).toBe(3);
-    expect(only?.sourceDocuments).toEqual(documents);
-  });
-
-  it("keeps the row when it is as new as the save or newer", () => {
-    expect(applySaved([row], saved("save", 2))[0]?.body).toBe("row");
-    expect(applySaved([row], saved("save", 1))[0]?.body).toBe("row");
-  });
-
-  it("never adds a row for a save the rows do not carry", () => {
-    const other = memo("b", "b", JAN_1_EARLIER);
-    expect(applySaved([other], saved("save", 9))).toEqual([other]);
-  });
-});
-
 describe("windowCovers", () => {
   const newest = memo("n", "n", JAN_2_EARLY);
   const middle = memo("m", "m", JAN_1_LATE);
@@ -697,9 +669,9 @@ describe("windowCovers", () => {
   });
 });
 
-describe("timelineRows", () => {
-  it("drops a scrolled-in row the window covers but no longer carries, and keeps the rest", () => {
-    const rows = timelineRows(
+describe("pruneToWindow", () => {
+  it("drops a scrolled-in row the window reaches but no longer carries, and keeps the rest", () => {
+    const kept = pruneToWindow(
       page([memo("a", "a", JAN_2_EARLY), memo("c", "c", JAN_1_EARLIER)], "c1"),
       [
         memo("b", "b", JAN_1_LATE),
@@ -707,15 +679,7 @@ describe("timelineRows", () => {
         memo("d", "d", new Date("2026-01-01T12:00:00Z")),
       ],
     );
-    expect(rows.map((row) => row.id)).toEqual(["a", "c", "d"]);
-  });
-
-  it("keeps the higher version of a row both carry", () => {
-    const stale = memo("a", "window", JAN_1_LATE);
-    const rows = timelineRows(page([stale], "c1"), [
-      { ...stale, body: "scrolled-in", version: 2 },
-    ]);
-    expect(rows.map((row) => row.body)).toEqual(["scrolled-in"]);
+    expect(kept.map((row) => row.id)).toEqual(["c", "d"]);
   });
 });
 
@@ -837,14 +801,56 @@ describe("TimelineBoard: an edit under a keyword", () => {
     ]);
   });
 
+  it("keeps a dropped row gone when a later window no longer reaches it", async () => {
+    const c = memo("c", "りんご 煮る", JAN_1_EARLIER);
+    const d = memo("d", "りんご 干す", new Date("2026-01-01T12:00:00Z"));
+    const fresh = memo("n", "りんご 新", new Date("2026-01-02T00:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [b, c, d],
+      nextCursor: null,
+    });
+    mocks.editMemoFn
+      .mockResolvedValueOnce(savedAs(b, "みかん ジュース"))
+      .mockResolvedValueOnce(savedAs(a, "りんご を2つ買う"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 干す");
+
+    const invalidate = vi
+      .spyOn(router, "invalidate")
+      .mockImplementationOnce(async () => {
+        refetch(page([a, c], "cursor-2"));
+      });
+    editTo("b", "みかん ジュース");
+    await waitFor(() => expect(document.getElementById("memo-b")).toBeNull());
+
+    // Another client posts a match; the next window ends at A, short of B.
+    const a2 = { ...a, body: "りんご を2つ買う", version: a.version + 1 };
+    invalidate.mockImplementationOnce(async () => {
+      refetch(page([fresh, a2], "cursor-3"));
+    });
+    editTo("a", "りんご を2つ買う");
+    await screen.findByText("りんご 新");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "りんご 新"],
+      ["memo-a", "りんご を2つ買う"],
+      ["memo-c", "りんご 煮る"],
+      ["memo-d", "りんご 干す"],
+    ]);
+  });
+
   it("drops it under a date jump with a keyword too, noting the day once its last match is gone", async () => {
     mocks.editMemoFn.mockResolvedValue(savedAs(a, "みかん を買う"));
-    // A is the day's only match, the landing and the window's newer end;
-    // the refetched window lands on B, the nearest match, as a reload of
-    // the URL would, and no longer reaches A's position.
+    // A is the day's only match and the landing, with nothing newer (so no
+    // newer cursor); the refetched window lands on B, the nearest match, as
+    // a reload of the URL would.
     const window = (items: readonly TimelineItemView[], pivotId: string) => ({
-      ...page(items),
-      newerCursor: "cursor-newer",
+      ...page(items, "cursor-older"),
       pivotId,
     });
     const { router, refetch } = await renderRefetchingBoard(
