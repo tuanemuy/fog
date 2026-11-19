@@ -34,7 +34,7 @@ SSO 主体が既に使われていて連携・登録が成立しないとき、�
 - AC-4（自動テスト・DOM テスト）: `AuthForm` に `mode` が `login` / `signup`、`ssoError="already_used"` を渡すと、フォームの先頭の `role="alert"` に「この外部アカウントは既に使われています」が出る
 - AC-5（`browser`）: `/login?sso_error=already_used` と `/signup?sso_error=already_used` を開くと、それぞれのフォームの先頭に `role="alert"` で「この外部アカウントは既に使われています」が出て、「別のアカウント」を含む文言は画面に出ない
 - AC-6（コマンド出力）: `rg "別のアカウントに連携" apps packages` が何も返さない
-- AC-7（コマンド出力・自動テスト）: 同じ表のほかのコードの文言は変わらない。`git diff 619769c..HEAD` が `renderConflictMessage`・`renderSsoError`・`ssoLinkErrorMessage` の中で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。既存テストが字面で固定している組（`errorDisplay.test.ts` の全コード、`authForm.dom.test.tsx` の P-02 `email_registered`・P-01 `unverified`・P-02 `failed`、`ssoNotice.dom.test.tsx` の `email_registered` / `unverified` / `failed`）が通る。P-01 `email_registered`・P-02 `unverified`・P-01 `failed` を描くテストは無く、この 3 組は差分が触れないことだけが根拠
+- AC-7（コマンド出力・自動テスト）: 同じ表のほかのコードの文言は変わらない。`git diff 619769c..HEAD` が `renderConflictMessage`・`renderSsoError`・`ssoLinkErrorMessage` の中で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。既存テストが文言を確かめている組が通る: 字面の一致（`toBe`）で確かめるのは `errorDisplay.test.ts` の conflict の `EMAIL_ALREADY_REGISTERED`・`OPTIMISTIC_LOCK_FAILURE`、`authForm.dom.test.tsx` の P-01 `unverified`、`ssoNotice.dom.test.tsx` の `email_registered` / `unverified` / `failed`。部分一致（`toContain`）で確かめるのは `authForm.dom.test.tsx` の P-02 `email_registered`・P-02 `failed`。テストが無いのは、conflict の `UNIQUE_VIOLATION`・`FOREIGN_KEY_VIOLATION`・既定の文言と、P-01 `email_registered`・P-02 `unverified`・P-01 `failed`。テストが無い組と部分一致の組は、差分が触れないことだけが根拠
 
 ### 観測の対象（AC 以外で、結果がユーザーに見えるもの）
 

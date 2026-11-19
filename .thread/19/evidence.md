@@ -11,7 +11,7 @@
 | AC-4 | `renderSsoError("already_used", mode)` → `SSO_IDENTITY_IN_USE_MESSAGE`。`AuthForm` がフォームの先頭の `FormError` に描く | `authForm.dom.test.tsx`「login / signup draws a subject already in use without naming who holds it」。PASS |
 | AC-5 | 同上 | ブラウザ（O-7〜O-10）。PASS |
 | AC-6 | — | `rg -n "別のアカウントに連携" apps packages` の出力なし（exit 1） |
-| AC-7 | 変更なし | `git diff 619769c..HEAD` が 3 つの文言の表で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。字面で固定している既存テストが通る: `errorDisplay.test.ts`（全コード）、`authForm.dom.test.tsx`（P-02 `email_registered`・P-01 `unverified`・P-02 `failed`）、`ssoNotice.dom.test.tsx`（`email_registered` / `unverified` / `failed`）。P-01 `email_registered`・P-02 `unverified`・P-01 `failed` はテストが無く、差分が触れないことだけが根拠 |
+| AC-7 | 変更なし | `git diff 619769c..HEAD` が 3 つの文言の表で触れるのは `SSO_IDENTITY_ALREADY_REGISTERED` / `already_used` の分岐だけ。文言を確かめる既存テストが通る。字面の一致（`toBe`）: `errorDisplay.test.ts`（conflict の `EMAIL_ALREADY_REGISTERED`・`OPTIMISTIC_LOCK_FAILURE`）、`authForm.dom.test.tsx`（P-01 `unverified`）、`ssoNotice.dom.test.tsx`（`email_registered` / `unverified` / `failed`）。部分一致（`toContain`）: `authForm.dom.test.tsx`（P-02 `email_registered`・P-02 `failed`）。テストが無い組（conflict の `UNIQUE_VIOLATION`・`FOREIGN_KEY_VIOLATION`・既定の文言、P-01 `email_registered`・P-02 `unverified`・P-01 `failed`）と部分一致の組は、差分が触れないことだけが根拠 |
 
 ## テストと変異
 
