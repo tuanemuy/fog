@@ -20,6 +20,7 @@ import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
   groupByDay,
   mergeTimeline,
+  overlaySaved,
   pruneToWindow,
   TimelineBoard,
   windowCovers,
@@ -669,6 +670,21 @@ describe("windowCovers", () => {
   });
 });
 
+describe("overlaySaved", () => {
+  const row = { ...memo("a", "row", JAN_1_LATE), version: 2 };
+
+  it("lays a newer save over the row it holds and keeps the row on a tie", () => {
+    const newer = { ...row, body: "save", version: 3 };
+    expect(overlaySaved([row], [newer])[0]?.body).toBe("save");
+    expect(overlaySaved([row], [{ ...row, body: "tie" }])[0]?.body).toBe("row");
+  });
+
+  it("never adds a row for a save the rows do not carry", () => {
+    const other = memo("b", "b", JAN_1_EARLIER);
+    expect(overlaySaved([other], [{ ...row, version: 9 }])).toEqual([other]);
+  });
+});
+
 describe("pruneToWindow", () => {
   it("drops a scrolled-in row the window reaches but no longer carries, and keeps the rest", () => {
     const kept = pruneToWindow(
@@ -798,6 +814,26 @@ describe("TimelineBoard: an edit under a keyword", () => {
     expect(shownBodies()).toEqual([
       ["memo-c", "りんご 煮る"],
       ["memo-d", "りんご 干す"],
+    ]);
+  });
+
+  it("drops the window's older end once edited away, even when a match posted elsewhere moves the window past it", async () => {
+    const fresh = memo("n", "りんご 新", new Date("2026-01-02T00:00:00Z"));
+    mocks.editMemoFn.mockResolvedValue(savedAs(b, "みかん ジュース"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    // Another client posted a match, so the refetched window ends at A.
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([fresh, a], "cursor-2"));
+    });
+    editTo("b", "みかん ジュース");
+    await screen.findByText("りんご 新");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "りんご 新"],
+      ["memo-a", "りんご を買う"],
     ]);
   });
 

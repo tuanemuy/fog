@@ -151,6 +151,24 @@ export function pruneToWindow(
   );
 }
 
+/**
+ * Lays the saves the leaves reported over the rows the list holds, by the
+ * rule of `mergeTimeline` (the row wins a tie), so an edited row shows what
+ * was saved until the refetched window arrives. A save never adds a row:
+ * whether a memo is on the list is the answer of the window and the pages,
+ * and under a keyword the refetched window may no longer carry it.
+ */
+export function overlaySaved(
+  rows: readonly TimelineItemView[],
+  saved: readonly TimelineItemView[],
+): TimelineItemView[] {
+  const held = new Set(rows.map((row) => row.id));
+  return mergeTimeline(
+    rows,
+    saved.filter((memo) => held.has(memo.id)),
+  );
+}
+
 /** The date headings are display-only grouping (`spec/pages/index.md`, P-04). */
 export function groupByDay(
   memos: readonly DisplayMemo[],
@@ -193,6 +211,7 @@ export function TimelineBoard({
 
   const [draft, setDraft] = useState("");
   const [loaded, setLoaded] = useState<TimelineItemView[]>([]);
+  const [saved, setSaved] = useState<TimelineItemView[]>([]);
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [cursors, setCursors] = useState<{
     older: string | null | undefined;
@@ -237,7 +256,7 @@ export function TimelineBoard({
   const newerCursor =
     cursors.newer === undefined ? initial.newerCursor : cursors.newer;
 
-  const base = mergeTimeline(initial.items, loaded).filter(
+  const base = overlaySaved(mergeTimeline(initial.items, loaded), saved).filter(
     (memo) => !removed.has(memo.id),
   );
   const [optimistic, dispatch] = useOptimistic<DisplayMemo[], ListAction>(
@@ -449,15 +468,16 @@ export function TimelineBoard({
     });
   };
 
-  const onSaved = (memo: MemoView) =>
-    setLoaded((current) => {
-      const known =
-        current.find((item) => item.id === memo.id) ??
-        initial.items.find((item) => item.id === memo.id);
-      return mergeTimeline(current, [
+  const onSaved = (memo: MemoView) => {
+    const known =
+      loaded.find((item) => item.id === memo.id) ??
+      initial.items.find((item) => item.id === memo.id);
+    setSaved((current) =>
+      mergeTimeline(current, [
         { ...memo, sourceDocuments: known?.sourceDocuments ?? [] },
-      ]);
-    });
+      ]),
+    );
+  };
 
   const filterBarOpen = filterBar !== "closed";
   const clearFilter = () => void goto({ date: search.date });
