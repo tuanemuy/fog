@@ -20,7 +20,6 @@ import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
   groupByDay,
   mergeTimeline,
-  overlaySaved,
   pruneToWindow,
   TimelineBoard,
   windowCovers,
@@ -670,21 +669,6 @@ describe("windowCovers", () => {
   });
 });
 
-describe("overlaySaved", () => {
-  const row = { ...memo("a", "row", JAN_1_LATE), version: 2 };
-
-  it("lays a newer save over the row it holds and keeps the row on a tie", () => {
-    const newer = { ...row, body: "save", version: 3 };
-    expect(overlaySaved([row], [newer])[0]?.body).toBe("save");
-    expect(overlaySaved([row], [{ ...row, body: "tie" }])[0]?.body).toBe("row");
-  });
-
-  it("never adds a row for a save the rows do not carry", () => {
-    const other = memo("b", "b", JAN_1_EARLIER);
-    expect(overlaySaved([other], [{ ...row, version: 9 }])).toEqual([other]);
-  });
-});
-
 describe("pruneToWindow", () => {
   it("drops a scrolled-in row the window reaches but no longer carries, and keeps the rest", () => {
     const kept = pruneToWindow(
@@ -817,23 +801,34 @@ describe("TimelineBoard: an edit under a keyword", () => {
     ]);
   });
 
-  it("drops the window's older end once edited away, even when a match posted elsewhere moves the window past it", async () => {
+  it("keeps the window's older end edited still matching when a match posted elsewhere moves the window past it", async () => {
+    const c = memo("c", "りんご 煮る", JAN_1_EARLIER);
     const fresh = memo("n", "りんご 新", new Date("2026-01-02T00:00:00Z"));
-    mocks.editMemoFn.mockResolvedValue(savedAs(b, "みかん ジュース"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [c],
+      nextCursor: null,
+    });
+    mocks.editMemoFn.mockResolvedValue(savedAs(b, "りんご ジュース 改"));
     const { router, refetch } = await renderRefetchingBoard(
       page([a, b], "cursor-1"),
       { q: "りんご" },
       "/?q=りんご",
     );
-    // Another client posted a match, so the refetched window ends at A.
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 煮る");
+    // Another client posted a match, so the refetched window ends at A and
+    // does not reach B: it says nothing about B, which keeps its row.
     vi.spyOn(router, "invalidate").mockImplementation(async () => {
       refetch(page([fresh, a], "cursor-2"));
     });
-    editTo("b", "みかん ジュース");
+    editTo("b", "りんご ジュース 改");
     await screen.findByText("りんご 新");
     expect(shownBodies()).toEqual([
       ["memo-n", "りんご 新"],
       ["memo-a", "りんご を買う"],
+      ["memo-b", "りんご ジュース 改"],
+      ["memo-c", "りんご 煮る"],
     ]);
   });
 
@@ -962,15 +957,45 @@ describe("TimelineBoard: an edit's saved body", () => {
     expect(shownBodies()).toEqual([["memo-a", "after"]]);
   });
 
-  it("keeps a scrolled-in row with its saved body, since its page is not refetched", async () => {
+  it("keeps the window's end edited when a memo posted elsewhere moves the window past it", async () => {
+    const a = memo("a", "a", JAN_2_EARLY);
+    const b = memo("b", "before", JAN_1_LATE);
+    const c = memo("c", "c", JAN_1_EARLIER);
+    const fresh = memo("n", "n", new Date("2026-01-02T00:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [c],
+      nextCursor: null,
+    });
+    mocks.editMemoFn.mockResolvedValue(savedAs(b, "after"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("c");
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([fresh, a], "cursor-2"));
+    });
+    editTo("b", "after");
+    await screen.findByText("n");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "n"],
+      ["memo-a", "a"],
+      ["memo-b", "after"],
+      ["memo-c", "c"],
+    ]);
+  });
+
+  it("keeps a scrolled-in row with its saved body, before and after the refetched window, since its page is not refetched", async () => {
     const older = memo("older", "りんご 古い", JAN_1_EARLIER);
+    const windowMemo = memo("m1", "りんご 窓", JAN_1_LATE);
     mocks.loadTimelinePageFn.mockResolvedValue({
       items: [older],
       nextCursor: null,
     });
     mocks.editMemoFn.mockResolvedValue(savedAs(older, "りんご 新しい"));
-    await renderRefetchingBoard(
-      page([memo("m1", "りんご 窓", JAN_1_LATE)], "cursor-1"),
+    const { refetch } = await renderRefetchingBoard(
+      page([windowMemo], "cursor-1"),
       { q: "りんご" },
       "/?q=りんご",
     );
@@ -982,6 +1007,12 @@ describe("TimelineBoard: an edit's saved body", () => {
     await waitFor(() =>
       expect(screen.queryByRole("textbox", { name: "メモを編集" })).toBeNull(),
     );
+    expect(shownBodies()).toEqual([
+      ["memo-m1", "りんご 窓"],
+      ["memo-older", "りんご 新しい"],
+    ]);
+
+    refetch(page([windowMemo], "cursor-1"));
     expect(shownBodies()).toEqual([
       ["memo-m1", "りんご 窓"],
       ["memo-older", "りんご 新しい"],
