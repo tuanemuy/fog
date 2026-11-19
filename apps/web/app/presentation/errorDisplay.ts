@@ -7,12 +7,21 @@ import {
   type SerializedError,
 } from "@/presentation/errorResponse";
 
+/**
+ * The wording for an SSO subject that is already in use. It does not say
+ * whose account holds it: a link refuses a subject the user's own account
+ * already holds just as it refuses another account's (spec/pages P-13).
+ * The SSO callback's `already_used` on P-01 / P-02 / P-13 says the same.
+ */
+export const SSO_IDENTITY_IN_USE_MESSAGE =
+  "この外部アカウントは既に使われています";
+
 function renderConflictMessage(code: string | null): string {
   switch (code) {
     case "EMAIL_ALREADY_REGISTERED":
       return "このメールアドレスは登録済みです";
     case "SSO_IDENTITY_ALREADY_REGISTERED":
-      return "この外部アカウントは既に別のアカウントに連携されています";
+      return SSO_IDENTITY_IN_USE_MESSAGE;
     case "OPTIMISTIC_LOCK_FAILURE":
       return "他の操作と競合しました。もう一度お試しください";
     case "UNIQUE_VIOLATION":

@@ -249,6 +249,30 @@ describe("AuthForm — SSO and the entries under the form", () => {
     expectAtTheHeadOfTheForm(alert);
   });
 
+  // Whose account holds the subject is not known here: on login and signup
+  // the race spec/usecases/identity.md names is lost to a sign-in with the
+  // same subject, so "another account" would be wrong.
+  it.each(["login", "signup"] as const)(
+    "%s draws a subject already in use without naming who holds it",
+    async (mode) => {
+      await renderWithRouter(
+        <AuthForm
+          mode={mode}
+          redirectTo={undefined}
+          ssoError="already_used"
+          ssoProviders={PROVIDERS}
+        />,
+        { path: `/${mode}` },
+      );
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toContain(
+        "この外部アカウントは既に使われています",
+      );
+      expect(alert.textContent).not.toContain("別のアカウント");
+      expectAtTheHeadOfTheForm(alert);
+    },
+  );
+
   it("replaces the SSO failure with the failure of the attempt made on the page", async () => {
     mocks.registerFn.mockRejectedValue(
       new AppServerError(EMAIL_ALREADY_REGISTERED),

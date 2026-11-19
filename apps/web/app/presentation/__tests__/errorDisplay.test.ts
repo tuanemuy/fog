@@ -331,13 +331,13 @@ describe("renderErrorMessage", () => {
       "このメールアドレスは登録済みです",
     ],
     [
-      "an SSO identity held by another account",
+      "an SSO identity already in use, whichever account holds it",
       {
         kind: "conflict",
         code: "SSO_IDENTITY_ALREADY_REGISTERED",
         message: "This SSO identity is already registered",
       },
-      "この外部アカウントは既に別のアカウントに連携されています",
+      "この外部アカウントは既に使われています",
     ],
     [
       "a spent reset link",

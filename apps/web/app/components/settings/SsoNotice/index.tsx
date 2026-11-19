@@ -3,6 +3,7 @@
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 import type { SsoErrorCode } from "@/components/auth/schema";
 import { useToast } from "@/components/ui/Toast";
+import { SSO_IDENTITY_IN_USE_MESSAGE } from "@/presentation/errorDisplay";
 
 export const SSO_LINKED_MESSAGE = "外部アカウントを連携しました";
 
@@ -10,7 +11,7 @@ export const SSO_LINKED_MESSAGE = "外部アカウントを連携しました";
 export function ssoLinkErrorMessage(ssoError: SsoErrorCode): string {
   switch (ssoError) {
     case "already_used":
-      return "この外部アカウントは既に使われています";
+      return SSO_IDENTITY_IN_USE_MESSAGE;
     case "email_registered":
     case "unverified":
     case "failed":
