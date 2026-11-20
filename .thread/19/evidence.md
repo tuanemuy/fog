@@ -81,4 +81,4 @@
 
 比べた既存画面: P-01 の `/login?sso_error=unverified`（375px、`compare-login-unverified-375.png`）。同じ `FormError` の箱・同じ位置に出ており、置き方がそろう。P-13 は変更の前後で文言が同じで、モック（spec/design/pages/settings.html「SSO 連携の追加が成立しない」）とは位置（「連携を追加」の後）が合い、文言はプロバイダ名の有無で食い違う（起票の下書きに回した）。
 
-証跡の置き場所: `/private/tmp/claude-501/-Users-hikaru-github-com-tuanemuy-dotfiles-agents-skills/c8c03944-c01b-4c6e-a71d-35b79645f865/scratchpad/cmp/wt/fog-19-NEW.evidence/`
+証跡の置き場所: `一時ディレクトリ`
