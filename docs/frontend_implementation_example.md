@@ -148,7 +148,7 @@ A loader-owned RSC list can reflect within-element state immediately via an item
 
 **Who calls the server function is determined by "the kind of operation"**:
 
-- In-item operations (inline edit) have the leaf call the server function itself. Since membership doesn't change and the leaf survives, the item-local `useOptimistic` and error display can also live in the leaf (`MemoEntry` and `editMemoFn`).
+- In-item operations (inline edit) have the leaf call the server function itself. Since the request itself doesn't change membership and the leaf survives it, the item-local `useOptimistic` and error display can also live in the leaf (`MemoEntry` and `editMemoFn`).
 - Operations that change membership (add / remove) have the owner (the island) call the server function. In particular, **delete must be called by the owner**: with optimistic deletion the leaf unmounts before the request settles, so the error UI placed in the leaf would be discarded. Add is dispatched from the form's action (the composer lives outside the list and survives the round trip).
 
 Every operation calls `router.invalidate()` once it settles, and the optimistic list is re-based onto the refetched latest value (it reverts automatically on failure). The reference implementation is `apps/web/app/components/timeline/TimelineBoard`; the worked example below is its shape.
@@ -444,7 +444,7 @@ So a mutation that deletes what the screen is showing and then navigates away re
 
 Once the server has confirmed such a delete, a later failure belongs to the navigation and not to the delete: the `catch` closes the confirmation and reports nothing, so the dialog cannot be used to confirm a second delete of something already in the trash. Both halves are held by `renderWithReloadingRoutes` (see the DOM section of `docs/test.md`), which draws the two screens over real loaders at `staleTime: 0` and judges which loaders re-ran.
 
-The leaf (`MemoEntry`) only asks for the delete through a callback and owns nothing about it — the failure message is rendered by the board next to the row that stayed, because the leaf would have been unmounted by the optimistic removal. An item-owned change (inline edit, `editMemoFn` with the OCC `expectedVersion`) stays in the leaf with its own `useOptimistic` and error text, and reports the saved memo back to the owner (`onSaved`) so the owner's copy of the list is current before `router.invalidate()` re-bases it.
+The leaf (`MemoEntry`) only asks for the delete through a callback and owns nothing about it — the failure message is rendered by the board next to the row that stayed, because the leaf would have been unmounted by the optimistic removal. An item-owned change (inline edit, `editMemoFn` with the OCC `expectedVersion`) stays in the leaf with its own `useOptimistic` and error text, and reports the saved memo back to the owner (`onSaved`) so the owner's copy of the list is current before `router.invalidate()` re-bases it. Whether the memo stays on the list is the refetched window's answer: each window the loader hands over prunes, once, the owner's rows that lie within the stretch it was read over and that it no longer carries — under a keyword filter an edit can make the memo stop matching. Pages scrolled in beyond that stretch are not refetched, so their rows stay.
 
 ### Failures such as Conflict
 

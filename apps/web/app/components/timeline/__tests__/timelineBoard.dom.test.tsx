@@ -1,4 +1,5 @@
 import type {
+  EditMemoView,
   TimelineItemView,
   TimelinePageView,
 } from "@repo/core/application/memo/view";
@@ -9,6 +10,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "@/components/__tests__/renderWithRouter";
 import { toastRegion } from "@/components/__tests__/toastFrame";
@@ -18,7 +20,9 @@ import type { TimelineBoardInitial } from "@/components/timeline/TimelineBoard";
 import {
   groupByDay,
   mergeTimeline,
+  pruneToWindow,
   TimelineBoard,
+  windowCovers,
 } from "@/components/timeline/TimelineBoard";
 import { AppServerError } from "@/presentation/errorResponse";
 import { formatDay } from "@/presentation/time";
@@ -38,6 +42,12 @@ const mocks = vi.hoisted(() => ({
     >(),
   softDeleteMemoFn:
     vi.fn<(input: { data: { memoId: string } }) => Promise<unknown>>(),
+  editMemoFn:
+    vi.fn<
+      (input: {
+        data: { memoId: string; body: string; expectedVersion: number };
+      }) => Promise<unknown>
+    >(),
 }));
 
 vi.mock("@tanstack/react-start", async (importOriginal) => ({
@@ -48,7 +58,7 @@ vi.mock("@tanstack/react-start", async (importOriginal) => ({
 vi.mock("@/components/timeline/actions", () => ({
   postMemoFn: mocks.postMemoFn,
   loadTimelinePageFn: mocks.loadTimelinePageFn,
-  editMemoFn: vi.fn(),
+  editMemoFn: mocks.editMemoFn,
   softDeleteMemoFn: mocks.softDeleteMemoFn,
 }));
 
@@ -616,6 +626,397 @@ describe("mergeTimeline re-base", () => {
         [{ ...v1, body: "loaded" }],
       )[0]?.body,
     ).toBe("initial");
+  });
+});
+
+describe("windowCovers", () => {
+  const newest = memo("n", "n", JAN_2_EARLY);
+  const middle = memo("m", "m", JAN_1_LATE);
+  const oldest = memo("o", "o", JAN_1_EARLIER);
+  const window = (
+    items: readonly TimelineItemView[],
+    olderCursor: string | null,
+    newerCursor: string | null,
+  ) => ({ items, olderCursor, newerCursor, pivotId: null });
+
+  it("covers what lies between the first and the last item, ends included", () => {
+    const both = window([newest, oldest], "older", "newer");
+    expect(windowCovers(both, middle)).toBe(true);
+    expect(windowCovers(both, newest)).toBe(true);
+    expect(windowCovers(both, oldest)).toBe(true);
+  });
+
+  it("stops at an end that has a cursor beyond it and runs past one that has none", () => {
+    const head = window([middle], "older", null);
+    expect(windowCovers(head, newest)).toBe(true);
+    expect(windowCovers(head, oldest)).toBe(false);
+    const tail = window([middle], null, "newer");
+    expect(windowCovers(tail, newest)).toBe(false);
+    expect(windowCovers(tail, oldest)).toBe(true);
+  });
+
+  it("breaks a tie on the time by id, as the order does", () => {
+    const sameTime = memo("l", "l", JAN_1_LATE);
+    const head = window([middle], "older", null);
+    // "l" sorts after "m" at the same instant, so it is older than the end.
+    expect(windowCovers(head, sameTime)).toBe(false);
+    expect(windowCovers(window([sameTime], "older", null), middle)).toBe(true);
+  });
+
+  it("covers everything when empty with no cursors, and nothing otherwise", () => {
+    expect(windowCovers(window([], null, null), middle)).toBe(true);
+    expect(windowCovers(window([], "older", null), middle)).toBe(false);
+  });
+});
+
+describe("pruneToWindow", () => {
+  it("drops a scrolled-in row the window reaches but no longer carries, and keeps the rest", () => {
+    const kept = pruneToWindow(
+      page([memo("a", "a", JAN_2_EARLY), memo("c", "c", JAN_1_EARLIER)], "c1"),
+      [
+        memo("b", "b", JAN_1_LATE),
+        memo("c", "c", JAN_1_EARLIER),
+        memo("d", "d", new Date("2026-01-01T12:00:00Z")),
+      ],
+    );
+    expect(kept.map((row) => row.id)).toEqual(["c", "d"]);
+  });
+});
+
+/**
+ * The board as the route draws it across a refetch: `refetch` hands it the
+ * window a `router.invalidate()` would have read, under the same key, the
+ * way `TimelineFeed` does for an unchanged URL.
+ */
+async function renderRefetchingBoard(
+  initial: TimelineBoardInitial,
+  search: TimelineSearch = {},
+  path?: `/?${string}`,
+) {
+  let setWindow: (next: TimelineBoardInitial) => void = () => {};
+  function Refetching() {
+    const [current, setCurrent] = useState(initial);
+    setWindow = setCurrent;
+    return <TimelineBoard initial={current} search={search} />;
+  }
+  const rendered = await renderWithRouter(
+    <AppShell>
+      <Refetching />
+    </AppShell>,
+    path === undefined ? {} : { path },
+  );
+  const refetch = (next: TimelineBoardInitial) =>
+    act(() => {
+      setWindow(next);
+    });
+  return { ...rendered, refetch };
+}
+
+function savedAs(item: TimelineItemView, body: string): EditMemoView {
+  const { sourceDocuments: _, ...view } = item;
+  return {
+    result: "saved",
+    memo: { ...view, body, version: item.version + 1 },
+    conflict: null,
+  } as EditMemoView;
+}
+
+/** Opens the editor on `id`, types `body` and saves it. */
+function editTo(id: string, body: string) {
+  const row = document.getElementById(`memo-${id}`) as HTMLElement;
+  fireEvent.click(within(row).getByRole("button", { name: "メモの操作" }));
+  fireEvent.click(within(row).getByRole("menuitem", { name: "編集" }));
+  const textarea = within(row).getByRole("textbox", { name: "メモを編集" });
+  fireEvent.change(textarea, { target: { value: body } });
+  fireEvent.click(within(row).getByRole("button", { name: "保存" }));
+}
+
+const shownBodies = () =>
+  screen
+    .getAllByRole("article")
+    .map((article) => [article.id, article.querySelector("p")?.textContent]);
+
+describe("TimelineBoard: an edit under a keyword", () => {
+  const a = memo("a", "りんご を買う", JAN_2_EARLY);
+  const b = memo("b", "りんご ジュース", JAN_1_LATE);
+
+  it("shows the saved body until the refetched window arrives, then drops the memo it no longer carries", async () => {
+    mocks.editMemoFn.mockResolvedValue(savedAs(a, "みかん を買う"));
+    const { refetch } = await renderRefetchingBoard(
+      page([a, b]),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    // `invalidate()` settles before the window streams in.
+    editTo("a", "みかん を買う");
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "メモを編集" })).toBeNull(),
+    );
+    expect(shownBodies()).toEqual([
+      ["memo-a", "みかん を買う"],
+      ["memo-b", "りんご ジュース"],
+    ]);
+
+    refetch(page([b]));
+    expect(document.getElementById("memo-a")).toBeNull();
+    expect(shownBodies()).toEqual([["memo-b", "りんご ジュース"]]);
+  });
+
+  it("drops it when a scrolled-in page carries it too, and keeps the scrolled-in rows past the window", async () => {
+    const c = memo("c", "りんご 煮る", JAN_1_EARLIER);
+    const d = memo("d", "りんご 干す", new Date("2026-01-01T12:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [b, c, d],
+      nextCursor: null,
+    });
+    mocks.editMemoFn
+      .mockResolvedValueOnce(savedAs(a, "みかん を買う"))
+      .mockResolvedValueOnce(savedAs(b, "みかん ジュース"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 干す");
+
+    // The window moves down by one: B is now in it and in the scrolled-in page.
+    const invalidate = vi
+      .spyOn(router, "invalidate")
+      .mockImplementationOnce(async () => {
+        refetch(page([b], "cursor-2"));
+      });
+    editTo("a", "みかん を買う");
+    await waitFor(() => expect(document.getElementById("memo-a")).toBeNull());
+
+    invalidate.mockImplementationOnce(async () => {
+      refetch(page([c], "cursor-3"));
+    });
+    editTo("b", "みかん ジュース");
+    await waitFor(() => expect(document.getElementById("memo-b")).toBeNull());
+    expect(shownBodies()).toEqual([
+      ["memo-c", "りんご 煮る"],
+      ["memo-d", "りんご 干す"],
+    ]);
+  });
+
+  it("keeps the window's older end edited still matching when a match posted elsewhere moves the window past it", async () => {
+    const c = memo("c", "りんご 煮る", JAN_1_EARLIER);
+    const fresh = memo("n", "りんご 新", new Date("2026-01-02T00:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [c],
+      nextCursor: null,
+    });
+    mocks.editMemoFn.mockResolvedValue(savedAs(b, "りんご ジュース 改"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 煮る");
+    // Another client posted a match, so the refetched window ends at A and
+    // does not reach B: it says nothing about B, which keeps its row.
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([fresh, a], "cursor-2"));
+    });
+    editTo("b", "りんご ジュース 改");
+    await screen.findByText("りんご 新");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "りんご 新"],
+      ["memo-a", "りんご を買う"],
+      ["memo-b", "りんご ジュース 改"],
+      ["memo-c", "りんご 煮る"],
+    ]);
+  });
+
+  it("keeps a dropped row gone when a later window no longer reaches it", async () => {
+    const c = memo("c", "りんご 煮る", JAN_1_EARLIER);
+    const d = memo("d", "りんご 干す", new Date("2026-01-01T12:00:00Z"));
+    const fresh = memo("n", "りんご 新", new Date("2026-01-02T00:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [b, c, d],
+      nextCursor: null,
+    });
+    mocks.editMemoFn
+      .mockResolvedValueOnce(savedAs(b, "みかん ジュース"))
+      .mockResolvedValueOnce(savedAs(a, "りんご を2つ買う"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 干す");
+
+    const invalidate = vi
+      .spyOn(router, "invalidate")
+      .mockImplementationOnce(async () => {
+        refetch(page([a, c], "cursor-2"));
+      });
+    editTo("b", "みかん ジュース");
+    await waitFor(() => expect(document.getElementById("memo-b")).toBeNull());
+
+    // Another client posts a match; the next window ends at A, short of B.
+    const a2 = { ...a, body: "りんご を2つ買う", version: a.version + 1 };
+    invalidate.mockImplementationOnce(async () => {
+      refetch(page([fresh, a2], "cursor-3"));
+    });
+    editTo("a", "りんご を2つ買う");
+    await screen.findByText("りんご 新");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "りんご 新"],
+      ["memo-a", "りんご を2つ買う"],
+      ["memo-c", "りんご 煮る"],
+      ["memo-d", "りんご 干す"],
+    ]);
+  });
+
+  it("drops it under a date jump with a keyword too, noting the day once its last match is gone", async () => {
+    mocks.editMemoFn.mockResolvedValue(savedAs(a, "みかん を買う"));
+    // A is the day's only match and the landing, with nothing newer (so no
+    // newer cursor); the refetched window lands on B, the nearest match, as
+    // a reload of the URL would.
+    const window = (items: readonly TimelineItemView[], pivotId: string) => ({
+      ...page(items, "cursor-older"),
+      pivotId,
+    });
+    const { router, refetch } = await renderRefetchingBoard(
+      window([a, b], "a"),
+      { date: "2026-01-02", q: "りんご" },
+      "/?date=2026-01-02&q=りんご",
+    );
+    expect(screen.queryByText(/のメモはありません/)).toBeNull();
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(window([b], "b"));
+    });
+    editTo("a", "みかん を買う");
+    await waitFor(() => expect(document.getElementById("memo-a")).toBeNull());
+    expect(shownBodies()).toEqual([["memo-b", "りんご ジュース"]]);
+    const heading = screen.getByRole("heading", { level: 2 });
+    expect(heading.textContent).toBe(
+      `${formatDay(JAN_1_LATE)}2026年1月2日(金)のメモはありません`,
+    );
+  });
+
+  it("keeps the edited memo with its saved body while the refetched window still carries it", async () => {
+    const result = savedAs(a, "りんご を2つ買う");
+    mocks.editMemoFn.mockResolvedValue(result);
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b]),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([{ ...result.memo, sourceDocuments: [] }, b]));
+    });
+    editTo("a", "りんご を2つ買う");
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "メモを編集" })).toBeNull(),
+    );
+    expect(shownBodies()).toEqual([
+      ["memo-a", "りんご を2つ買う"],
+      ["memo-b", "りんご ジュース"],
+    ]);
+  });
+
+  it("shows the no-match state once the last match is edited away", async () => {
+    mocks.editMemoFn.mockResolvedValue(savedAs(a, "みかん を買う"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a]),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([]));
+    });
+    editTo("a", "みかん を買う");
+    await screen.findByText("「りんご」に一致するメモは見つかりませんでした");
+    expect(screen.queryAllByRole("article")).toEqual([]);
+  });
+});
+
+describe("TimelineBoard: an edit's saved body", () => {
+  it("shows the saved body once the save settles, before the refetched window arrives, and after it", async () => {
+    const a = memo("a", "before", JAN_1_LATE);
+    const result = savedAs(a, "after");
+    mocks.editMemoFn.mockResolvedValue(result);
+    // The window streams in after `invalidate()` settles (CLAUDE.md,
+    // Frontend: the loader does not await the fragment).
+    const { refetch } = await renderRefetchingBoard(page([a]));
+    editTo("a", "after");
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "メモを編集" })).toBeNull(),
+    );
+    expect(shownBodies()).toEqual([["memo-a", "after"]]);
+
+    refetch(page([{ ...result.memo, sourceDocuments: [] }]));
+    expect(shownBodies()).toEqual([["memo-a", "after"]]);
+  });
+
+  it("keeps the window's end edited when a memo posted elsewhere moves the window past it", async () => {
+    const a = memo("a", "a", JAN_2_EARLY);
+    const b = memo("b", "before", JAN_1_LATE);
+    const c = memo("c", "c", JAN_1_EARLIER);
+    const fresh = memo("n", "n", new Date("2026-01-02T00:00:00Z"));
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [c],
+      nextCursor: null,
+    });
+    mocks.editMemoFn.mockResolvedValue(savedAs(b, "after"));
+    const { router, refetch } = await renderRefetchingBoard(
+      page([a, b], "cursor-1"),
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("c");
+    vi.spyOn(router, "invalidate").mockImplementation(async () => {
+      refetch(page([fresh, a], "cursor-2"));
+    });
+    editTo("b", "after");
+    await screen.findByText("n");
+    expect(shownBodies()).toEqual([
+      ["memo-n", "n"],
+      ["memo-a", "a"],
+      ["memo-b", "after"],
+      ["memo-c", "c"],
+    ]);
+  });
+
+  it("keeps a scrolled-in row with its saved body, before and after the refetched window, since its page is not refetched", async () => {
+    const older = memo("older", "りんご 古い", JAN_1_EARLIER);
+    const windowMemo = memo("m1", "りんご 窓", JAN_1_LATE);
+    mocks.loadTimelinePageFn.mockResolvedValue({
+      items: [older],
+      nextCursor: null,
+    });
+    mocks.editMemoFn.mockResolvedValue(savedAs(older, "りんご 新しい"));
+    const { refetch } = await renderRefetchingBoard(
+      page([windowMemo], "cursor-1"),
+      { q: "りんご" },
+      "/?q=りんご",
+    );
+    await waitFor(() => expect(sentinel("older")).toBeDefined());
+    intersect(sentinel("older") as Element);
+    await screen.findByText("りんご 古い");
+
+    editTo("older", "りんご 新しい");
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "メモを編集" })).toBeNull(),
+    );
+    expect(shownBodies()).toEqual([
+      ["memo-m1", "りんご 窓"],
+      ["memo-older", "りんご 新しい"],
+    ]);
+
+    refetch(page([windowMemo], "cursor-1"));
+    expect(shownBodies()).toEqual([
+      ["memo-m1", "りんご 窓"],
+      ["memo-older", "りんご 新しい"],
+    ]);
   });
 });
 

@@ -114,6 +114,43 @@ export function mergeTimeline(
   return [...byId.values()].sort(byTimeline);
 }
 
+/**
+ * Whether `memo` lies inside the stretch of the timeline `window` was read
+ * over: between its first and last item, ends included, and past an end
+ * with no cursor beyond it. An empty window reaches everything when it has
+ * no cursor at all, and nothing otherwise.
+ */
+export function windowCovers(
+  window: TimelineWindowView,
+  memo: TimelineItemView,
+): boolean {
+  const first = window.items[0];
+  const last = window.items.at(-1);
+  if (first === undefined || last === undefined) {
+    return window.olderCursor === null && window.newerCursor === null;
+  }
+  return (
+    (window.newerCursor === null || byTimeline(first, memo) <= 0) &&
+    (window.olderCursor === null || byTimeline(memo, last) <= 0)
+  );
+}
+
+/**
+ * The scrolled-in rows a refetched window leaves standing: the ones it
+ * carries and the ones beyond its reach. Within its reach the window is
+ * the answer, so a row it no longer carries — one an edit made stop
+ * matching the keyword, say — goes.
+ */
+export function pruneToWindow(
+  window: TimelineWindowView,
+  loaded: readonly TimelineItemView[],
+): TimelineItemView[] {
+  const carried = new Set(window.items.map((memo) => memo.id));
+  return loaded.filter(
+    (row) => carried.has(row.id) || !windowCovers(window, row),
+  );
+}
+
 /** The date headings are display-only grouping (`spec/pages/index.md`, P-04). */
 export function groupByDay(
   memos: readonly DisplayMemo[],
@@ -186,6 +223,14 @@ export function TimelineBoard({
     message: string;
   } | null>(null);
   const [deleting, startDelete] = useTransition();
+
+  // Each window the loader hands over prunes the scrolled-in rows once, so
+  // a row it dropped stays gone when a later window no longer reaches it.
+  const [prunedFor, setPrunedFor] = useState(initial);
+  if (prunedFor !== initial) {
+    setPrunedFor(initial);
+    setLoaded((current) => pruneToWindow(initial, current));
+  }
 
   const olderCursor =
     cursors.older === undefined ? initial.olderCursor : cursors.older;
