@@ -1,5 +1,6 @@
 import { ButtonAnchor } from "@/components/ui/ButtonAnchor";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { SSO_IDENTITY_IN_USE_MESSAGE } from "@/presentation/errorDisplay";
 import type { SsoErrorCode } from "../schema";
 
 type Provider = Readonly<{ name: string; icon: IconName }>;
@@ -43,7 +44,7 @@ export function renderSsoError(
         ? "このメールアドレスは既に登録されています。パスワードでログインしてください"
         : "このメールアドレスはパスワードで登録されています。パスワードでログインしてください";
     case "already_used":
-      return "この外部アカウントは既に別のアカウントに連携されています";
+      return SSO_IDENTITY_IN_USE_MESSAGE;
     case "unverified":
       return "外部アカウントのメールアドレスが確認されていません";
     case "failed":
