@@ -1,6 +1,6 @@
 # 根拠の記録 — Issue #14
 
-証跡のパスは `/private/tmp/claude-501/-Users-hikaru-github-com-tuanemuy-dotfiles-agents-skills/c8c03944-c01b-4c6e-a71d-35b79645f865/scratchpad/cmp/wt/fog-14-OLD.evidence/` からの相対パス。観測は `pnpm dev`（ポート 6860）と agent-browser で、すべて今のツリー（ADR-004 の実装）に対して行った。
+証跡のパスは `一時ディレクトリ` からの相対パス。観測は `pnpm dev`（ポート 6860）と agent-browser で、すべて今のツリー（ADR-004 の実装）に対して行った。
 
 観測の記録の取り方: 編集の前にページへ印（`window.__mark`）を置き（残っていれば再読み込みしていない）、MutationObserver で行の本文と日付見出しの並びが変わるたびに記録した（`[編集中]` はエディタを開いている行）。件数の観測は、そのつど行の本文の一覧を数えた。「別のクライアント」は同じブラウザの別のタブで、そこで投稿してから閉じた。
 
